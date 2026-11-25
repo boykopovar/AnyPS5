@@ -80,6 +80,66 @@ static void CheckBooleanAndEmpty(StringTrace& trace) {
         Require(trace.live == baseline, "Destroying the boolean must not release the old string twice");
     }
 }
+static void CheckSelfAppendRollback(StringTrace& trace) {
+    const auto baseline = trace.live;
+    const char seed[] = "alpha-\xc3\xa9-beta-\xe2\x82\xac-gamma!";
+    constexpr std::size_t seedLength = sizeof(seed) - 1;
+    static_assert(seedLength == 24);
+    char doubled[seedLength * 2 + 1]{};
+    std::memcpy(doubled, seed, seedLength);
+    std::memcpy(doubled + seedLength, seed, seedLength);
+    String selfText{};
+    _ZN3sce4Json6StringC1EPKc(&selfText, seed);
+    const auto* const header = selfText.text;
+    const char* const oldBuffer = _ZNK3sce4Json6String5c_strEv(&selfText);
+    const auto initialCapacity = _ZNK3sce4Json6String8capacityEv(&selfText);
+    Require(header != nullptr &&
+                trace.live.count(const_cast<void*>(static_cast<const void*>(oldBuffer))) == 1,
+            "Populated string must own its initial character buffer");
+    Require(seedLength * 2 + 1 > initialCapacity,
+            "Initial string length must exceed half its capacity so self-append reallocates");
+    CheckText(selfText, seed, seedLength, initialCapacity);
+
+    const auto requestsBeforeGrow = trace.requests.size();
+    const auto liveBeforeGrow = trace.live.size();
+    Require(_ZN3sce4Json6String6appendERKS1_(&selfText, &selfText) == &selfText,
+            "Reallocating self-append must return the target string");
+    const char* const grownBuffer = _ZNK3sce4Json6String5c_strEv(&selfText);
+    const auto grownCapacity = _ZNK3sce4Json6String8capacityEv(&selfText);
+    Require(selfText.text == header && grownBuffer != oldBuffer,
+            "Reallocating self-append must keep the header and allocate a new character buffer");
+    Require(trace.requests.size() == requestsBeforeGrow + 1 && trace.requests.back() >= seedLength * 2 + 1,
+            "Reallocating self-append must request a grown character buffer");
+    Require(trace.live.count(const_cast<void*>(static_cast<const void*>(oldBuffer))) == 0 &&
+                trace.live.count(const_cast<void*>(static_cast<const void*>(grownBuffer))) == 1 &&
+                trace.live.size() == liveBeforeGrow,
+            "Reallocating self-append must release the old buffer and track only the new buffer");
+    Require(grownCapacity >= seedLength * 2 + 1,
+            "Reallocating self-append must grow capacity to fit doubled text");
+    CheckText(selfText, doubled, seedLength * 2, grownCapacity);
+
+    Require(_ZNK3sce4Json6String4sizeEv(&selfText) * 2 + 1 > grownCapacity,
+            "Repeated self-append must require reallocation");
+    const auto requestsBeforeFail = trace.requests.size();
+    const auto notificationsBeforeFail = trace.notifications;
+    const auto liveBeforeFail = trace.live;
+    trace.budget = 0;
+    Require(_ZN3sce4Json6String6appendERKS1_(&selfText, &selfText) == &selfText,
+            "Failed reallocating self-append must return the target string");
+    trace.budget = -1;
+    Require(trace.requests.size() == requestsBeforeFail + 1 && trace.requests.back() >= seedLength * 4 + 1,
+            "Failed self-append must record the attempted reallocation size");
+    Require(trace.notifications == notificationsBeforeFail + 1,
+            "Failed self-append must emit one out-of-memory notification");
+    Require(trace.live == liveBeforeFail,
+            "Failed self-append must leave live allocations untouched");
+    Require(selfText.text == header && _ZNK3sce4Json6String5c_strEv(&selfText) == grownBuffer,
+            "Failed self-append must preserve the header and character buffer pointer");
+    CheckText(selfText, doubled, seedLength * 2, grownCapacity);
+
+    _ZN3sce4Json6StringD1Ev(&selfText);
+    Require(trace.live == baseline, "Destroying self-appended string must release all storage");
+}
 int main() {
     Value beforeInitialization{};
     _ZN3sce4Json5ValueC1Ev(&beforeInitialization);
@@ -116,6 +176,19 @@ int main() {
     _ZN3sce4Json6String5clearEv(&text); CheckText(text, "", 0, 0);
     const char binary[]{'a', 0, 'b', 0};
     _ZN3sce4Json6String6appendEPKcm(&text, binary, 3); CheckText(text, binary, 3, 20);
+    String slice{};
+    Require(_ZNK3sce4Json6String6substrEmm(&slice, &text, 1, _ZN3sce4Json6String4nposE) == &slice,
+            "Substring extraction must return the constructed result");
+    CheckText(slice, binary + 1, 2, 3);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    const char zeroByte[]{0, 0};
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 1);
+    CheckText(slice, zeroByte, 1, 2);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    _ZNK3sce4Json6String6substrEmm(&slice, &text, 1, 0);
+    CheckText(slice, "", 0, 0);
+    _ZN3sce4Json6StringD1Ev(&slice);
+    CheckText(text, binary, 3, 20);
     String copy{}; _ZN3sce4Json6StringC1ERKS1_(&copy, &text); CheckText(copy, binary, 3, 4);
     String appended{}; _ZN3sce4Json6StringC1EPKc(&appended, nullptr);
     _ZN3sce4Json6String6appendERKS1_(&appended, &text); CheckText(appended, "a", 1, 18);
@@ -127,6 +200,7 @@ int main() {
     Require(trace.notifications == 5, "Each header, character, growth and assignment failure must notify once");
     _ZN3sce4Json6StringD1Ev(&appended); _ZN3sce4Json6StringD1Ev(&copy); _ZN3sce4Json6StringD1Ev(&text);
     Require(trace.live.size() == baseline, "String operations must release all owned resources");
+    CheckSelfAppendRollback(trace);
     Value null{}; _ZN3sce4Json5ValueC1Ev(&null);
     const auto* defaultString = _ZNK3sce4Json5Value9getStringEv(&null);
     Require(defaultString && defaultString->text && trace.live.at(defaultString->text) == 24, "The default string header must belong to the active allocator");

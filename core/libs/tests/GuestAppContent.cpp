@@ -53,7 +53,11 @@ int main() {
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
     Require(sceAppContentDownloadDataFormat(nullptr) == notInitialized);
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentDownload0Expand(1024) == notInitialized);
+    Require(sceAppContentDownload0Shrink(1024) == notInitialized);
     Require(sceAppContentDownload1Expand(1024) == notInitialized);
+    Require(sceAppContentDownload1Shrink(1024) == notInitialized);
+    Require(sceAppContentDownload2Shrink(1024) == notInitialized);
     Require(sceAppContentDownload2Expand(1024) == notInitialized);
     Require(sceAppContentAddcontDelete(0, nullptr) == notInitialized);
     Require(sceAppContentAddcontEnqueueDownload(0, nullptr) == notInitialized);
@@ -68,6 +72,12 @@ int main() {
     Require(sceAppContentGetPftFlag(&pftFlag) == notInitialized);
     Require(pftFlag == 0x5a5a5a5a);
     Require(sceAppContentGetDownloadedStoreCountry(0, nullptr, nullptr) == notInitialized);
+    const std::array<std::uint8_t, 16> mdid{};
+    unsigned char matchByte = 0x5a;
+    auto* const matches = reinterpret_cast<bool*>(&matchByte);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(mdid.data(), matches) == notInitialized);
+    Require(matchByte == 0x5a);
     const auto original = std::filesystem::current_path();
     const auto directory = original / ("appcontent-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory));
@@ -119,6 +129,10 @@ int main() {
     std::uint32_t region = 0;
     Require(sceAppContentGetRegion(nullptr) == ErrorParameter);
     Require(reachesService([&] { sceAppContentGetRegion(&region); }));
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(nullptr, matches) == ErrorParameter);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(mdid.data(), nullptr) == ErrorParameter);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(nullptr, nullptr) == ErrorParameter);
+    Require(matchByte == 0x5a);
     const std::string longest(255, 'a');
     const std::string tooLong(256, 'a');
     Require(sceAppContentRequestPatchInstall(nullptr) == ErrorParameter);
@@ -196,6 +210,25 @@ int main() {
     { std::ofstream file(download1Data / "used.bin", std::ios::binary); file << std::string(1024, 'x'); }
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download1Mount, &download1Space) == 0);
     Require(download1Space == 2047);
+    Require(reachesService([&] { sceAppContentDownload1Shrink(1); }));
+    Require(sceAppContentDownload2Shrink(0) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentDownload2Shrink(1); }));
+    Require(std::filesystem::exists(downloadData / "preserve.bin"));
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    Require(availableKb == 0);
+    Require(reachesService([&] { sceAppContentDownload0Expand(0); }));
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    Require(availableKb == 0);
+    Require(sceAppContentDownload0Expand(2) == 0);
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    Require(availableKb == 2047);
+    Require(sceAppContentDownload0Expand(1) == 0);
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    Require(availableKb == 2047);
+    Require(std::filesystem::exists(downloadData / "preserve.bin"));
+    Require(reachesService([&] { sceAppContentDownload0Shrink(1); }));
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
+    Require(availableKb == 2047);
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {

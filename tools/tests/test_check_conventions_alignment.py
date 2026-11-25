@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_conventions import Check, cpp_text, named_constants, over_aligned
+from check_conventions import Check, cpp_text, integer_literal, named_constants, over_aligned
 
 SOURCE = "core/libs/prx/libSceExample/tests/Example.cpp"
 
@@ -152,6 +152,15 @@ class AlignmentRuleTests(unittest.TestCase):
                                        "    alignas(Alignment) static char data[4];\n"
                                        "}\n"),
                          [("alignment", SOURCE, 6, "alignas(Alignment)")])
+
+    def test_integer_literal_bases_and_digit_separators(self):
+        self.assertEqual(integer_literal("16384"), 16384)
+        self.assertEqual(integer_literal("0x4000"), 16384)
+        self.assertEqual(integer_literal("0X4'000"), 16384)
+        self.assertEqual(integer_literal("0b1000"), 8)
+        self.assertEqual(integer_literal("010"), 8)
+        self.assertEqual(integer_literal("0"), 0)
+        self.assertEqual(integer_literal("1'000"), 1000)
 
 
 if __name__ == "__main__":

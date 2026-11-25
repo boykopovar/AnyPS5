@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/InventoryExports.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -17,10 +18,46 @@ bool IsInitialized() {
     return false;
 }
 
+bool IsValidType2ProfileAndLevel(std::uint16_t profile, std::uint16_t level) {
+    if (profile != 4 && profile != 5) return false;
+    return level == 4 || level == 6 || level == 8 || level == 10;
+}
+
+bool IsValidType4ProfileAndLevel(std::uint16_t profile, std::uint16_t level) {
+    if (profile != 0x42 && profile != 0x4D && profile != 0x64 && profile != 0x80) return false;
+    switch (level) {
+        case 10:
+        case 11:
+        case 12:
+        case 13:
+        case 20:
+        case 21:
+        case 22:
+        case 30:
+        case 31:
+        case 32:
+        case 40:
+        case 41:
+        case 42:
+        case 50:
+        case 51:
+        case 111:
+            return true;
+        default:
+            return false;
+    }
+}
+
 template <typename T>
 T ReadGuest(const void* address, const char* what) {
     T value{};
-    if (address == nullptr || !GuestCopyIn_nid_no_patch(&value, address, sizeof(value))) {
+    if (address == nullptr) {
+        throw std::invalid_argument(what);
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
         throw std::invalid_argument(what);
     }
     return value;
@@ -33,7 +70,13 @@ extern "C" {
 int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, void** instance) {
     (void)param;
     const std::uint64_t none = 0;
-    if (instance == nullptr || !GuestCopyOut_nid_no_patch(instance, &none, sizeof(none))) {
+    if (instance == nullptr) {
+        throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(instance, &none, sizeof(none));
+    errno = savedErrno;
+    if (!copied) {
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
     }
     if (!IsInitialized()) return ErrorNotInitialized;
@@ -76,10 +119,19 @@ int APS5_VABI libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(std:
     (void)argument1;
     (void)argument2;
     (void)argument3;
-    (void)argument4;
-    (void)argument5;
     if (output == nullptr) return ErrorInvalidArgument;
     if (type != 2 && type != 3 && type != 4) return ErrorUnknownType;
+    const std::uint64_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::invalid_argument("libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch: unwritable output");
+    }
+    const auto profile = static_cast<std::uint16_t>(argument4);
+    const auto level = static_cast<std::uint16_t>(argument5);
+    if (type == 2 && !IsValidType2ProfileAndLevel(profile, level)) return ErrorInvalidArgument;
+    if (type == 4 && !IsValidType4ProfileAndLevel(profile, level)) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("iwAQhvb9BvY", libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch);

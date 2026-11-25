@@ -29,11 +29,14 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
 #include "src/EncoderMetadata.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include "Stream.hpp"
 #include "Factory.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
@@ -52,6 +55,40 @@ constexpr std::int64_t WmpErrBufferOverflow = -103;
 constexpr std::size_t MemoryBuffer = 0;
 constexpr std::size_t MemorySize = 1;
 constexpr std::size_t MemoryPosition = 2;
+using DecoderGetResolution = std::int64_t (APS5_VABI*)(void*, float*, float*);
+static_assert(sizeof(DecoderGetResolution) == 8);
+
+std::uintptr_t GuestFieldAddress(const void* base, std::uintptr_t offset, std::size_t size) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) {
+        throw std::invalid_argument("invalid JXR guest field address");
+    }
+    const auto field = address + offset;
+    if (size > std::numeric_limits<std::uintptr_t>::max() - field) {
+        throw std::invalid_argument("invalid JXR guest field range");
+    }
+    return field;
+}
+
+bool CopyGuestRange(std::uintptr_t destBase, std::uintptr_t sourceBase, std::size_t size) {
+    if (size > std::numeric_limits<std::uintptr_t>::max() - sourceBase) return false;
+    if (size > std::numeric_limits<std::uintptr_t>::max() - destBase) return false;
+    std::array<std::uint8_t, 4096> chunk{};
+    std::size_t offset = 0;
+    while (offset < size) {
+        const std::size_t batch = std::min(size - offset, chunk.size());
+        const int copyInErrno = errno;
+        const bool inOk = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(sourceBase + offset), batch);
+        errno = copyInErrno;
+        if (!inOk) return false;
+        const int copyOutErrno = errno;
+        const bool outOk = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destBase + offset), chunk.data(), batch);
+        errno = copyOutErrno;
+        if (!outOk) return false;
+        offset += batch;
+    }
+    return true;
+}
 
 template<typename TSlot, typename TFunction>
 TSlot Slot(TFunction* function) {
@@ -139,14 +176,24 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
 
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
     if (!stream) APS5_INVALID_ARG_EX;
-    return stream->state[MemorySize] <= stream->state[MemoryPosition];
+    std::array<std::uintptr_t, 4> state{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
+    return state[MemorySize] <= state[MemoryPosition];
 }
 
 std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t* position) {
     if (!stream || !position) APS5_INVALID_ARG_EX;
-    const std::size_t local = stream->state[MemoryPosition];
+    std::uintptr_t local = 0;
+    const int readErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&local, &stream->state[MemoryPosition], sizeof(local));
+    errno = readErrno;
+    if (!read) APS5_INVALID_ARG_EX;
+    const std::size_t guestPosition = local;
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(position, &local, sizeof(local));
+    const bool copied = GuestCopyOut_nid_no_patch(position, &guestPosition, sizeof(guestPosition));
     errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
@@ -155,10 +202,10 @@ std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 std::int64_t APS5_VABI PKCodecFactory_CreateCodec_nid_postfix(const std::uint32_t* iid, void** codec) {
     if (!iid || !codec) APS5_INVALID_ARG_EX;
     if (*iid == JxrGuest_IID_PKImageWmpEncode_nid_no_patch) {
-        return reinterpret_cast<std::int64_t (APS5_VABI*)(void**)>(&PKImageEncode_Create_WMP_nid_postfix)(codec);
+        return PKImageEncode_Create_WMP_nid_postfix(reinterpret_cast<Jxr::ImageEncode**>(codec));
     }
     if (*iid == JxrGuest_IID_PKImageWmpDecode_nid_no_patch) {
-        return reinterpret_cast<std::int64_t (APS5_VABI*)(void**)>(&PKImageDecode_Create_WMP_nid_postfix)(codec);
+        return PKImageDecode_Create_WMP_nid_postfix(codec);
     }
     return WmpErrUnsupportedFormat;
 }
@@ -225,48 +272,117 @@ std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(void* converter, co
     return WmpErrSuccess;
 }
 
-int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Copy_nid_postfix(JxrGuestFormatConverter* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t decoderCopyOffset = 7 * sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - decoderCopyOffset) APS5_INVALID_ARG_EX;
+    using DecoderCopy = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(DecoderCopy) == sizeof(void*));
+    DecoderCopy decoderCopy = nullptr;
+    const auto* decoderCopyField = reinterpret_cast<const void*>(decoderAddress + decoderCopyOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoderCopy, decoderCopyField, sizeof(decoderCopy)) || !decoderCopy) APS5_INVALID_ARG_EX;
+
+    auto result = decoderCopy(decoder, rectangle, buffer, stride);
+    if (result < 0) return result;
+
+    constexpr std::size_t converterConvertOffset = 7 * sizeof(void*);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - converterConvertOffset) APS5_INVALID_ARG_EX;
+    using ConverterConvert = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(ConverterConvert) == sizeof(void*));
+    ConverterConvert converterConvert = nullptr;
+    const auto* converterConvertField = reinterpret_cast<const void*>(converterAddress + converterConvertOffset);
+    if (!GuestCopyIn_nid_no_patch(&converterConvert, converterConvertField, sizeof(converterConvert)) || !converterConvert) APS5_INVALID_ARG_EX;
+
+    result = converterConvert(converter, rectangle, buffer, stride);
+    return result;
 }
 
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
+    constexpr auto pixelFormatOffset = offsetof(JxrGuestFormatConverter, pixelFormat);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - pixelFormatOffset) APS5_INVALID_ARG_EX;
+    const auto* sourcePixelFormat = reinterpret_cast<const JxrGuestGuid*>(converterAddress + pixelFormatOffset);
+    JxrGuestGuid copy{};
+    if (!GuestCopyIn_nid_no_patch(&copy, sourcePixelFormat, sizeof(copy))) APS5_INVALID_ARG_EX;
+    if (!GuestCopyOut_nid_no_patch(pixelFormat, &copy, sizeof(copy))) APS5_INVALID_ARG_EX;
+    return WmpErrSuccess;
 }
 
-int APS5_VABI PKFormatConverter_GetResolution_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetResolution_nid_postfix(JxrGuestFormatConverter* converter, float* x, float* y) {
+    if (!converter) throw std::invalid_argument("null JXR format converter");
+    void* decoder = nullptr;
+    const auto decoderAddress = GuestFieldAddress(converter, offsetof(JxrGuestFormatConverter, decoder), sizeof(decoder));
+    if (!GuestCopyIn_nid_no_patch(&decoder, reinterpret_cast<const void*>(decoderAddress), sizeof(decoder)) || !decoder) {
+        throw std::invalid_argument("invalid JXR decoder field");
+    }
+    DecoderGetResolution getResolution = nullptr;
+    const auto callbackAddress = GuestFieldAddress(decoder, 24, sizeof(getResolution));
+    if (!GuestCopyIn_nid_no_patch(&getResolution, reinterpret_cast<const void*>(callbackAddress), sizeof(getResolution)) || !getResolution) {
+        throw std::invalid_argument("invalid JXR resolution callback field");
+    }
+    return getResolution(decoder, x, y);
 }
 
-int APS5_VABI PKFormatConverter_GetSize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetSize_nid_postfix(JxrGuestFormatConverter* converter, std::int32_t* width, std::int32_t* height) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t getSizeOffset = 2 * sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - getSizeOffset) APS5_INVALID_ARG_EX;
+    using DecoderGetSize = std::int64_t (APS5_VABI*)(void*, std::int32_t*, std::int32_t*);
+    static_assert(sizeof(DecoderGetSize) == 8);
+    DecoderGetSize getSize = nullptr;
+    const auto* callbackField = reinterpret_cast<const void*>(decoderAddress + getSizeOffset);
+    if (!GuestCopyIn_nid_no_patch(&getSize, callbackField, sizeof(getSize)) || !getSize) APS5_INVALID_ARG_EX;
+    return getSize(decoder, width, height);
 }
 
-int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t getPixelFormatOffset = sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - getPixelFormatOffset) APS5_INVALID_ARG_EX;
+    using DecoderGetPixelFormat = std::int64_t (APS5_VABI*)(void*, JxrGuestGuid*);
+    static_assert(sizeof(DecoderGetPixelFormat) == sizeof(void*));
+    DecoderGetPixelFormat getPixelFormat = nullptr;
+    const auto* callbackField = reinterpret_cast<const void*>(decoderAddress + getPixelFormatOffset);
+    if (!GuestCopyIn_nid_no_patch(&getPixelFormat, callbackField, sizeof(getPixelFormat)) || !getPixelFormat) APS5_INVALID_ARG_EX;
+
+    return getPixelFormat(decoder, pixelFormat);
 }
 
-int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKFormatConverter_Initialize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKFormatConverter_Release_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter) {
+    return PKFree_nid_postfix(converter);
 }
 
 std::int64_t APS5_VABI PKImageDecode_Copy_nid_postfix(void*, const void*, std::uint8_t*, std::uint32_t) {
     return WmpErrAbstractMethod;
-}
-
-int APS5_VABI PKImageDecode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame) {
@@ -275,10 +391,6 @@ std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std:
 
 std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize) {
     return WmpErrSuccess;
-}
-
-int APS5_VABI PKImageEncode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
@@ -385,21 +497,34 @@ std::int64_t APS5_VABI PKImageEncode_WriteSource_nid_postfix(void* encoder, void
 
 std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
-    auto& state = stream->state;
+    std::array<std::uintptr_t, 4> state{};
+    const int readErrno = errno;
+    const bool readState = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
+    errno = readErrno;
+    if (!readState) APS5_INVALID_ARG_EX;
     if (state[MemorySize] < state[MemoryPosition]) return WmpErrSuccess;
     if (state[MemoryPosition] + size < state[MemoryPosition]) return WmpErrBufferOverflow;
     if (state[MemorySize] < state[MemoryPosition] + size) size = state[MemorySize] - state[MemoryPosition];
     if (size != 0) {
         if (!buffer || !state[MemoryBuffer]) APS5_INVALID_ARG_EX;
-        std::memcpy(buffer, reinterpret_cast<const std::uint8_t*>(state[MemoryBuffer]) + state[MemoryPosition], size);
+        if (state[MemoryPosition] > std::numeric_limits<std::uintptr_t>::max() - state[MemoryBuffer]) APS5_INVALID_ARG_EX;
+        if (!CopyGuestRange(reinterpret_cast<std::uintptr_t>(buffer), state[MemoryBuffer] + state[MemoryPosition], size)) APS5_INVALID_ARG_EX;
     }
-    state[MemoryPosition] += size;
+    const std::uintptr_t nextPosition = state[MemoryPosition] + size;
+    const int writeErrno = errno;
+    const bool updated = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &nextPosition, sizeof(nextPosition));
+    errno = writeErrno;
+    if (!updated) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 
 std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t position) {
     if (!stream) APS5_INVALID_ARG_EX;
-    stream->state[MemoryPosition] = position;
+    const std::uintptr_t value = position;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &value, sizeof(value));
+    errno = savedErrno;
+    if (!written) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 
@@ -420,13 +545,22 @@ std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
 
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
-    auto& state = stream->state;
+    std::array<std::uintptr_t, 4> state{};
+    const int readErrno = errno;
+    const bool readState = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
+    errno = readErrno;
+    if (!readState) APS5_INVALID_ARG_EX;
     if (state[MemoryPosition] + size < state[MemoryPosition] || state[MemorySize] < state[MemoryPosition] + size) return WmpErrBufferOverflow;
     if (size != 0) {
         if (!buffer || !state[MemoryBuffer]) APS5_INVALID_ARG_EX;
-        std::memcpy(reinterpret_cast<std::uint8_t*>(state[MemoryBuffer]) + state[MemoryPosition], buffer, size);
+        if (state[MemoryPosition] > std::numeric_limits<std::uintptr_t>::max() - state[MemoryBuffer]) APS5_INVALID_ARG_EX;
+        if (!CopyGuestRange(state[MemoryBuffer] + state[MemoryPosition], reinterpret_cast<std::uintptr_t>(buffer), size)) APS5_INVALID_ARG_EX;
     }
-    state[MemoryPosition] += size;
+    const std::uintptr_t nextPosition = state[MemoryPosition] + size;
+    const int writeErrno = errno;
+    const bool updated = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &nextPosition, sizeof(nextPosition));
+    errno = writeErrno;
+    if (!updated) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 

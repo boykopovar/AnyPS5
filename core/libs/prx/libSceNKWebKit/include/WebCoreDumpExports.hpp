@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +13,37 @@ struct FloatPoint3D {
     float m_x;
     float m_y;
     float m_z;
+};
+
+struct AbsolutePositionConstraints {
+    FloatSize m_alignmentOffset;
+    FloatPoint m_layerPositionAtLastLayout;
+};
+
+struct FixedPositionViewportConstraints {
+    const void* m_vtable;
+    FloatSize m_alignmentOffset;
+    std::uint32_t m_anchorEdges;
+    FloatRect m_viewportRectAtLastLayout;
+    FloatPoint m_layerPositionAtLastLayout;
+};
+
+static_assert(sizeof(AbsolutePositionConstraints) == 16);
+static_assert(offsetof(AbsolutePositionConstraints, m_layerPositionAtLastLayout) == 8);
+static_assert(sizeof(FixedPositionViewportConstraints) == 48);
+static_assert(alignof(FixedPositionViewportConstraints) == 8);
+static_assert(offsetof(FixedPositionViewportConstraints, m_alignmentOffset) == 8);
+static_assert(offsetof(FixedPositionViewportConstraints, m_anchorEdges) == 16);
+static_assert(offsetof(FixedPositionViewportConstraints, m_viewportRectAtLastLayout) == 20);
+static_assert(offsetof(FixedPositionViewportConstraints, m_layerPositionAtLastLayout) == 36);
+
+enum class TouchAction : std::uint8_t {
+    Auto = 1 << 0,
+    None = 1 << 1,
+    Manipulation = 1 << 2,
+    PanX = 1 << 3,
+    PanY = 1 << 4,
+    PinchZoom = 1 << 5,
 };
 
 enum class CompositeOperator : std::uint8_t {
@@ -86,8 +118,6 @@ enum class AlphaPremultiplication : std::uint8_t { Premultiplied, Unpremultiplie
 enum class ScrollType : bool { User, Programmatic };
 
 enum class ScrollClamping : bool { Unclamped, Clamped };
-
-enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
 
 enum class ScrollingNodeType : std::uint8_t {
     MainFrame,
@@ -167,6 +197,11 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_20TransformationMatrixE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::TransformationMatrix& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntSize& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS0_9OptionSetINS_13ActivityState4FlagEEE(NKWebKit::WtfAbi::TextStream& stream, std::uint32_t flags);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(NKWebKit::WtfAbi::TextStream& stream, WebCore::TouchAction touchAction);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_27AbsolutePositionConstraintsE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::AbsolutePositionConstraints& constraints);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConstraintsE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FixedPositionViewportConstraints& constraints);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_8IntPointE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntPoint& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatSize& value);

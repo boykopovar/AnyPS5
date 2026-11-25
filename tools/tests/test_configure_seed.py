@@ -102,6 +102,15 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
 
 
 class ConfigureSeedPathTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires named pipes")
+    def test_fifo_seed_is_preserved(self):
+        seed = self.root / "seed.cmake"
+        os.mkfifo(seed)
+        result = self.run_seed(seed)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(seed.is_fifo())
+        self.assertIn(str(seed), result.stderr)
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX file size limits")
     def test_failed_write_preserves_existing_seed_and_allows_retry(self):
         seed = self.root / "seed.cmake"
@@ -350,6 +359,31 @@ class ConfigureSeedTests(ConfigureSeedProject):
 
 
 class ConfigureSeedRoundTripTests(ConfigureSeedProject):
+    def test_check_names_with_leading_slashes_round_trip_through_cmake(self):
+        source = self.root / "slash-check-source"
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(slash_check C)\ninclude(CheckFunctionExists)\n'
+            'check_function_exists(puts /MINI_HAVE_PUTS)\n'
+            'check_function_exists(mini_missing_function /MINI_HAVE_MISSING)\n', encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja",
+                                   f"-DCMAKE_C_COMPILER={self.compiler}"],
+                                  check=True, capture_output=True, text=True).stdout
+
+        fresh = configure("slash-fresh")
+        self.assertIn("Looking for puts", fresh)
+        self.assertIn("Looking for mini_missing_function", fresh)
+        cache = self.root / "slash-fresh" / "CMakeCache.txt"
+        found = configure_seed.checks(cache)
+        self.assertEqual(found["/MINI_HAVE_PUTS"], ("1", "Have function puts"))
+        self.assertEqual(found["/MINI_HAVE_MISSING"], ("", "Have function mini_missing_function"))
+        output = configure("slash-seeded", "-C", str(self.seed(cache, "slash.cmake")))
+        self.assertNotIn("Looking for puts", output)
+        self.assertNotIn("Looking for mini_missing_function", output)
+        self.assertEqual(configure_seed.checks(self.root / "slash-seeded" / "CMakeCache.txt"), found)
+
     def configure_cache_only(self, name, *extra):
         source = self.root / "cache-only-source"
         source.mkdir(exist_ok=True)
@@ -429,9 +463,46 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertIn(f"MINI_ODD:INTERNAL={value}\n", seeded)
         self.assertEqual(configure_seed.checks(self.root / "odd-seeded" / "CMakeCache.txt")["MINI_ODD"][0], value)
 
+    def test_values_cmake_quotes_for_trailing_whitespace_round_trip(self):
+        source = self.root / "quoted-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(quoted_check NONE)\nif(NOT DEFINED MINI_SPACE)\n"
+            '  set(MINI_SPACE "abc " CACHE INTERNAL "Test MINI_SPACE")\n'
+            '  set(MINI_TAB "a\\t" CACHE INTERNAL "Test MINI_TAB")\nendif()\n'
+            'message(STATUS "MINI_SPACE=[${MINI_SPACE}] MINI_TAB=[${MINI_TAB}]")\n', encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
+                                  check=True, capture_output=True, text=True).stdout
+
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", configure("quoted-fresh"))
+        cache = self.root / "quoted-fresh" / "CMakeCache.txt"
+        self.assertIn("MINI_SPACE:INTERNAL='abc '\n", cache.read_text(encoding="utf-8"))
+        self.assertEqual({name: entry[0] for name, entry in configure_seed.checks(cache).items()},
+                         {"MINI_SPACE": "abc ", "MINI_TAB": "a\t"})
+        output = configure("quoted-seeded", "-C", str(self.seed(cache, "quoted.cmake")))
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", output)
+        self.assertEqual(configure_seed.checks(self.root / "quoted-seeded" / "CMakeCache.txt"), configure_seed.checks(cache))
+
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_later_non_check_assignment_supersedes_a_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            for later in ("//User option\nHAVE_EXAMPLE:BOOL=OFF\n",
+                          "//Manual entry\nHAVE_EXAMPLE:INTERNAL=manual\n",
+                          '"HAVE_EXAMPLE":INTERNAL=undocumented'):
+                with self.subTest(later=later):
+                    cache.write_text("//Have function example\nHAVE_EXAMPLE:INTERNAL=1\n" + later, encoding="utf-8")
+                    self.assertEqual(configure_seed.checks(cache), {})
+
+    def test_nonregular_cache_is_rejected_before_opening_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(OSError, "configure cache must be a regular file"):
+                configure_seed.checks(directory)
+
     def test_unicode_line_separators_are_preserved_in_cache_fields(self):
         entries = {
             f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")

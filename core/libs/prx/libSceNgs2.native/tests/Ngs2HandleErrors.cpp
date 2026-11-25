@@ -19,7 +19,7 @@ static void Status(int actual, int expected, const char* message) {
 }
 
 static void CheckExportLinked() {
-    auto* volatile linked = &sceNgs2RackQueryInfo;
+    auto* volatile linked = reinterpret_cast<void*>(&sceNgs2RackQueryInfo);
     Require(linked != nullptr);
 }
 
@@ -29,19 +29,19 @@ static void CheckPendingExports(const char* path) {
         const char* name;
     };
     const Export exports[] = {
-        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
-        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
-        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
-        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
-        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
-        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
-        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
-        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
-        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
-        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
-        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
-        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
-        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleArrayEnumItems), "sceNgs2ModuleArrayEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleEnumConfigs), "sceNgs2ModuleEnumConfigs"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleQueueEnumItems), "sceNgs2ModuleQueueEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2RackRunCommands), "sceNgs2RackRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreate), "sceNgs2StreamCreate"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreateWithAllocator), "sceNgs2StreamCreateWithAllocator"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamDestroy), "sceNgs2StreamDestroy"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryBufferSize), "sceNgs2StreamQueryBufferSize"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryInfo), "sceNgs2StreamQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamResetOption), "sceNgs2StreamResetOption"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamRunCommands), "sceNgs2StreamRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemQueryInfo), "sceNgs2SystemQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemRunCommands), "sceNgs2SystemRunCommands"},
     };
     if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
         throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
@@ -203,6 +203,7 @@ static int APS5_VABI DestroyScheduler(std::uintptr_t handle) {
 
 static void CheckResetScheduler() {
     Require(sceNgs2JobSchedulerResetOption(nullptr) == static_cast<int>(0x804A8012u));
+    Require(sceNgs2JobSchedulerResetOption(reinterpret_cast<Ngs2JobSchedulerOption*>(0x10)) == static_cast<int>(0x804A8012u));
     Ngs2JobSchedulerOption option{};
     Require(sceNgs2JobSchedulerResetOption(&option) == SCE_NGS2_OK);
     Require(option.size == 112 && option.user_data == 0 && option.num_workers == 4 && option.max_jobs == 1024);
@@ -307,6 +308,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {CreateCase{&valid, nullptr, true, bufferError, "a null buffer info"},
                           CreateCase{&valid, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{&valid, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), true, bufferError, "an unreadable buffer info"},
                           CreateCase{&badRate, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
                           CreateCase{&badRate, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
                           CreateCase{&badRate, &buffer, false, outputError, "a null handle and bad option"},
@@ -328,6 +330,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {AllocatorCase{&valid, nullptr, true, allocatorError, "a null allocator"},
                           AllocatorCase{&valid, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{&valid, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), true, allocatorError, "an unreadable allocator"},
                           AllocatorCase{&badRate, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
                           AllocatorCase{&badRate, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
                           AllocatorCase{&badRate, &allocator, false, outputError, "a null handle and bad option"},
@@ -341,6 +344,86 @@ static void CheckCreateArguments() {
     Require(allocations == 1);
     Status(sceNgs2SystemDestroy(allocated, nullptr), SCE_NGS2_OK, "system destroy failed");
     Require(allocations == 0);
+}
+
+static void CheckRackCreateArguments() {
+    constexpr int outputError = static_cast<int>(0x804A8010u);
+    constexpr int bufferError = static_cast<int>(0x804A8020u);
+    constexpr int allocatorError = static_cast<int>(0x804A8023u);
+    constexpr int systemError = static_cast<int>(0x804A8201u);
+    constexpr uintptr_t sentinel = 0x5a5a;
+    constexpr uintptr_t invalid = 0x1234;
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption bad{};
+    bad.rack_option.size = sizeof(bad);
+    bad.rack_option.max_grain_samples = 256;
+    bad.rack_option.max_voices = 1;
+    bad.max_channels = 2;
+    bad.max_inputs = 1;
+    Ngs2ContextBufferInfo query{};
+    Status(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &query), SCE_NGS2_OK, "rack buffer query failed");
+    const auto buffer = Buffer(query);
+    Ngs2ContextBufferInfo noHost = buffer;
+    noHost.host_buffer = nullptr;
+    const Ngs2BufferAllocator allocator{CountedAllocate, CountedRelease, 0};
+    const Ngs2BufferAllocator noAlloc{nullptr, CountedRelease, 0};
+    const Ngs2BufferAllocator noFree{CountedAllocate, nullptr, 0};
+
+    struct CreateCase {
+        uintptr_t system;
+        const Ngs2RackOption* option;
+        const Ngs2ContextBufferInfo* buffer;
+        bool handle;
+        int expected;
+        const char* label;
+    };
+    for (const auto& c : {CreateCase{system, nullptr, nullptr, true, bufferError, "a null buffer info"},
+                          CreateCase{system, nullptr, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{system, &bad.rack_option, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
+                          CreateCase{system, &bad.rack_option, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
+                          CreateCase{invalid, nullptr, nullptr, true, bufferError, "a null buffer info and invalid system"},
+                          CreateCase{invalid, nullptr, &noHost, true, bufferError, "a null host buffer and invalid system"},
+                          CreateCase{system, &bad.rack_option, &buffer, false, outputError, "a null handle and bad option"},
+                          CreateCase{system, &bad.rack_option, &buffer, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a bad option"},
+                          CreateCase{invalid, nullptr, &buffer, true, systemError, "an invalid system"}}) {
+        uintptr_t created = sentinel;
+        Returned(sceNgs2RackCreate(c.system, SCE_NGS2_RACK_ID_SUBMIXER, c.option, c.buffer, c.handle ? &created : nullptr), c.expected, "sceNgs2RackCreate", c.label);
+        Require(created == sentinel);
+    }
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &buffer, &created), SCE_NGS2_OK, "sceNgs2RackCreate", "valid arguments");
+    Require(created != sentinel);
+    Status(sceNgs2RackDestroy(created, nullptr), SCE_NGS2_OK, "rack destroy failed");
+
+    struct AllocatorCase {
+        uintptr_t system;
+        const Ngs2RackOption* option;
+        const Ngs2BufferAllocator* allocator;
+        bool handle;
+        int expected;
+        const char* label;
+    };
+    for (const auto& c : {AllocatorCase{system, nullptr, nullptr, true, allocatorError, "a null allocator"},
+                          AllocatorCase{system, nullptr, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{system, &bad.rack_option, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
+                          AllocatorCase{system, &bad.rack_option, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
+                          AllocatorCase{invalid, nullptr, nullptr, true, allocatorError, "a null allocator and invalid system"},
+                          AllocatorCase{invalid, nullptr, &noAlloc, true, allocatorError, "a null alloc handler and invalid system"},
+                          AllocatorCase{system, &bad.rack_option, &allocator, false, outputError, "a null handle and bad option"},
+                          AllocatorCase{system, &bad.rack_option, &allocator, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a bad option"},
+                          AllocatorCase{system, &bad.rack_option, &noFree, true, SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS, "a null free handler and bad option"},
+                          AllocatorCase{invalid, nullptr, &allocator, true, systemError, "an invalid system"},
+                          AllocatorCase{invalid, nullptr, &noFree, true, systemError, "a null free handler and invalid system"}}) {
+        uintptr_t allocated = sentinel;
+        Returned(sceNgs2RackCreateWithAllocator(c.system, SCE_NGS2_RACK_ID_SUBMIXER, c.option, c.allocator, c.handle ? &allocated : nullptr), c.expected, "sceNgs2RackCreateWithAllocator", c.label);
+        Require(allocated == sentinel && allocations == 0);
+    }
+    uintptr_t allocated = sentinel;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_SUBMIXER, nullptr, &allocator, &allocated), SCE_NGS2_OK, "sceNgs2RackCreateWithAllocator", "valid arguments");
+    Require(allocated != sentinel && allocations == 1);
+    Status(sceNgs2RackDestroy(allocated, nullptr), SCE_NGS2_OK, "rack destroy failed");
+    Require(allocations == 0);
+    Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
 }
 
 static void CheckSystemOption() {
@@ -488,6 +571,32 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void CheckRackCreateGuestPointers() {
+    constexpr uintptr_t sentinel = 0x5a5a;
+    const auto system = CreateSystem();
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), &created), static_cast<int>(0x804A8020u), "sceNgs2RackCreate", "an unreadable buffer info");
+    Require(created == sentinel);
+
+    const int allocationsBefore = allocations;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), &created), static_cast<int>(0x804A8023u), "sceNgs2RackCreateWithAllocator", "an unreadable allocator");
+    Require(created == sentinel && allocations == allocationsBefore);
+
+    Ngs2ContextBufferInfo query{};
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackQueryBufferSize", "an unwritable buffer info");
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, &query), SCE_NGS2_OK, "sceNgs2RackQueryBufferSize", "a writable buffer info");
+    Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
+}
+
+static void CheckDestroyGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackDestroy(rack, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackDestroy", "an unwritable buffer info");
+    Returned(sceNgs2RackDestroy(rack, nullptr), SCE_NGS2_OK, "sceNgs2RackDestroy", "a null buffer info after a refused destroy");
+    Returned(sceNgs2SystemDestroy(system, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2SystemDestroy", "an unwritable buffer info");
+    Returned(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "sceNgs2SystemDestroy", "a null buffer info after a refused destroy");
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -521,6 +630,9 @@ int main(int argc, char** argv) {
         Status(sceNgs2SystemGetUserData(system, &value), systemError, "retired system returned the wrong error");
         Require(value == sentinel);
         CheckCreateArguments();
+        CheckRackCreateGuestPointers();
+        CheckDestroyGuestPointers();
+        CheckRackCreateArguments();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();

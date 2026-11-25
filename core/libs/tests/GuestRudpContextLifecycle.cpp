@@ -22,6 +22,8 @@ static void APS5_VABI Handler(int, int, int, void*) {}
 static void CheckOptions(int context) {
     constexpr int invalidArgument = static_cast<int>(0x80770004u);
     constexpr int invalidOption = static_cast<int>(0x80770005u);
+    constexpr int invalidContextId = static_cast<int>(0x80770003u);
+    constexpr std::uint32_t notAcceptable = 0x80770011u;
     constexpr std::array<std::pair<int, std::uint32_t>, 17> defaults{{
         {1, 1346}, {2, 65536}, {3, 65536}, {4, 0}, {5, 1}, {6, 1}, {7, 1}, {8, 0},
         {9, 60000}, {10, 0}, {11, 30}, {13, 10}, {15, 0}, {16, 0}, {17, 0}, {18, 0}, {19, 20000},
@@ -57,13 +59,27 @@ static void CheckOptions(int context) {
         Require(sceRudpGetOption(context, option, &result, sizeof(result)) == 0);
         Require(result == 0xffffffffu);
     }
-    for (int option : {std::numeric_limits<int>::min(), -1, 0, 20, std::numeric_limits<int>::max()}) {
+    for (int option : {std::numeric_limits<int>::min(), -1, 0, 21, std::numeric_limits<int>::max()}) {
         Require(sceRudpSetOption(context, option, nullptr, 0) == invalidOption);
         buffer.fill(0xa5);
         Require(sceRudpGetOption(context, option, buffer.data() + 1, 4) == invalidOption);
         for (auto byte : buffer) Require(byte == 0xa5);
     }
     std::uint32_t value = 0;
+    Require(sceRudpSetOption(context, 20, nullptr, 0) == invalidOption);
+    for (int current : {context, other}) {
+        value = 0;
+        Require(sceRudpGetOption(current, 20, &value, sizeof(value)) == 0 && value == notAcceptable);
+        value = 0xa5a5a5a5u;
+        Require(sceRudpGetOption(current, 20, &value, 8) == invalidArgument && value == 0xa5a5a5a5u);
+    }
+    value = 0xa5a5a5a5u;
+    Require(sceRudpGetOption(-1, 1, &value, sizeof(value)) == invalidArgument);
+    Require(sceRudpGetOption(12345, 1, nullptr, sizeof(value)) == invalidArgument);
+    Require(sceRudpGetOption(12345, 1, &value, sizeof(value)) == invalidContextId);
+    Require(sceRudpGetOption(context, 0, nullptr, sizeof(value)) == invalidArgument);
+    Require(sceRudpGetOption(context, 1, &value, 0x100000004ull) == invalidArgument);
+    Require(value == 0xa5a5a5a5u);
     Require(sceRudpGetOption(context, 12, &value, sizeof(value)) == 0 && value == 1);
     for (const std::uint32_t input : {0u, 1u, 2u, 0x100u, 0x10000u, 0x80000000u, 0xffffffffu}) {
         Require(sceRudpSetOption(context, 12, &input, sizeof(input)) == 0);
@@ -81,11 +97,12 @@ static void CheckOptions(int context) {
     Require(sceRudpSetOption(context, 14, &value, 4) == invalidOption);
     Require(sceRudpSetOption(context, 14, nullptr, 4) == invalidArgument);
     for (int current : {context, other}) {
+        for (int read = 0; read < 2; ++read) {
+            value = 0xa5a5a5a5u;
+            Require(sceRudpGetOption(current, 14, &value, sizeof(value)) == 0 && value == 0);
+        }
         value = 0xa5a5a5a5u;
-        bool threw = false;
-        try { sceRudpGetOption(current, 14, &value, sizeof(value)); }
-        catch (const std::runtime_error&) { threw = true; }
-        Require(threw && value == 0xa5a5a5a5u);
+        Require(sceRudpGetOption(current, 14, &value, 3) == invalidArgument && value == 0xa5a5a5a5u);
     }
     Require(sceRudpTerminate(other) == 0);
 }
@@ -96,7 +113,7 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80770004u);
     constexpr int invalidOption = static_cast<int>(0x80770005u);
     constexpr int connRefused = static_cast<int>(0x8077000Au);
-    constexpr int connReset = static_cast<int>(0x80770009u);
+    constexpr int notAcceptable = static_cast<int>(0x80770011u);
     alignas(16) static unsigned char pool[0x10000];
 
     Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770001));
@@ -138,8 +155,8 @@ int main() {
     Require(sceRudpBind(12345, 0, 0, 2) == invalidContextId);
 
     Require(sceRudpSetOption(12345, 0, nullptr, 0) == invalidContextId);
-    Require(sceRudpGetOption(12345, 0, nullptr, 0) == invalidContextId);
-    Require(sceRudpGetOption(-1, 1, nullptr, 4) == invalidContextId);
+    Require(sceRudpGetOption(12345, 0, nullptr, 0) == invalidArgument);
+    Require(sceRudpGetOption(-1, 1, nullptr, 4) == invalidArgument);
     Require(sceRudpSetOption(-1, 1, nullptr, 4) == invalidContextId);
 
     Require(sceRudpInitiate(12345, nullptr, 0, 0) == invalidContextId);
@@ -152,9 +169,14 @@ int main() {
         Require(sceRudpGetContextStatus(-1, status, sizeof(status)) == invalidArgument);
     }
 
-    Require(sceRudpWrite(12345, nullptr, 0, 0) == invalidContextId);
+    unsigned char ioBuffer[16]{};
+    Require(sceRudpWrite(-1, ioBuffer, sizeof(ioBuffer), 0) == invalidArgument);
+    Require(sceRudpWrite(12345, nullptr, 0, 0) == invalidArgument);
+    Require(sceRudpWrite(12345, ioBuffer, sizeof(ioBuffer), 0) == invalidContextId);
 
-    Require(sceRudpRead(12345, nullptr, 0, 0, nullptr) == invalidContextId);
+    Require(sceRudpRead(-1, ioBuffer, 0, 0, nullptr) == invalidArgument);
+    Require(sceRudpRead(12345, nullptr, 0, 0, nullptr) == invalidArgument);
+    Require(sceRudpRead(12345, ioBuffer, 0, 0, nullptr) == invalidContextId);
 
     int ctx = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &ctx) == 0);
@@ -164,6 +186,8 @@ int main() {
     unsigned char address[34]{};
     Require(sceRudpActivate(-1, address, sizeof(address)) == static_cast<int>(0x80770004));
     Require(sceRudpBind(ctx, 5, 0, 2) == 0);
+    Require(sceRudpActivate(ctx, address, sizeof(address)) == static_cast<int>(0x80770022u));
+    Require(sceRudpActivate(12345, address, sizeof(address)) == static_cast<int>(0x80770022u));
 
     Require(sceRudpSetOption(ctx, 0, nullptr, 0) == invalidOption);
     CheckOptions(ctx);
@@ -188,9 +212,40 @@ int main() {
     }
     Require(sceRudpGetContextStatus(ctx, nullptr, 0x30) == invalidArgument);
 
-    Require(sceRudpWrite(ctx, nullptr, 0, 0) == connReset);
+    Require(sceRudpWrite(ctx, nullptr, sizeof(ioBuffer), 0) == invalidArgument);
+    Require(sceRudpWrite(ctx, ioBuffer, 0, 0) == invalidArgument);
+    Require(sceRudpWrite(ctx, ioBuffer, sizeof(ioBuffer), 0) == notAcceptable);
+    Require(sceRudpWrite(ctx, ioBuffer, sizeof(ioBuffer), -1) == notAcceptable);
+    Require(sceRudpWrite(ctx, reinterpret_cast<const void*>(0x10), sizeof(ioBuffer), 0) == notAcceptable);
 
-    Require(sceRudpRead(ctx, nullptr, 0, 0, nullptr) == connReset);
+    Require(sceRudpRead(ctx, nullptr, 0, 0, nullptr) == invalidArgument);
+    Require(sceRudpRead(ctx, ioBuffer, 0, 0, nullptr) == notAcceptable);
+    Require(sceRudpRead(ctx, reinterpret_cast<void*>(0x10), sizeof(ioBuffer), 0, nullptr) == notAcceptable);
+    unsigned char readStatus[16];
+    std::memset(readStatus, 0xdd, sizeof(readStatus));
+    readStatus[0] = 13;
+    Require(sceRudpRead(ctx, ioBuffer, sizeof(ioBuffer), 0, readStatus) == invalidArgument);
+    Require(readStatus[0] == 13);
+    for (std::size_t i = 1; i < sizeof(readStatus); ++i) Require(readStatus[i] == 0xdd);
+    std::memset(readStatus, 0xdd, sizeof(readStatus));
+    readStatus[0] = 0;
+    Require(sceRudpRead(ctx, ioBuffer, sizeof(ioBuffer), 0, readStatus) == notAcceptable);
+    Require(readStatus[0] == 0);
+    for (std::size_t i = 1; i < sizeof(readStatus); ++i) Require(readStatus[i] == 0xdd);
+    std::memset(readStatus, 0xdd, sizeof(readStatus));
+    readStatus[0] = 12;
+    Require(sceRudpRead(ctx, ioBuffer, sizeof(ioBuffer), 0x1ff, readStatus) == notAcceptable);
+    Require(readStatus[0] == 12);
+    for (std::size_t i = 1; i < 12; ++i) Require(readStatus[i] == 0);
+    for (std::size_t i = 12; i < sizeof(readStatus); ++i) Require(readStatus[i] == 0xdd);
+    errno = 71;
+    Require(sceRudpRead(ctx, ioBuffer, sizeof(ioBuffer), 0, reinterpret_cast<void*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    std::memset(readStatus, 0xdd, sizeof(readStatus));
+    readStatus[0] = 4;
+    Require(sceRudpRead(12345, ioBuffer, sizeof(ioBuffer), 0, readStatus) == invalidContextId);
+    Require(readStatus[0] == 4);
+    for (std::size_t i = 1; i < sizeof(readStatus); ++i) Require(readStatus[i] == 0xdd);
 
     Require(sceRudpSetEventHandler(Handler, nullptr) == 0);
     {
@@ -205,15 +260,57 @@ int main() {
         Require(sceRudpTerminate(listener) == 0);
         Require(sceRudpProcessEvents(0) == 0);
     }
+    {
+        constexpr int notBound = static_cast<int>(0x80770013u);
+        constexpr int notAcceptable = static_cast<int>(0x80770011u);
+        constexpr int inProgress = static_cast<int>(0x80770021u);
+        Require(sceRudpActivate(12345, address, sizeof(address)) == invalidContextId);
+        int created = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &created) == 0);
+        Require(sceRudpActivate(created, address, 0x10) == notBound);
+        int listening = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &listening) == 0);
+        Require(sceRudpBind(listening, 7, 0, 2) == 0);
+        Require(sceRudpListen(listening, 1) == 0);
+        Require(sceRudpActivate(listening, address, 0x10) == notAcceptable);
+        int p2p = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &p2p) == 0);
+        Require(sceRudpBind(p2p, 8, 0x3000, 1) == 0);
+        Require(sceRudpActivate(p2p, address, 0) == 0);
+        Require(sceRudpActivate(p2p, address, 0x10) == inProgress);
+        unsigned char status[0x30];
+        std::memset(status, 0x5a, sizeof(status));
+        Require(sceRudpGetContextStatus(p2p, status, sizeof(status)) == 0);
+        for (std::size_t i = 0; i < sizeof(status); ++i) Require(status[i] == (i == 0 ? 1 : i >= 4 && i < 8 ? 0xFF : 0));
+        int server = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &server) == 0);
+        Require(sceRudpBind(server, 9, 0, 2) == 0);
+        address[0] = 0xff;
+        address[1] = 0x1e;
+        Require(sceRudpActivate(server, address, 0xffffffffu) == 0);
+        Require(sceRudpActivate(server, address, 2) == inProgress);
+        Require(sceRudpListen(server, 1) == notAcceptable && sceRudpListen(p2p, 1) == notAcceptable);
+        std::memset(status, 0x5a, sizeof(status));
+        Require(sceRudpGetContextStatus(server, status, sizeof(status)) == 0 && status[0] == 1);
+        Require(sceRudpTerminate(p2p) == 0);
+        Require(sceRudpActivate(p2p, address, 0x10) == invalidContextId);
+        Require(sceRudpGetContextStatus(p2p, status, sizeof(status)) == invalidContextId);
+        Require(sceRudpTerminate(server) == 0 && sceRudpTerminate(listening) == 0 && sceRudpTerminate(created) == 0);
+        int rebound = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &rebound) == 0);
+        Require(sceRudpBind(rebound, 9, 0x2711, 2) == 0);
+        Require(sceRudpTerminate(rebound) == 0);
+        Require(sceRudpProcessEvents(0) == 0);
+    }
 
     Require(sceRudpTerminate(ctx) == 0);
-    Require(sceRudpGetOption(ctx, 1, nullptr, 4) == invalidContextId);
+    Require(sceRudpGetOption(ctx, 1, nullptr, 4) == invalidArgument);
     Require(sceRudpSetOption(ctx, 1, nullptr, 4) == invalidContextId);
     Require(sceRudpEnd() == 0);
     Require(sceRudpGetOption(ctx, 1, nullptr, 4) == notInitialized);
     Require(sceRudpSetOption(ctx, 1, nullptr, 4) == notInitialized);
     Require(sceRudpInit_nid_postfix(pool, sizeof(pool)) == 0);
-    Require(sceRudpGetOption(ctx, 1, nullptr, 4) == invalidContextId);
+    Require(sceRudpGetOption(ctx, 1, nullptr, 4) == invalidArgument);
     Require(sceRudpCreateContext(Handler, nullptr, &ctx) == 0);
     CheckOptions(ctx);
     Require(sceRudpEnd() == 0);
