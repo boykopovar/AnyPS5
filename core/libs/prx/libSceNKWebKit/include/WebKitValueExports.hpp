@@ -682,6 +682,14 @@ void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* 
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
+void APS5_VABI WKBundleAddUserScript(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef, const void* sourceRef, const void* urlRef, const void* whitelistRef, const void* blacklistRef, std::uint32_t injectionTimeRef, std::uint32_t injectedFramesRef);
+void APS5_VABI WKBundleAddUserStyleSheet(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef, const void* sourceRef, const void* urlRef, const void* whitelistRef, const void* blacklistRef, std::uint32_t injectedFramesRef);
+void APS5_VABI WKBundleRemoveUserScript(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef, const void* urlRef);
+void APS5_VABI WKBundleRemoveUserScripts(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef);
+void APS5_VABI WKBundleRemoveUserStyleSheet(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef, const void* urlRef);
+void APS5_VABI WKBundleRemoveUserStyleSheets(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef);
+void APS5_VABI WKBundleRemoveAllUserContent(const void* bundleRef, const void* pageGroupRef);
+void APS5_VABI WKBundleSetUserStyleSheetLocation(const void* bundleRef, const void* pageGroupRef, const void* locationRef);
 
 const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
 const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
