@@ -6,6 +6,7 @@
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
 #include "prx/libSceJsc/include/ArrayBufferContentsExports.hpp"
 #include "prx/libSceJsc/include/InspectorAccessorsExports.hpp"
+#include "prx/libSceJsc/include/InspectorEnumParsingExports.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libSceJsc/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceJsc/include/WtfBase64Exports.hpp"
