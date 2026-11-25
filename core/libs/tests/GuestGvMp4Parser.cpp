@@ -18,6 +18,7 @@ namespace {
 constexpr int kNotInitialized = static_cast<int>(0x809D420Bu);
 constexpr int kMissingPath = static_cast<int>(0x809D4203u);
 constexpr int kUnsupportedFormat = static_cast<int>(0x809D4201u);
+constexpr int kUnsupportedQuery = static_cast<int>(0x809D4054u);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -73,7 +74,6 @@ GuestString Path(const std::string& text) {
     return path;
 }
 
-
 void RemoveGuestFile(const char* path, bool mustExist = false) {
     const int saved = errno;
     const int result = sceKernelUnlink(path);
@@ -96,6 +96,54 @@ void RequireGates(const GuestString& path, const char* message) {
     Require(libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&path, nullptr) == kNotInitialized, message);
     Require(libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(&path, 0, 0, nullptr) == kNotInitialized, message);
     Require(allocations.size() == before, "a gate allocated through the table");
+}
+
+void TestInitializedGatesAndQuery(const GuestString& shortPath, const GuestString& longPath) {
+    const std::string missingName = "gv_missing.mp4";
+    RemoveGuestFile(missingName.c_str());
+    const auto missingPath = Path(missingName);
+    Require(libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&missingPath, nullptr, nullptr) == kMissingPath, "a missing read path did not return 0x809D4203");
+    Require(libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&missingPath, nullptr) == kMissingPath, "a missing thumbnail path did not return 0x809D4203");
+
+    const std::string missingNoExtName = "gv_missing_noext";
+    RemoveGuestFile(missingNoExtName.c_str());
+    const auto missingNoExtPath = Path(missingNoExtName);
+    Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&missingNoExtPath, nullptr, nullptr); }), "missing path without extension did not throw before stat");
+    Require(Rejects([&] { libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&missingNoExtPath, nullptr); }), "thumbnail missing path without extension did not throw before stat");
+
+    for (const std::string unsupportedName : {"gv_bad.mov", "gv_unknown.ETS", "gv_unknown.3gp", "gv_bad.mp40"}) {
+        MakeGuestFile(unsupportedName.c_str());
+        const auto unsupportedPath = Path(unsupportedName);
+        Require(libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&unsupportedPath, nullptr, nullptr) == kUnsupportedFormat, "an unsupported extension read path did not return 0x809D4201");
+        Require(libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&unsupportedPath, nullptr) == kUnsupportedFormat, "an unsupported extension thumbnail path did not return 0x809D4201");
+        RemoveGuestFile(unsupportedName.c_str(), true);
+    }
+
+    for (const std::string supportedName : {"gv_ok.mp4", "gv_ok.m4v", "gv_ok.MGV", "gv_ok.mnv"}) {
+        MakeGuestFile(supportedName.c_str());
+        const auto supportedPath = Path(supportedName);
+        Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&supportedPath, nullptr, nullptr); }), "a measured supported extension did not reach the unsupported parser body");
+        Require(Rejects([&] { libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&supportedPath, nullptr); }), "a thumbnail supported extension did not reach the unsupported parser body");
+        RemoveGuestFile(supportedName.c_str(), true);
+    }
+
+    const std::string noExtensionName = "gv_noext";
+    MakeGuestFile(noExtensionName.c_str());
+    const auto noExtensionPath = Path(noExtensionName);
+    Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&noExtensionPath, nullptr, nullptr); }), "a no-extension path did not keep the measured exception gate");
+    Require(Rejects([&] { libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&noExtensionPath, nullptr); }), "a thumbnail no-extension path did not keep the measured exception gate");
+    RemoveGuestFile(noExtensionName.c_str(), true);
+
+    const std::string nonDirectoryName = "gv_parent.mp4";
+    MakeGuestFile(nonDirectoryName.c_str());
+    const std::string nonDirectoryChild = nonDirectoryName + "/child.mp4";
+    const auto nonDirectoryPath = Path(nonDirectoryChild);
+    Require(libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&nonDirectoryPath, nullptr, nullptr) == kUnsupportedFormat, "an ENOTDIR stat result did not return 0x809D4201");
+    Require(libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(&nonDirectoryPath, nullptr) == kUnsupportedFormat, "a thumbnail ENOTDIR stat result did not return 0x809D4201");
+    RemoveGuestFile(nonDirectoryName.c_str(), true);
+
+    Require(libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(&shortPath, 0, 0, nullptr) == kUnsupportedQuery, "initialized iPAZM6la8Gk short path did not return 0x809D4054");
+    Require(libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(&longPath, 1, 2, nullptr) == kUnsupportedQuery, "initialized iPAZM6la8Gk long path did not return 0x809D4054");
 }
 
 }
@@ -125,43 +173,8 @@ int main() {
     Require(libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(nullptr) == kNotInitialized, "a second Initialize read its table before the context check");
     Require(allocations.size() == 2 && released.empty(), "a refused Initialize allocated or released");
 
-    const std::string missingName = "gv_missing.mp4";
-    RemoveGuestFile(missingName.c_str());
-    const auto missingPath = Path(missingName);
-    Require(libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&missingPath, nullptr, nullptr) == kMissingPath, "a missing read path did not return 0x809D4203");
-
-    const std::string unsupportedName = "gv_bad.mov";
-    MakeGuestFile(unsupportedName.c_str());
-    const auto unsupportedPath = Path(unsupportedName);
-    Require(libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&unsupportedPath, nullptr, nullptr) == kUnsupportedFormat, "an existing .mov path did not return 0x809D4201");
-    RemoveGuestFile(unsupportedName.c_str(), true);
-
-    for (const std::string supportedName : {"gv_ok.mp4", "gv_ok.m4v", "gv_ok.MGV", "gv_ok.mnv"}) {
-        MakeGuestFile(supportedName.c_str());
-        const auto supportedPath = Path(supportedName);
-        Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&supportedPath, nullptr, nullptr); }), "a measured supported extension did not reach the unsupported parser body");
-        RemoveGuestFile(supportedName.c_str(), true);
-    }
-
-    for (const std::string unmeasuredName : {"gv_unknown.ETS", "gv_unknown.3gp"}) {
-        MakeGuestFile(unmeasuredName.c_str());
-        const auto unmeasuredPath = Path(unmeasuredName);
-        Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&unmeasuredPath, nullptr, nullptr); }), "an unmeasured extension was assigned a firmware result");
-        RemoveGuestFile(unmeasuredName.c_str(), true);
-    }
-
-    const std::string noExtensionName = "gv_noext";
-    MakeGuestFile(noExtensionName.c_str());
-    const auto noExtensionPath = Path(noExtensionName);
-    Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&noExtensionPath, nullptr, nullptr); }), "a no-extension path did not keep the measured exception gate");
-    RemoveGuestFile(noExtensionName.c_str(), true);
-
-    const std::string nonDirectoryName = "gv_parent.mp4";
-    MakeGuestFile(nonDirectoryName.c_str());
-    const std::string nonDirectoryChild = nonDirectoryName + "/child.mp4";
-    const auto nonDirectoryPath = Path(nonDirectoryChild);
-    Require(Rejects([&] { libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(&nonDirectoryPath, nullptr, nullptr); }), "an unmeasured ENOTDIR stat result was mapped as missing");
-    RemoveGuestFile(nonDirectoryName.c_str(), true);
+    TestInitializedGatesAndQuery(shortPath, longPath);
+    Require(errno == 71, "initialized gates changed errno");
 
     config[3] = 0;
     Require(_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv() == 0, "an active Finalize did not return 0");
