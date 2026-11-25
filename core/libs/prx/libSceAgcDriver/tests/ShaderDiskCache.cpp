@@ -63,6 +63,14 @@ void setEnvironment(const char* name, const std::string& value) {
 #endif
 }
 
+void clearEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
 void setPathEnvironment(const char* name, const std::filesystem::path& value) {
 #ifdef _WIN32
     _wputenv_s(std::filesystem::path(name).wstring().c_str(), value.wstring().c_str());
@@ -1256,6 +1264,33 @@ void verifySpecializedStore() {
     require(WriteFileAtomically(path, corrupt), "cannot damage the specialized entry");
     require(!ShaderDiskCache::LoadSpecialized(key, loaded), "a corrupt specialized entry loads");
     require(ShaderDiskCache::Totals().specializedLoadFailures == after.specializedLoadFailures + 2, "the rejected specialized entries were not counted");
+}
+
+const std::vector<std::byte> SwitchedSpecializedKey{std::byte{0x73}, std::byte{0x70}, std::byte{0x65}, std::byte{0x63}, std::byte{0x03}};
+const std::vector<std::uint32_t> SwitchedSpecializedWords{0x07230203u, 0x00010600u, 0u, 16u, 0u, 0x00020011u, 2u};
+
+int runSwitchedSpecialized() {
+    const auto before = ShaderDiskCache::Totals();
+    std::vector<std::uint32_t> loaded;
+    require(!ShaderDiskCache::LoadSpecialized(SwitchedSpecializedKey, loaded), "a specialized module stored without APS5_NO_NAN_PAYLOAD_ELIMINATION loads with it");
+    const auto after = ShaderDiskCache::Totals();
+    require(after.specializedMisses == before.specializedMisses + 1 && after.specializedLoadFailures == before.specializedLoadFailures, "the switched lookup was not a miss");
+    ShaderDiskCache::StoreSpecialized(SwitchedSpecializedKey, std::vector<std::uint32_t>(SwitchedSpecializedWords.begin(), SwitchedSpecializedWords.end() - 1));
+    ShaderDiskCache::Flush();
+    std::cout << "APS5_NO_NAN_PAYLOAD_ELIMINATION=1 keeps its own specialized modules\n";
+    return 0;
+}
+
+void verifySpecializedSwitch(const char* self) {
+    ShaderDiskCache::StoreSpecialized(SwitchedSpecializedKey, SwitchedSpecializedWords);
+    ShaderDiskCache::Flush();
+    setEnvironment("APS5_NO_NAN_PAYLOAD_ELIMINATION", "1");
+    const std::string command = "\"" + std::string(self) + "\" --specialized-switch";
+    const auto status = std::system(command.c_str());
+    clearEnvironment("APS5_NO_NAN_PAYLOAD_ELIMINATION");
+    require(status == 0, "the process with APS5_NO_NAN_PAYLOAD_ELIMINATION=1 failed");
+    std::vector<std::uint32_t> loaded;
+    require(ShaderDiskCache::LoadSpecialized(SwitchedSpecializedKey, loaded) && loaded == SwitchedSpecializedWords, "a run with APS5_NO_NAN_PAYLOAD_ELIMINATION=1 replaced the default specialized module");
 }
 
 void verifyPersist() {
@@ -3088,6 +3123,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-switch") return runSwitchedSpecialized();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
@@ -3109,6 +3145,7 @@ int main(int argc, char** argv) {
         verifySharedPlans();
         verifyStore();
         verifySpecializedStore();
+        verifySpecializedSwitch(argv[0]);
         verifyPersist();
         verifyReleaseMapped();
         verifyAcrossProcesses(argv[0]);

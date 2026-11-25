@@ -1480,6 +1480,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_LAYOUT_PAIR",
     "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
+    "APS5_NO_SPECIALIZED_CACHE",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
     "APS5_RESOURCE_PLAN_MB",
@@ -2151,12 +2152,19 @@ void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan>
 
 bool LoadSpecialized(std::span<const std::byte> key, std::vector<std::uint32_t>& words) {
     auto& instance = store();
-    return instance.Enabled() && instance.LoadSpecialized(key, words);
+    if (!instance.Enabled()) return false;
+    const auto& switches = switchKey();
+    std::vector<std::byte> full(key.begin(), key.end());
+    full.insert(full.end(), switches.begin(), switches.end());
+    return instance.LoadSpecialized(full, words);
 }
 
 void StoreSpecialized(std::vector<std::byte> key, std::vector<std::uint32_t> words) {
     auto& instance = store();
-    if (instance.Enabled() && !words.empty()) instance.StoreSpecialized(std::move(key), std::move(words));
+    if (!instance.Enabled() || words.empty()) return;
+    const auto& switches = switchKey();
+    key.insert(key.end(), switches.begin(), switches.end());
+    instance.StoreSpecialized(std::move(key), std::move(words));
 }
 
 std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {

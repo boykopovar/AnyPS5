@@ -1152,8 +1152,10 @@ std::vector<std::byte> specializedCacheKey(const CompiledShaderArtifact& artifac
     for (const auto value : target.maxWorkgroupSize) put(value);
     put(target.maxWorkgroupInvocations);
     put(target.maxWorkgroupSharedMemoryBytes);
-    put(target.featureDigest[0]);
-    put(target.featureDigest[1]);
+    put(target.nonConstantImageOffsets);
+    const auto features = RecompileCacheKey::FeatureDigest(target);
+    put(features[0]);
+    put(features[1]);
     put(target.mesh.has_value());
     if (const auto& mesh = target.mesh) {
         for (const auto value : mesh->maxWorkgroupSize) put(value);
