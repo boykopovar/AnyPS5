@@ -308,8 +308,9 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
         Require(std::memcmp(&charPut->names, expectedTimes, sizeof(*expectedTimes)) == 0, "NID time_put<char> _Init");
         nidPutD0(&charPut->base);
 
-        GuestLocale::Facet widePutFacet{};
-        Require(Throws([&] { nidWidePutInit(&widePutFacet, &info); }), "NID ZolDcuDSD0Q still throws");
+        GuestLocale::Facet widePutFacet{nullptr, 5, 0};
+        nidWidePutInit(&widePutFacet, &info);
+        Require(widePutFacet.vtable != nullptr && widePutFacet.references == 5, "NID ZolDcuDSD0Q installs wide time_put vtable");
     }
 
     _ZNSt8_LocinfoD1Ev_nid_postfix(&info);
@@ -414,7 +415,13 @@ void CheckGroup1ConstructionAndLifetime() {
     Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix(&putFromLocinfo.base, nullptr, 0); }), "char time_put C1 null locinfo throws");
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em_nid_postfix(nullptr, 0); }), "char time_put C2 null self throws");
     Require(Throws([] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(nullptr, 0); }), "wide time_put C1 null self throws");
-    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, &info); }), "wide time_put _Init still throws");
+    GuestLocale::Facet reinitWideFacet{nullptr, 4, 0};
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&reinitWideFacet, &info);
+    Require(reinitWideFacet.vtable == &putWideVtable->facet && reinitWideFacet.references == 4, "wide time_put _Init installs vtable without touching references");
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, &info);
+    Require(putWideGuarded.base.vtable != nullptr && putWideGuarded.base.references == 4 && putWideGuarded.guard == expectedGuard, "wide time_put _Init preserves guarded storage");
+    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(nullptr, &info); }), "wide time_put _Init null self throws");
+    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, nullptr); }), "wide time_put _Init null locinfo throws");
     Require(NotImplementedCalls_nid_no_patch() > before, "error paths reported via NotImplemented");
 }
 
