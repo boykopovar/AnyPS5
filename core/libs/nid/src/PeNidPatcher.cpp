@@ -335,6 +335,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
         const std::uint32_t thunkRva = desc.OriginalFirstThunk != 0u ? desc.OriginalFirstThunk : desc.FirstThunk;
         std::size_t thunkOffset = RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkStartOffset = thunkOffset;
         const auto thunkSectionOffset = FindSectionOffsetByRva(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const auto thunkSection = Internal::Read<PeSectionHeader>(pe, thunkSectionOffset);
         const auto thunkRawEnd = std::uint64_t{thunkSection.PointerToRawData} + thunkSection.SizeOfRawData;
@@ -354,6 +355,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
             if (thunk == 0u)
                 break;
 
+            const auto addressRvaValue = std::uint64_t{desc.FirstThunk} + (thunkOffset - thunkStartOffset);
+            if (addressRvaValue > std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("import address table entry out of bounds");
+            std::size_t addressOffset;
+            try {
+                addressOffset = RvaRangeToOffset(pe, static_cast<std::uint32_t>(addressRvaValue), thunkEntrySize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+            } catch (const std::runtime_error&) {
+                throw std::runtime_error("import address table entry out of bounds");
+            }
+
             if (!(thunk & ordinalFlag)) {
                 const auto hintNameRva = static_cast<std::uint32_t>(thunk & 0x7fffffffffffffffu);
                 const std::size_t hintNameOffset = RvaToOffset(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
@@ -362,7 +373,6 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
                 const std::string funcName = ReadRvaCStr(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader, 2u);
                 if (!funcName.empty()) {
-                    const auto addressOffset = RvaToOffset(pe, desc.FirstThunk, peHeaderOffset, numberOfSections, sizeOfOptionalHeader) + thunkOffset - RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
                     imports.push_back({hintNameOffset + 2u, thunkOffset, addressOffset, funcName});
                     importNames.push_back(funcName);
                 }
