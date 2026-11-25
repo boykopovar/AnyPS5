@@ -14,9 +14,14 @@ if(NOT curlMbedDefinitions)
     set(curlMbedDefinitions "")
 endif()
 get_target_property(curlNgBinaryDir nghttp2_static BINARY_DIR)
-set(curlSocketDefinitions "include([=[${CMAKE_CURRENT_SOURCE_DIR}/src/SocketBackend.cmake]=])\n")
+set(curlProjectSetup "include([=[${CMAKE_CURRENT_SOURCE_DIR}/src/SocketBackend.cmake]=])\n")
+if(DEFINED CMAKE_C_COMPILER_LAUNCHER)
+    file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/CompilerLauncher.cmake
+        CONTENT "set(CMAKE_C_COMPILER_LAUNCHER [=[@CMAKE_C_COMPILER_LAUNCHER@]=])\n" @ONLY)
+    string(APPEND curlProjectSetup "include([=[${CMAKE_CURRENT_BINARY_DIR}/CompilerLauncher.cmake]=])\n")
+endif()
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BackendOptions.cmake CONTENT
-    "${curlSocketDefinitions}add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal curl_slist_append=host_curl_slist_append curl_slist_free_all=host_curl_slist_free_all curl_easy_escape=host_curl_easy_escape curl_escape=host_curl_escape curl_unescape=host_curl_unescape curl_easy_unescape=host_curl_easy_unescape curl_free=host_curl_free)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\nif(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")\n    string(APPEND CMAKE_C_FLAGS \" -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration\")\nendif()\n")
+    "${curlProjectSetup}add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal curl_slist_append=host_curl_slist_append curl_slist_free_all=host_curl_slist_free_all curl_easy_escape=host_curl_easy_escape curl_escape=host_curl_escape curl_unescape=host_curl_unescape curl_easy_unescape=host_curl_easy_unescape curl_free=host_curl_free)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\nif(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")\n    string(APPEND CMAKE_C_FLAGS \" -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration\")\nendif()\n")
 
 set(curlBackendOptions
     -DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}
