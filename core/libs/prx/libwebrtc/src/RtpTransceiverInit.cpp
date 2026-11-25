@@ -232,7 +232,7 @@ void ReleaseEncoding(const EncodingResources& resources) {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc18RtpTransceiverInitC1Ev_nid_postfix(WebRtcRtpTransceiverInit* init) {
-    if (!init)
+    if (!init || !GuestWritable_nid_no_patch(init, sizeof(*init)))
         throw std::invalid_argument("RtpTransceiverInit requires an object");
     *init = WebRtcRtpTransceiverInit{};
     init->direction = WebRtcRtpTransceiverDirectionSendRecv;

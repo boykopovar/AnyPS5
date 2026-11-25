@@ -1937,7 +1937,7 @@ void CheckImportWindow() {
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
 void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     const std::lock_guard held(GpuMutex());
     std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
@@ -1974,6 +1974,27 @@ void CheckImportOverReadTraps() {
     reader.join();
     Require(seen == 0x33, "a read after the import did not see the bytes its trap stores");
 }
+
+#if defined(__linux__)
+void CheckImportKeepsReadTraps() {
+    ::alarm(20);
+    constexpr std::size_t bytes = 4 * Block;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    Require(CollectWritesUncached(base, bytes) != 0, "the read-trapped import range is not collected");
+    Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes), "cannot set a read trap on the import range");
+    std::size_t trappedInside = 0;
+    Require(ImportWatched(base, bytes, [&] {
+        trappedInside = TrappedBytes(base, bytes);
+        return true;
+    }, false), "the import over a read-trapped range failed");
+    Require(trappedInside == bytes, "an import took the read traps off its range");
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(base, bytes);
+    Require(static_cast<const volatile std::uint8_t*>(memory)[0] == 0x11, "an import ran the read trap resolver on the importing thread, which holds the write tracker lock the resolver's store takes");
+}
+#endif
 #endif
 
 void CheckImportWindowOtherThread() {
@@ -2688,12 +2709,19 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
         if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
             CheckImportOverReadTraps();
             std::cout << "import over read traps test passed\n";
             return 0;
         }
+#if defined(__linux__)
+        if (argc == 2 && std::string_view(argv[1]) == "--import-keeps-read-traps") {
+            CheckImportKeepsReadTraps();
+            std::cout << "import keeps read traps test passed\n";
+            return 0;
+        }
+#endif
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
             CheckMarkPossiblyWrittenOrder();

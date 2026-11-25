@@ -790,6 +790,8 @@ NewReplace* APS5_VABI sceKernelGetSanitizerNewReplaceExternal(void);
 int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output);
 int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous);
 GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler);
+GuestHandler APS5_VABI sigset_nid_postfix(int guest, GuestHandler disposition);
+int APS5_VABI sigpause_nid_postfix(int mask);
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI raise_nid_postfix(int guest);
