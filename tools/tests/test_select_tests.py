@@ -662,13 +662,38 @@ class BuildErrorTests(unittest.TestCase):
         self.assertIn("CMAKE_CACHEFILE_DIR", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "needs CMake and Ninja")
+    def test_copied_build_cache_cannot_change_the_original_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.20)\nproject(copy NONE)\n", encoding="utf-8")
+            original, copied = root / "original build", root / "copied build"
+            subprocess.run(["cmake", "-S", str(source), "-B", str(original), "-G", "Ninja"],
+                           check=True, capture_output=True)
+            copied.mkdir()
+            shutil.copyfile(original / "CMakeCache.txt", copied / "CMakeCache.txt")
+            saved = {"select.ninja": b"include build.ninja\nbuild selected: phony\n", "select.tests": b"0,0,0,1\n"}
+            for name, contents in saved.items():
+                (original / name).write_bytes(contents)
+            result = self.run_tool("select", copied, root / "missing.json", root / "changed.txt")
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("cache belongs to", result.stderr)
+            self.assertIn(os.path.normcase(str(original)), os.path.normcase(result.stderr))
+            self.assertNotIn("Traceback", result.stderr)
+            for name, contents in saved.items():
+                self.assertEqual((original / name).read_bytes(), contents)
+                self.assertFalse((copied / name).exists())
+
     def test_cache_with_utf8_bom_is_read(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
-            cache.write_text("\ufeffCMAKE_CACHEFILE_DIR:INTERNAL=C:/work/build\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
+            cache.write_text(f"\ufeffCMAKE_CACHEFILE_DIR:INTERNAL={directory}\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
             with mock.patch.object(select_tests.Build, "run", return_value="Build file encoding: UTF-8"):
                 build = select_tests.Build(directory)
-                self.assertEqual(build.path, os.path.normpath("C:/work/build"))
+                self.assertEqual(build.path, os.path.normpath(directory))
                 self.assertEqual(build.source, os.path.normpath("C:/work/source"))
 
     def test_explain_accepts_utf8_bom_in_graph_and_changed(self):

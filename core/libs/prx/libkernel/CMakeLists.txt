@@ -35,6 +35,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPoolExport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Mutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxMutexForwards.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxThreadForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
@@ -173,6 +174,16 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(guest_kernel_resident_fmem_export PROPERTIES ENVIRONMENT_MODIFICATION "${residentFmemUnpatchedPath}")
         set_tests_properties(guest_kernel_resident_fmem_export_patched PROPERTIES ENVIRONMENT_MODIFICATION "${residentFmemPatchedPath}")
+    endif()
+    add_test_executable(guest_kernel_soc_power_sensor_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocPowerSensorBounds.cpp)
+    target_include_directories(guest_kernel_soc_power_sensor_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_soc_power_sensor_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_soc_power_sensor_bounds_tests)
+    add_test(NAME guest_kernel_soc_power_sensor_bounds COMMAND guest_kernel_soc_power_sensor_bounds_tests)
+    set_tests_properties(guest_kernel_soc_power_sensor_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_soc_power_sensor_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_apr_read_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprRead.cpp)
     target_include_directories(guest_apr_read_tests PRIVATE ${LIBS_INCLUDE_DIR})
