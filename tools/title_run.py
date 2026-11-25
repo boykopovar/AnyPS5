@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import datetime
 import json
+import math
 import os
 import re
 import shutil
@@ -44,7 +45,7 @@ def check_pad(pad):
     if "events" not in pad or not set(pad) <= PAD_FIELDS:
         raise ValueError(f"pad must hold events and may hold {', '.join(sorted(PAD_FIELDS - {'events'}))}")
     pad_timeline.integer(pad.get("after_s", PAD_AFTER_SECONDS), "pad.after_s", 0, 3600)
-    pad_text(pad, 1)
+    pad_text(pad, pad_input.MAX_SEQUENCE)
 
 
 def pad_record_signature(path):
@@ -122,7 +123,12 @@ def stage_files(files, work, content):
                 missing.append(content_name)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as error:
+            if os.name != "nt" or linked_path(target) or not target.is_file() or target.stat().st_mode & stat.S_IWRITE:
+                raise
+            remove_read_only(os.unlink, target, error)
         if content_file is None:
             with target.open("w", encoding="utf-8", newline="\n") as output:
                 output.write(source["text"])
@@ -131,19 +137,36 @@ def stage_files(files, work, content):
     return missing
 
 
-def load_titles(path):
+def load_json(text, source):
     def unique_fields(pairs):
         fields = {}
         for name, value in pairs:
             if name in fields:
-                raise ValueError(f"{path}: duplicate field {name!r}")
+                raise ValueError(f"{source}: duplicate field {name!r}")
             fields[name] = value
         return fields
 
-    titles = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
+    def finite_float(token):
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f"{source}: JSON numbers must be finite")
+        return value
+
+    try:
+        return json.loads(text, object_pairs_hook=unique_fields, parse_float=finite_float, parse_constant=finite_float)
+    except RecursionError as error:
+        raise ValueError(f"{source}: JSON is nested too deeply") from error
+
+
+def load_titles(path):
+    titles = load_json(Path(path).read_text(encoding="utf-8-sig"), path)
+    if not isinstance(titles, dict):
+        raise ValueError(f"{path}: title catalog must be an object")
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
+        if not isinstance(entry, dict):
+            raise ValueError(f"{path}: {title_id}: title entry must be an object")
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
@@ -192,6 +215,7 @@ def relink_args(entry, platform, intel_host=False):
 ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
+MAX_WINDOW_MS = int(sys.float_info.max)
 
 
 def first_error(text):
@@ -206,21 +230,33 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8-sig", errors="replace").split("\n") if path.is_file() else []:
         try:
-            decoded = json.loads(line)
+            decoded = load_json(line, path)
         except ValueError:
             continue
-        if isinstance(decoded, dict):
-            lines.append(decoded)
+        if not isinstance(decoded, dict):
+            continue
+        frames = decoded.get("presents", 0)
+        window = decoded.get("window", {})
+        if type(frames) is not int or not 0 <= frames < 1 << 64 or not isinstance(window, dict):
+            continue
+        duration = window.get("ms", 0)
+        if type(duration) not in (int, float) or not 0 <= duration <= MAX_WINDOW_MS or (frames and duration == 0):
+            continue
+        lines.append(decoded)
     intervals = [line for line in lines if "interval_start_s" in line]
     if intervals:
         lines = intervals
     presents = sum(line.get("presents", 0) for line in lines)
-    seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
+    seconds = sum(line.get("window", {}).get("ms", 0) / 1000 for line in lines)
+    fps = presents / seconds if seconds else 0.0
     last = lines[-1] if lines else {}
-    return {"presents": presents, "fps": round(presents / seconds, 1) if seconds else 0.0,
-            "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
+    identity = {}
+    for key in ("gpu", "driver", "os"):
+        value = last.get(key)
+        identity[key] = value if isinstance(value, str) else ""
+    return {"presents": presents, "fps": round(fps, 1) if math.isfinite(fps) else 0.0, **identity}
 
 
 def section(document, name):
@@ -230,7 +266,7 @@ def section(document, name):
 
 def read_report(path):
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = load_json(path.read_text(encoding="utf-8-sig"), path)
     except (OSError, ValueError):
         return None
     if not isinstance(document, dict) or document.get("format") != "anyps5-report":
@@ -254,6 +290,33 @@ def take_report(work, run_dir):
         return None
     shutil.move(str(source), str(run_dir / REPORT_FILE))
     return read_report(run_dir / REPORT_FILE)
+
+
+def validate_comparison(document):
+    if not isinstance(document, dict) or not isinstance(document.get("titles"), dict):
+        raise ValueError("comparison summary must be an object with a titles object")
+    for title_id, title in document["titles"].items():
+        if not isinstance(title, dict) or not isinstance(title.get("name"), str):
+            raise ValueError(f"comparison title {title_id} must be an object with a name")
+        runs = title.get("runs")
+        if not isinstance(runs, list) or not runs:
+            raise ValueError(f"comparison title {title_id} needs recorded runs")
+        for run in runs:
+            if not isinstance(run, dict) or run.get("outcome") not in OUTCOMES:
+                raise ValueError(f"comparison title {title_id} has a run with an unrecognized outcome")
+            report = run.get("report")
+            if report is None:
+                continue
+            if not isinstance(report, dict):
+                raise ValueError(f"comparison title {title_id} has a run whose report must be an object")
+            for key in ("frameMs", "shaders", "truncated"):
+                value = report.get(key)
+                if value is not None and not isinstance(value, dict):
+                    raise ValueError(f"comparison title {title_id} report {key} must be an object")
+            for key in ("missing", "unsupported"):
+                value = report.get(key)
+                if value is not None and (not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value)):
+                    raise ValueError(f"comparison title {title_id} report {key} must be a list of objects")
 
 
 def frame_is_uniform(path, tolerance=8):
@@ -508,14 +571,32 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
+def package_parameters(directory):
+    checks = PathChecks()
+    seen = set()
+    for directory_path, subdirs, _ in os.walk(directory):
+        folder = Path(directory_path)
+        identity = checks.identity(folder)
+        if identity is None or identity in seen:
+            subdirs.clear()
+            continue
+        seen.add(identity)
+        subdirs.sort()
+        param = folder / "sce_sys/param.json"
+        if param.is_file():
+            yield param
+
+
 def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
-        for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
+        for param in sorted(package_parameters(directory)):
             package = param.parent.parent
             if not (package / "eboot.bin").is_file():
                 continue
-            data = json.loads(param.read_text(encoding="utf-8-sig"))
+            data = load_json(param.read_text(encoding="utf-8-sig"), param)
+            if not isinstance(data, dict):
+                raise ValueError(f"{param}: package metadata must be an object")
             title_id = data.get("titleId")
             if not isinstance(title_id, str):
                 raise ValueError(f"{param}: no titleId")
@@ -530,8 +611,20 @@ def discover(directories, wanted=(), packages=None):
                     continue
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
-            name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)
-            found[title_id] = {"package": package, "version": data.get("contentVersion", ""), "name": name}
+            if not isinstance(localized, dict):
+                raise ValueError(f"{param}: localizedParameters must be an object")
+            language = localized.get("defaultLanguage", "en-US")
+            if not isinstance(language, str):
+                raise ValueError(f"{param}: defaultLanguage must be a string")
+            details = localized.get(language, {})
+            if not isinstance(details, dict):
+                raise ValueError(f"{param}: localized entry must be an object")
+            version = data.get("contentVersion", "")
+            if not isinstance(version, str):
+                raise ValueError(f"{param}: contentVersion must be a string")
+            name = details.get("titleName")
+            found[title_id] = {"package": package, "version": version,
+                               "name": name if isinstance(name, str) and name.strip() else title_id}
     return found
 
 
@@ -567,15 +660,24 @@ def copy_asset(source, target):
 
 
 def link_tree(source, target, skip):
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source)
-        if relative.parts[0] in skip:
-            continue
-        if path.is_dir():
-            (target / relative).mkdir(parents=True, exist_ok=True)
-        else:
-            (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            copy_asset(path, target / relative)
+    checks = PathChecks()
+    pending = [(source, target, frozenset())]
+    while pending:
+        folder, destination, ancestors = pending.pop()
+        identity = checks.identity(folder)
+        if identity in ancestors:
+            raise ValueError(f"asset directory cycle at {folder}")
+        parents = ancestors | {identity}
+        for path in sorted(folder.iterdir()):
+            if folder == source and path.name in skip:
+                continue
+            staged = destination / path.name
+            if path.is_dir():
+                staged.mkdir(parents=True, exist_ok=True)
+                pending.append((path, staged, parents))
+            else:
+                destination.mkdir(parents=True, exist_ok=True)
+                copy_asset(path, staged)
 
 
 def lock_work(path):
@@ -1264,9 +1366,10 @@ def validate_performance_args(parser, args):
 def source_root(build):
     cache = Path(build) / "CMakeCache.txt"
     if cache.is_file():
-        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("CMAKE_HOME_DIRECTORY:"):
-                return Path(line.split("=", 1)[1])
+        for line in cache.read_text(encoding="utf-8-sig", errors="replace").split("\n"):
+            key, _, value = line.partition("=")
+            if key.startswith("CMAKE_HOME_DIRECTORY:") and value:
+                return Path(value)
     return ROOT
 
 
@@ -1344,11 +1447,13 @@ def run_cli(argv, capture_resources):
     if args.json and not args.compare:
         parser.error("--json needs --compare")
     try:
-        previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+        previous = load_json(args.compare.read_text(encoding="utf-8-sig"), args.compare) if args.compare else None
+        if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
+            parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
+        if args.compare:
+            validate_comparison(previous)
     except (OSError, ValueError) as error:
         parser.error(f"--compare: {error}")
-    if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
-        parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     try:
         titles = load_titles(args.titles)
@@ -1359,7 +1464,10 @@ def run_cli(argv, capture_resources):
         if not args.ids:
             raise SystemExit(f"no title in {args.titles} is marked smoke")
     packages = []
-    found = discover(args.games, args.ids, packages=packages)
+    try:
+        found = discover(args.games, args.ids, packages=packages)
+    except (OSError, ValueError) as error:
+        parser.error(f"--games: {error}")
     ids = args.ids or sorted(found)
     if not ids:
         raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
