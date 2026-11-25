@@ -589,6 +589,13 @@ def main():
             alias_tail[0x1258:0x1260] = bytes.fromhex("64 8b 04 25 28 00 00 00")
             convert("symbol-alias-unreachable-tls-tail", alias_tail,
                     "Unsupported Windows guest TLS instruction", error_offset=0x1258)
+            data_tail = make_image("register", "symbol", 0x68)
+            data_tail[0x1250:0x1268] = bytes.fromhex("66 0f 78 c0 01 02") * 4
+            unwind = make_image("register", "unwind")
+            data_tail[0x900:0x9a0] = unwind[0x900:0x9a0]
+            data_tail[232:344] = unwind[232:344]
+            struct.pack_into("<H", data_tail, 56, 5)
+            convert("symbol-data-after-unwind-range", data_tail)
             for metadata in ("unwind", "symbol"):
                 convert(f"branch-into-cut-tail-{metadata}",
                         make_image("register", metadata, 0x50, TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 c3")))
@@ -804,6 +811,12 @@ def main():
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
+            two_unwind = make_image("register", "unwind")
+            struct.pack_into("<IIQQ", two_unwind, 0x928, 20, 0x2c, 0x1200, 0x48)
+            struct.pack_into("<IQQ", two_unwind, 0x98c, 2, 0x1200, 0x910)
+            struct.pack_into("<QQ", two_unwind, 0x9a0, 0x1200, 0x928)
+            struct.pack_into("<QQ", two_unwind, 264, 48, 48)
+            convert("conflicting-unwind-extents", two_unwind, "Code analysis: conflicting function ranges")
             convert("branch-into-gs", make_image("register", "unwind", body=bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3")),
                     "Branch enters a guest GS instruction", error_offset=0x11243)
 

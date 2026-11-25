@@ -263,6 +263,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     std::set<std::uint64_t> roots;
     std::set<std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> functions;
+    std::set<std::uint64_t> unwindBegins;
     std::map<std::uint64_t, std::uint64_t> tables;
     const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
     const auto addRoot = [&](std::uint64_t address) { if (isCode(address) && !inTable(address)) roots.insert(address); };
@@ -382,8 +383,12 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         }
         if (!mapped) throw Domain::RelinkerException("Code analysis: function is not file-backed", begin);
         const auto [position, inserted] = functions.emplace(begin, begin + size);
-        if (!inserted && !symbolAlias && position->second != begin + size)
-            throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+        if (!inserted && !symbolAlias && position->second != begin + size) {
+            if (position->second < begin + size || unwindBegins.contains(begin))
+                throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+            position->second = begin + size;
+        }
+        if (!symbolAlias) unwindBegins.insert(begin);
         position->second = std::max(position->second, begin + size);
         roots.insert(begin);
     };
