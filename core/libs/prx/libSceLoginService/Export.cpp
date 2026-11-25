@@ -1,7 +1,6 @@
 #include "prx/libSceLoginService/include/Api.hpp"
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -33,9 +32,7 @@ int APS5_VABI sceLoginServiceRequestDevices(const LoginServiceDeviceRequest* par
         return SCE_LOGIN_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     std::array<std::byte, 64> request{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(request.data(), param, request.size());
-    errno = savedErrno;
     if (!copied) {
         return SCE_LOGIN_SERVICE_ERROR_INVALID_ARGUMENT;
     }
