@@ -86,8 +86,9 @@ struct PathRender {
 };
 
 struct SourceRender {
-    PcmRecord pcm{};
-    bool hasPcm = false;
+    std::vector<float> pending;
+    std::uint32_t pendingType = 0;
+    bool hasPending = false;
     std::vector<float> history;
     std::uint64_t written = 0;
 };
@@ -714,9 +715,20 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
         if (attribute.id != 4 || attribute.valueSize != sizeof(PcmRecord)) continue;
         PcmRecord pcm{};
         require(GuestCopyIn_nid_no_patch(&pcm, attribute.value, sizeof(pcm)), __func__);
+        const auto frame = reinterpret_cast<const SystemState*>(state.objects.at(source).system)->frameSamples;
         auto& render = state.sourceRenders[source];
-        render.pcm = pcm;
-        render.hasPcm = true;
+        render.pending.assign(frame, 0.0f);
+        render.pendingType = pcm.type;
+        render.hasPending = true;
+        if (pcm.data == nullptr || pcm.type > 1) continue;
+        if (pcm.type == 1) {
+            std::vector<std::int16_t> raw(std::min<std::size_t>(frame, pcm.sizeBytes / 2));
+            if (!raw.empty() && !GuestCopyIn_nid_no_patch(raw.data(), pcm.data, raw.size() * 2)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
+            for (std::size_t n = 0; n < raw.size(); ++n) render.pending[n] = raw[n] / 32767.0f;
+        } else {
+            const std::size_t samples = std::min<std::size_t>(frame, pcm.sizeBytes / 4);
+            if (samples != 0 && !GuestCopyIn_nid_no_patch(render.pending.data(), pcm.data, samples * 4)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
+        }
     }
     return 0;
 }
@@ -861,7 +873,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
             if (info.format != 0) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " with audio paths is not measured");
             if (configuration.frameSamples != 1024) throw std::runtime_error(std::string(__func__) + ": audio path rendering with " + std::to_string(configuration.frameSamples) + "-sample frames is not measured");
             const auto found = state.sourceRenders.find(info.source);
-            if (found != state.sourceRenders.end() && found->second.hasPcm && found->second.pcm.type > 1) throw std::runtime_error(std::string(__func__) + ": PCM type " + std::to_string(found->second.pcm.type) + " is not measured");
+            if (found != state.sourceRenders.end() && found->second.hasPending && found->second.pendingType > 1) throw std::runtime_error(std::string(__func__) + ": PCM type " + std::to_string(found->second.pendingType) + " is not measured");
         }
         validated.emplace_back(info, anyActive);
     }
@@ -869,17 +881,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
     for (const auto& [info, anyActive] : validated) {
         auto& source = state.sourceRenders[info.source];
         std::vector<float> input(frame, 0.0f);
-        if (source.hasPcm && source.pcm.data != nullptr) {
-            if (source.pcm.type == 1) {
-                std::vector<std::int16_t> raw(std::min<std::size_t>(frame, source.pcm.sizeBytes / 2));
-                if (!raw.empty()) {
-                    if (!GuestCopyIn_nid_no_patch(raw.data(), source.pcm.data, raw.size() * 2)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
-                    for (std::size_t n = 0; n < raw.size(); ++n) input[n] = raw[n] / 32767.0f;
-                }
-            } else {
-                const std::size_t samples = std::min<std::size_t>(frame, source.pcm.sizeBytes / 4);
-                if (samples != 0 && !GuestCopyIn_nid_no_patch(input.data(), source.pcm.data, samples * 4)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
-            }
+        if (source.hasPending) {
+            std::copy_n(source.pending.begin(), std::min<std::size_t>(frame, source.pending.size()), input.begin());
+            source.hasPending = false;
         }
         if (source.history.empty()) source.history.assign(HistorySize, 0.0f);
         const std::uint64_t start = source.written;
