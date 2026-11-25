@@ -27,9 +27,23 @@ void RequireThrows(TThrow&& thrower, const char* what, int line) {
     Require(caught, line);
 }
 
+void CheckThrowHelpers() {
+    RequireThrows<std::bad_typeid>([] { __cxa_bad_typeid_nid_postfix(); }, "std::bad_typeid", __LINE__);
+    RequireThrows<std::bad_array_new_length>([] { __cxa_throw_bad_array_new_length_nid_postfix(); }, "bad allocation", __LINE__);
+    RequireThrows<std::bad_alloc>([] { _ZSt11_Xbad_allocv_nid_postfix(); }, "bad allocation", __LINE__);
+    RequireThrows<std::length_error>([] { _ZSt14_Xlength_errorPKc_nid_postfix("string too long"); }, "string too long", __LINE__);
+    RequireThrows<std::invalid_argument>([] { _ZSt18_Xinvalid_argumentPKc_nid_postfix("invalid stoi argument"); }, "invalid stoi argument", __LINE__);
+    RequireThrows<std::logic_error>([] { _ZSt14_Xlength_errorPKc_nid_postfix("caught as its base"); }, "caught as its base", __LINE__);
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "throws") == 0) {
+        CheckThrowHelpers();
+        std::puts("exception throw helpers passed");
+        return 0;
+    }
     REQUIRE(!__cxa_uncaught_exception_nid_postfix() && __cxa_uncaught_exceptions_nid_postfix() == 0);
     REQUIRE(!_ZSt18uncaught_exceptionv_nid_postfix() && _ZSt19uncaught_exceptionsv_nid_postfix() == 0);
 
@@ -42,13 +56,6 @@ int main() {
     __cxa_free_dependent_exception_nid_postfix(first);
     __cxa_free_dependent_exception_nid_postfix(second);
     __cxa_free_dependent_exception_nid_postfix(nullptr);
-
-    RequireThrows<std::bad_typeid>([] { __cxa_bad_typeid_nid_postfix(); }, "std::bad_typeid", __LINE__);
-    RequireThrows<std::bad_array_new_length>([] { __cxa_throw_bad_array_new_length_nid_postfix(); }, "bad allocation", __LINE__);
-    RequireThrows<std::bad_alloc>([] { _ZSt11_Xbad_allocv_nid_postfix(); }, "bad allocation", __LINE__);
-    RequireThrows<std::length_error>([] { _ZSt14_Xlength_errorPKc_nid_postfix("string too long"); }, "string too long", __LINE__);
-    RequireThrows<std::invalid_argument>([] { _ZSt18_Xinvalid_argumentPKc_nid_postfix("invalid stoi argument"); }, "invalid stoi argument", __LINE__);
-    RequireThrows<std::logic_error>([] { _ZSt14_Xlength_errorPKc_nid_postfix("caught as its base"); }, "caught as its base", __LINE__);
 
     std::puts("exception ABI entry points passed");
     return 0;
