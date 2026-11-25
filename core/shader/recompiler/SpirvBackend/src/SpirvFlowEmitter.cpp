@@ -218,30 +218,32 @@ bool EndsProgram(const IrProgram& program, std::uint32_t id) {
     return true;
 }
 
-bool ReachesBarrierBefore(const IrProgram& program, std::uint32_t start, std::uint32_t stop) {
+bool ReachesBarrierWithoutLoopBefore(const IrProgram& program, std::uint32_t start, std::uint32_t stop) {
     std::vector<std::uint32_t> pending{start};
     std::unordered_set<std::uint32_t> visited;
+    bool barrier = false;
     while (!pending.empty()) {
         const auto id = pending.back();
         pending.pop_back();
         if (id == stop || id == InvalidControlFlowId || !visited.insert(id).second) continue;
         const IrBlock* block = TargetBlock(program, id);
-        for (const IrValue* instruction : block->Instructions()) {
-            if (instruction->Opcode() == IrOpcode::Barrier) return true;
-        }
         const Terminator& term = BlockInfoFor(program, block)->terminator;
+        if (term.loopHeader) return false;
+        for (const IrValue* instruction : block->Instructions()) {
+            if (instruction->Opcode() == IrOpcode::Barrier) barrier = true;
+        }
         if (term.kind == TerminatorKind::Branch || term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.trueBlock);
         if (term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.falseBlock);
         pending.insert(pending.end(), term.indirectTargets.begin(), term.indirectTargets.end());
     }
-    return false;
+    return barrier;
 }
 
 bool KeepsEndedWave(const IrProgram& program, const Terminator& term) {
     if (term.kind != TerminatorKind::ConditionalBranch || term.loopHeader || term.mergeBlock == InvalidControlFlowId || term.trueBlock == term.falseBlock) return false;
     const bool trueEnds = term.trueBlock == term.mergeBlock;
     if (trueEnds == (term.falseBlock == term.mergeBlock) || !EndsProgram(program, term.mergeBlock)) return false;
-    return ReachesBarrierBefore(program, trueEnds ? term.falseBlock : term.trueBlock, term.mergeBlock);
+    return ReachesBarrierWithoutLoopBefore(program, trueEnds ? term.falseBlock : term.trueBlock, term.mergeBlock);
 }
 
 void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& program, const BlockInfo& info) {

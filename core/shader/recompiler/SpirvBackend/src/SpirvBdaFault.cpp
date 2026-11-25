@@ -48,6 +48,17 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
     state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
     EmitLabel(state, state.module.AllocateId());
+    if (state.endedWavesStay) {
+        const auto ended = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeBool(state), ended, state.endedWaveVariable);
+        const auto leave = state.module.AllocateId();
+        const auto record = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, record, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, ended, leave, record);
+        EmitLabel(state, leave);
+        state.module.AddFunction(spv::OpReturn);
+        EmitLabel(state, record);
+    }
     const auto word = [&](std::size_t offset) { return static_cast<std::uint32_t>(offset / sizeof(std::uint32_t)); };
     const auto scope = ConstantU32(state, spv::ScopeDevice);
     const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);

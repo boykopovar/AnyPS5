@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -18,8 +19,9 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Waves = 8;
 constexpr std::uint32_t Rounds = 16;
-constexpr std::uint32_t Groups = 16;
+constexpr std::uint32_t Groups = 1;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
+alignas(4096) std::array<std::uint32_t, 1024> Input{};
 alignas(256) std::array<std::uint32_t, Waves * 64u> Output{};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -30,8 +32,10 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const ShaderRecompiler::SpirvTarget& target) {
     const std::uint32_t threads = Waves * wave;
     const std::uint32_t live = threads / 2u;
-    alignas(256) const std::array<std::uint32_t, 17> code{
-        0x34040082u, 0x4a020081u, 0xbf8a0000u, 0x7da800ffu, live, 0xbf88000au, 0xd8340000u, 0x00000102u,
+    const auto input = reinterpret_cast<std::uintptr_t>(Input.data());
+    alignas(256) const std::array<std::uint32_t, 25> code{
+        0x34040082u, 0x7d8800ffu, live, 0x4a1004ffu, static_cast<std::uint32_t>(input), 0x02101080u, 0x7e1202ffu, static_cast<std::uint32_t>(input >> 32u),
+        0x02121280u, 0xbf8a0000u, 0xbf86000du, 0xdc308000u, 0x067d0008u, 0xbf8c3f70u, 0xd8340000u, 0x00000602u,
         0xbf8cc07fu, 0xbf8a0000u, 0xd8d80000u, 0x03000002u, 0xbf8cc07fu, 0xbf8a0000u, 0xe0701000u, 0x80000302u,
         0xbf810000u,
     };
@@ -49,6 +53,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const ShaderRecomp
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    for (std::uint32_t thread = 0; thread < Input.size(); ++thread) Input[thread] = thread + 1u;
     for (std::uint32_t round = 0; round < Rounds; ++round) {
         Output.fill(Untouched);
         device.Dispatch(result, Groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(program.data()));
@@ -58,7 +63,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const ShaderRecomp
             Require(Output[thread] == expected, "ended wave barrier, wave" + std::to_string(wave) + " round " + std::to_string(round) + ": thread " + std::to_string(thread) + " (wave " + std::to_string(thread / wave) + ") holds " + std::to_string(Output[thread]) + ", expected " + std::to_string(expected));
         }
     }
-    std::printf("ended wave barrier, wave%u: %u live waves passed two barriers after %u waves ended\n", wave, Waves / 2u, Waves / 2u);
+    std::printf("ended wave barrier, wave%u: %u live waves passed two barriers after %u waves with active lanes ended\n", wave, Waves / 2u, Waves / 2u);
 }
 
 }
@@ -67,6 +72,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        GuestAllocations::Mutation().Add(Input.data(), sizeof(Input), true, false, true);
         const auto wave32 = device->ComputeTarget(32);
         if (wave32.subgroupSize == 32u) Run(*device, 32, wave32);
         else std::printf("wave32 skipped, wave32 programs do not run on 32-lane subgroups (%u lanes)\n", wave32.subgroupSize);
