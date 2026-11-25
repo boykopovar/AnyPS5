@@ -182,6 +182,18 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
 
+    def test_input_mapper_files_only_run_the_relinker_with_other_build_inputs(self):
+        mapper = "tools/input-mapper/app.js"
+        helper = "tools/select_tests.py"
+        for files, expected in (
+            ((mapper, "tools/input-mapper/tests/app.test.js"), False),
+            ((mapper, helper), True),
+            (({"filename": mapper, "previous_filename": helper},), True),
+        ):
+            with self.subTest(files=files):
+                result = self.run_gate([{"sha": "a"}], None, files=files)
+                self.assertIs(result["outputs"]["relinker"], expected)
+
     def test_write_watch_backing_test_runs_the_write_watch_job(self):
         for path in ("core/libs/tests/WriteWatchBacking.cpp", "core/libs/tests/WriteWatch.cpp"):
             with self.subTest(path=path):
