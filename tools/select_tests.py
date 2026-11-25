@@ -205,7 +205,7 @@ def changed_paths(path):
     if b"\0" in data:
         return [name for name in data.decode("utf-8").split("\0") if name]
     text = data.decode("utf-8-sig")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return [line for line in re.split(r"\r\n?|\n", text) if line]
 
 
 def dependency_path(data, base):

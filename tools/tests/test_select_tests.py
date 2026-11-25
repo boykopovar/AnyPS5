@@ -752,6 +752,28 @@ class BuildErrorTests(unittest.TestCase):
             self.assertEqual(data["tests"], ["unit"])
 
 
+class ChangedPathParsingTests(unittest.TestCase):
+    def test_preserves_non_newline_separators_in_paths(self):
+        filename = "tools/alpha\u0085beta\u2028gamma\u2029delta.py"
+        expected = [filename, "tools/other.py"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "changed.txt"
+            for delimiter in ("\n", "\r\n", "\r", "\0"):
+                with self.subTest(delimiter=delimiter):
+                    path.write_bytes((delimiter.join(expected) + delimiter).encode("utf-8"))
+                    self.assertEqual(select_tests.changed_paths(path), expected)
+
+    def test_preserves_spaces_in_git_filenames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "changed.txt"
+            for content, expected in ((b"source/odd name .cpp\n", ["source/odd name .cpp"]),
+                                      (b"source/trailing-space .cpp \n", ["source/trailing-space .cpp "]),
+                                      (b"source/trailing-space .cpp \0", ["source/trailing-space .cpp "])):
+                with self.subTest(content=content):
+                    path.write_bytes(content)
+                    self.assertEqual(select_tests.changed_paths(path), expected)
+
+
 class GitChangedPathTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_git_nul_preserves_a_leading_bom_in_the_first_filename(self):
