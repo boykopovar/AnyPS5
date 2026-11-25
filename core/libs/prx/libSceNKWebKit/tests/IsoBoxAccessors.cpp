@@ -167,6 +167,11 @@ static void WebVTTCueJSON() {
         u"{\"text\":\"<caf\u00e9> \\\"hi\\\"\\n\",\"sourceId\":\"cam%C3%A9ra%20%2F%201\",\"id\":\"cue%231\","
         u"\"originalStartTime\":\"00%3A00%3A01.500\",\"settings\":\"align%3Astart\",\"presentationTime\":1.5,\"duration\":0.25}"));
     Require(ThrowsInvalidArgument([] { _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(nullptr); }));
+    const void* originalData = cue.cueText.impl->data;
+    cue.cueText.impl->data = nullptr;
+    const bool rejected = ThrowsInvalidArgument([&] { _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(&cue); });
+    cue.cueText.impl->data = originalData;
+    Require(rejected);
 }
 
 int main() {
