@@ -42,7 +42,7 @@
 #include "prx/libkernel/File/include/WindowsPermissions.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 static HANDLE OpenNativeHandle(const std::filesystem::path& p, int nativeFlags, DWORD desired, SECURITY_ATTRIBUTES& security,
-    DWORD attributes, bool& created, std::optional<std::uint16_t>& kept) {
+    DWORD attributes, bool& created) {
     constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     const DWORD existing = (nativeFlags & _O_TRUNC) ? TRUNCATE_EXISTING : OPEN_EXISTING;
     for (int attempt = 0; attempt < 8; ++attempt) {
@@ -54,7 +54,6 @@ static HANDLE OpenNativeHandle(const std::filesystem::path& p, int nativeFlags, 
             }
             if (GetLastError() != ERROR_FILE_EXISTS || (nativeFlags & _O_EXCL)) return INVALID_HANDLE_VALUE;
         }
-        kept = (nativeFlags & _O_TRUNC) ? File::WindowsPermissions::Read(p) : std::nullopt;
         const auto handle = CreateFileW(p.c_str(), desired, share, &security, existing, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle != INVALID_HANDLE_VALUE || !(nativeFlags & _O_CREAT) || GetLastError() != ERROR_FILE_NOT_FOUND) return handle;
     }
@@ -80,15 +79,14 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     const DWORD attributes = (requested & _S_IWRITE) ? FILE_ATTRIBUTE_NORMAL : FILE_ATTRIBUTE_READONLY;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, (nativeFlags & _O_NOINHERIT) == 0};
     bool created = false;
-    std::optional<std::uint16_t> kept;
-    const auto handle = OpenNativeHandle(p, nativeFlags, desired, security, attributes, created, kept);
+    const auto handle = OpenNativeHandle(p, nativeFlags, desired, security, attributes, created);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
     }
-    if (created || kept) {
-        if (const DWORD error = File::WindowsPermissions::Store(handle, created ? requested : *kept); error != ERROR_SUCCESS) {
-            if (created) DeleteCreatedFile(handle);
+    if (created) {
+        if (const DWORD error = File::WindowsPermissions::Store(handle, requested); error != ERROR_SUCCESS) {
+            DeleteCreatedFile(handle);
             CloseHandle(handle);
             errno = WindowsOpenError_nid_no_patch(error);
             return -1;

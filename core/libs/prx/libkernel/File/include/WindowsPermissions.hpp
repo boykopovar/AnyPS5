@@ -133,14 +133,6 @@ public:
         return static_cast<std::uint16_t>(mode & 07777);
     }
 
-    static std::optional<std::uint16_t> Read(const std::filesystem::path& path) {
-        const HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_READ_EA, shareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-        if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
-        const auto permissions = Read(handle);
-        CloseHandle(handle);
-        return permissions;
-    }
-
     static DWORD Store(HANDLE handle, std::uint16_t permissions) {
         FILE_BASIC_INFO basic{};
         if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) return GetLastError();
