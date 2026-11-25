@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceMbus/include/InventoryExports.hpp"
 #include "prx/libSceMbus/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -63,9 +62,7 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
         break;
     case 0x8001: {
         DeviceServiceUsageFilter usage{};
-        const int savedErrno = errno;
         const bool readable = filter != nullptr && GuestCopyIn_nid_no_patch(&usage, filter, sizeof(usage));
-        errno = savedErrno;
         if (!readable || usage.minimumUsage > usage.maximumUsage) return invalidArgument;
         break;
     }
