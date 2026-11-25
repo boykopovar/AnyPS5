@@ -122,7 +122,8 @@ template <typename T>
 bool copyGuestOut(T* dst, const T& src);
 
 void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32_t id, std::size_t size, const char* function) {
-    require(desc != nullptr && desc->id == id && desc->size == size, function);
+    AudioPropagationStructDescriptor local{};
+    require(desc != nullptr && copyGuestIn(local, desc) && local.id == id && local.size == size, function);
 }
 
 std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
