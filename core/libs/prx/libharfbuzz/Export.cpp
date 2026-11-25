@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstdint>
 #include <type_traits>
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
@@ -12,24 +11,18 @@ namespace {
 
 template <typename T>
 bool GuestCopyInPreservingErrno(T& out, const void* source) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&out, source, sizeof(T));
-    errno = savedErrno;
     return ok;
 }
 
 template <typename T>
 bool GuestCopyOutPreservingErrno(void* destination, const T& value) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
     return ok;
 }
 
 bool GuestWritablePreservingErrno(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     return ok;
 }
 
