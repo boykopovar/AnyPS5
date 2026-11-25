@@ -694,7 +694,23 @@ static void CheckDescriptorAccessModes() {
     Require(closed >= 0 && ::close(closed) == 0);
 #endif
     *__error_nid_postfix() = 0;
-    Require(fdopen_nid_postfix(closed, "r") == nullptr && *__error_nid_postfix() == 9);
+    auto* closedStream = fdopen_nid_postfix(closed, "r");
+    Require(closedStream != nullptr);
+    *__error_nid_postfix() = 0;
+    Require(fflush_nid_postfix(closedStream) == -1 && *__error_nid_postfix() == 9);
+    {
+        char buffer[4] = {};
+        *__error_nid_postfix() = 0;
+        Require(fread_nid_postfix(buffer, 1, sizeof(buffer), closedStream) == 0 && *__error_nid_postfix() != 9);
+        *__error_nid_postfix() = 0;
+        Require(fwrite_nid_postfix("x", 1, 1, closedStream) == 0 && *__error_nid_postfix() != 9);
+        *__error_nid_postfix() = 0;
+        Require(fseek_nid_postfix(closedStream, 0, SEEK_SET) == -1 && *__error_nid_postfix() != 9);
+        *__error_nid_postfix() = 0;
+        Require(ftell_nid_postfix(closedStream) == -1 && *__error_nid_postfix() != 9);
+    }
+    *__error_nid_postfix() = 0;
+    Require(fclose_nid_postfix(closedStream) == -1 && *__error_nid_postfix() == 9);
     Require(std::filesystem::remove(filename));
 }
 

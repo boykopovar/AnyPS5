@@ -448,17 +448,26 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
     try {
         auto nativeMode = parsed->native;
         std::erase(nativeMode, 'x');
-        const auto release = [](void* pointer) { ::operator delete(pointer); };
-        std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
 #ifdef _WIN32
         const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
-        if (handle == INVALID_HANDLE_VALUE) { errno = 9; return nullptr; }
+        if (handle == INVALID_HANDLE_VALUE) return FileStream::CreateBadDescriptorStream(descriptor);
         if (parsed->append && !AppendThroughDescriptor(descriptor)) return nullptr;
+        const auto release = [](void* pointer) { ::operator delete(pointer); };
+        std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
         auto* native = ::_fdopen(descriptor, nativeMode.c_str());
+        if (!native) {
+            if (errno == 9) return FileStream::CreateBadDescriptorStream(descriptor);
+            return nullptr;
+        }
 #else
+        const auto release = [](void* pointer) { ::operator delete(pointer); };
+        std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
         auto* native = ::fdopen(descriptor, nativeMode.c_str());
+        if (!native) {
+            if (errno == 9) return FileStream::CreateBadDescriptorStream(descriptor);
+            return nullptr;
+        }
 #endif
-        if (!native) return nullptr;
         auto* stream = new (storage.get()) FileStream(native, true);
         storage.release();
         return stream;
@@ -748,6 +757,10 @@ int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, c
 }
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) {
+        std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
+        return stream->Close();
+    }
     if (stream && !stream->IsOpen()) {
         std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
         errno = 9;
@@ -790,6 +803,7 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
     if (size == 0 || count == 0) return 0;
     if (count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
+    if (stream && stream->IsBadDescriptor()) return 0;
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
     stream->Orientation(-1);
@@ -817,6 +831,7 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
 
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
     if (size * count == 0) return 0;
+    if (stream && stream->IsBadDescriptor()) return 0;
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -895,6 +910,7 @@ static bool ResolveSeekTarget(FileStream* stream, std::int64_t& offset, int& ori
 }
 
 int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) { errno = 22; return -1; }
 #ifdef _WIN32
@@ -917,6 +933,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
 }
 
 std::int64_t APS5_VABI ftello_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
@@ -977,6 +994,7 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -992,6 +1010,7 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
 }
 
 int APS5_VABI fflush_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) { errno = 9; return -1; }
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     std::FILE* native = stream ? GetStreamHandle(stream) : nullptr;
     if (stream && (stream->IsRandomDevice() || stream->IsDirectory())) return 0;

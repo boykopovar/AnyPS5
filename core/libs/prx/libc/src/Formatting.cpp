@@ -624,6 +624,7 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
 template <typename NextPointer, typename NextCapacity>
 int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPointer, NextCapacity nextCapacity, bool secure = true) {
     if (stream == nullptr || format == nullptr) return EOF;
+    if (stream->IsBadDescriptor()) return EOF;
     if (!stream->IsOpen()) { errno = 9; return EOF; }
     flockfile_nid_postfix(stream);
     struct Unlock {
@@ -687,6 +688,7 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 }
 
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -742,6 +744,7 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
         return result;
     }
 #endif
+    if (stream && stream->IsBadDescriptor()) return EOF;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);

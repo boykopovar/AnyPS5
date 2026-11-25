@@ -103,6 +103,7 @@ int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
 }
 
 int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -152,6 +153,7 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
+    if (stream->IsBadDescriptor()) return -1;
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (value == -1) return -1;
@@ -198,6 +200,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -247,6 +250,7 @@ std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
@@ -262,6 +266,7 @@ int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
 int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToWritingUnlocked()) return -1;
@@ -283,6 +288,7 @@ int APS5_VABI __swbuf_nid_postfix(int value, FileStream* stream) { return fputc_
 int APS5_VABI putchar_nid_postfix(int value) { return fputc_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
     static_cast<void>(GetNativeStream(stream));
@@ -299,6 +305,7 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     if (size < 2) return nullptr;
+    if (stream && stream->IsBadDescriptor()) return nullptr;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
@@ -335,6 +342,9 @@ void APS5_VABI clearerr_nid_postfix(FileStream* stream) {
     stream->ClearError();
 }
 int APS5_VABI fileno_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) {
+        return stream->GuestState().descriptor;
+    }
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
 #ifdef _WIN32
     const int descriptor = _fileno(GetNativeStream(stream));
@@ -348,6 +358,7 @@ void APS5_VABI clearerr_unlocked_nid_postfix(FileStream* stream) {
     stream->ClearError();
 }
 int APS5_VABI fileno_unlocked_nid_postfix(FileStream* stream) {
+    if (stream && stream->IsBadDescriptor()) return stream->GuestState().descriptor;
     if (stream == nullptr || !stream->IsOpen()) return -1;
     return fileno_nid_postfix(stream);
 }
@@ -355,6 +366,7 @@ int APS5_VABI fileno_unlocked_nid_postfix(FileStream* stream) {
     throw std::runtime_error("fgetln: the console's export is a hlt instruction, which ends the process");
 }
 int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, std::size_t size) {
+    if (stream && stream->IsBadDescriptor()) return -1;
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
