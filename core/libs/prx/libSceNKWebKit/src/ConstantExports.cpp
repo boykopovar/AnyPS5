@@ -126,6 +126,14 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() {
     return 0;
 }
 
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
+    return 0;
+}
+
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }

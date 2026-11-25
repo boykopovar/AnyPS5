@@ -80,6 +80,8 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType();
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled();
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType();
 int APS5_VABI WKBundleNodeHandleGetRenderRect();
 int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType();

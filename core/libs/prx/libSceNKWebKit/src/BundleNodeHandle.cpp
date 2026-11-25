@@ -28,19 +28,9 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled(const void* nodeH
     handle->htmlInputElementAutoFilled = autoFilled;
 }
 
-bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled(const void* nodeHandleRef) {
-    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
-    return handle->htmlInputElementAutoFilled;
-}
-
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutofilled(const void* nodeHandleRef, bool autofilled) {
     auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
     handle->htmlInputElementAutoFilled = autofilled;
-}
-
-bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled(const void* nodeHandleRef) {
-    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
-    return handle->htmlInputElementAutoFilled;
 }
 
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(const void* nodeHandleRef, bool autoFilledAndViewable) {

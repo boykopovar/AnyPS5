@@ -137,9 +137,7 @@ const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandle
 const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(const void* nodeHandleRef, bool autoFillAvailable);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled(const void* nodeHandleRef, bool autoFilled);
-bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled(const void* nodeHandleRef);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutofilled(const void* nodeHandleRef, bool autofilled);
-bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled(const void* nodeHandleRef);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable(const void* nodeHandleRef, bool autoFilledAndViewable);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(const void* nodeHandleRef, bool enabled);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementValueForUser(const void* nodeHandleRef, const void* valueRef);
