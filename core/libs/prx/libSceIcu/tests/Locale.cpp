@@ -11,6 +11,10 @@ static_assert(std::is_same_v<decltype(&ulocale_openForLocaleID_nid_postfix), ULo
 static_assert(std::is_same_v<decltype(&ulocale_close_nid_postfix), void (APS5_VABI*)(ULocale*)>);
 static_assert(std::is_same_v<decltype(&ulocale_getLocaleID_nid_postfix), const char* (APS5_VABI*)(const ULocale*)>);
 static_assert(std::is_same_v<decltype(&ulocale_isBogus_nid_postfix), bool (APS5_VABI*)(const ULocale*)>);
+static_assert(std::is_same_v<decltype(&ulocbld_buildLocaleID_nid_postfix),
+                             std::int32_t (APS5_VABI*)(ULocaleBuilder*, char*, std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ulocbld_buildLanguageTag_nid_postfix),
+                             std::int32_t (APS5_VABI*)(ULocaleBuilder*, char*, std::int32_t, std::int32_t*)>);
 
 namespace {
 
@@ -99,10 +103,60 @@ void CheckLocaleQueries() {
     }
     uenum_close_nid_postfix(keywords);
     ulocale_close_nid_postfix(locale);
-    if (!ulocbld_open_nid_postfix()) {
+    ULocaleBuilder* builder = ulocbld_open_nid_postfix();
+    if (!builder) {
         std::fputs("locale builder allocation failed\n", stderr);
         std::abort();
     }
+    ulocbld_close_nid_postfix(builder);
+}
+
+void CheckLocaleBuilder() {
+    ULocaleBuilder* builder = ulocbld_open_nid_postfix();
+    if (!builder) {
+        std::fputs("locale builder allocation failed\n", stderr);
+        std::abort();
+    }
+    ulocbld_setLanguage_nid_postfix(builder, "sr-extra", 2);
+    ulocbld_setScript_nid_postfix(builder, "latn-extra", 4);
+    ulocbld_setRegion_nid_postfix(builder, "rs-extra", 2);
+    ulocbld_setVariant_nid_postfix(builder, "revised-extra", 7);
+    std::int32_t error = 0;
+    char locale[64] = {};
+    char language[64] = {};
+    if (ulocbld_buildLocaleID_nid_postfix(builder, locale, 64, &error) != 18 || error != 0 ||
+        std::strcmp(locale, "sr_Latn_RS_REVISED") != 0 ||
+        ulocbld_buildLanguageTag_nid_postfix(builder, language, 64, &error) != 18 || error != 0 ||
+        std::strcmp(language, "sr-Latn-RS-revised") != 0) {
+        std::fputs("locale builder components differ\n", stderr);
+        std::abort();
+    }
+    ulocbld_clear_nid_postfix(builder);
+    ulocbld_setLanguageTag_nid_postfix(builder, "de-DE-u-ca-gregory-extra", 18);
+    ulocbld_clearExtensions_nid_postfix(builder);
+    if (ulocbld_buildLocaleID_nid_postfix(builder, locale, 64, &error) != 5 || error != 0 ||
+        std::strcmp(locale, "de_DE") != 0) {
+        std::fputs("locale builder extension clearing differs\n", stderr);
+        std::abort();
+    }
+    ulocbld_setLocale_nid_postfix(builder, "fr_CA_extra", 5);
+    if (ulocbld_buildLanguageTag_nid_postfix(builder, language, 64, &error) != 5 || error != 0 ||
+        std::strcmp(language, "fr-CA") != 0) {
+        std::fputs("locale builder locale reset differs\n", stderr);
+        std::abort();
+    }
+    bool threw = false;
+    try {
+        ulocbld_buildLocaleID_nid_postfix(builder, locale, 64, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw) {
+        std::fputs("a null locale builder status did not throw\n", stderr);
+        std::abort();
+    }
+    ulocbld_close_nid_postfix(builder);
+    ulocbld_close_nid_postfix(nullptr);
 }
 
 }
@@ -135,5 +189,6 @@ int main() {
     CheckNullThrows();
     CheckLocaleObject();
     CheckLocaleQueries();
+    CheckLocaleBuilder();
     std::puts("ICU locale keyword tests passed");
 }
