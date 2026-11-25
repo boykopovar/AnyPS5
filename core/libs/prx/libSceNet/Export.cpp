@@ -1996,8 +1996,8 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
 #ifdef _WIN32
             if ((flags & NET_MSG_DONTWAIT) != 0 || socket.native->nonblock.load()) {
                 char probe{};
-                if (::recvfrom(socket.native->value, &probe, sizeof(probe), MSG_PEEK, nullptr, nullptr) < 0 &&
-                    WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EAGAIN);
+                const auto pending = ::recvfrom(socket.native->value, &probe, sizeof(probe), MSG_PEEK, nullptr, nullptr);
+                if (pending < 0 && WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EAGAIN);
             }
 #endif
             return fail(NET_EFAULT);
