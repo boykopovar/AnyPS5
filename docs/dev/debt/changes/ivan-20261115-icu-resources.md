@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [ICU resource bundle exports]
+
+- [Resource-bundle reads](../../../core/libs/prx/libSceIcu/ResourceBundle.cpp) lack console ABI/data-version/default/path parity. Fourteen calls use [ICU 78.1](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/uresbund.cpp). Foreign/caller-allocated `fillIn` and NULL locale IDs throw. Missing explicit locales may use host defaults; title paths/external packages are unverified. NULL-status opens return null where native code dereferences status. Overlapping length/status outputs are unverified by the shadow-output oracle. Borrowed data must not race close/reuse/cleanup. Close frees native bundles; tokens persist to teardown. Cleanup/reconfiguration require no live objects/concurrent use. Unsigned, UTF-8 and iterator reads accept owned and ICU 68 guest bundles. Stack initialization rejects owned handles. Stubs and unusable memory throw. Closes when: console ABI, data, defaults, paths, layouts and remaining APIs are verified.
