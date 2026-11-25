@@ -3,9 +3,11 @@
 
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
+#include "SplitStateAbi.hpp"
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -66,6 +68,41 @@ struct TableCallee {
 [[nodiscard]] std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister, bool allowGetpc = false);
 [[nodiscard]] std::vector<std::uint32_t> LinkUserDataCalls(const RdnaProgram& program, std::span<const UserDataCall> calls, std::span<const std::vector<std::uint32_t>> callees);
 [[nodiscard]] std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcInfo& swappc);
+struct TableCallSplit {
+    std::uint32_t loopProgramCounter = 0;
+    std::uint32_t callProgramCounter = 0;
+    std::uint32_t exitProgramCounter = 0;
+    std::vector<std::uint32_t> vectors;
+};
+
+[[nodiscard]] std::optional<TableCallSplit> SplitTableCall(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, std::uint32_t waveSize, std::string& refusal);
+
+struct SplitTableCallProgram {
+    std::vector<std::uint32_t> code;
+    std::vector<std::uint32_t> plan;
+};
+
+struct SplitTableCallPrograms {
+    SplitTableCallProgram entry;
+    std::vector<SplitTableCallProgram> callees;
+    SplitTableCallProgram resume;
+    std::uint32_t stateVectors = 0;
+    bool continuation = false;
+};
+
+[[nodiscard]] SplitTableCallPrograms BuildSplitTableCallPrograms(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallSplit& split, std::uint32_t vectorCount);
+
+struct TableCallContinuation {
+    std::uint32_t headerProgramCounter = 0;
+    std::uint32_t replayProgramCounter = 0;
+    std::uint32_t callProgramCounter = 0;
+    std::vector<std::uint32_t> registers;
+    std::vector<std::uint32_t> assumed;
+};
+
+[[nodiscard]] std::optional<TableCallContinuation> ContinueTableCall(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, std::uint32_t vectorCount, std::string& refusal);
+[[nodiscard]] SplitTableCallPrograms BuildTableCallContinuation(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallContinuation& continuation);
+
 struct LinkedCalls {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> fallbacks;

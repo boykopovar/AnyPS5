@@ -145,6 +145,12 @@ int main() {
                     std::fprintf(stderr, "CELT PCM differs from libopus at %d Hz, %d channels, frame %d\n", rate, channels, frame);
                     std::abort();
                 }
+                std::array<std::int16_t, 1920> concealedExpected{};
+                Require(opus_decode(reference, nullptr, 0, concealedExpected.data(), samples, 0) == samples);
+                tone.fill(12345);
+                Require(sceOpusCeltDecDecode(toneState.data(), nullptr, 0, tone.data() + 1, samples * channels * 2 + 1) == samples * channels * 2);
+                Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
+                Require(std::equal(concealedExpected.begin(), concealedExpected.begin() + samples * channels, tone.begin() + 1));
                 if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, channels, rate);
             }
             opus_decoder_destroy(reference);
