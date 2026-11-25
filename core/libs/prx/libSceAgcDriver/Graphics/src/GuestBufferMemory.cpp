@@ -208,6 +208,7 @@ std::atomic<std::uint64_t> importSetGeneration{1};
 struct RetiredImport;
 
 std::atomic<std::uint64_t> retiredPinnedBytes{0};
+std::atomic<std::uint64_t> retiredLabelBytes{0};
 std::atomic<bool> retiredPinnedReleased{false};
 constexpr std::uint64_t HeapRetryBuilds = 64;
 
@@ -600,12 +601,14 @@ struct RetiredImport {
 #endif
         if (!pinned) return;
         retiredPinnedBytes.fetch_sub(entry.pinnedBytes, std::memory_order_acq_rel);
+        if (entry.label) retiredLabelBytes.fetch_sub(entry.pinnedBytes, std::memory_order_acq_rel);
         retiredPinnedReleased.store(true, std::memory_order_release);
     }
     void Pin() {
         if (pinned) return;
         pinned = true;
         retiredPinnedBytes.fetch_add(node.mapped().pinnedBytes, std::memory_order_acq_rel);
+        if (node.mapped().label) retiredLabelBytes.fetch_add(node.mapped().pinnedBytes, std::memory_order_acq_rel);
     }
     VkDevice device;
     PFN_vkDestroyBuffer destroyBuffer;
@@ -614,8 +617,16 @@ struct RetiredImport {
     bool pinned = false;
 };
 
-std::uint64_t pinnedTotal(const HostImports& state) {
+std::uint64_t importedTotal(const HostImports& state) {
     return state.liveBytes + retiredPinnedBytes.load(std::memory_order_acquire);
+}
+
+std::uint64_t budgetedLive(const HostImports& state) {
+    return state.liveBytes - state.labelBytes;
+}
+
+std::uint64_t pinnedTotal(const HostImports& state) {
+    return budgetedLive(state) + retiredPinnedBytes.load(std::memory_order_acquire) - retiredLabelBytes.load(std::memory_order_acquire);
 }
 
 class UntrappedImport {
@@ -2040,7 +2051,7 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
     while (freed < wanted) {
         auto oldest = state.imports.end();
         for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
-            if (it->second.base + it->second.bytes > begin && it->second.base < end) continue;
+            if (it->second.label || (it->second.base + it->second.bytes > begin && it->second.base < end)) continue;
             if (evictable(state, it->second) && (oldest == state.imports.end() || effectiveUse(state, it->second) < effectiveUse(state, oldest->second))) oldest = it;
         }
         if (oldest == state.imports.end()) break;
@@ -2153,7 +2164,7 @@ std::uint64_t effectiveBudget(const Context& context, HostImports& state) {
             VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
             VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &report};
             context.memoryProperties2(context.physical, &properties);
-            state.reportedBudget = HostImportBudgetFor(context.memory, &report, std::numeric_limits<std::uint64_t>::max(), pinnedTotal(state));
+            state.reportedBudget = HostImportBudgetFor(context.memory, &report, std::numeric_limits<std::uint64_t>::max(), importedTotal(state));
             const auto heap = hostHeapIndex(context.memory);
             state.reportedHeap = heap.value_or(0);
             state.reportedHeapBudget = heap ? report.heapBudget[*heap] : 0;
@@ -2293,7 +2304,7 @@ void coverGrowth(HostImports& state, std::uint64_t base, std::uint64_t bytes) {
 std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end, std::uint64_t& ready, std::uint64_t& readyHeld) {
     std::uint64_t bytes = 0;
     for (const auto& [base, entry] : state.imports) {
-        if (entry.base + entry.bytes > begin && entry.base < end) continue;
+        if (entry.label || (entry.base + entry.bytes > begin && entry.base < end)) continue;
         if (evictable(state, entry)) {
             bytes += entry.pinnedBytes;
             continue;
@@ -2532,7 +2543,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const bool freed = retireFreesAtOnce(true);
     const auto pinned = pinnedTotal(state);
-    const auto retired = pinned - state.liveBytes;
+    const auto retired = pinned - budgetedLive(state);
     const auto allowance = !freed && importRetireCredit.load(std::memory_order_relaxed) ? budget / 4 : 0;
     const bool immediate = freed || (allowance != 0 && retired + replaced <= allowance);
     const auto reserved = state.heapOwedBytes != 0 && requester != ImportRequester::Build && (base + bytes <= state.heapOwedBase || base >= state.heapOwedBase + state.heapOwedBytes) ? state.heapOwedBytes : 0;
@@ -2775,7 +2786,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (const auto held = !freed && immediate ? state.liveBytes : pinnedTotal(state); !label && held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
+    if (const auto held = !freed && immediate ? budgetedLive(state) : pinnedTotal(state); !label && held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
