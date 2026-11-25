@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -95,7 +96,12 @@ public:
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
 };
-class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
+class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
+public:
+    std::vector<std::string> fetchCacheOrigins;
+    std::unordered_map<std::string, std::uint64_t> fetchCacheSizes;
+    bool removedAllFetchCaches = false;
+};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
 inline std::optional<std::u16string> OptionalString(const void* ref, const char* function) {

@@ -19,6 +19,9 @@ extern "C" {
 
 typedef void (APS5_VABI *WKResultErrorFunction)(const void* result, const void* error, void* context);
 typedef void (APS5_VABI *WKUserContentExtensionStoreFunction)(const void* filter, std::uint32_t error, void* context);
+typedef void (APS5_VABI *WKWebsiteDataStoreGetFetchCacheOriginsFunction)(const void* originsArray, void* context);
+typedef void (APS5_VABI *WKWebsiteDataStoreGetFetchCacheSizeForOriginFunction)(std::uint64_t size, void* context);
+typedef void (APS5_VABI *WKWebsiteDataStoreRemoveFetchCacheFunction)(void* context);
 
 std::uint32_t APS5_VABI WKAXObjectGetTypeID();
 const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
@@ -634,6 +637,10 @@ void APS5_VABI WKViewWillExitFullScreen(const void* viewRef);
 std::uint32_t APS5_VABI WKViewportAttributesGetTypeID();
 std::uint32_t APS5_VABI WKWebsiteDataStoreConfigurationGetTypeID();
 std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
+void APS5_VABI WKWebsiteDataStoreGetFetchCacheOrigins(const void* dataStoreRef, void* context, WKWebsiteDataStoreGetFetchCacheOriginsFunction callback);
+void APS5_VABI WKWebsiteDataStoreGetFetchCacheSizeForOrigin(const void* dataStoreRef, const void* originRef, void* context, WKWebsiteDataStoreGetFetchCacheSizeForOriginFunction callback);
+void APS5_VABI WKWebsiteDataStoreRemoveAllFetchCaches(const void* dataStoreRef, void* context, WKWebsiteDataStoreRemoveFetchCacheFunction callback);
+void APS5_VABI WKWebsiteDataStoreRemoveFetchCacheForOrigin(const void* dataStoreRef, const void* originRef, void* context, WKWebsiteDataStoreRemoveFetchCacheFunction callback);
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
