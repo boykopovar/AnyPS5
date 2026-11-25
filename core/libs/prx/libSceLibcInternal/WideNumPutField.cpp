@@ -55,7 +55,7 @@ std::string TakeGrouping(const GuestLocale::WideNumpunctFacet* punct, const Gues
     vtable.grouping(&value, punct);
     const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) GuestLocale::ReleaseStringStorage(value);
+    if (onHeap) LibcReleaseStringStorage_nid_no_patch(&value);
     return text;
 }
 

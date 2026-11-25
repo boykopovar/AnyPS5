@@ -412,6 +412,7 @@ extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocal
 extern "C" GuestLocale::OutputIterator LibcTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
 extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source);
 extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source);
+extern "C" void LibcReleaseStringStorage_nid_no_patch(GuestLocale::String* value);
 
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);

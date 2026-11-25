@@ -1005,6 +1005,10 @@ void GuestLocale::ReleaseStringStorage(String& string) {
     string.capacity = StringInlineCapacity;
 }
 
+extern "C" void LibcReleaseStringStorage_nid_no_patch(GuestLocale::String* value) {
+    if (value != nullptr) GuestLocale::ReleaseStringStorage(*value);
+}
+
 extern "C" {
 
 int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, 0x02); }
