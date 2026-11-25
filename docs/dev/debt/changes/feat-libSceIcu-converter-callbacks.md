@@ -1,0 +1,6 @@
+# libSceIcu
+
+## change [Converter STOP/SKIP callbacks]
+
+- [Converter callbacks](../../../core/libs/prx/libSceIcu/ConverterCallbacks.cpp) - none has console ABI or behavior verification. STOP and SKIP signatures and decisions follow ICU 78.1's [ucnv_err.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ucnv_err.h) and [ucnv_err.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucnv_err.cpp). The callback-specific default-ignorable ranges include U+180F, which ICU 65.1 excludes; firmware-dependent selection is not implemented. SUBSTITUTE and ESCAPE, in both directions, call ICU 78.1's own callbacks from the same file, so their output follows ICU 78.1, not the console. Reasons outside the upstream enum's 0–7 value range throw `invalid_argument`. Null converter arguments and null error pointers throw on every SUBSTITUTE and ESCAPE call, even reset calls where ICU reads neither; ESCAPE also throws on null code units with a nonzero length. Untouched pointers remain unread for STOP and SKIP, including the error pointer on no-write paths. Converter execution is unavailable, so the output-writing replacement paths are not exercised by tests. Closes when: compared with the console, including converter output.
+

@@ -1,9 +1,14 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "ImeFilterCodepages.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace ime_filter {
 
@@ -55,6 +60,7 @@ constexpr bool In(const char16_t (&set)[N], std::uint32_t c) {
 }
 
 constexpr bool InCodepageA(std::uint32_t c) {
+    if (c > 0xffffu) return false;
     return ((kCodepageABitmap[c >> 6] >> (c & 63)) & 1u) != 0;
 }
 
@@ -131,46 +137,91 @@ constexpr bool KeepClassified(std::uint32_t c, std::uint64_t mask, std::uint32_t
 
 inline std::uint32_t FilterText(char16_t* dst, std::int32_t* out_length, std::uint32_t capacity,
                                 const FilterParam* param, const char16_t* src, std::uint32_t src_length) {
+    struct ErrnoGuard {
+        int saved;
+        ErrnoGuard() : saved(errno) {}
+        ~ErrnoGuard() { errno = saved; }
+    };
+    const ErrnoGuard errno_guard;
+
     if (dst == nullptr || out_length == nullptr || param == nullptr || src == nullptr) return kErrorInvalidAddress;
     if (capacity < 2) return kErrorInvalidParam;
-    const std::uint32_t type = param->type;
+
+    FilterParam local_param{};
+    if (!GuestCopyIn_nid_no_patch(&local_param, param, sizeof(local_param))) return kErrorInvalidAddress;
+
+    const std::uint32_t type = local_param.type;
     if (type >= 5 && type - 0x100 > 3) return kErrorInvalidParam;
 
-    std::uint64_t mask = param->mask;
-    if (mask == 0) mask = DerivedMask(param->version, param->variant);
+    std::uint64_t mask = local_param.mask;
+    if (mask == 0) mask = DerivedMask(local_param.version, local_param.variant);
     std::uint32_t limit = 0;
-    if (!ValidMask(mask, param->version, param->variant, &limit)) return kErrorInvalidParam;
+    if (!ValidMask(mask, local_param.version, local_param.variant, &limit)) return kErrorInvalidParam;
 
     bool absent[8];
     for (int i = 0; i < 8; ++i) absent[i] = (mask & kAbsentMasks[i]) == 0;
 
     std::uint32_t room = capacity - 1;
-    std::uint32_t count = 0;
-    for (std::uint64_t i = 0; i < src_length && room != 0; ++i) {
-        const std::uint32_t c = src[i];
-        if (c == 0) break;
-        bool keep;
-        if (type == 4) {
-            keep = static_cast<std::uint16_t>(c - 0x30) <= 9 || In(kNumberSeparators, c);
-        } else if (type == 1 || type == 3 || type == 0x102) {
-            keep = c <= 0x7e;
-        } else if (type == 0x100) {
-            keep = c < 0x17f;
-            if (!keep && (mask & kClassVietnamese) != 0) {
-                const bool listed = static_cast<std::uint16_t>(c - 0x300) >= 0x24 && (c & 0xff00) != 0x1e00;
-                keep = !listed || In(kVietnameseLetters, c);
+    std::vector<char16_t> buffered;
+    buffered.reserve(std::min<std::uint32_t>(capacity, 64u));
+    constexpr std::size_t kChunkUnits = 256;
+    std::array<char16_t, kChunkUnits> chunk{};
+    std::uint64_t index = 0;
+    while (index < src_length && room != 0) {
+        const auto address = reinterpret_cast<std::uintptr_t>(src + index);
+        const std::size_t page_units = (4096u - (address & 4095u)) / sizeof(char16_t);
+        const std::size_t units = static_cast<std::size_t>(std::min<std::uint64_t>({
+            src_length - index,
+            static_cast<std::uint64_t>(kChunkUnits),
+            static_cast<std::uint64_t>(page_units != 0 ? page_units : 1u),
+        }));
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), src + index, units * sizeof(char16_t))) {
+            return kErrorInvalidAddress;
+        }
+        bool stopped = false;
+        for (std::size_t offset = 0; offset < units && room != 0; ++offset) {
+            const char16_t unit = chunk[offset];
+            const std::uint32_t c = unit;
+            if (c == 0) {
+                stopped = true;
+                break;
             }
-            if (!keep && HighBitSet(mask)) keep = (c & 0xfffc) == 0x218;
-        } else {
-            keep = KeepClassified(c, mask, limit, absent);
+            bool keep;
+            if (type == 4) {
+                keep = static_cast<std::uint16_t>(c - 0x30) <= 9 || In(kNumberSeparators, c);
+            } else if (type == 1 || type == 3 || type == 0x102) {
+                keep = c <= 0x7e;
+            } else if (type == 0x100) {
+                keep = c < 0x17f;
+                if (!keep && (mask & kClassVietnamese) != 0) {
+                    const bool listed = static_cast<std::uint16_t>(c - 0x300) >= 0x24 && (c & 0xff00) != 0x1e00;
+                    keep = !listed || In(kVietnameseLetters, c);
+                }
+                if (!keep && HighBitSet(mask)) keep = (c & 0xfffc) == 0x218;
+            } else {
+                keep = KeepClassified(c, mask, limit, absent);
+            }
+            if (keep) {
+                buffered.push_back(unit);
+                --room;
+            }
         }
-        if (keep) {
-            dst[count++] = static_cast<char16_t>(c);
-            --room;
-        }
+        if (stopped) break;
+        index += units;
     }
-    dst[count] = 0;
-    *out_length = static_cast<std::int32_t>(count);
+    buffered.push_back(0);
+
+    const std::size_t byte_count = buffered.size() * sizeof(char16_t);
+    if (!GuestWritable_nid_no_patch(out_length, sizeof(*out_length)) ||
+        !GuestWritable_nid_no_patch(dst, byte_count)) {
+        return kErrorInvalidAddress;
+    }
+
+    const std::int32_t final_length = static_cast<std::int32_t>(buffered.size() - 1);
+    if (!GuestCopyOut_nid_no_patch(dst, buffered.data(), byte_count) ||
+        !GuestCopyOut_nid_no_patch(out_length, &final_length, sizeof(final_length))) {
+        return kErrorInvalidAddress;
+    }
     return 0;
 }
 

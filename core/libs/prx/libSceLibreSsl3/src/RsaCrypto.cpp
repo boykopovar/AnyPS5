@@ -524,6 +524,7 @@
 
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -535,6 +536,7 @@
 #include <utility>
 #include <vector>
 #include "mbedtls/bignum.h"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -776,6 +778,12 @@ int PrimalityCheck(const Number& candidate, const char* function) {
     if (status == MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) return 0;
     HandleMbedtls(status, function);
     return -1;
+}
+
+bool Magnitude(Number& number, const char* function) {
+    if (mbedtls_mpi_cmp_int(&number.value, 0) >= 0) return true;
+    Number zero;
+    return Subtract(number, zero, number, function);
 }
 
 bool CheckedRemainder(Number& result, const Number& value, const Number& modulus, const char* function) {
@@ -1053,6 +1061,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     static constexpr unsigned char Sha256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};
     static constexpr unsigned char Sha384[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02};
     static constexpr unsigned char Sha512[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03};
+    static constexpr unsigned char Sha512_256[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x06};
     switch (type) {
     case 4: return Md5;
     case 64: return Sha1;
@@ -1062,6 +1071,7 @@ std::span<const unsigned char> DigestIdentifier(int type) {
     case 673: return Sha384;
     case 674: return Sha512;
     case 675: return Sha224;
+    case 1030: return Sha512_256;
     default: return {};
     }
 }
@@ -1113,6 +1123,17 @@ void CheckSignatureMethod(const LibreSsl3Rsa* rsa, const char* function) {
         NotImplemented_nid_no_patch((std::string(function) + ": a key flagged for method signatures").c_str());
 }
 
+LibreSslRsa* ParentRsa(const LibreSsl3Rsa* rsa, const char* function) {
+    if (!rsa) return nullptr;
+    LibreSsl3Rsa copy{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
+    if (!copy.method) return nullptr;
+    return reinterpret_cast<LibreSslRsa*>(const_cast<LibreSsl3Rsa*>(rsa));
+}
+
 } // namespace
 
 namespace LibreSsl3 {
@@ -1124,6 +1145,26 @@ int RsaByteCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
 int RsaBitCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
     if (!rsa) Reject("RSA_bits: null key");
     return BitCount(RequireComponent(rsa->n, "RSA_bits", "modulus"));
+}
+
+int RsaSecurityBits_nid_no_patch(const LibreSsl3Rsa* rsa) {
+    if (!rsa) Reject("RSA_security_bits: null key");
+    const int bits = BitCount(RequireComponent(rsa->n, "RSA_security_bits", "modulus"));
+    if (bits >= 15360) return 256;
+    if (bits >= 7680) return 192;
+    if (bits >= 3072) return 128;
+    if (bits >= 2048) return 112;
+    if (bits >= 1024) return 80;
+    return 0;
+}
+
+int RsaPublicCompare_nid_no_patch(const LibreSsl3Rsa* first, const LibreSsl3Rsa* second) {
+    if (!first || !second) Reject("EVP_PKEY_cmp: null RSA key");
+    const auto same = [](const void* left, const void* right, const char* name) {
+        if (!left || !right) return left == right;
+        return CompareComponents(RequireComponent(left, "EVP_PKEY_cmp", name), RequireComponent(right, "EVP_PKEY_cmp", name)) == 0;
+    };
+    return same(second->n, first->n, "modulus") && same(second->e, first->e, "exponent") ? 1 : 0;
 }
 
 int RsaComponentBits_nid_no_patch(const void* component) {
@@ -1180,13 +1221,18 @@ LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number) 
 
 void FreeRsa_nid_no_patch(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
+    LibreSsl3Rsa copy{};
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
+    if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
+    if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     const int remaining = std::atomic_ref<std::int32_t>(rsa->references).fetch_add(-1) - 1;
     if (remaining > 0) return;
-    if (rsa->pss || rsa->blinding || rsa->mtBlinding || rsa->extraData)
+    if (copy.pss || copy.blinding || copy.mtBlinding || copy.extraData)
         NotImplemented_nid_no_patch("RSA_free of a key holding PSS parameters, blinding state or extra data");
-    if (rsa->methodModN || rsa->methodModP || rsa->methodModQ || rsa->method)
+    if (copy.methodModN || copy.methodModP || copy.methodModQ || copy.method)
         NotImplemented_nid_no_patch("RSA_free of a key with method data");
-    for (void* component : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp})
+    for (void* component : {copy.n, copy.e, copy.d, copy.p, copy.q, copy.dmp1, copy.dmq1, copy.iqmp})
         BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(component));
     Wipe(rsa, sizeof(*rsa));
     free_nid_postfix(rsa);
@@ -1819,8 +1865,14 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
 extern "C" {
 
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
-    if (rsa && rsa->method) {
-        RSA_free_nid_postfix(reinterpret_cast<LibreSslRsa*>(rsa));
+    if (!rsa) return;
+    LibreSsl3Rsa copy{};
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
+    if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
+    if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
+    if (copy.method) {
+        LibreSslRsaFree_nid_no_patch(reinterpret_cast<LibreSslRsa*>(rsa));
         return;
     }
     LibreSsl3::FreeRsa_nid_no_patch(rsa);
@@ -1836,6 +1888,56 @@ LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix() {
     return rsa;
 }
 
+int APS5_VABI RSA_size_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaSize_nid_no_patch(parent);
+    return LibreSsl3::RsaByteCount_nid_no_patch(rsa);
+}
+
+int APS5_VABI RSA_flags_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaFlags_nid_no_patch(parent);
+    return 0;
+}
+
+int APS5_VABI RSA_public_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPublicEncrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPublicEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_public_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPublicDecrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPublicDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_private_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPrivateEncrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPrivateEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_private_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPrivateDecrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPrivateDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_sign_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature, unsigned int* signatureLength, LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaSign_nid_no_patch(type, message, messageLength, signature, signatureLength, parent);
+    return LibreSsl3::RsaSign_nid_no_patch(type, message, messageLength, signature, signatureLength, rsa);
+}
+
+int APS5_VABI RSA_verify_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, const unsigned char* signature, unsigned int signatureLength, LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaVerify_nid_no_patch(type, message, messageLength, signature, signatureLength, parent);
+    return LibreSsl3::RsaVerify_nid_no_patch(type, message, messageLength, signature, signatureLength, rsa);
+}
+
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, int saltLength) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(parent, encoded, messageHash, reinterpret_cast<const EvpMd*>(digest), saltLength);
+    return LibreSsl3::RsaPaddingAddPkcs1PssMgf1_nid_no_patch(rsa, encoded, messageHash, digest, nullptr, saltLength);
+}
+
+int APS5_VABI RSA_verify_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const unsigned char* encoded, int saltLength) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaVerifyPkcs1Pss_nid_no_patch(parent, messageHash, reinterpret_cast<const EvpMd*>(digest), encoded, saltLength);
+    return LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, messageHash, digest, nullptr, encoded, saltLength);
+}
+
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded,
     const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest,
     const LibreSsl3::DigestMethod* maskDigest, int saltLength) {
@@ -1849,17 +1951,18 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsi
 int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     constexpr auto function = "RSA_check_key";
     if (!rsa) NotImplemented_nid_no_patch("RSA_check_key of a null key");
-    if (!rsa->p || !rsa->q || !rsa->n || !rsa->e || !rsa->d) {
+    LibreSsl3Rsa key{};
+    const bool readable = GuestCopyIn_nid_no_patch(&key, rsa, sizeof(key));
+    if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
+    if (!key.p || !key.q || !key.n || !key.e || !key.d) {
         QueueError(ReasonValueMissing);
         return 0;
     }
-    const auto p = ComponentNumber(RequireComponent(rsa->p, function, "p"), function);
-    const auto q = ComponentNumber(RequireComponent(rsa->q, function, "q"), function);
-    const auto n = ComponentNumber(RequireComponent(rsa->n, function, "n"), function);
-    const auto e = ComponentNumber(RequireComponent(rsa->e, function, "e"), function);
-    const auto d = ComponentNumber(RequireComponent(rsa->d, function, "d"), function);
-    if (mbedtls_mpi_cmp_int(&p.value, 0) == 0 || mbedtls_mpi_cmp_int(&q.value, 0) == 0)
-        NotImplemented_nid_no_patch("RSA_check_key of a key with a zero prime factor");
+    const auto p = ComponentNumber(RequireComponent(key.p, function, "p"), function);
+    const auto q = ComponentNumber(RequireComponent(key.q, function, "q"), function);
+    const auto n = ComponentNumber(RequireComponent(key.n, function, "n"), function);
+    const auto e = ComponentNumber(RequireComponent(key.e, function, "e"), function);
+    const auto d = ComponentNumber(RequireComponent(key.d, function, "d"), function);
     auto result = 1;
     if (IsOne(e)) {
         result = 0;
@@ -1891,14 +1994,15 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     Number congruence;
     if (!HandleMbedtls(mbedtls_mpi_lset(&one.value, 1), function) || !Subtract(pMinusOne, p, one, function) ||
         !Subtract(qMinusOne, q, one, function) ||
-        !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &pMinusOne.value, &qMinusOne.value), function) ||
-        !HandleMbedtls(mbedtls_mpi_gcd(&divisor.value, &pMinusOne.value, &qMinusOne.value), function))
+        !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &pMinusOne.value, &qMinusOne.value), function))
         return -1;
-    if (mbedtls_mpi_cmp_int(&divisor.value, 0) == 0) {
+    if (mbedtls_mpi_cmp_int(&qMinusOne.value, 0) == 0) {
         QueueBigNumberError(BigNumberReasonDivisionByZero);
         return -1;
     }
-    if (!HandleMbedtls(mbedtls_mpi_div_mpi(&lcm.value, nullptr, &product.value, &divisor.value), function) ||
+    if (!HandleMbedtls(mbedtls_mpi_gcd(&divisor.value, &pMinusOne.value, &qMinusOne.value), function) ||
+        !HandleMbedtls(mbedtls_mpi_div_mpi(&lcm.value, nullptr, &product.value, &divisor.value), function) ||
+        !Magnitude(lcm, function) ||
         !HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &d.value, &e.value), function) ||
         !CheckedRemainder(congruence, product, lcm, function))
         return -1;
@@ -1906,11 +2010,12 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
         result = 0;
         QueueError(ReasonDeNotCongruentToOne);
     }
-    if (!rsa->dmp1 || !rsa->dmq1 || !rsa->iqmp) return result;
-    const auto dmp1 = ComponentNumber(RequireComponent(rsa->dmp1, function, "dmp1"), function);
-    const auto dmq1 = ComponentNumber(RequireComponent(rsa->dmq1, function, "dmq1"), function);
-    const auto iqmp = ComponentNumber(RequireComponent(rsa->iqmp, function, "iqmp"), function);
+    if (!key.dmp1 || !key.dmq1 || !key.iqmp) return result;
+    const auto dmp1 = ComponentNumber(RequireComponent(key.dmp1, function, "dmp1"), function);
+    const auto dmq1 = ComponentNumber(RequireComponent(key.dmq1, function, "dmq1"), function);
+    const auto iqmp = ComponentNumber(RequireComponent(key.iqmp, function, "iqmp"), function);
     Number reduced;
+    if (!Magnitude(pMinusOne, function) || !Magnitude(qMinusOne, function)) return -1;
     if (!CheckedRemainder(reduced, d, pMinusOne, function)) return -1;
     if (mbedtls_mpi_cmp_mpi(&reduced.value, &dmp1.value) != 0) {
         result = 0;
@@ -1920,6 +2025,10 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     if (mbedtls_mpi_cmp_mpi(&reduced.value, &dmq1.value) != 0) {
         result = 0;
         QueueError(ReasonDmq1NotCongruentToD);
+    }
+    if (mbedtls_mpi_cmp_int(&p.value, 0) == 0) {
+        QueueBigNumberError(BigNumberReasonDivisionByZero);
+        return -1;
     }
     const auto inverse = mbedtls_mpi_inv_mod(&reduced.value, &q.value, &p.value);
     if (inverse == MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) QueueBigNumberError(BigNumberReasonNoInverse);

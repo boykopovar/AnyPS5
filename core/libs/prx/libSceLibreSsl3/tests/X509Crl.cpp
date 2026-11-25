@@ -114,6 +114,16 @@ Bytes Ascii(const char* text) {
     return Bytes(text, text + std::strlen(text));
 }
 
+Bytes Hex(const char* text) {
+    Bytes result;
+    for (std::size_t index = 0; text[index] != '\0' && text[index + 1] != '\0'; index += 2) {
+        unsigned int value = 0;
+        Require(std::sscanf(text + index, "%2x", &value) == 1);
+        result.push_back(static_cast<unsigned char>(value));
+    }
+    return result;
+}
+
 Bytes Join(std::initializer_list<Bytes> parts) {
     Bytes result;
     for (const Bytes& part : parts) result.insert(result.end(), part.begin(), part.end());
@@ -151,6 +161,10 @@ Bytes UtcTime(const char* text) {
     return Tlv(0x17, Ascii(text));
 }
 
+Bytes GeneralizedTime(const char* text) {
+    return Tlv(0x18, Ascii(text));
+}
+
 Bytes IssuerName(const char* commonName) {
     return Sequence({
         Tlv(0x31, Sequence({
@@ -186,6 +200,14 @@ Bytes CrlNumberExtension(int number) {
 
 Bytes CrlReasonExtension(unsigned char reason) {
     return Extension({0x55, 0x1d, 0x15}, false, Tlv(0x0a, Bytes{reason}));
+}
+
+Bytes CertificateIssuerExtension(const char* commonName) {
+    return Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0xa4, IssuerName(commonName))}));
+}
+
+Bytes InvalidityDateExtension() {
+    return Extension({0x55, 0x1d, 0x18}, false, GeneralizedTime("20240102000000Z"));
 }
 
 Bytes RevokedEntry(const Bytes& serial) {
@@ -226,6 +248,37 @@ LibreSsl3X509Crl* Parse(const Bytes& der, const unsigned char** consumed = nullp
     LibreSsl3X509Crl* crl = d2i_X509_CRL_nid_postfix(nullptr, &input, static_cast<std::int64_t>(der.size()));
     if (consumed) *consumed = input;
     return crl;
+}
+
+Bytes CrlWithIssuer(const Bytes& name) {
+    return BuildCrl(Join({Tlv(0x02, Bytes{0x01}), SignatureAlgorithm(), name, UtcTime("240101000000Z")}));
+}
+
+Bytes CommonName(const Bytes& value) {
+    return Sequence({Tlv(0x31, Sequence({Oid({0x55, 0x04, 0x03}), value}))});
+}
+
+struct NameBuffer {
+    std::size_t length;
+    char* data;
+    std::size_t max;
+};
+
+void RequireNameEncodings(const LibreSslX509Name* name, const Bytes& der, const Bytes& canonical) {
+    Require(name != nullptr);
+    Require(name->modified == 0);
+    const auto* buffer = static_cast<const NameBuffer*>(name->bytes);
+    Require(buffer != nullptr && buffer->data != nullptr);
+    Require(buffer->length == der.size());
+    Require(buffer->max == (der.size() + 3) / 3 * 4);
+    Require(std::memcmp(buffer->data, der.data(), der.size()) == 0);
+    Require(name->canonEnclen == static_cast<int>(canonical.size()));
+    if (canonical.empty()) {
+        Require(name->canonEnc == nullptr);
+    } else {
+        Require(name->canonEnc != nullptr);
+        Require(std::memcmp(name->canonEnc, canonical.data(), canonical.size()) == 0);
+    }
 }
 
 const LibreSslX509NameEntry* NameEntry(const LibreSslX509Name* name, int index) {
@@ -370,10 +423,7 @@ void TestParsedStructure() {
     Require(crl->crl->issuer != nullptr);
     Require(crl->crl->issuer->entries != nullptr);
     Require(crl->crl->issuer->entries->num == 1);
-    Require(crl->crl->issuer->modified == 0);
-    Require(crl->crl->issuer->bytes == nullptr);
-    Require(crl->crl->issuer->canonEnc == nullptr);
-    Require(crl->crl->issuer->canonEnclen == 0);
+    RequireNameEncodings(crl->crl->issuer, IssuerName("Test CA"), Hex("3110300e06035504030c0774657374206361"));
     const LibreSslX509NameEntry* nameEntry = NameEntry(crl->crl->issuer, 0);
     Require(nameEntry != nullptr);
     Require(nameEntry->set == 0);
@@ -382,6 +432,7 @@ void TestParsedStructure() {
     Require(nameObject != nullptr && nameObject->length == 3 && nameObject->nid == 0);
     Require(std::memcmp(nameObject->data, "\x55\x04\x03", 3) == 0);
     RequireString(static_cast<const Asn1String*>(nameEntry->value), 12, "Test CA");
+    Require(static_cast<const Asn1String*>(nameEntry->value)->flags == 0x40);
 
     RequireString(crl->crl->lastUpdate, 23, "240101000000Z");
     RequireString(crl->crl->nextUpdate, 23, "240201000000Z");
@@ -627,6 +678,80 @@ void TestRemoveFromCrl() {
     Require(allocations.empty());
 }
 
+int LookupSerial(LibreSsl3X509Crl* crl, int low, const LibreSslX509Name* issuer, LibreSsl3Revoked** found) {
+    Serial serial(static_cast<unsigned char>(low));
+    LibreSsl3CertificateInfo info{};
+    LibreSsl3Certificate certificate{};
+    SetCertificate(certificate, info, &serial.value, issuer);
+    return X509_CRL_get0_by_cert_nid_postfix(crl, found, &certificate);
+}
+
+void TestCertificateIssuerEntries() {
+    LibreSsl3X509Crl* crl = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntry(Bytes{0x10, 0x01}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, CertificateIssuerExtension("Other CA")),
+            RevokedEntry(Bytes{0x10, 0x03}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x04}, CrlReasonExtension(8)),
+        })),
+    })));
+    Require(crl != nullptr);
+    LibreSsl3X509Crl* other = Parse(CrlWithIssuer(IssuerName("Other CA")));
+    Require(other != nullptr);
+    const LibreSslX509Name* crlIssuer = crl->crl->issuer;
+    const LibreSslX509Name* otherIssuer = other->crl->issuer;
+    Require(RevokedEntryAt(crl, 1)->extensions != nullptr && RevokedEntryAt(crl, 1)->extensions->num == 1);
+    for (int index = 0; index < 4; ++index) Require(RevokedEntryAt(crl, index)->issuer == nullptr);
+    Require(RevokedEntryAt(crl, 3)->reason == 8);
+
+    LibreSsl3Revoked* found = nullptr;
+    Require(LookupSerial(crl, 0x01, nullptr, &found) == 1);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(crl, 0)));
+    Require(LookupSerial(crl, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(crl, 0x01, otherIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, nullptr, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, otherIssuer, nullptr) == 0);
+
+    for (const int low : {0x02, 0x03, 0x04}) {
+        for (const LibreSslX509Name* issuer : {otherIssuer, crlIssuer, static_cast<const LibreSslX509Name*>(nullptr)}) {
+            found = nullptr;
+            RequireNotImplemented([&] { LookupSerial(crl, low, issuer, &found); });
+            Require(found == nullptr);
+        }
+    }
+
+    LibreSsl3X509Crl* second = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+            Join({CrlReasonExtension(1), CertificateIssuerExtension("Other CA")}))),
+    })));
+    Require(second != nullptr);
+    Require(RevokedEntryAt(second, 0)->extensions->num == 2 && RevokedEntryAt(second, 0)->reason == 1);
+    RequireNotImplemented([&] { LookupSerial(second, 0x01, otherIssuer, nullptr); });
+    Require(LookupSerial(second, 0x02, otherIssuer, nullptr) == 0);
+
+    LibreSsl3X509Crl* direct = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntryWithExtensions(Bytes{0x10, 0x01}, CrlReasonExtension(1)),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, Join({InvalidityDateExtension(), CrlReasonExtension(8)})),
+        })),
+    })));
+    Require(direct != nullptr);
+    Require(LookupSerial(direct, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(direct, 0x02, nullptr, &found) == 2);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(direct, 1)));
+    Require(LookupSerial(direct, 0x02, otherIssuer, nullptr) == 0);
+
+    FreeCrlValue(direct);
+    FreeCrlValue(second);
+    FreeCrlValue(other);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
 void TestTrailingData() {
     Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
     const std::size_t length = der.size();
@@ -668,9 +793,21 @@ void TestMalformed() {
     Require(Parse(indefinite) == nullptr);
     RequireQueue({102});
 
-    const Bytes badLength = Join({Bytes{0x30, 0x84, 0x00, 0x00, 0x00, 0x00}});
+    const Bytes badLength = Join({Bytes{0x30, 0x84, 0x00, 0x00, 0x00}});
     Require(Parse(badLength) == nullptr);
-    RequireQueue({102});
+    RequireQueue({123});
+
+    const Bytes longLength = Bytes{0x30, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    Require(Parse(longLength) == nullptr);
+    RequireQueue({123});
+
+    Require(Parse(Bytes{0x30}) == nullptr);
+    RequireQueue({123});
+
+    const unsigned char* emptyInput = der.data();
+    Require(d2i_X509_CRL_nid_postfix(nullptr, &emptyInput, 0) == nullptr);
+    Require(emptyInput == der.data());
+    RequireQueue({123});
 
     const Bytes extraField = BuildCrl(Join({TbsHead(), Bytes{0x05, 0x00}}));
     Require(Parse(extraField) == nullptr);
@@ -742,6 +879,45 @@ void TestMalformed() {
     DrainErrors();
 }
 
+Bytes CrlWithTime(int position, const Bytes& time) {
+    const Bytes good = UtcTime("240101000000Z");
+    return BuildCrl(Join({
+        Tlv(0x02, Bytes{0x01}),
+        SignatureAlgorithm(),
+        IssuerName("Test CA"),
+        position == 0 ? time : good,
+        position == 1 ? time : good,
+        Tlv(0x30, Join({Sequence({Tlv(0x02, Bytes{0x10, 0x01}), position == 2 ? time : good})})),
+    }));
+}
+
+void TestTimes() {
+    for (const Bytes& time : {UtcTime("240229235959Z"), UtcTime("491231000000Z"), UtcTime("500101000000Z"),
+             GeneralizedTime("20500101000000Z"), GeneralizedTime("20000229000000Z"), GeneralizedTime("00000101000000Z"),
+             GeneralizedTime("99991231235959Z")}) {
+        for (int position = 0; position < 3; ++position) {
+            LibreSsl3X509Crl* crl = Parse(CrlWithTime(position, time));
+            Require(crl != nullptr);
+            FreeCrlValue(crl);
+            Require(allocations.empty());
+        }
+    }
+    RequireQueue({});
+
+    for (const Bytes& time : {UtcTime("2401010000Z"), UtcTime("240101000000"), UtcTime("240101000000z"), UtcTime("240101000000+0000"),
+             UtcTime("240101000000ZZ"), UtcTime("241301000000Z"), UtcTime("240001000000Z"), UtcTime("240100000000Z"),
+             UtcTime("230229000000Z"), UtcTime("240431000000Z"), UtcTime("240101240000Z"), UtcTime("240101006000Z"),
+             UtcTime("240101000060Z"), UtcTime("24010100000 Z"), UtcTime("2401010000-1Z"), UtcTime(""),
+             UtcTime("20240101000000Z"), GeneralizedTime("240101000000Z"), GeneralizedTime("20240101000000.0Z"),
+             GeneralizedTime("202401010000Z"), GeneralizedTime("21000229000000Z"), GeneralizedTime("20240101000000")}) {
+        for (int position = 0; position < 3; ++position) {
+            Require(Parse(CrlWithTime(position, time)) == nullptr);
+            RequireQueue({132});
+            Require(allocations.empty());
+        }
+    }
+}
+
 void TestArgumentErrors() {
     const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
     const unsigned char* input = der.data();
@@ -763,7 +939,7 @@ void TestArgumentErrors() {
     LibreSsl3X509Crl* const first = output;
     const unsigned char* second = der.data();
     Require(d2i_X509_CRL_nid_postfix(&output, &second, static_cast<std::int64_t>(der.size())) == output);
-    Require(output != nullptr && output != first);
+    Require(output != nullptr);
     Require(second == der.data() + der.size());
     Require(allocations.size() == retained);
     X509_CRL_free_nid_postfix(output);
@@ -785,6 +961,88 @@ void TestReferenceCountedFree() {
     Require(allocations.empty());
     X509_CRL_free_nid_postfix(nullptr);
     DrainErrors();
+}
+
+void TestReusedOutput() {
+    const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
+    const Bytes truncated(der.begin(), der.end() - 1);
+    Bytes wrongTag = der;
+    wrongTag[0] = 0x31;
+    const Bytes inner = BuildCrl(Join({TbsHead(), Tlv(0x04, Bytes{0x00})}));
+    const std::int64_t size = static_cast<std::int64_t>(der.size());
+
+    LibreSsl3X509Crl* first = Parse(der);
+    Require(first != nullptr);
+    const std::size_t live = allocations.size();
+    first->references = 2;
+    LibreSsl3X509Crl* output = first;
+    const unsigned char* input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == truncated.data());
+    Require(allocations.size() == live);
+    Require(first->references == 1);
+    Require(ERR_get_error_nid_postfix() != 0);
+    DrainErrors();
+
+    output = first;
+    input = wrongTag.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, size) == nullptr);
+    Require(output == nullptr);
+    Require(input == wrongTag.data());
+    Require(allocations.empty());
+    DrainErrors();
+
+    LibreSsl3X509Crl* kept = Parse(der);
+    Require(kept != nullptr);
+    Require(allocations.size() == live);
+    kept->references = 2;
+    output = kept;
+    input = inner.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(inner.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == inner.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, 0) == nullptr);
+    Require(output == nullptr);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = kept;
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, -1) == nullptr);
+    Require(output == kept);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = nullptr;
+    input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(allocations.size() == live);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    LibreSsl3X509Crl* replaced = d2i_X509_CRL_nid_postfix(&output, &input, size);
+    Require(replaced != nullptr && replaced == output && replaced != kept);
+    Require(input == der.data() + der.size());
+    Require(allocations.size() == 2 * live);
+    Require(kept->references == 1);
+    X509_CRL_free_nid_postfix(replaced);
+    X509_CRL_free_nid_postfix(kept);
+    Require(allocations.empty());
+    RequireQueue({});
 }
 
 void TestAllocationFailures() {
@@ -812,10 +1070,337 @@ void TestAllocationFailures() {
     Require(allocations.empty());
 }
 
+Bytes NonMinimal(unsigned char tag, const Bytes& content) {
+    Bytes result{tag, 0x82, static_cast<unsigned char>(content.size() >> 8), static_cast<unsigned char>(content.size())};
+    result.insert(result.end(), content.begin(), content.end());
+    return result;
+}
+
+void TestNonMinimalLengths() {
+    const Bytes der = NonMinimal(0x30, Join({
+        NonMinimal(0x30, Join({
+            NonMinimal(0x02, Bytes{0x01}),
+            SignatureAlgorithm(),
+            IssuerName("Test CA"),
+            NonMinimal(0x17, Ascii("240101000000Z")),
+            Tlv(0x30, Sequence({NonMinimal(0x02, Bytes{0x10, 0x01}), UtcTime("240102000000Z")})),
+        })),
+        SignatureAlgorithm(),
+        Bytes{0x03, 0x81, 0x02, 0x00, 0x5a},
+    }));
+    const unsigned char* consumed = nullptr;
+    LibreSsl3X509Crl* crl = Parse(der, &consumed);
+    Require(crl != nullptr);
+    Require(consumed == der.data() + der.size());
+    RequireInteger(crl->crl->version, {0x01});
+    RequireString(crl->crl->lastUpdate, 23, "240101000000Z");
+    RequireInteger(RevokedEntryAt(crl, 0)->serialNumber, {0x10, 0x01});
+    Require(crl->signature->length == 1 && crl->signature->data[0] == 0x5a);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestRejectedNameValues() {
+    struct Case {
+        const char* value;
+        int reason;
+    };
+    for (const Case& rejected : {
+             Case{"1a024162", 140}, Case{"15024162", 140}, Case{"1b024162", 140}, Case{"04024162", 140},
+             Case{"1f15024162", 140}, Case{"8c024162", 139}, Case{"9f0c024162", 139}, Case{"4c024162", 139},
+             Case{"0000", 159}, Case{"1000", 156}, Case{"1e0100", 214}, Case{"1c020000", 215},
+             Case{"0c02c080", 134}, Case{"0c03eda080", 134}, Case{"0c04f4908080", 134}, Case{"1e02d800", 124},
+             Case{"1e04d83dde00", 124}, Case{"1c0400110000", 124}, Case{"1c040000dfff", 124}, Case{"2c80040141", 137},
+             Case{"2c0400000401", 159}, Case{"2c102c0e2c0c2c0a2c082c062c040c024162", 197}, Case{"2c0404850141", 123},
+             Case{"0300", 152}, Case{"03020841", 220}, Case{"2304030208ff", 220}, Case{"30803000", 137},
+             Case{"0c8a01000000000000000000", 123}, Case{"0c80", 123}, Case{"0c", 123}, Case{"0c03", 155},
+             Case{"1fffffffff7f024162", 123}, Case{"0c8880000000000000004162", 123}, Case{"0c887fffffffffffffff4162", 155}}) {
+        Require(Parse(CrlWithIssuer(CommonName(Hex(rejected.value)))) == nullptr);
+        RequireQueue({rejected.reason});
+        Require(allocations.empty());
+    }
+}
+
+void TestNameValueTypes() {
+    struct Case {
+        const char* value;
+        int type;
+        const char* data;
+        std::int64_t flags;
+        const char* canonical;
+    };
+    for (const Case& accepted : {
+             Case{"07024162", 7, "4162", 0x40, "310b3009060355040307024162"},
+             Case{"1d024162", 29, "4162", 0x40, "310b300906035504031d024162"},
+             Case{"12023132", 18, "3132", 0x40, "310b3009060355040312023132"},
+             Case{"1f0c024162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"0c81024162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"0c8200024162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"2c06040141040162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"2c06800141c40162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"2c800401410401620000", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"2c0c2c0a2c082c062c040c024162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"030207ff", 3, "80", 0x4f, "310b3009060355040303020780"},
+             Case{"030103", 3, "", 0x4b, "310a30080603550403030100"},
+             Case{"2304030207ff", 3, "80", 0x4f, "310b3009060355040303020780"},
+             Case{"0a01ff", 266, "01", 0x40, "310c300a06035504031f820a0101"},
+             Case{"0a02ff00", 266, "0100", 0x40, "310d300b06035504031f820a020100"},
+             Case{"0a02ff7f", 266, "81", 0x40, "310c300a06035504031f820a0181"},
+             Case{"0a020001", 10, "01", 0x40, "310a300806035504030a0101"},
+             Case{"0a0200ff", 10, "ff", 0x40, "310b300906035504030a0200ff"},
+             Case{"0a00", 10, "", 0x40, "310a300806035504030a0100"},
+             Case{"2a030401ff", 266, "01", 0x40, "310c300a06035504031f820a0101"},
+             Case{"30023000", 16, "30023000", 0x40, "310b3009060355040330023000"},
+             Case{"308030000000", 16, "308030000000", 0x40, "310d300b0603550403308030000000"},
+             Case{"3080308000000000", 16, "3080308000000000", 0x40, "310f300d06035504033080308000000000"},
+             Case{"130d20205465737420090a20434120", 19, "20205465737420090a20434120", 0x40, "3110300e06035504030c0774657374206361"},
+             Case{"1304436166e9", 19, "436166e9", 0x40, "310e300c06035504030c05636166c3a9"},
+             Case{"160341e980", 22, "41e980", 0x40, "310e300c06035504030c0561c3a9c280"},
+             Case{"1403e94162", 20, "e94162", 0x40, "310d300b06035504030c04c3a96162"},
+             Case{"1e060041006200e9", 30, "0041006200e9", 0x40, "310d300b06035504030c046162c3a9"},
+             Case{"1c080001f6000000004b", 28, "0001f6000000004b", 0x40, "310e300c06035504030c05f09f98806b"},
+             Case{"0c06f09f9880c3a9", 12, "f09f9880c3a9", 0x40, "310f300d06035504030c06f09f9880c3a9"},
+             Case{"0c00", 12, "", 0x40, "3109300706035504030c00"},
+             Case{"2c0a24800401410000040162", 12, "4162", 0x40, "310b300906035504030c026162"},
+             Case{"360730800000040180", 22, "80", 0x40, "310b300906035504030c02c280"},
+             Case{"1203313233", 18, "313233", 0x40, "310c300a06035504031203313233"},
+             Case{"030107", 3, "", 0x4f, "310a30080603550403030100"}}) {
+        const Bytes name = CommonName(Hex(accepted.value));
+        LibreSsl3X509Crl* crl = Parse(CrlWithIssuer(name));
+        Require(crl != nullptr);
+        Require(crl->crl->issuer->entries->num == 1);
+        const LibreSslX509NameEntry* entry = NameEntry(crl->crl->issuer, 0);
+        Require(entry != nullptr && entry->set == 0);
+        const auto* value = static_cast<const Asn1String*>(entry->value);
+        const Bytes data = Hex(accepted.data);
+        Require(value->type == accepted.type);
+        Require(value->flags == accepted.flags);
+        Require(value->length == static_cast<int>(data.size()));
+        Require(data.empty() || std::memcmp(value->data, data.data(), data.size()) == 0);
+        RequireNameEncodings(crl->crl->issuer, name, Hex(accepted.canonical));
+        FreeCrlValue(crl);
+        RequireQueue({});
+        Require(allocations.empty());
+    }
+
+    const Bytes longName = CommonName(Tlv(0x0c, Bytes(128, 'A')));
+    LibreSsl3X509Crl* crl = Parse(CrlWithIssuer(longName));
+    Require(crl != nullptr);
+    RequireNameEncodings(crl->crl->issuer, longName, Tlv(0x31, Sequence({Oid({0x55, 0x04, 0x03}), Tlv(0x0c, Bytes(128, 'a'))})));
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestRejectedNameStructures() {
+    struct Case {
+        const char* name;
+        int reason;
+    };
+    for (const Case& rejected : {
+             Case{"300d310b100906035504030c024162", 149}, Case{"3009310730050603550403", 121},
+             Case{"300f310d300b06035504030c0241620500", 148}, Case{"300d310b308006035504030c024162", 137},
+             Case{"300431020000", 159}, Case{"300d300b300906035504030c024162", 168},
+             Case{"a00d310b300906035504030c024162", 168}, Case{"3080310b300906035504030c024162", 168},
+             Case{"30803100", 168}, Case{"300c310a3008060255840c024162", 216},
+             Case{"300f310d300b26030401800c024162", 216}, Case{"3089010000000000000000", 123},
+             Case{"30820100", 155}, Case{"0000", 159},
+             Case{"3100", 168}, Case{"3002310100", 155}, Case{"300db10b300906035504030c024162", 168}}) {
+        Require(Parse(CrlWithIssuer(Hex(rejected.name))) == nullptr);
+        RequireQueue({rejected.reason});
+        Require(allocations.empty());
+    }
+
+    Require(Parse(BuildCrl(Join({Tlv(0x02, Bytes{0x01}), SignatureAlgorithm()}))) == nullptr);
+    RequireQueue({121});
+    Require(allocations.empty());
+}
+
+void TestNameStructures() {
+    struct Case {
+        const char* name;
+        int count;
+        int lastSet;
+        const char* canonical;
+    };
+    for (const Case& accepted : {
+             Case{"3082000f31810c30810906035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"30803180308006035504030c024162000000000000", 1, 0, "310b300906035504030c026162"},
+             Case{"300d110b300906035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"100d310b300906035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"3f100d310b300906035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"300f3100310b300906035504030c024162", 1, 1, "310b300906035504030c026162"},
+             Case{"300f310d300b260504035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"300e310c300a1f06035504030c024162", 1, 0, "310b300906035504030c026162"},
+             Case{"300431003100", 0, 0, ""},
+             Case{"3000", 0, 0, ""},
+             Case{"302431163009060355040a0c025a7a3009060355040313024162310a30080603550403160158", 3, 1,
+                 "3116300906035504030c0261623009060355040a0c027a7a310a300806035504030c0178"}}) {
+        const Bytes name = Hex(accepted.name);
+        LibreSsl3X509Crl* crl = Parse(CrlWithIssuer(name));
+        Require(crl != nullptr);
+        Require(crl->crl->issuer->entries->num == accepted.count);
+        if (accepted.count > 0) Require(NameEntry(crl->crl->issuer, accepted.count - 1)->set == accepted.lastSet);
+        RequireNameEncodings(crl->crl->issuer, name, Hex(accepted.canonical));
+        FreeCrlValue(crl);
+        RequireQueue({});
+        Require(allocations.empty());
+    }
+}
+
+Bytes AlgorithmWithParameter(const Bytes& parameter) {
+    return Sequence({Oid({0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b}), parameter});
+}
+
+Bytes LongTag(const char* identifier, const Bytes& encoded) {
+    return Join({Hex(identifier), Bytes(encoded.begin() + 1, encoded.end())});
+}
+
+void TestLongFormTags() {
+    const Bytes longNull = Hex("1f0500");
+    for (const Bytes& der : {
+             BuildCrl(Join({Tlv(0x02, Bytes{0x01}), AlgorithmWithParameter(longNull), IssuerName("Test CA"), UtcTime("240101000000Z")})),
+             BuildCrl(TbsHead(), AlgorithmWithParameter(longNull))}) {
+        LibreSsl3X509Crl* crl = Parse(der);
+        Require(crl != nullptr);
+        Require(crl->crl->sigAlg->parameter != nullptr && crl->crl->sigAlg->parameter->type == 5);
+        Require(crl->sigAlg->parameter != nullptr && crl->sigAlg->parameter->type == 5);
+        FreeCrlValue(crl);
+        RequireQueue({});
+        Require(allocations.empty());
+    }
+
+    const Bytes extension = Sequence({Oid({0x55, 0x1d, 0x14}), Hex("1f0101ff"), Tlv(0x04, Hex("020107"))});
+    const Bytes revoked = Sequence({Tlv(0x02, Bytes{0x10, 0x01}), UtcTime("240102000000Z"), LongTag("3f10", Tlv(0x30, extension))});
+    const Bytes der = BuildCrl(Join({
+        Hex("1f020101"),
+        SignatureAlgorithm(),
+        IssuerName("Test CA"),
+        UtcTime("240101000000Z"),
+        LongTag("1f17", Tlv(0x17, Ascii("240201000000Z"))),
+        LongTag("3f10", Tlv(0x30, revoked)),
+        LongTag("bf00", Tlv(0xa0, Sequence({extension}))),
+    }));
+    LibreSsl3X509Crl* crl = Parse(der);
+    Require(crl != nullptr);
+    RequireInteger(crl->crl->version, {0x01});
+    RequireString(crl->crl->nextUpdate, 23, "240201000000Z");
+    Require(crl->crl->revoked != nullptr && crl->crl->revoked->num == 1);
+    const LibreSsl3Revoked* entry = RevokedEntryAt(crl, 0);
+    Require(entry != nullptr && entry->extensions != nullptr && entry->extensions->num == 1);
+    Require(crl->crl->extensions != nullptr && crl->crl->extensions->num == 1);
+    const auto* crlNumber = reinterpret_cast<const LibreSsl3X509Extension*>(crl->crl->extensions->data[0]);
+    Require(crlNumber->critical == 0xff);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+
+    struct Case {
+        const char* parameter;
+        int reason;
+    };
+    for (const Case& rejected : {Case{"0000", 159}, Case{"00000500", 159}, Case{"0100", 106}, Case{"0102ffff", 106}, Case{"1f0100", 106}, Case{"00", 123},
+             Case{"050100", 144}, Case{"1f050100", 144}, Case{"1e0141", 214}, Case{"1f1e0141", 214}, Case{"1c020000", 215},
+             Case{"1f1c03000000", 215}}) {
+        for (const Bytes& candidate : {
+                 BuildCrl(Join({Tlv(0x02, Bytes{0x01}), AlgorithmWithParameter(Hex(rejected.parameter)), IssuerName("Test CA"),
+                     UtcTime("240101000000Z")})),
+                 BuildCrl(TbsHead(), AlgorithmWithParameter(Hex(rejected.parameter)))}) {
+            Require(Parse(candidate) == nullptr);
+            RequireQueue({rejected.reason});
+            Require(allocations.empty());
+        }
+    }
+
+    crl = Parse(BuildCrl(Join({TbsHead(), LongTag("1f18", Tlv(0x18, Ascii("20240201000000Z")))})));
+    Require(crl != nullptr);
+    RequireString(crl->crl->nextUpdate, 24, "20240201000000Z");
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+
+    for (const Case& truncated : {Case{"170d3234", 155}, Case{"17", 123}}) {
+        Require(Parse(BuildCrl(Join({TbsHead(), Hex(truncated.parameter)}))) == nullptr);
+        RequireQueue({truncated.reason});
+        Require(allocations.empty());
+    }
+
+    RequireNotImplemented([] { Parse(BuildCrl(TbsHead(), AlgorithmWithParameter(Hex("8102ffff")))); });
+    DrainErrors();
+    for (const auto& [pointer, size] : allocations) std::free(pointer);
+    allocations.clear();
+}
+
+int LookupWithIssuer(LibreSsl3X509Crl* crl, LibreSslX509Name* issuer) {
+    Serial serial(0x01);
+    LibreSsl3CertificateInfo info{};
+    LibreSsl3Certificate certificate{};
+    SetCertificate(certificate, info, &serial.value, issuer);
+    return X509_CRL_get0_by_cert_nid_postfix(crl, nullptr, &certificate);
+}
+
+void TestGet0ByCertCanonicalIssuer() {
+    const Bytes revokedList = Tlv(0x30, RevokedEntry(Bytes{0x10, 0x01}));
+    LibreSsl3X509Crl* crl = Parse(BuildCrl(Join({TbsHead(), revokedList})));
+    Require(crl != nullptr);
+    struct Case {
+        const char* value;
+        int result;
+    };
+    for (const Case& lookup : {
+             Case{"130a20207465737420204341", 1}, Case{"1e0e0054006500730074002000430041", 1},
+             Case{"1408544553542063610a", 1}, Case{"0c0754657374204341", 1},
+             Case{"1c200000005400000065000000730000007400000020000000430000004100000020", 1}, Case{"160909544553540b0c4341", 1},
+             Case{"0c08546573742043412e", 0}, Case{"0c06546573744341", 0},
+             Case{"120754657374204341", 0}, Case{"0c08546573742043c381", 0},
+             Case{"1407546573742043c1", 0}}) {
+        LibreSsl3X509Crl* other = Parse(CrlWithIssuer(CommonName(Hex(lookup.value))));
+        Require(other != nullptr);
+        Require(LookupWithIssuer(crl, other->crl->issuer) == lookup.result);
+        FreeCrlValue(other);
+    }
+    LibreSsl3X509Crl* organization = Parse(CrlWithIssuer(
+        Sequence({Tlv(0x31, Sequence({Oid({0x55, 0x04, 0x0a}), Tlv(0x0c, Ascii("Test CA"))}))})));
+    Require(organization != nullptr);
+    Require(LookupWithIssuer(crl, organization->crl->issuer) == 0);
+    FreeCrlValue(organization);
+
+    LibreSsl3X509Crl* empty = Parse(CrlWithIssuer(Sequence({})));
+    Require(empty != nullptr);
+    Require(LookupWithIssuer(crl, empty->crl->issuer) == 0);
+    LibreSsl3X509Crl* emptyCrl = Parse(BuildCrl(Join({
+        Tlv(0x02, Bytes{0x01}), SignatureAlgorithm(), Sequence({}), UtcTime("240101000000Z"), revokedList})));
+    Require(emptyCrl != nullptr);
+    Require(LookupWithIssuer(emptyCrl, empty->crl->issuer) == 1);
+
+    LibreSslX509Name bare = *crl->crl->issuer;
+    bare.canonEnc = nullptr;
+    bare.canonEnclen = 0;
+    Require(LookupWithIssuer(crl, &bare) == 0);
+    Require(LookupWithIssuer(emptyCrl, &bare) == 1);
+    bare.canonEnclen = 3;
+    RequireInvalidArgument([&] { LookupWithIssuer(crl, &bare); });
+    LibreSslX509Name negative = *crl->crl->issuer;
+    negative.canonEnclen = -1;
+    RequireInvalidArgument([&] { LookupWithIssuer(crl, &negative); });
+    LibreSslX509Name modified = *crl->crl->issuer;
+    modified.modified = 1;
+    RequireNotImplemented([&] { LookupWithIssuer(crl, &modified); });
+    crl->crl->issuer->modified = 1;
+    RequireNotImplemented([&] { LookupWithIssuer(crl, empty->crl->issuer); });
+    crl->crl->issuer->modified = 0;
+    FreeCrlValue(empty);
+    FreeCrlValue(emptyCrl);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
 }
 
 int main() {
-    std::array<void*, 7> api{
+    std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch),
         reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Callocate_nid_no_patch),
@@ -831,11 +1416,21 @@ int main() {
     TestExtensionArgumentErrors();
     TestGet0ByCert();
     TestRemoveFromCrl();
+    TestCertificateIssuerEntries();
     TestTrailingData();
     TestMalformed();
+    TestTimes();
     TestArgumentErrors();
     TestReferenceCountedFree();
+    TestReusedOutput();
     TestAllocationFailures();
+    TestNonMinimalLengths();
+    TestRejectedNameValues();
+    TestNameValueTypes();
+    TestRejectedNameStructures();
+    TestNameStructures();
+    TestLongFormTags();
+    TestGet0ByCertCanonicalIssuer();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509_CRL tests passed");
 }

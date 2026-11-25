@@ -709,7 +709,7 @@ static void CheckLoadAverageSysctl() {
     Require(sysctl_nid_postfix(mib, 2, &load, &length, &load, sizeof(load)) == -1 && *__error_nid_postfix() == 1);
 }
 static void CheckLeafWithTrailingComponent() {
-    const int leaves[][2] = {{6, 3}, {6, 2}, {6, 5}, {6, 7}, {1, 21}, {1, 24}, {1, 37}, {1, 50}, {2, 2}};
+    const int leaves[][2] = {{6, 3}, {6, 2}, {6, 5}, {6, 7}, {1, 21}, {1, 24}, {1, 37}, {1, 46}, {1, 50}, {2, 2}};
     for (const auto& leaf : leaves) {
         const int mib[] = {leaf[0], leaf[1], 0};
         char buffer[8] = {};
@@ -881,8 +881,12 @@ static void CheckPseudoRandomSysctl() {
     Require(sysctlbyname_nid_postfix("kern.rng_pseudo", first, nullptr, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && untouchedFrom(0));
     *__error_nid_postfix() = 13;
     Require(sysctlbyname_nid_postfix("kern.rng_pseudo", nullptr, nullptr, nullptr, 0) == 0 && *__error_nid_postfix() == 13);
+    std::memset(first, 0xaa, sizeof(first));
     length = 64;
     Require(sysctlbyname_nid_postfix("kern.rng_pseudo", first, &length, first, 64) == -1 && *__error_nid_postfix() == 1);
+    Require(length == 64 && untouchedFrom(0));
+    auto* const unreadable = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+    Require(sysctlbyname_nid_postfix("kern.rng_pseudo", first, unreadable, first, 64) == -1 && *__error_nid_postfix() == 14);
 }
 static void CheckOvercommitSysctl() {
     *__error_nid_postfix() = 13;
@@ -921,6 +925,32 @@ static void CheckSdkVersionSysctl() {
     Require(length == 2 && bytes[2] == 0xaa && bytes[3] == 0xaa);
     length = sizeof(version);
     Require(sysctlbyname_nid_postfix("kern.sdk_version", &version, &length, &version, sizeof(version)) == -1 && *__error_nid_postfix() == 1);
+    int mib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t size = 3;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.sdk_version", mib, &size) == 0 && size == 2 && *__error_nid_postfix() == 13);
+    Require(mib[0] == 1 && mib[1] == 46 && mib[2] == 0x5a5a5a5a);
+    int dotted[2] = {0, 0};
+    size = 2;
+    Require(sysctlnametomib_nid_postfix("kern.sdk_version.", dotted, &size) == 0 && size == 2 && dotted[0] == 1 && dotted[1] == 46);
+    length = 0;
+    Require(sysctl_nid_postfix(mib, 2, nullptr, &length, nullptr, 0) == 0 && length == sizeof(std::uint32_t));
+    version = 0;
+    length = sizeof(version);
+    Require(sysctl_nid_postfix(mib, 2, &version, &length, nullptr, 0) == 0 && version == 0x01000000 && length == sizeof(std::uint32_t));
+    Require(*__error_nid_postfix() == 13);
+    std::memset(bytes, 0xaa, sizeof(bytes));
+    length = 2;
+    Require(sysctl_nid_postfix(mib, 2, bytes, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
+    Require(length == 2 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xaa && bytes[3] == 0xaa);
+    Require(sysctl_nid_postfix(mib, 2, &version, nullptr, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 13;
+    Require(sysctl_nid_postfix(mib, 2, nullptr, nullptr, nullptr, 0) == 0 && *__error_nid_postfix() == 13);
+    length = sizeof(version);
+    Require(sysctl_nid_postfix(mib, 2, &version, &length, &version, sizeof(version)) == -1 && *__error_nid_postfix() == 1);
+    auto* const unreadable = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+    Require(sysctl_nid_postfix(mib, 2, &version, unreadable, &version, sizeof(version)) == -1 && *__error_nid_postfix() == 14);
+    Require(sysctlbyname_nid_postfix("kern.sdk_version", &version, unreadable, &version, sizeof(version)) == -1 && *__error_nid_postfix() == 14);
 }
 static void CheckArandomSysctl() {
     const int mib[] = {1, 37};
@@ -1073,16 +1103,22 @@ static void CheckPseudoRandomMibSysctl() {
     std::memset(shortBuffer, 0xaa, sizeof(shortBuffer));
     Require(sysctl_nid_postfix(mib, 2, shortBuffer, nullptr, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
     for (unsigned char byte : shortBuffer) Require(byte == 0xaa);
-    int value = 0;
+    int value = 0x5a5a5a5a;
     length = sizeof(value);
-    bool threw = false;
-    try {
-        sysctl_nid_postfix(mib, 2, &value, &length, &value, sizeof(value));
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    *__error_nid_postfix() = 13;
+    Require(sysctl_nid_postfix(mib, 2, &value, &length, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+    *__error_nid_postfix() = 13;
+    Require(sysctl_nid_postfix(mib, 2, nullptr, nullptr, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
+    *__error_nid_postfix() = 13;
+    Require(sysctl_nid_postfix(mib, 2, &value, &length, &value, 0) == -1 && *__error_nid_postfix() == 1);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+    const void* const unreadableNew = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    *__error_nid_postfix() = 13;
+    Require(sysctl_nid_postfix(mib, 2, &value, &length, unreadableNew, sizeof(value)) == -1 && *__error_nid_postfix() == 1);
+    Require(value == 0x5a5a5a5a && length == sizeof(value));
+    auto* const unreadable = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+    Require(sysctl_nid_postfix(mib, 2, &value, unreadable, &value, sizeof(value)) == -1 && *__error_nid_postfix() == 14);
 }
 static void CheckNameToMib() {
     struct Expected {

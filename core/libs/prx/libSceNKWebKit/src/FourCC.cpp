@@ -47,22 +47,44 @@
  */
 
 #include "prx/libSceNKWebKit/include/FourCCExports.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstring>
 #include <stdexcept>
+#include <string>
 
 using NKWebKit::WebCoreAbi::OptionalFourCC;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
+
+namespace {
+
+void RequireCopied(bool copied, int savedErrno, const char* what) {
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string("FourCC::fromString: unreadable ") + what);
+}
+
+}
 
 extern "C" OptionalFourCC* APS5_VABI _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE(OptionalFourCC* result, const String* string) {
     if (!result || !string) throw std::invalid_argument("null FourCC result or String reference");
-    const auto* impl = string->impl;
-    if (impl && impl->length && !impl->data) throw std::invalid_argument("null WTF::StringImpl characters");
-    if (!impl || impl->length != 4) {
+    const int savedErrno = errno;
+    const StringImpl* guestImpl = nullptr;
+    RequireCopied(GuestCopyIn_nid_no_patch(&guestImpl, &string->impl, sizeof(guestImpl)), savedErrno, "string");
+    StringImpl impl{};
+    if (guestImpl) RequireCopied(GuestCopyIn_nid_no_patch(&impl, guestImpl, sizeof(impl)), savedErrno, "string implementation");
+    if (guestImpl && impl.length && !impl.data) throw std::invalid_argument("null WTF::StringImpl characters");
+    if (!guestImpl || impl.length != 4) {
         result->engaged = false;
         return result;
     }
+    const bool is8Bit = impl.hashAndFlags & 4;
+    unsigned char characters[4 * sizeof(char16_t)];
+    RequireCopied(GuestCopyIn_nid_no_patch(characters, impl.data, is8Bit ? 4 : sizeof(characters)), savedErrno, "string characters");
     std::uint32_t value = 0;
     for (unsigned i = 0; i < 4; ++i) {
-        const char16_t ch = impl->hashAndFlags & 4 ? static_cast<const unsigned char*>(impl->data)[i] : static_cast<const char16_t*>(impl->data)[i];
+        char16_t ch = characters[i];
+        if (!is8Bit) std::memcpy(&ch, characters + i * sizeof(char16_t), sizeof(ch));
         const auto byte = ch && (ch < 0x20 || ch > 0x7f) ? '?' : ch;
         value = (value << 8) | byte;
     }
