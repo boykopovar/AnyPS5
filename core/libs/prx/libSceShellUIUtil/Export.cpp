@@ -1,6 +1,5 @@
 #include "prx/libSceShellUIUtil/include/Api.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -25,18 +24,14 @@ std::atomic<std::uint32_t> g_taskTokens{0};
 
 bool IsValidGuestWrite(void* pointer, std::size_t size) {
     if (pointer == nullptr) return false;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
-    errno = savedErrno;
     return writable;
 }
 
 bool StringTooLong(const char* text) {
     if (text == nullptr) return true;
     std::string copy;
-    const int savedErrno = errno;
     const int error = CopyGuestString_nid_no_patch(text, StringLimit, copy);
-    errno = savedErrno;
     return error != 0 || copy.length() > StringLimit - 1;
 }
 
@@ -85,9 +80,7 @@ int APS5_VABI sceShellUIUtilLaunchByUri(const char* uri, const ShellUIUtilLaunch
         return ErrorInvalidArgument;
     }
     std::uint32_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, parameter, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != LaunchParameterSize) {
         return ErrorInvalidArgument;
     }
@@ -100,9 +93,7 @@ int APS5_VABI sceShellUIUtilLaunchTask(std::int32_t taskToken, const char* uri, 
         return ErrorInvalidArgument;
     }
     const std::vector<char> zeros(capacity, 0);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(output, zeros.data(), capacity);
-    errno = savedErrno;
     if (!copied) {
         return ErrorInvalidArgument;
     }
