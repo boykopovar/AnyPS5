@@ -5,7 +5,6 @@
 #include <hb-ot.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <type_traits>
 #include <vector>
@@ -17,23 +16,17 @@ static_assert(std::is_same_v<hb_bool_t, int>);
 namespace {
 
 bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return ok;
 }
 
 bool WritableGuest(void* destination, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     return ok;
 }
 
 bool WriteGuest(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return ok;
 }
 
