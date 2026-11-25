@@ -516,8 +516,10 @@ if(BUILD_TESTING)
     target_include_directories(guest_libc_internal_atomic_wait_deadline_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libc_internal_atomic_wait_deadline_tests PRIVATE libSceLibcInternal libc libkernel)
     configure_windows_unwind(guest_libc_internal_atomic_wait_deadline_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/atomic-wait-deadline)
     add_test(NAME guest_libc_internal_atomic_wait_deadline COMMAND guest_libc_internal_atomic_wait_deadline_tests)
-    set_tests_properties(guest_libc_internal_atomic_wait_deadline PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_libc_internal_atomic_wait_deadline PROPERTIES TIMEOUT 20
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/atomic-wait-deadline)
     if(WIN32)
         set_tests_properties(guest_libc_internal_atomic_wait_deadline PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")

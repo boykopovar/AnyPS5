@@ -589,8 +589,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 }
 
 void PadInput::dispatchPadChords(DisplayWindow& window) {
-    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const auto requests = keyboardMouse.PadChordRequests(slots[0].state.buttons);
+    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const bool focused = window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle();
     applyRequests(requests, focused, window);
 }

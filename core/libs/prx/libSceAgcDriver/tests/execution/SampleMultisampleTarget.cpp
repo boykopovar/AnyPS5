@@ -2091,7 +2091,7 @@ void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t
     using namespace AgcDriver::Graphics;
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
     const std::uint32_t format = samples == 2u ? 159u : samples == 4u ? 161u : 166u;
-    const std::uint32_t expandedIndices = samples == 2u ? 0x10u : samples == 4u ? 0x3210u : 0x76543210u;
+    const std::uint32_t expandedIndices = samples == 2u ? 0x10u : samples == 4u ? 0x32103210u : 0x76543210u;
     Block colorMemory(4u * BlockBytes, true);
     Block dcc(BlockBytes, true);
     Block cmask(BlockBytes, true);
