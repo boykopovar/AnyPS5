@@ -351,6 +351,13 @@ bool legacyVersionTests() {
     create.data[0x2CA] = 1;
     ok = check(sceNpPartyCreate(1, &create) == kInvalidArgument, "legacy create accepted nonzero reserved byte at 0x2CA") && ok;
     create = {};
+    std::uint8_t legacyEntries[2][0x14] = {};
+    legacyEntries[0][0] = 1;
+    legacyEntries[1][0] = 2;
+    SetField(create, 0x2C0, reinterpret_cast<std::uint64_t>(legacyEntries));
+    create.data[0x2C8] = 2;
+    ok = check(sceNpPartyCreate(1, &create) == kNotInParty, "legacy create with nonzero count and null data was rejected") && ok;
+    create = {};
     SetField(create, 0x2D0, static_cast<std::uint64_t>(0x10));
     SetField(create, 0x2D8, static_cast<std::uint16_t>(8));
     errno = 71;
