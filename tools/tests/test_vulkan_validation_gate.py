@@ -952,6 +952,13 @@ class IdentityTests(unittest.TestCase):
             root, head = self.make_repo(directory)
             self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
 
+    def test_identity_accepts_a_root_that_ends_in_whitespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source "
+            source.mkdir()
+            root, head = self.make_repo(source)
+            self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
+
 
 
 class CacheTests(unittest.TestCase):
