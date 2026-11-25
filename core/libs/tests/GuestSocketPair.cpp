@@ -444,14 +444,17 @@ static bool WaitFor(const std::atomic<int>& count, int expected) {
     return count >= expected;
 }
 
-static void CheckHeldSequencedEndClose(bool replace) {
+static bool TryHeldSequencedEndClose(bool replace) {
     constexpr std::uint32_t RecordSize = 1000;
     constexpr int Again = 35;
+    constexpr int BadDescriptor = 9;
     constexpr int BrokenPipe = 32;
     static char record[RecordSize];
     std::memset(record, 'h', sizeof(record));
     int pair[2] = {-1, -1};
+    int spare[2] = {-1, -1};
     Require(socketpair_nid_postfix(Unix, SequencedPacket | NonBlocking, 0, pair) == 0);
+    if (replace) Require(socketpair_nid_postfix(Unix, SequencedPacket | NonBlocking, 0, spare) == 0);
     for (const int end : pair) {
         while (send_nid_postfix(end, record, RecordSize, NoSignal) == RecordSize) {}
         Require(*__error_nid_postfix() == Again && fcntl_nid_postfix(end, 4, 0) == 0);
@@ -459,6 +462,8 @@ static void CheckHeldSequencedEndClose(bool replace) {
     std::atomic<int> started{0};
     std::atomic<int> finished{0};
     std::atomic<int> holderFinished{0};
+    std::atomic<bool> firstClosed{false};
+    std::atomic<bool> holderAfterFirstClose{false};
     std::array<std::int64_t, 3> results{-2, -2, -2};
     std::array<int, 3> errors{0, 0, 0};
     std::array<std::thread, 3> senders;
@@ -468,25 +473,38 @@ static void CheckHeldSequencedEndClose(bool replace) {
             ++started;
             results[index] = send_nid_postfix(end, record, RecordSize, NoSignal);
             errors[index] = *__error_nid_postfix();
+            if (index == 2) holderAfterFirstClose = firstClosed.load();
             ++(index == 2 ? holderFinished : finished);
         });
     }
     Require(WaitFor(started, 3));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     Require(finished == 0 && holderFinished == 0);
-    if (replace) Require(dup2_nid_postfix(pair[0], pair[1]) == pair[1]);
+    if (replace) Require(dup2_nid_postfix(spare[0], pair[1]) == pair[1]);
     else Require(close_nid_postfix(pair[1]) == 0);
     Require(WaitFor(finished, 2));
     for (std::size_t index = 0; index < 2; ++index) {
         senders[index].join();
         Require(results[index] == -1 && errors[index] == BrokenPipe);
     }
-    Require(holderFinished == 0);
-    if (replace) Require(close_nid_postfix(pair[1]) == 0);
+    if (replace) Require(close_nid_postfix(pair[1]) == 0 && close_nid_postfix(spare[1]) == 0);
+    firstClosed = true;
     Require(close_nid_postfix(pair[0]) == 0);
     Require(WaitFor(holderFinished, 1));
     senders[2].join();
-    Require(results[2] == -1 && errors[2] == BrokenPipe);
+    if (replace) Require(close_nid_postfix(spare[0]) == 0);
+    if (results[2] == -1 && errors[2] == BrokenPipe) {
+        Require(holderAfterFirstClose);
+        return true;
+    }
+    Require(replace ? results[2] == RecordSize || (results[2] == -1 && errors[2] == BadDescriptor) : results[2] == -1 && errors[2] == BadDescriptor);
+    return false;
+}
+
+static void CheckHeldSequencedEndClose(bool replace) {
+    for (int attempt = 0; attempt < 20; ++attempt)
+        if (TryHeldSequencedEndClose(replace)) return;
+    Require(false);
 }
 #endif
 
