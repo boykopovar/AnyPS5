@@ -32,9 +32,8 @@ HsOffchipParam hsOffchipParam;
 extern "C" {
 
 int APS5_VABI sceAgcDriverSetHsOffchipParam(uint16_t granularity, uint16_t buffering) {
- if (granularity > 3 || (buffering > 0x1ff && buffering != 0x3ff)) throw std::runtime_error("sceAgcDriverSetHsOffchipParam: what the console keeps for a granularity above 3 or a buffering above 511 other than 1023 is not measured");
  std::lock_guard lock(hsOffchipParamMutex);
- hsOffchipParam = {granularity, static_cast<uint16_t>(buffering & 0x1ff)};
+ hsOffchipParam = {static_cast<uint16_t>(granularity & 0x3), static_cast<uint16_t>(buffering & 0x1ff)};
  return 0;
 }
 

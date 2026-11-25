@@ -49,6 +49,12 @@ void CheckHsOffchipParam() {
     Require(sceAgcDriverSetHsOffchipParam(1, 0x3ff) == 0);
     RequireOffchip(1, 0x1ff);
     std::thread([] { RequireOffchip(1, 0x1ff); }).join();
+    const uint16_t masked[][4] = {{4, 100, 0, 100}, {5, 100, 1, 100}, {7, 100, 3, 100}, {0xffff, 100, 3, 100},
+        {1, 512, 1, 0}, {1, 600, 1, 88}, {1, 1000, 1, 488}, {1, 1024, 1, 0}, {1, 1500, 1, 476}, {1, 2047, 1, 511}, {1, 0xffff, 1, 511}};
+    for (const auto& value : masked) {
+        Require(sceAgcDriverSetHsOffchipParam(value[0], value[1]) == 0);
+        RequireOffchip(value[2], value[3]);
+    }
     Require(sceAgcDriverSetHsOffchipParam(0, 0) == 0);
     RequireOffchip(0, 0);
     OffchipOutput output;
