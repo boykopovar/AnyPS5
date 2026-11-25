@@ -11,6 +11,7 @@ from test_guest_deferred_dependencies import page_aligned
 from test_guest_export_lookup import guest_symbols
 from test_guest_intel_trampolines import main_fixture
 from test_guest_symbol_names import dynamic_tags, file_offset, symbol_name
+from test_import_symbol_types import importing_executable
 from test_windows_import_modules import consumer, provider
 
 
@@ -59,20 +60,55 @@ def exports(image):
     return result
 
 
-def relink(relinker, case, modules):
+def convert(relinker, case, modules, image=None):
     (case / "sce_module").mkdir(parents=True)
-    for name, image in modules.items():
-        (case / "sce_module" / name).write_bytes(image)
-    image = main_fixture()
+    for name, module in modules.items():
+        (case / "sce_module" / name).write_bytes(module)
+    image = main_fixture() if image is None else image
     code = bytes.fromhex("b83c000000bf2a0000000f05")
     image[0x4000:0x4000 + len(code)] = code
     source = case / "input.elf"
     source.write_bytes(image)
     output = case / "output.elf"
     result = subprocess.run([str(relinker), "--skip-syscall-check", str(source), str(output)],
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+    return result, output
+
+
+def relink(relinker, case, modules, image=None):
+    result, output = convert(relinker, case, modules, image)
     assert result.returncode == 0, (result.stdout, result.stderr)
     return output
+
+
+def typed(image, info):
+    image = bytearray(image)
+    image[0x898 + 4] = info
+    return image
+
+
+def unreferenced(image):
+    image = bytearray(image)
+    struct.pack_into("<Q", image, 0x668, 0)
+    return image
+
+
+def check_unresolvable_imports(relinker, work):
+    for kind in (0, 1):
+        provider_image = at_address_zero(typed(provider(22), 0x10 | kind))
+        for importer, modules, executable in (
+                ("consumer.prx", {"consumer.prx": page_aligned(typed(consumer("provider.prx"), 0x10 | kind))}, None),
+                ("input.elf", {}, importing_executable([("shared#A#B", kind)]))):
+            case = work / f"unresolvable-{kind}-{importer}"
+            result, output = convert(relinker, case, {"provider.prx": provider_image, **modules}, executable)
+            assert result.returncode == 2, (kind, importer, result.returncode, result.stdout, result.stderr)
+            assert "Guest import shared in " in result.stderr and importer in result.stderr, result.stderr
+            assert "an export at address 0 in " in result.stderr and "that the Linux loader skips" in result.stderr and "provider.prx" in result.stderr, result.stderr
+            assert not output.exists(), (kind, importer)
+        relink(relinker, work / f"unreferenced-{kind}", {
+            "provider.prx": provider_image,
+            "consumer.prx": page_aligned(unreferenced(typed(consumer("provider.prx"), 0x10 | kind))),
+        })
 
 
 def main():
@@ -101,6 +137,8 @@ def main():
         assert len(set(jumps)) == len(jumps), symbols
         assert symbols["internal"] == (0x12, 0) and symbols["hidden"] == (0x12, 0), symbols
         assert symbols["object#guest"] == (0x11, 0), symbols
+
+        check_unresolvable_imports(relinker, work)
 
         if runnable:
             libraries = work / "function" / "libs"
