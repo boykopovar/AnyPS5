@@ -397,6 +397,20 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("import descriptor table is not terminated within import directory", result.stderr)
             self.assertEqual(path.read_bytes(), image)
+
+    def test_pe_import_descriptor_terminator_is_all_zero(self):
+        for field, value in ((536, 1), (540, 1), (544, 0x1028)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                image = bytearray(self.pe())
+                struct.pack_into("<I", image, field, value)
+                original = bytes(image)
+                path = Path(directory) / "program"
+                path.write_bytes(original)
+                result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("nonzero fields in null import descriptor", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_exec_rejects_thunk_crossing_raw_tail_without_writing(self):
         image = bytearray(self.pe())
         section = 0x58 + 240

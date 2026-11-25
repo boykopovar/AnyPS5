@@ -329,6 +329,8 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     while (importDescOffset <= importDescEnd && sizeof(PeImportDescriptor) <= importDescEnd - importDescOffset) {
         const auto desc = Read<PeImportDescriptor>(pe, importDescOffset);
         if (desc.OriginalFirstThunk == 0u && desc.FirstThunk == 0u) {
+            if (desc.TimeDateStamp != 0u || desc.ForwarderChain != 0u || desc.Name != 0u)
+                throw std::runtime_error("nonzero fields in null import descriptor");
             foundNullImportDescriptor = true;
             break;
         }
