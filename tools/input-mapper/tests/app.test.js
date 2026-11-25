@@ -497,6 +497,23 @@ test('settings preserve imported spellings and keep edits across locale changes'
     assert.equal(copied, expected);
 });
 
+test('setting hints give the accepted range and built-in value in the interface language', async t => {
+    const app = await setup(t, 'input-setting-hints');
+    const hint = name => {
+        const row = app.get('input-setting-values').children.find(item => item.querySelector('span').textContent === name);
+        return row.children.find(child => child.className === 'hint');
+    };
+    assert.equal(hint('MouseCurve').textContent, '\u20660.2–5\u2069 · Built-in: 1');
+    assert.equal(inputSetting(app, 'MouseCurve').getAttribute('aria-describedby'), `${hint('MouseCurve').id} input-settings-help`);
+    assert.equal(hint('MouseStickTarget').textContent, 'Built-in: Right');
+    assert.equal(hint('ToggleActions'), undefined);
+    assert.equal(inputSetting(app, 'ToggleActions').getAttribute('aria-describedby'), 'input-settings-help');
+    const select = app.get('language-control').querySelector('select');
+    select.value = 'fr';
+    select.dispatchEvent(new Event('change'));
+    assert.equal(hint('LeftStickDeadzone').textContent, '\u20660–90\u2069 · Par défaut : 0');
+});
+
 test('reset ignores restored settings order but prompts for an invalid draft', async t => {
     const app = await setup(t, 'restored-input-settings');
     const original = 'LeftStickDeadzone = 12\nMouseSensitivity = 2\n';

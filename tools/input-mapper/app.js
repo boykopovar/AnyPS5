@@ -306,15 +306,18 @@ function renderControllerRemaps() {
 
 function renderInputSettings() {
     settingControls.clear();
-    byId('input-setting-values').replaceChildren(...settingDefinitions.map(({name, kind}) => {
+    byId('input-setting-values').replaceChildren(...settingDefinitions.map(({name, kind, minimum, maximum, builtin}) => {
         const choices = kind === 'stickTarget' ? mouseStickTargets : undefined;
         const row = element('label');
         const label = element('span', name);
         label.dir = 'ltr';
+        const hint = element('span', [minimum === undefined ? '' : `\u2066${minimum}–${maximum}\u2069`, builtin === undefined ? '' : t('builtin', {inputs: builtin})].filter(Boolean).join(' · '));
+        hint.className = 'hint';
+        hint.id = `setting-${name}-hint`;
         const control = element(choices ? 'select' : 'input');
         const value = settingValue(name);
         control.dir = 'ltr';
-        control.setAttribute('aria-describedby', 'input-settings-help');
+        control.setAttribute('aria-describedby', hint.textContent ? `${hint.id} input-settings-help` : 'input-settings-help');
         control.setAttribute('aria-errormessage', 'validation');
         if (choices) {
             for (const choice of ['', ...choices]) {
@@ -342,6 +345,7 @@ function renderInputSettings() {
         });
         settingControls.set(name, control);
         row.append(label, control);
+        if (hint.textContent) row.append(hint);
         return row;
     }));
 }
