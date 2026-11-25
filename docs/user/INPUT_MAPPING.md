@@ -248,7 +248,7 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](https://boykopovar.github.io/AnyPS5/input-mapper/) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs. The hosted mapper follows `main`, so settings added since a release require a newer build.
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
@@ -276,7 +276,7 @@ The translation button selects one of 22 interface and FAQ languages. First visi
 
 Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `74be4c2836da0940f0144d0d97852606f9ab11e9`, the commit `3rdparty/SDL2` is pinned to. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
-For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
+For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory.
 
 ## Checking a timeline without a controller
 
