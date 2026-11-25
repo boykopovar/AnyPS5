@@ -7,7 +7,7 @@
 extern "C" {
 
 int APS5_VABI __Ux86_64_setcontext_nid_no_patch(void);
-int APS5_VABI __elf_phdr_match_addr_nid_no_patch(dl_phdr_info* phdrInfo, void* addr);
+int APS5_VABI __elf_phdr_match_addr_nid_no_patch(const ModuleInfoEx* module, void* addr);
 int* APS5_VABI __error_nid_no_patch(void);
 const char* APS5_VABI __inet_ntop_nid_no_patch(int family, const void* source, char* destination, std::uint32_t capacity);
 int APS5_VABI __inet_pton_nid_no_patch(int family, const char* text, void* destination);

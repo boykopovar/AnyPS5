@@ -2058,16 +2058,16 @@ int APS5_VABI pthread_attr_setstackaddr_nid_no_patch(PthreadAttr* attr, void* st
     return pthread_attr_setstackaddr_nid_postfix(attr, stack_addr);
 }
 
-int APS5_VABI pthread_get_specificarray_np_nid_no_patch(void) {
-    return pthread_get_specificarray_np_nid_postfix();
+int APS5_VABI pthread_get_specificarray_np_nid_no_patch(PthreadKey key, int total, void** array) {
+    return pthread_get_specificarray_np_nid_postfix(key, total, array);
 }
 
 int APS5_VABI pthread_get_user_context_np_nid_no_patch(void) {
     return pthread_get_user_context_np_nid_postfix();
 }
 
-int APS5_VABI pthread_getstack_np_nid_no_patch(void) {
-    return pthread_getstack_np_nid_postfix();
+int APS5_VABI pthread_getstack_np_nid_no_patch(void** stackAddress, std::size_t* stackSize) {
+    return pthread_getstack_np_nid_postfix(stackAddress, stackSize);
 }
 
 int APS5_VABI pthread_main_np_nid_no_patch(void) {
@@ -2236,16 +2236,16 @@ int APS5_VABI sceKernelAllocateDirectMemoryForMiniApp_nid_no_patch(void) {
     return sceKernelAllocateDirectMemoryForMiniApp();
 }
 
-int APS5_VABI sceKernelAllocateToolMemory_nid_no_patch(void) {
-    return sceKernelAllocateToolMemory();
+int APS5_VABI sceKernelAllocateToolMemory_nid_no_patch(std::int32_t partition, std::int64_t searchStart, std::int64_t searchEnd, size_t len, size_t alignment, int memoryType, std::int64_t* physAddrOut) {
+    return sceKernelAllocateToolMemory(partition, searchStart, searchEnd, len, alignment, memoryType, physAddrOut);
 }
 
 int APS5_VABI sceKernelAllocateTraceDirectMemory_nid_no_patch(void) {
     return sceKernelAllocateTraceDirectMemory();
 }
 
-int APS5_VABI sceKernelAvailableToolMemorySize_nid_no_patch(void) {
-    return sceKernelAvailableToolMemorySize();
+int APS5_VABI sceKernelAvailableToolMemorySize_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut) {
+    return sceKernelAvailableToolMemorySize(searchStart, searchEnd, alignment, physAddrOut, sizeOut);
 }
 
 int APS5_VABI sceKernelBacktraceSelf_nid_no_patch(void) {
@@ -2372,8 +2372,8 @@ int APS5_VABI sceKernelExtendMaximumModuleNumber_nid_no_patch(void) {
     return sceKernelExtendMaximumModuleNumber();
 }
 
-int APS5_VABI sceKernelFlock_nid_no_patch(void) {
-    return sceKernelFlock();
+int APS5_VABI sceKernelFlock_nid_no_patch(int d, int operation) {
+    return sceKernelFlock(d, operation);
 }
 
 int APS5_VABI sceKernelGetAmprCounter_nid_no_patch(void) {
@@ -2516,8 +2516,8 @@ int APS5_VABI sceKernelGetGPO_nid_no_patch(void) {
     return sceKernelGetGPO();
 }
 
-int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(void) {
-    return sceKernelGetGenuineProsperoSystemSwVersion();
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(SceKernelProsperoSystemSwVersion* version) {
+    return sceKernelGetGenuineProsperoSystemSwVersion(version);
 }
 
 int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_no_patch(void) {
@@ -2672,8 +2672,8 @@ int APS5_VABI sceKernelGetThreadName_nid_no_patch(uint32_t id, char* name) {
     return sceKernelGetThreadName(id, name);
 }
 
-int APS5_VABI sceKernelGetToolMemoryRange_nid_no_patch(void) {
-    return sceKernelGetToolMemoryRange();
+int APS5_VABI sceKernelGetToolMemoryRange_nid_no_patch(std::int32_t partition, std::int64_t* start, std::int64_t* end) {
+    return sceKernelGetToolMemoryRange(partition, start, end);
 }
 
 int APS5_VABI sceKernelGetUniversalMode_nid_no_patch(void) {
@@ -3028,8 +3028,8 @@ int APS5_VABI sceKernelMapSanitizerShadowMemory_nid_no_patch(void) {
     return sceKernelMapSanitizerShadowMemory();
 }
 
-int APS5_VABI sceKernelMapToolMemory_nid_no_patch(void) {
-    return sceKernelMapToolMemory();
+int APS5_VABI sceKernelMapToolMemory_nid_no_patch(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment) {
+    return sceKernelMapToolMemory(addr, len, prot, flags, start, alignment);
 }
 
 int APS5_VABI sceKernelMapTraceMemory_nid_no_patch(void) {
@@ -3064,8 +3064,8 @@ int APS5_VABI sceKernelMsync_nid_no_patch(void* address, std::size_t length, int
     return sceKernelMsync(address, length, flags);
 }
 
-int APS5_VABI sceKernelNormalizePath_nid_no_patch(void) {
-    return sceKernelNormalizePath();
+int APS5_VABI sceKernelNormalizePath_nid_no_patch(const char* path, std::size_t pathSize, char* normalizedPath, std::size_t normalizedSize) {
+    return sceKernelNormalizePath(path, pathSize, normalizedPath, normalizedSize);
 }
 
 int APS5_VABI sceKernelNotifyAppStateChanged_nid_no_patch(void) {
@@ -3116,8 +3116,8 @@ int APS5_VABI sceKernelReboot_nid_no_patch(void) {
     return sceKernelReboot();
 }
 
-int APS5_VABI sceKernelReleaseToolMemory_nid_no_patch(void) {
-    return sceKernelReleaseToolMemory();
+int APS5_VABI sceKernelReleaseToolMemory_nid_no_patch(std::int64_t start, size_t len) {
+    return sceKernelReleaseToolMemory(start, len);
 }
 
 int APS5_VABI sceKernelReleaseTraceDirectMemory_nid_no_patch(void) {
