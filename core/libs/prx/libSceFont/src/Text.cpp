@@ -432,33 +432,44 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
     }
     const FontTextCharacter* begin = characters;
     const FontTextCharacter* end = characters + data->renderCount;
-    if (!startCharacter) startCharacter = characters;
-    if (startCharacter < begin || startCharacter >= end || (lastCharacter && (lastCharacter < begin || lastCharacter >= end))) {
+    const auto address = [](const FontTextCharacter* ptr) {
+        return reinterpret_cast<std::uintptr_t>(ptr);
+    };
+    const std::uintptr_t beginAddr = address(begin);
+    const std::uintptr_t endAddr = address(end);
+    const std::uintptr_t startAddr = startCharacter ? address(startCharacter) : beginAddr;
+    const std::uintptr_t lastAddr = address(lastCharacter);
+    if (startAddr < beginAddr || startAddr >= endAddr || ((startAddr - beginAddr) % sizeof(FontTextCharacter)) != 0) {
         return none();
     }
-    FontTextCharacter* probe = startCharacter;
-    if (startCharacter->clusterKind > 1) {
+    if (lastCharacter && (lastAddr < beginAddr || lastAddr >= endAddr || ((lastAddr - beginAddr) % sizeof(FontTextCharacter)) != 0)) {
+        return none();
+    }
+    FontTextCharacter* start = characters + (startAddr - beginAddr) / sizeof(FontTextCharacter);
+    FontTextCharacter* last = lastCharacter ? characters + (lastAddr - beginAddr) / sizeof(FontTextCharacter) : nullptr;
+    FontTextCharacter* probe = start;
+    if (start->clusterKind > 1) {
         do {
-            startCharacter = probe;
-            probe = startCharacter->prev;
+            start = probe;
+            probe = start->prev;
             if (!probe) break;
         } while (probe->synthetic < 0);
     }
-    auto startFlags = static_cast<std::uint32_t>(startCharacter->flags);
+    auto startFlags = static_cast<std::uint32_t>(start->flags);
     const std::uint32_t paragraphLevel = (data->writingForm >> 8) & 1u;
-    if ((startFlags & 0xFF00u) == 0x100u && startCharacter->prev) {
-        if (startCharacter->prev->clusterKind == 1) startCharacter = startCharacter->prev;
-        startFlags = static_cast<std::uint32_t>(startCharacter->flags);
+    if ((startFlags & 0xFF00u) == 0x100u && start->prev) {
+        if (start->prev->clusterKind == 1) start = start->prev;
+        startFlags = static_cast<std::uint32_t>(start->flags);
     }
     std::uint32_t startLevel = startFlags >> 24;
     std::uint32_t lastLevel = startLevel;
     std::uint32_t minLevel = startLevel;
-    std::uint32_t count = startCharacter->clusterIndex == 0 ? 1u : 0u;
-    probe = startCharacter;
-    while (probe != lastCharacter) {
+    std::uint32_t count = start->clusterIndex == 0 ? 1u : 0u;
+    probe = start;
+    while (probe != last) {
         probe = probe->next;
         if (!probe) {
-            if (lastCharacter) {
+            if (last) {
                 return none();
             }
             break;
@@ -470,29 +481,29 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
         }
     }
     if (startLevel != lastLevel || startLevel != minLevel) {
-        probe = startCharacter->prev;
+        probe = start->prev;
         while (probe) {
             if (probe->clusterIndex == 0) {
                 if (LevelOf(probe) <= minLevel) break;
                 ++count;
             }
-            startCharacter = probe;
+            start = probe;
             probe = probe->prev;
         }
-        if (lastCharacter) {
-            probe = lastCharacter->next;
+        if (last) {
+            probe = last->next;
             while (probe) {
                 if (probe->clusterIndex == 0) {
                     if (LevelOf(probe) <= minLevel) break;
                     ++count;
-                    lastCharacter = probe;
+                    last = probe;
                 }
                 probe = probe->next;
             }
         }
     }
-    if (lastCharacter) {
-        probe = lastCharacter->next;
+    if (last) {
+        probe = last->next;
         std::uint32_t clusterTrim = 0;
         while (probe) {
             std::uint32_t nextTrim = clusterTrim;
@@ -503,9 +514,9 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
                 if (probe->synthetic < 1) {
                     if (probe->clusterKind == 1) break;
                     nextTrim = clusterTrim + 1;
-                    nextLast = lastCharacter;
+                    nextLast = last;
                 }
-                lastCharacter = nextLast;
+                last = nextLast;
                 ++count;
             }
             probe = probe->next;
@@ -513,17 +524,17 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
             clusterTrim = nextTrim;
         }
     }
-    startLevel = LevelOf(startCharacter);
+    startLevel = LevelOf(start);
     if (startLevel != paragraphLevel) {
-        probe = startCharacter;
-        if (!lastCharacter || LevelOf(lastCharacter) != startLevel) {
+        probe = start;
+        if (!last || LevelOf(last) != startLevel) {
             do {
                 probe = probe->next;
                 if (!probe) {
-                    if (lastCharacter) startCharacter = nullptr;
+                    if (last) start = nullptr;
                     break;
                 }
-                FontTextCharacter* best = startCharacter;
+                FontTextCharacter* best = start;
                 std::uint32_t bestLevel = startLevel;
                 if (probe->clusterIndex == 0) {
                     const std::uint32_t probeLevel = LevelOf(probe);
@@ -534,15 +545,15 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
                     }
                 }
                 startLevel = bestLevel;
-                startCharacter = best;
-            } while (probe != lastCharacter);
-        } else if ((LevelOf(startCharacter) & 1u) != paragraphLevel) {
-            startCharacter = lastCharacter;
+                start = best;
+            } while (probe != last);
+        } else if ((LevelOf(start) & 1u) != paragraphLevel) {
+            start = last;
         }
     }
-    if (!startCharacter) count = 0;
+    if (!start) count = 0;
     if (!GuestCopyOut_nid_no_patch(characterCount, &count, sizeof(count))) return nullptr;
-    return startCharacter;
+    return start;
 }
 
 int APS5_VABI sceFontCharacterGetBidiLevel(const FontTextCharacter* textCharacter, int* bidiLevel) {
@@ -562,23 +573,25 @@ int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* te
 }
 
 int APS5_VABI sceFontCharacterGetTextFontCode(const FontTextCharacter* textCharacter, FontHandle* pFontHandle, std::uint32_t* textCode) {
-    if (!textCharacter) {
+    FontTextCharacter character{};
+    if (!textCharacter || !Font::CopyInGuest(character, textCharacter)) {
         if (pFontHandle) Font::CopyOutGuest(pFontHandle, FontHandle{});
         if (textCode) Font::CopyOutGuest(textCode, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (!pFontHandle || !textCode) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!Font::CopyOutGuest(pFontHandle, textCharacter->font) || !Font::CopyOutGuest(textCode, textCharacter->characterCode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!Font::CopyOutGuest(pFontHandle, character.font) || !Font::CopyOutGuest(textCode, character.characterCode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontCharacterGetTextOrder(const FontTextCharacter* textCharacter, void** pTextOrder) {
     if (!pTextOrder) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!textCharacter) {
+    FontTextCharacter character{};
+    if (!textCharacter || !Font::CopyInGuest(character, textCharacter)) {
         Font::CopyOutGuest(pTextOrder, static_cast<void*>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    if (!Font::CopyOutGuest(pTextOrder, textCharacter->textOrder)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!Font::CopyOutGuest(pTextOrder, character.textOrder)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
