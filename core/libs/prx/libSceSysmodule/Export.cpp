@@ -1,7 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -206,9 +205,7 @@ int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, 
     if (!fillModuleInfoForUnwind(addr, &localInfo)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
     if (!copied) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: invalid info pointer");
     }
@@ -233,9 +230,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
     }
     const auto existing = gHandles.find(id);
     if (existing != gHandles.end()) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(handle, &existing->second, sizeof(existing->second));
-        errno = savedErrno;
         if (!copied) {
             throw std::runtime_error("sceSysmoduleGetModuleHandleInternal: invalid handle pointer");
         }
@@ -246,9 +241,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
         throw std::runtime_error(std::string("sceSysmoduleGetModuleHandleInternal: failed to open ") + name);
     }
     const auto value = static_cast<KernelModule>(reinterpret_cast<std::intptr_t>(module));
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) {
         dlclose_nid_postfix(module);
         throw std::runtime_error("sceSysmoduleGetModuleHandleInternal: invalid handle pointer");
@@ -298,9 +291,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
     }
     if (ret) {
         const int val = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) {
             throw std::runtime_error("sceSysmoduleLoadModuleInternalWithArg: invalid ret pointer");
         }
@@ -378,9 +369,7 @@ int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc
     }
     if (ret) {
         const int val = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(ret, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) {
             throw std::runtime_error("sceSysmoduleUnloadModuleInternalWithArg: invalid ret pointer");
         }
