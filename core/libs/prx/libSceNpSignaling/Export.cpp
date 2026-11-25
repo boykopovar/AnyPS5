@@ -1,7 +1,6 @@
 #include "prx/libSceNpSignaling/include/InventoryExports.hpp"
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "prx/libSceNpSignaling/include/SignalingState.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -106,30 +105,24 @@ int APS5_VABI sceNpSignalingCreateContext(const void* npId, void* callback, void
     std::lock_guard lock(signalingMutex);
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!npId || !outContextId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    const int savedErrno = errno;
     SignalingNpId owner{};
     if (!GuestCopyIn_nid_no_patch(&owner, npId, sizeof(owner))) {
-        errno = savedErrno;
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
     if (!ValidNpId(owner)) {
-        errno = savedErrno;
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
     const int lastContextIdBeforeCreate = lastContextId;
     const int ctxId = AllocateContextId();
     if (ctxId < 0) {
-        errno = savedErrno;
         return SCE_NP_SIGNALING_ERROR_CTXID_NOT_AVAILABLE;
     }
     contexts[ctxId] = Context{owner};
     if (!GuestCopyOut_nid_no_patch(outContextId, &ctxId, sizeof(ctxId))) {
         contexts.erase(ctxId);
         lastContextId = lastContextIdBeforeCreate;
-        errno = savedErrno;
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -295,13 +288,10 @@ int APS5_VABI sceNpSignalingGetContextOption(int ctxId, int optionId, int* outOp
     const Context* context = FindContext(ctxId);
     if (!context) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
     if (optionId != CONTEXT_OPTION_FLAG) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    const int savedErrno = errno;
     const int value = (context->flags & CONTEXT_FLAG_BIT) != 0 ? 1 : 0;
     if (!GuestCopyOut_nid_no_patch(outOptionValue, &value, sizeof(value))) {
-        errno = savedErrno;
         return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
-    errno = savedErrno;
     return 0;
 }
 
