@@ -60,11 +60,53 @@ void ProtectedReports() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(direct), Page) == 0, "unmap of the direct mapping failed");
 }
 
+void NullOutputs() {
+    void* mapped = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapped, Page, 0x3, 0) == 0 && mapped != nullptr, "read-write flexible map failed");
+    void* const startMark = reinterpret_cast<void*>(0x1111);
+    void* const endMark = reinterpret_cast<void*>(0x2222);
+    constexpr int ProtectionMark = 0xffff;
+
+    void* start = startMark;
+    void* end = endMark;
+    int protection = ProtectionMark;
+    Require(sceKernelQueryMemoryProtection(mapped, &start, &end, &protection) == 0, "query with every output failed");
+    Require(start != startMark && end != endMark && protection == 0x3, "query with every output did not set them");
+    Require(reinterpret_cast<std::uintptr_t>(start) <= reinterpret_cast<std::uintptr_t>(mapped) && reinterpret_cast<std::uintptr_t>(mapped) < reinterpret_cast<std::uintptr_t>(end), "reported range does not contain the address");
+
+    start = startMark;
+    end = endMark;
+    protection = ProtectionMark;
+    Require(sceKernelQueryMemoryProtection(mapped, nullptr, &end, &protection) == 0, "query with a NULL start failed");
+    Require(start == startMark && end != endMark && protection == 0x3, "query with a NULL start did not set the other outputs");
+
+    start = startMark;
+    end = endMark;
+    protection = ProtectionMark;
+    Require(sceKernelQueryMemoryProtection(mapped, &start, nullptr, &protection) == 0, "query with a NULL end failed");
+    Require(start != startMark && end == endMark && protection == 0x3, "query with a NULL end did not set the other outputs");
+
+    start = startMark;
+    end = endMark;
+    protection = ProtectionMark;
+    Require(sceKernelQueryMemoryProtection(mapped, &start, &end, nullptr) == 0, "query with a NULL protection failed");
+    Require(start != startMark && end != endMark && protection == ProtectionMark, "query with a NULL protection did not set the other outputs");
+
+    start = startMark;
+    end = endMark;
+    protection = ProtectionMark;
+    Require(sceKernelQueryMemoryProtection(mapped, nullptr, nullptr, nullptr) == 0, "query with every output NULL failed");
+    Require(start == startMark && end == endMark && protection == ProtectionMark, "query with every output NULL changed a local value");
+
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), Page) == 0, "unmap of the flexible mapping failed");
+}
+
 }
 
 int main() {
     try {
         ProtectedReports();
+        NullOutputs();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "unexpected exception: %s\n", error.what());
         return 1;

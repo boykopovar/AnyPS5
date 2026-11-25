@@ -31,6 +31,10 @@ std::optional<StreamCopy> StreamCopyRange(const std::vector<std::uint32_t>& user
 bool MatchesIndexedCopyKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
 bool MatchesTableCopyKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
 std::optional<StreamCopy> TableCopyRange(const std::array<std::uint32_t, 8>& table, std::uint32_t groups);
+inline constexpr std::array<std::uint32_t, 11> WideTableCopyKernel{0xd7460004u, 0x04010c02u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xe00c2000u, 0x80010004u, 0xbf8c3f70u, 0xe01c2000u, 0x80020004u, 0xbf810000u};
+inline constexpr std::uint32_t WideTableCopyFormat = 0x0004bfacu;
+bool MatchesWideTableCopyKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
+std::optional<StreamCopy> WideTableCopyRange(const std::array<std::uint32_t, 8>& table, std::uint32_t groups);
 std::optional<StreamCopy> IndexedCopyRange(const std::vector<std::uint32_t>& userData, std::uint32_t groups, std::uint32_t count, std::uint32_t sourceOffset, std::uint32_t destinationOffset);
 
 }

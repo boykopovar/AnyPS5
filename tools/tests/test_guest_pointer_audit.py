@@ -35,6 +35,20 @@ class AccessTests(unittest.TestCase):
             ("sceExampleRead", "attr", ["dereference"]),
         ])
 
+    def test_array_parameters_are_pointer_parameters(self):
+        source = (
+            "int APS5_VABI sceExampleValues(const int values[]) { return values[0]; }\n"
+            "int APS5_VABI sceExampleTable(const Info* const table[], int count) { return table[0]->size + count; }\n"
+            "int APS5_VABI sceExampleSized(struct waitfd fds[4]) { fds[0].fd = 1; return 0; }\n"
+            "int APS5_VABI sceExampleCopied(int values[]) { int first = 0;\n"
+            "  if (!GuestCopyIn_nid_no_patch(&first, values, sizeof(first))) return 14; return first; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleValues", "values", ["index"]),
+            ("sceExampleTable", "table", ["index"]),
+            ("sceExampleSized", "fds", ["index"]),
+        ])
+
     def test_accesses_through_a_cast_are_reported(self):
         source = (
             "void APS5_VABI sceExampleInit(void* self) { *static_cast<std::uint8_t*>(self) = 0; }\n"

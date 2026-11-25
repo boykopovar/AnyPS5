@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -146,6 +147,35 @@ class ProgressSnapshotTests(unittest.TestCase):
             snapshot = self.snapshot()
             del snapshot[section]["percent"]
             self.assert_rejected(snapshot, section + ".percent")
+
+    def test_snapshot_rejects_inconsistent_counts_and_symbol_sets(self):
+        counts = (
+            ({"done": True}, ".done must be a non-negative integer"),
+            ({"done": "1"}, ".done must be a non-negative integer"),
+            ({"total": -1}, ".total must be a non-negative integer"),
+            ({"total": 1.5}, ".total must be a non-negative integer"),
+            ({"done": 2, "total": 1}, ".done must not exceed total"),
+        )
+        symbols = (
+            ({"done_names": ["Ready", "Ready"]}, ".done_names contains duplicate symbols"),
+            ({"todo_names": ["Pending", "Pending"]}, ".todo_names contains duplicate symbols"),
+            ({"inert_names": ["Stub", "Stub"]}, ".inert_names contains duplicate symbols"),
+            ({"done_names": ["Flip"], "todo_names": ["Flip"]}, "lists symbols as both done and todo"),
+            ({"done_names": ["Ready"], "inert_names": ["Stub"]}, ".inert_names must be a subset of done_names"),
+        )
+        for section in ("libraries", "shaders"):
+            for fields, diagnostic in counts:
+                with self.subTest(section=section, counts=fields):
+                    snapshot = self.snapshot()
+                    snapshot[section].update(fields)
+                    with self.assertRaisesRegex(ValueError, re.escape(section + diagnostic)):
+                        progress.validate_snapshot(snapshot)
+            for fields, diagnostic in symbols:
+                with self.subTest(section=section, symbols=fields):
+                    snapshot = self.snapshot()
+                    snapshot[section]["groups"] = [{"name": "Group", **fields}]
+                    with self.assertRaisesRegex(ValueError, re.escape(diagnostic)):
+                        progress.validate_snapshot(snapshot)
 
     def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
         base, head = self.snapshot(), self.snapshot()
@@ -1241,6 +1271,20 @@ class BodyEndTests(unittest.TestCase):
         self.assertEqual(progress.body_end(text, 1), 7)
         self.assertEqual(text[progress.body_end(text, 1)], "}")
         self.assertEqual(progress.body_end("x{a", 1), len("x{a"))
+
+
+class CodeTests(unittest.TestCase):
+    def test_code_masks_token_runs_like_single_tokens(self):
+        samples = ["1'000'000 x", r"""u8"a" uR"x(y)x" xu8"q" R"(" 'a' '\'' "open""", "/* open", "a/b//c\n/*x*/d",
+                   """L'x'LR"d(z)d"Ruby u8x""", 'R"abc(no close', ".5e3'x' 'y", "'", '"', "x  \t\n\n  \n y",
+                   "#define A \\\n B \\\r\n C", """a u8"x" b L'y' c R"(z)" d U"w" e u'v' f a/b"""]
+        for text in samples:
+            with self.subTest(text=text):
+                joined = text.replace("\\\n", "").replace("\\\r\n", "")
+                single = re.sub(r"\n(?:[ \t]*\n)+", "\n", progress.CPP_TOKEN.sub(progress.blank, joined))
+                self.assertEqual(progress.code(text), single)
+
+
 class HelperValueTests(unittest.TestCase):
     def test_camel_capitalises_each_underscore_part(self):
         self.assertEqual(progress.camel("a_b_c"), "ABC")

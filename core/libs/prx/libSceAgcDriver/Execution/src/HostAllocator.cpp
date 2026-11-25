@@ -49,11 +49,22 @@ struct Cache {
     std::uint32_t largeOperations;
 };
 
-constexpr std::uint16_t KeptLists = 8;
+constexpr std::size_t DepotSlots = 64;
+constexpr std::size_t DepotClassBytes = 256 * 1024;
+
+constexpr std::size_t ListBytes(std::size_t sizeClass) {
+    return Depth(sizeClass) * (sizeClass + 1) * Granule;
+}
+
+constexpr std::size_t KeptLists(std::size_t sizeClass) {
+    return std::min(DepotSlots, DepotClassBytes / ListBytes(sizeClass));
+}
+
+static_assert(KeptLists(SharedClasses - 1) >= 1);
 
 struct Depot {
     SRWLOCK lock = SRWLOCK_INIT;
-    FreeBlock* lists[KeptLists] = {};
+    FreeBlock* lists[DepotSlots] = {};
     std::uint16_t count = 0;
 };
 
@@ -61,8 +72,9 @@ Depot depots[SharedClasses];
 
 bool KeepList(std::size_t sizeClass, FreeBlock* list) noexcept {
     auto& depot = depots[sizeClass];
+    const auto limit = KeptLists(sizeClass);
     AcquireSRWLockExclusive(&depot.lock);
-    const bool kept = depot.count < KeptLists;
+    const bool kept = depot.count < limit;
     if (kept) depot.lists[depot.count++] = list;
     ReleaseSRWLockExclusive(&depot.lock);
     return kept;
@@ -251,6 +263,16 @@ void Release(void* block, std::size_t bytes = 0) noexcept {
 std::size_t HostAllocatorLargeBytes() noexcept {
     const auto* cache = CurrentCache();
     return cache != nullptr ? cache->largeBytes : 0;
+}
+
+std::size_t HostAllocatorDepotBytes(std::size_t blockBytes) noexcept {
+    if (blockBytes == 0 || (blockBytes - 1) / Granule >= SharedClasses) return 0;
+    const auto sizeClass = (blockBytes - 1) / Granule;
+    auto& depot = depots[sizeClass];
+    AcquireSRWLockExclusive(&depot.lock);
+    const auto bytes = depot.count * ListBytes(sizeClass);
+    ReleaseSRWLockExclusive(&depot.lock);
+    return bytes;
 }
 
 void* operator new(std::size_t bytes) { return Allocate(bytes); }
