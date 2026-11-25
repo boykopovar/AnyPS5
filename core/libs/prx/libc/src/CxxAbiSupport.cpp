@@ -6,7 +6,6 @@
 #endif
 
 #include "prx/libc/include/specifics/itanium/CxxAbi.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -114,10 +113,8 @@ int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(
     int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg
 ) {
     if (flag == nullptr) return 1;
-    const int savedErrno = errno;
     int value = 0;
     bool readable = GuestCopyIn_nid_no_patch(&value, flag, sizeof(value));
-    errno = savedErrno;
     if (!readable) return 1;
     static std::mutex mutex;
     static std::condition_variable changed;
