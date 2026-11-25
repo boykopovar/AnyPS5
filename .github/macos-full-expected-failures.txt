@@ -20,13 +20,11 @@ guest_sce_net
 guest_socket_port_zero
 # #20161
 guest_poll
-# #26729
-guest_webrtc_network_manager
 # #26806
 guest_socket_options
 # #25134
 guest_udp
-# #26783
-guest_icu_utf_conversions
-# #26855
-nkwebkit_inspectorcontentsearchregex
+# issue #21538
+guest_libcxx_exception_pointer
+# #27320
+guest_libcxx_regex_error
