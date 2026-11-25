@@ -1,6 +1,5 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -35,11 +34,9 @@ int SendNotification(std::array<unsigned char, NotificationRequestSize>& request
 
 int CopyNotificationString(std::array<unsigned char, NotificationRequestSize>& request, std::size_t offset, const char* value, std::size_t limit = TextLimit) {
     if (value == nullptr) return 0;
-    const int savedErrno = errno;
     for (std::size_t index = 0; index < limit; ++index) {
         char character = 0;
         const bool copied = GuestCopyIn_nid_no_patch(&character, value + index, sizeof(character));
-        errno = savedErrno;
         if (!copied) return SCE_KERNEL_ERROR_EFAULT;
         request[offset + index] = static_cast<unsigned char>(character);
         if (character == '\0') break;
@@ -79,12 +76,10 @@ int APS5_VABI sceSysUtilSendSystemNotificationWithText(int32_t type, const char*
     std::memcpy(request.data(), &TextNotificationKind, sizeof(TextNotificationKind));
     std::memcpy(request.data() + TypeOffset, &type, sizeof(type));
     if (message != nullptr) {
-        const int savedErrno = errno;
         std::size_t length = 0;
         char c = 0;
         while (length < TextLimit) {
             const bool copied = GuestCopyIn_nid_no_patch(&c, message + length, sizeof(c));
-            errno = savedErrno;
             if (!copied) {
                 return SCE_KERNEL_ERROR_EFAULT;
             }
@@ -171,9 +166,7 @@ void APS5_VABI sceSysUtilSendSystemNotificationParamInit(void* param, int32_t ty
         std::memset(initialized.data() + 0x818, 0xff, sizeof(std::uint32_t));
     }
     std::memcpy(initialized.data() + 0xa38, &initializedTag, sizeof(initializedTag));
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(param, initialized.data(), initialized.size());
-    errno = savedErrno;
 }
 
 int APS5_VABI sceSysUtilSendAddressingSystemNotification(int32_t type, int32_t addressingType) {
@@ -278,9 +271,7 @@ int APS5_VABI sceSysUtilSendSystemNotification2(const void* param) {
     if (param == nullptr) return invalidParameter;
 
     std::array<unsigned char, 0xa40> localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size());
-    errno = savedErrno;
     if (!copied) return SCE_KERNEL_ERROR_EFAULT;
 
     std::uint32_t type = 0;
