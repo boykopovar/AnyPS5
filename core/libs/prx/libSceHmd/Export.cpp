@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <cstddef>
-#include <cerrno>
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
@@ -28,9 +27,7 @@ std::int32_t Initialize(const Hmd::InitializeParam* param) {
     if (initialized.load()) return Hmd::AlreadyInitialized;
     if (!param) return Hmd::ParameterNull;
     Hmd::InitializeParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) return Hmd::ParameterNull;
     if (localParam.reserved0) return Hmd::UnsupportedFeature;
     return initialized.exchange(true) ? Hmd::AlreadyInitialized : 0;
@@ -59,9 +56,7 @@ T ParameterWord(const unsigned char* bytes, std::size_t offset) {
 std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, const HmdCommandBuffer* commandBuffer) {
     if (!parameter || !commandBuffer) return Hmd::ParameterNull;
     unsigned char bytes[0x40]{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(bytes, parameter, sizeof(bytes));
-    errno = savedErrno;
     if (!copied) return Hmd::ParameterNull;
     for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
         if (ParameterWord<std::uint64_t>(bytes, offset) == 0) return Hmd::ParameterNull;
@@ -121,9 +116,7 @@ std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info) 
     Hmd::DeviceInformation result{};
     result.status = Hmd::DeviceStatus::NotDetected;
     result.userId = -1;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) {
-        errno = savedErrno;
         return Hmd::ParameterNull;
     }
     return 0;
@@ -139,9 +132,7 @@ std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle,
 std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) {
     if (!status) return Hmd::ParameterNull;
     constexpr Hmd::DeviceStatus deviceStatus = Hmd::DeviceStatus::NotDetected;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(status, &deviceStatus, sizeof(deviceStatus))) {
-        errno = savedErrno;
         return Hmd::ParameterNull;
     }
     return 0;
