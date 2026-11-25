@@ -38,12 +38,12 @@ class GuestBlock {
 public:
     explicit GuestBlock(std::size_t bytes) : bytes(bytes) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes + WindowBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(WindowBytes, bytes));
+        block = static_cast<std::uint8_t*>(std::aligned_alloc(WindowBytes, bytes + WindowBytes));
 #endif
         Require(block != nullptr, "label import window: cannot allocate the guest block");
-        std::memset(block, 0, bytes);
+        std::memset(block, 0, bytes + WindowBytes);
         GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
@@ -119,6 +119,7 @@ int main() {
             const auto live = AgcDriver::Graphics::HostImportLiveBytes();
             const std::uint32_t value = 0x5a11u;
             const auto address = small.Address() + 128;
+            Require(!AgcDriver::Graphics::HostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), address, 4), "an earlier import already covers the small allocation");
             const int reason = Store(*device, address, value, 2);
             Require(reason == 7, "a label in an allocation no larger than a window did not keep its CPU path (reason " + std::to_string(reason) + ")");
             Require(LabelCounts().made == before.made && AgcDriver::Graphics::HostImportLiveBytes() == live, "a label in a small allocation imported it");
