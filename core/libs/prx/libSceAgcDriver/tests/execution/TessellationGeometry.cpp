@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -389,16 +390,27 @@ void RequireConsecutiveGeometryDraws(AgcDriver::VulkanDevice& device, const Shad
     FillBackground(large);
     DrawReference(device, target, VK_CULL_MODE_NONE, 64u, largeColor);
     const auto largeReference = ReadBack(device, large, largeColor.bytes);
-    FillBackground(small);
-    FillBackground(large);
-    FillBackground(again);
-    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, smallColor, levelFive, 5.0f, false);
-    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, largeColor, Indices, 64.0f, false);
-    DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, againColor, levelFive, 5.0f, false);
-    device.WaitIdle();
-    RequireSameImage(smallReference, ReadBack(device, small, smallColor.bytes), "the first of three tessellation-geometry draws recorded in one batch");
-    RequireSameImage(largeReference, ReadBack(device, large, largeColor.bytes), "a tessellation-geometry draw that needs more capture items than the draw before it in one batch");
-    RequireSameImage(smallReference, ReadBack(device, again, againColor.bytes), "a tessellation-geometry draw that reuses the capture items the draw before it read in one batch");
+    for (const bool split : {false, true}) {
+        FillBackground(small);
+        FillBackground(large);
+        FillBackground(again);
+        DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, smallColor, levelFive, 5.0f, false);
+        DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, largeColor, Indices, 64.0f, false);
+        if (split) {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            auto* recorder = AgcDriver::Graphics::Recorder::Active();
+            Require(recorder != nullptr, "the geometry draws have no active recorder");
+            const auto serial = recorder->OpenSerial();
+            device.SubmitRecorded(false);
+            Require(recorder->OpenSerial() == serial + 1, "the geometry draws did not submit a separate batch");
+        }
+        DrawThroughGeometry(device, target, VK_CULL_MODE_NONE, 64u, againColor, levelFive, 5.0f, false);
+        device.WaitIdle();
+        const std::string batches = split ? " across two submissions" : " in one batch";
+        RequireSameImage(smallReference, ReadBack(device, small, smallColor.bytes), "the first tessellation-geometry draw" + batches);
+        RequireSameImage(largeReference, ReadBack(device, large, largeColor.bytes), "the larger tessellation-geometry draw" + batches);
+        RequireSameImage(smallReference, ReadBack(device, again, againColor.bytes), "the tessellation-geometry draw reusing the capture items" + batches);
+    }
 }
 
 struct RegisteredStage {
@@ -463,6 +475,7 @@ int main() {
             std::puts("tessellation geometry: skipped, the device has no subgroup operations in tessellation-evaluation shaders, which the captured domain half uses");
             return VulkanTestSkipped;
         }
+        RequireConsecutiveGeometryDraws(*device, target);
         for (const auto wave : {64u, 32u}) {
             for (const auto cull : {VK_CULL_MODE_NONE, VK_CULL_MODE_BACK_BIT}) {
                 ClearPixels();
@@ -490,7 +503,6 @@ int main() {
         }
         RequireRecordedTarget(*device, target);
         RequireBatchedAfterOrdinaryDraw(*device, target);
-        RequireConsecutiveGeometryDraws(*device, target);
         device.reset();
         RequireRegisteredStages();
         std::puts("Tessellation geometry tests passed");
