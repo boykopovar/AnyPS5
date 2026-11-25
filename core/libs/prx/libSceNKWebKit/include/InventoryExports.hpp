@@ -167,8 +167,6 @@ int APS5_VABI WKBundlePageUninstallPageOverlayWithAnimation();
 int APS5_VABI WKBundlePostMessage();
 int APS5_VABI WKBundlePostSynchronousMessage();
 int APS5_VABI WKBundleRangeHandleCopySnapshotWithOptions();
-int APS5_VABI WKBundleRangeHandleCreate();
-int APS5_VABI WKBundleRangeHandleGetBoundingRectInWindowCoordinates();
 int APS5_VABI WKBundleReportException();
 int APS5_VABI WKBundleSetClient();
 int APS5_VABI WKBundleSetDatabaseQuota();
