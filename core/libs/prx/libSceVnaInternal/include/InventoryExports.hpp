@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -7,7 +8,7 @@ extern "C" {
 int APS5_VABI sceVnaGetMicStatus();
 int APS5_VABI sceVnaSetEnableWupSettings();
 int APS5_VABI sceVnaGetAgentSettings();
-int APS5_VABI sceVnaGetErrorSeverity();
+int APS5_VABI sceVnaGetErrorSeverity(std::int32_t errorCode, char* severity);
 int APS5_VABI sceVnaSetSessionTimeoutSettings();
 int APS5_VABI sceVnaStartAnalyzeInternal();
 int APS5_VABI sceVnaRequestTts();
@@ -67,7 +68,7 @@ int APS5_VABI sceVnaSetTtsVolumeSettings();
 int APS5_VABI sceVnaSetTtsDuckingLevel();
 int APS5_VABI sceVnaRegisterCallback();
 int APS5_VABI sceVnaSetEnableAssistantSettings();
-int APS5_VABI sceVnaUtilUpdateVoiceInputStatus();
+int APS5_VABI sceVnaUtilUpdateVoiceInputStatus(const void* status);
 int APS5_VABI sceVnaSetFeedbackTrigger();
 int APS5_VABI sceVnaRequestDownloadCahcedTts();
 int APS5_VABI sceVnaUtilIsLanguageSupported();
@@ -85,7 +86,7 @@ int APS5_VABI sceVnaGetKeyPhraseInfo();
 int APS5_VABI sceVnaReadTtsStream();
 int APS5_VABI sceVnaTerminate();
 int APS5_VABI sceVnaSetClientStatus();
-int APS5_VABI sceVnaUtilRemoveVoiceInputStatus();
+int APS5_VABI sceVnaUtilRemoveVoiceInputStatus(std::int32_t userId);
 int APS5_VABI sceVnaStopKeyPhraseDetection();
 int APS5_VABI sceVnaOpenTtsStream();
 
