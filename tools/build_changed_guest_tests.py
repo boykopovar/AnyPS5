@@ -74,11 +74,17 @@ def ctest_tests(build_dir, *arguments):
     return json.loads(result.stdout).get("tests", [])
 
 
-def script_test_indices(build_dir, patterns):
-    names = [test["name"] for test in ctest_tests(build_dir)]
-    indices = set()
+def script_test_indices(build_dir, patterns, changed_wrappers=()):
+    tests = ctest_tests(build_dir)
+    indices = {
+        index for index, test in enumerate(tests, 1)
+        if changed_wrappers and any(
+            Path(part).suffix == ".py" and Path(part).is_absolute() and Path(part).resolve() in changed_wrappers
+            for part in test.get("command", [])[1:]
+        )
+    }
     for pattern in patterns:
-        matched = {index for index, name in enumerate(names, 1) if pattern.match(name)}
+        matched = {index for index, test in enumerate(tests, 1) if pattern.match(test["name"])}
         if not matched:
             raise ValueError("no ctest registration matched " + pattern.pattern)
         indices |= matched
@@ -100,11 +106,15 @@ def scheduled_test_owners(build_dir, selection, targets_by_name):
     owners = set()
     for test in tests:
         for command in (test.get("command", []), registered.get(test["name"], [])):
+            references = {
+                target for part in paths(command[1:])
+                if (target := target_from_argument(part, targets_by_name)) is not None
+            }
             owner = test_owner(command, targets_by_name)
-            if owner is None:
-                owner = test_owner(list(paths(command[1:])), targets_by_name)
             if owner is not None:
-                owners.add(owner)
+                references.add(owner)
+            if references:
+                owners.update(references)
                 break
     return owners
 
@@ -148,19 +158,11 @@ def core_lib_test_targets(source_root, targets, changed_paths=None):
     return sorted(set(guest) | set(host), key=str.casefold)
 
 
-def changed_python_test_targets(build_dir, source_root, changed_paths, targets_by_name):
-    scripts = {(source_root / path).resolve() for path in changed_paths
-               if Path(path).as_posix().startswith("core/libs/") and Path(path).suffix == ".py"}
-    if not scripts:
-        return set()
-    owners = set()
-    for command in registered_test_commands(build_dir).values():
-        if any(Path(part).suffix == ".py" and Path(part).is_absolute() and Path(part).resolve() in scripts
-               for part in command[1:]):
-            owner = test_owner(command, targets_by_name)
-            if owner is not None:
-                owners.add(owner)
-    return owners
+def changed_python_wrappers(source_root, changed_paths):
+    return {
+        (source_root / path).resolve() for path in changed_paths
+        if Path(path).as_posix().startswith("core/libs/") and Path(path).suffix == ".py"
+    }
 
 
 def target_artifact_names(target):
@@ -176,6 +178,11 @@ def target_artifact_names(target):
     return {name.casefold(): target["name"] for name in names}
 
 
+def target_from_argument(argument, targets_by_name):
+    name = Path(argument).name.casefold().removesuffix(".exe")
+    return targets_by_name.get(name)
+
+
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
     if "--" in command:
@@ -189,11 +196,9 @@ def test_owner(command, targets_by_name):
         candidates += [part for part in command[1:] if not part.startswith("-")
                        and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
     for part in candidates:
-        name = Path(part).name.casefold()
-        if name.endswith(".exe"):
-            name = name[:-4]
-        if name in targets_by_name:
-            return targets_by_name[name]
+        target = target_from_argument(part, targets_by_name)
+        if target is not None:
+            return target
     return None
 
 
@@ -234,7 +239,7 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
+def run(build_dir, selected, targets_by_name, output_log=None, script_tests=(), changed_wrappers=()):
     total = time.perf_counter()
     started = time.perf_counter()
     try:
@@ -242,9 +247,9 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
     finally:
         phase_report("build libs", started)
     indices = set()
-    if script_tests:
+    if script_tests or changed_wrappers:
         started = time.perf_counter()
-        indices = set(script_test_indices(build_dir, script_tests))
+        indices = set(script_test_indices(build_dir, script_tests, changed_wrappers))
         phase_report("script test discovery", started, f"{len(indices)} tests")
     selected_names = set(selected)
     if selected:
@@ -286,7 +291,7 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
                             *(["--output-log", str(output_log)] if output_log else [])], check=True)
         finally:
             phase_report("ctest", started, f"{len(indices)} tests")
-    phase_report("total", total, f"{len(selected)} targets, {len(indices)} tests")
+    phase_report("total", total, f"{len(selected) + len(additional)} targets, {len(indices)} tests")
 
 
 def main(argv=None):
@@ -310,15 +315,14 @@ def main(argv=None):
             if target.get("type") == "EXECUTABLE":
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
-        script_owners = changed_python_test_targets(args.build_dir, source_root, changed_paths or [], targets_by_name)
-        selected = sorted(set(selected) | script_owners, key=str.casefold)
-        if not selected:
-            print("No core/libs test sources changed")
-        else:
+        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else ()
+        changed_wrappers = changed_python_wrappers(source_root, changed_paths or [])
+        if selected:
             print("Core/libs tests:")
             print("\n".join(selected))
-        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
-        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
+        elif not changed_wrappers:
+            print("No core/libs test sources changed")
+        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests, changed_wrappers)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
