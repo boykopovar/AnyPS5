@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <psapi.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
 #else
@@ -731,7 +732,11 @@ static GuestResourceUsage ResourceUsage(const struct rusage& native) {
     result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
     result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
     result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+#ifdef __APPLE__
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss) / 1024;
+#else
     result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+#endif
     result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
     result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
     result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
@@ -1169,6 +1174,11 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
         const auto times = GetReapedChildProcessTimes_nid_no_patch();
         result.ru_utime = TimevalFromHundredNanoseconds(times.user);
         result.ru_stime = TimevalFromHundredNanoseconds(times.kernel);
+#else
+        struct rusage native{};
+        if (::getrusage(RUSAGE_CHILDREN, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+        result = ResourceUsage(native);
 #endif
         if (!WriteGuest(usage, &result, sizeof(result))) {
             *__error_nid_postfix() = guestFault;
@@ -1197,6 +1207,10 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
     result.ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
+    PROCESS_MEMORY_COUNTERS memory{};
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory)))
+        throw std::system_error(GetLastError(), std::system_category(), "getrusage: GetProcessMemoryInfo failed");
+    result.ru_maxrss = static_cast<std::int64_t>(memory.PeakWorkingSetSize / 1024);
 #else
     struct rusage native{};
 #ifdef __APPLE__
