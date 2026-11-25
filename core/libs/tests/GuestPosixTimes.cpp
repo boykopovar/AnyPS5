@@ -109,11 +109,12 @@ int main(int argc, char** argv) {
     static_assert(PosixForWebKitClockTicks(16777215, 992124) == std::numeric_limits<std::int32_t>::max());
     static_assert(PosixForWebKitClockTicks(16777215, 999999) == std::numeric_limits<std::int32_t>::min());
 
+    const auto initialChildren = ChildTicks();
     errno = E2BIG;
     PosixForWebKitTms first{};
     const auto before = times_nid_postfix(&first);
     Require(first.tms_utime >= 0 && first.tms_stime >= 0);
-    Require(first.tms_cutime == 0 && first.tms_cstime == 0);
+    Require(first.tms_cutime == initialChildren.tms_cutime && first.tms_cstime == initialChildren.tms_cstime);
     Require(errno == E2BIG);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -122,14 +123,14 @@ int main(int argc, char** argv) {
     const auto after = times_nid_postfix(&second);
     Require(after > before);
     Require(second.tms_utime >= first.tms_utime && second.tms_stime >= first.tms_stime);
-    Require(second.tms_cutime == 0 && second.tms_cstime == 0 && errno == E2BIG);
+    Require(second.tms_cutime == first.tms_cutime && second.tms_cstime == first.tms_cstime && errno == E2BIG);
 
     ReapBurningChild();
     errno = E2BIG;
     PosixForWebKitTms reaped{};
     Require(times_nid_postfix(&reaped) >= after);
     Require(reaped.tms_cutime >= 0 && reaped.tms_cstime >= 0);
-    Require(reaped.tms_cutime + reaped.tms_cstime >= 11);
+    Require(reaped.tms_cutime + reaped.tms_cstime >= second.tms_cutime + second.tms_cstime + 11);
     const auto reapedExpected = ChildTicks();
     Require(reaped.tms_cutime == reapedExpected.tms_cutime && reaped.tms_cstime == reapedExpected.tms_cstime);
     Require(reaped.tms_utime >= second.tms_utime && reaped.tms_stime >= second.tms_stime);
