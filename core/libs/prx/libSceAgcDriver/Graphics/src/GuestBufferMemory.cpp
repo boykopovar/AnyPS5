@@ -350,6 +350,10 @@ thread_local std::uint32_t importsHeld = 0;
 class ImportsMutex {
 public:
     void lock() noexcept {
+        if (importsLockOrderChecked && MapImportGate::LeafLockHeld()) {
+            std::fprintf(stderr, "[lock] ASSERT: the host imports mutex is taken while this thread holds the live or pending storage image mutex\n");
+            std::abort();
+        }
         mutex.lock();
         if (importsLockOrderChecked) ++importsHeld;
     }
