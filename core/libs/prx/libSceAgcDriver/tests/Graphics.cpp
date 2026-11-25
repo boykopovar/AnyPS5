@@ -7352,7 +7352,7 @@ void limitDescriptorRunTests() {
     }
     const auto* base = second + secondBytes - runTailBytes;
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
-    const auto bound = [&](bool ps4) {
+    const auto bound = [&](bool ps4, const std::byte* at, std::uint32_t bytes) {
         ShaderRecompiler::SetGcnGuestShaders(ps4);
         struct Restore {
             ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
@@ -7361,7 +7361,7 @@ void limitDescriptorRunTests() {
         ShaderRecompiler::RecompileResult fragment;
         mock = MockVulkan{};
         const auto context = mockContext();
-        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(base, static_cast<std::uint32_t>(context.limits.maxStorageBufferRange))));
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(at, bytes)));
         VkDeviceSize range = 0;
         bool same = false;
         {
@@ -7369,15 +7369,18 @@ void limitDescriptorRunTests() {
             const auto& write = findWrite(0);
             Require(write.buffers.size() == 1, "a V# of the range limit was not bound");
             range = write.buffers[0].range;
-            same = range <= runTailBytes && sameBytes(bufferBytes(write.buffers[0].buffer), base, static_cast<std::size_t>(range));
+            same = range <= blockBytes - static_cast<std::size_t>(at - block) && sameBytes(bufferBytes(write.buffers[0].buffer), at, static_cast<std::size_t>(range));
         }
         Require(mock.live == 0, "a V# of the range limit leaked Vulkan objects");
         return std::pair{range, same};
     };
-    const auto ps4 = bound(true);
+    const auto limit = mockContext().limits.maxStorageBufferRange;
+    const auto ps4 = bound(true, base, limit);
     Require(ps4.first == runTailBytes && ps4.second, "a PS4 title's V# of the range limit was not bound up to the end of the registered run holding its base");
-    const auto ps5 = bound(false);
-    Require(ps5.first == mockContext().limits.maxStorageBufferRange, "a PS5 title's V# of exactly the range limit was not bound by the limit as before");
+    const auto longRun = bound(true, block, 0xffffffffu);
+    Require(longRun.first == limit && longRun.second, "a PS4 title's V# past the range limit at the start of a longer registered run was not bound by the limit");
+    const auto ps5 = bound(false, base, limit);
+    Require(ps5.first == limit, "a PS5 title's V# of exactly the range limit was not bound by the limit as before");
     {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
         GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, second);

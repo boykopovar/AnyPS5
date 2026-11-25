@@ -5631,7 +5631,7 @@ std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> w
     auto byteSize = descriptor.GetSize();
     if (ShaderRecompiler::GcnGuestShaders() && byteSize >= context.limits.maxStorageBufferRange) {
         const auto runEnd = RegisteredReadableRunEnd(address);
-        byteSize = runEnd <= address ? 0 : std::min(byteSize, runEnd - address);
+        byteSize = runEnd <= address ? 0 : std::min({byteSize, runEnd - address, static_cast<std::uint64_t>(context.limits.maxStorageBufferRange)});
     } else if (byteSize > context.limits.maxStorageBufferRange) {
         const auto mappedEnd = RegisteredReadableEnd(address);
         if (mappedEnd <= address) byteSize = 0;
