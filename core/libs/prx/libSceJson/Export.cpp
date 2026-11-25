@@ -183,6 +183,7 @@ struct LocalString {
 void InitValue(Value& value) {
     value.parent = nullptr;
     value.root = nullptr;
+    value.payload.uinteger = 0;
     value.type = TypeNull;
 }
 
@@ -524,6 +525,8 @@ void SetType(Value& value, ValueType type) {
         DestroyObject(*value.payload.object);
         Release(value.payload.object);
     }
+    value.type = TypeNull;
+    value.payload.uinteger = 0;
     switch (type) {
     case TypeBoolean:
         value.payload.boolean = false;
@@ -545,13 +548,23 @@ void SetType(Value& value, ValueType type) {
         break;
     case TypeArray:
         if (auto* array = static_cast<Array*>(Allocate(sizeof(Array)))) {
-            ConstructArray(*array);
+            try {
+                ConstructArray(*array);
+            } catch (...) {
+                Release(array);
+                throw;
+            }
             value.payload.array = array;
         }
         break;
     case TypeObject:
         if (auto* object = static_cast<Object*>(Allocate(sizeof(Object)))) {
-            ConstructObject(*object);
+            try {
+                ConstructObject(*object);
+            } catch (...) {
+                Release(object);
+                throw;
+            }
             value.payload.object = object;
         }
         break;
@@ -656,7 +669,12 @@ void SetParent(Value& value, const Value* parent) {
     if (value.parent == nullptr) {
         if (value.root == nullptr) {
             auto* root = static_cast<RootParam*>(AllocateRequired(sizeof(RootParam)));
-            ConstructRootParam(*root);
+            try {
+                ConstructRootParam(*root);
+            } catch (...) {
+                Release(root);
+                throw;
+            }
             value.root = root;
             SetParent(*root->nullValue, &value);
         }
@@ -930,6 +948,7 @@ bool BufferExhausted(const InputStream& stream) {
 void SkipWhitespace(InputStream& stream) {
     for (;;) {
         const int character = Get(stream);
+        if (stream.status < 0) return;
         if (character != ' ' && character != '\t' && character != '\n' && character != '\r') {
             Unget(stream);
             return;
@@ -1366,12 +1385,15 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_n
         auto* text = static_cast<String*>(pending = AllocateFrom(*parameter, sizeof(String)));
         ConstructString(*Required(text));
         _ZN3sce4Json5Value12s_nullstringE_nid_no_patch = text;
+        pending = nullptr;
         auto* array = static_cast<Array*>(pending = AllocateFrom(*parameter, sizeof(Array)));
         ConstructArray(*Required(array));
         _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch = array;
+        pending = nullptr;
         auto* object = static_cast<Object*>(pending = AllocateFrom(*parameter, sizeof(Object)));
         ConstructObject(*Required(object));
         _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch = object;
+        pending = nullptr;
     } catch (...) {
         if (pending != nullptr) Release(pending);
         ReleaseShared();

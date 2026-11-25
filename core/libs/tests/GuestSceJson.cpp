@@ -100,6 +100,16 @@ static void Uninitialized() {
     String out = EmptyString();
     Require(_ZN3sce4Json5Value9serializeERSbIcSt11char_traitsIcENS0_8StlAllocIcEEE_nid_no_patch(&value, &out) == ErrorNotInitialized);
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKc_nid_no_patch(&value, "missing.json") == ErrorNotInitialized);
+    Value dirty {};
+    std::memset(&dirty, 0x5a, sizeof(dirty));
+    _ZN3sce4Json5ValueC1ENS0_9ValueTypeE_nid_no_patch(&dirty, TypeArray);
+    Require(dirty.type == TypeArray && dirty.payload.array == nullptr);
+    _ZN3sce4Json5ValueD1Ev_nid_no_patch(&dirty);
+    Value scalar {};
+    _ZN3sce4Json5ValueC1El_nid_no_patch(&scalar, 5);
+    _ZN3sce4Json5Value3setENS0_9ValueTypeE_nid_no_patch(&scalar, TypeString);
+    Require(scalar.type == TypeString && scalar.payload.string == nullptr);
+    _ZN3sce4Json5ValueD1Ev_nid_no_patch(&scalar);
 }
 
 static void Document() {
@@ -369,6 +379,68 @@ static void FailedInitialize(InitParameter& parameter) {
     }
 }
 
+static void AllocationFailures() {
+    const long baseline = liveAllocations;
+    for (int failAt = 1; failAt <= 2; ++failAt) {
+        Value value {};
+        _ZN3sce4Json5ValueC1Ev_nid_no_patch(&value);
+        Require(Parse(value, "{\"a\":1}") == 0);
+        failAllocation = failAt;
+        bool threw = false;
+        try {
+            _ZN3sce4Json5Value3setENS0_9ValueTypeE_nid_no_patch(&value, TypeArray);
+        } catch (int code) {
+            threw = (code == -1);
+        }
+        failAllocation = 0;
+        Require(threw && value.type == TypeNull && value.payload.array == nullptr);
+        _ZN3sce4Json5ValueD1Ev_nid_no_patch(&value);
+        Require(liveAllocations == baseline);
+    }
+    for (int failAt = 1; failAt <= 2; ++failAt) {
+        Value value {};
+        _ZN3sce4Json5ValueC1Ev_nid_no_patch(&value);
+        Require(Parse(value, "[1,2]") == 0);
+        failAllocation = failAt;
+        bool threw = false;
+        try {
+            _ZN3sce4Json5Value3setENS0_9ValueTypeE_nid_no_patch(&value, TypeObject);
+        } catch (int code) {
+            threw = (code == -1);
+        }
+        failAllocation = 0;
+        Require(threw && value.type == TypeNull && value.payload.object == nullptr);
+        _ZN3sce4Json5ValueD1Ev_nid_no_patch(&value);
+        Require(liveAllocations == baseline);
+    }
+    for (int failAt = 1; failAt <= 2; ++failAt) {
+        Value value {};
+        _ZN3sce4Json5ValueC1Ev_nid_no_patch(&value);
+        failAllocation = failAt;
+        bool threw = false;
+        try {
+            _ZN3sce4Json5Value9setParentEPKS1__nid_no_patch(&value, nullptr);
+        } catch (int code) {
+            threw = (code == -1);
+        }
+        failAllocation = 0;
+        Require(threw && value.root == nullptr);
+        _ZN3sce4Json5ValueD1Ev_nid_no_patch(&value);
+        Require(liveAllocations == baseline);
+    }
+    for (int failAt = 1; failAt <= 8; ++failAt) {
+        Value value {};
+        _ZN3sce4Json5ValueC1Ev_nid_no_patch(&value);
+        Require(Parse(value, "\"populated string with heap storage\"") == 0);
+        failAllocation = failAt;
+        const int result = Parse(value, "{\"k\":[1,2,\"value\"],\"m\":{\"n\":true}}");
+        failAllocation = 0;
+        Require(result == ErrorNoMemory && value.type == TypeNull);
+        _ZN3sce4Json5ValueD1Ev_nid_no_patch(&value);
+        Require(liveAllocations == baseline);
+    }
+}
+
 int main() {
     Uninitialized();
     Initializer initializer {};
@@ -387,6 +459,7 @@ int main() {
     NullAccess();
     Errors();
     Tree();
+    AllocationFailures();
     Require(_ZN3sce4Json11Initializer9terminateEv_nid_no_patch(&initializer) == 0);
     Require(liveAllocations == 0);
     parameter.fileBufferSize = 4;
