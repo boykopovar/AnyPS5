@@ -58,6 +58,28 @@ test('translated controller diagnostics preserve button names and None', () => {
     assert.equal(diagnostic('ar-EG', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: القيمة لازم تكون زرار PlayStation أو None.');
 });
 
+test('Simplified Chinese labels and status messages identify the binding, filename and line', () => {
+    const binding = translate('zh-Hans', 'bindingLabel', {action: 'Cross', number: 2});
+    assert.equal(translate('zh-Hans', 'captureLabel', {binding}), 'Cross 的第 2 个绑定：录入按键');
+    assert.equal(translate('zh-Hans', 'captured', {value: 'Return', action: 'Cross'}), '已为 Cross 录入 Return。');
+    assert.equal(translate('zh-Hans', 'imported', {name: 'anyps5-input.PPSA01234.ini'}), '已导入 anyps5-input.PPSA01234.ini。');
+    const {errors} = parseIni('MouseStickTarget = Right\nMouseSensitivity = 0\n');
+    const {line, message} = errors[0];
+    assert.equal(translate('zh-Hans', 'line', {line, message: diagnostic('zh-Hans', message)}),
+        '第 2 行：MouseSensitivity 必须大于 0 且不超过 10。');
+});
+
+test('Simplified Chinese diagnostics preserve INI tokens and input names', () => {
+    assert.equal(diagnostic('zh-Hans', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a 的值必须是 PlayStation 按键名或 None。');
+    assert.equal(diagnostic('zh-Hans', 'KEY:Keypad : controls Triangle and L1 (built-in).'), 'KEY:Keypad : 同时控制 Triangle 和 L1（默认）。');
+    assert.equal(diagnostic('zh-Hans', "Unknown SDL controller button 'left and right'."), '无法识别 SDL 手柄按键“left and right”。');
+    assert.equal(diagnostic('zh-Hans', "Unknown SDL controller button 'INI content must be text.'."),
+        '无法识别 SDL 手柄按键“INI content must be text.”。');
+    assert.equal(diagnostic('zh-Hans', captureKey({key: 'Dead', code: 'BracketRight'}).error),
+        '无法准确识别输入法组字时的按键或死键。请从列表中选择 SDL 按键。');
+    assert.equal(diagnostic('zh-Hans', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+});
+
 test('capture diagnostics are fully translated', () => {
     const message = captureKey({key: 'Dead', code: 'BracketRight'}).error;
     assert.equal(diagnostic('sv', message), 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.');
