@@ -280,6 +280,38 @@ void navigation() {
     check(stick.SelectedLabel() == u"h", "the stick moves once past the threshold");
     for (int i = 0; i < 20; ++i) stick.Step(0, 255, 128);
     check(stick.SelectedLabel() != u"h", "a held stick repeats");
+    Driver symbolsRight;
+    symbolsRight.Step(0);
+    symbolsRight.state.cursorRow = 4;
+    symbolsRight.state.cursorColumn = 0;
+    symbolsRight.Step(PadButtonL2, 128, 128, 255);
+    symbolsRight.Step(PadButtonL2 | PadButtonTriangle, 128, 128, 255);
+    symbolsRight.Step(0);
+    check(symbolsRight.state.family == PadKeyboardFamily::Symbols && symbolsRight.SelectedLabel() == u"ABC", "toggling symbols from Shift lands on an empty cell whose visible key is ABC");
+    symbolsRight.Press(PadButtonRight);
+    check(symbolsRight.SelectedLabel() == u"Space", "moving right after toggling symbols steps from ABC to Space");
+    Driver symbolsUp;
+    symbolsUp.Step(0);
+    symbolsUp.state.cursorRow = 4;
+    symbolsUp.state.cursorColumn = 0;
+    symbolsUp.Step(PadButtonL2, 128, 128, 255);
+    symbolsUp.Step(PadButtonL2 | PadButtonTriangle, 128, 128, 255);
+    symbolsUp.Step(0);
+    check(symbolsUp.state.family == PadKeyboardFamily::Symbols && symbolsUp.SelectedLabel() == u"ABC", "toggling symbols from Shift keeps the visible key on ABC");
+    symbolsUp.Press(PadButtonUp);
+    check(symbolsUp.SelectedLabel() == u"|", "moving up after toggling symbols steps from ABC to |");
+    Driver specialsLeft;
+    specialsLeft.Step(0);
+    specialsLeft.Press(PadButtonL3);
+    specialsLeft.state.cursorRow = 5;
+    specialsLeft.state.cursorColumn = 5;
+    check(specialsLeft.state.family == PadKeyboardFamily::Specials && specialsLeft.SelectedLabel() == u"Space", "row 5 column 5 on specials selects Space");
+    specialsLeft.Press(PadButtonL3);
+    const PadKey* snapped = PadKeyboardSelected(specialsLeft.state);
+    check(specialsLeft.state.family == PadKeyboardFamily::Latin && snapped != nullptr && snapped->action == PadKeyAction::ArrowRight, "returning to Latin from row 5 column 5 snaps visible selection to ArrowRight");
+    specialsLeft.Press(PadButtonLeft);
+    const PadKey* moved = PadKeyboardSelected(specialsLeft.state);
+    check(moved != nullptr && moved->action == PadKeyAction::ArrowLeft && specialsLeft.state.cursorRow == 5 && specialsLeft.state.cursorColumn == 2, "moving left after returning to Latin steps from ArrowRight to ArrowLeft");
 }
 
 void repeatsOnlyEditingKeys() {

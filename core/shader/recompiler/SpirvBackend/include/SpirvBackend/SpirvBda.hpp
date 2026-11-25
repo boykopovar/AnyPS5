@@ -25,6 +25,7 @@ void ValidateBdaTarget(const IrProgram& program, const SpirvTargetOptions& targe
 // every invocation running, so their faulting reads return zero instead.
 bool BdaInvocationsMayStop(const IrProgram& program);
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition);
+std::uint32_t BdaInvocationFaulted(SpirvEmitterState& state);
 std::uint32_t BdaInstructionPc(SpirvEmitterState& state, const IrValue& inst);
 std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bits);
 std::uint32_t EmitBdaReadBytes(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bytes);

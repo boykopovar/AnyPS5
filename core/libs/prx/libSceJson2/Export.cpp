@@ -305,6 +305,18 @@ RttiAllocator rttiAllocator;
 
 char emptyCharacters[1]{};
 
+template <typename Value>
+Value LoadGuest(const void* source, const char* function) {
+    Value value {};
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename Value>
+void StoreGuest(void* destination, const Value& value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 AllocationContext ActiveAllocation() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
@@ -373,8 +385,7 @@ std::uint32_t CompiledSdk() {
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
     if (lookupFailed.load(std::memory_order_relaxed)) return sdk;
     try {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
+        sdk = ApplicationCompiledSdkVersion();
     } catch (const std::runtime_error&) {
         lookupFailed.store(true, std::memory_order_relaxed);
     }
@@ -2334,7 +2345,7 @@ double ParseDecimal(std::string_view text) {
 
 class Parser {
 public:
-    Parser(const char* text, std::size_t size) : text(text), end(text + size) {}
+    Parser(const char* text, std::size_t size) : text(text), remaining(size) {}
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
     bool Parse(Node& out) { return value(out); }
@@ -2345,7 +2356,10 @@ private:
     static constexpr std::size_t MaxNestingDepth = 512;
 
     const char* text = nullptr;
-    const char* end = nullptr;
+    std::size_t remaining = 0;
+    char buffer[256]{};
+    std::size_t buffered = 0;
+    std::size_t cursor = 0;
     ParserReadCallback read = nullptr;
     void* context = nullptr;
     std::size_t depth = 0;
@@ -2358,11 +2372,19 @@ private:
             char character = 0;
             readError = read(character, context);
             current = readError < 0 ? -1 : static_cast<unsigned char>(character);
-        } else if (text == end) {
+        } else if (cursor < buffered) {
+            current = static_cast<unsigned char>(buffer[cursor++]);
+        } else if (remaining == 0) {
             readError = JsonErrorParse;
             current = -1;
         } else {
-            current = static_cast<unsigned char>(*text++);
+            const std::size_t count = std::min(sizeof(buffer), remaining);
+            if (!GuestCopyIn_nid_no_patch(buffer, text, count)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            text += count;
+            remaining -= count;
+            buffered = count;
+            cursor = 1;
+            current = static_cast<unsigned char>(buffer[0]);
         }
         return current;
     }
@@ -2563,6 +2585,41 @@ private:
     }
 };
 
+void ValidateGuestParserTarget(Value* out, const char* function) {
+    static_cast<void>(LoadGuest<Value>(out, function));
+    if (!GuestWritable_nid_no_patch(out, sizeof(Value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestParserRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestParserBytes(const char* text, std::size_t size, const char* function) {
+    if (reinterpret_cast<std::uintptr_t>(text) > std::numeric_limits<std::uintptr_t>::max() - size)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < size;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t step = std::min(sizeof(chunk) - address % sizeof(chunk), size - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, step)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+void CopyGuestParserPath(const Value* out, const char* path, std::string& copy, const char* function) {
+    std::size_t length = 0;
+    if (!path || !GuestTextLength(path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (length == std::numeric_limits<std::size_t>::max() ||
+        GuestParserRangesOverlap(out, sizeof(Value), path, length + 1))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    copy.resize(length);
+    if (length && !GuestCopyIn_nid_no_patch(copy.data(), path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 int ParseValue(Value* out, Parser& parser) {
     AllocationOperation operation;
     bool parsedOk = false;
@@ -2755,8 +2812,10 @@ String* APS5_VABI _ZN3sce4Json6StringpLEh(String* self, unsigned char ch) {
     return self;
 }
 String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* self, std::size_t position, std::size_t length) {
-    if (position > View(*self).size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
-    Construct(*result, View(*self).substr(position, length));
+    const auto source = View(*self);
+    if (position > source.size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
+    Construct(*result, std::string_view{});
+    AssignText(*result, source.substr(position, length), true);
     return result;
 }
 char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) {
@@ -3200,18 +3259,25 @@ void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Str
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
+    ValidateGuestParserTarget(out, __func__);
     Parser parser(read, context);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size) {
+    ValidateGuestParserTarget(out, __func__);
     if (size == 0) return JsonErrorParse;
     if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
+    ValidateGuestParserBytes(text, size, __func__);
+    if (GuestParserRangesOverlap(out, sizeof(Value), text, size)) NotImplemented_nid_no_patch(__func__);
     Parser parser(text, size);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* path) {
+    ValidateGuestParserTarget(out, __func__);
+    std::string guestPath;
+    CopyGuestParserPath(out, path, guestPath, __func__);
     AllocationContext allocation;
     {
         auto& state = State();
@@ -3222,30 +3288,29 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
     if (!allocation.fileBufferSize) return static_cast<int>(0x80848105);
     FileReader reader{allocation};
     reader.buffer = Allocate(allocation, allocation.fileBufferSize);
-    if (reader.buffer) reader.descriptor = sceKernelOpen(path, 0, 0555);
+    if (reader.buffer) reader.descriptor = sceKernelOpen(guestPath.c_str(), 0, 0555);
     Parser parser(FileReader::Read, &reader);
     return ParseValue(out, parser);
 }
 
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
-    *self = {};
+    StoreGuest(self, InitParameterRtti{}, __func__);
     if (!allocParam) return;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;
-    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    const auto callbacks = LoadGuest<AllocParamRtti>(allocParam, __func__);
     if (!callbacks.allocate || !callbacks.free) return;
     state.rtti = callbacks;
-    self->allocParam = &rttiAllocator;
-    self->userData = userData;
-    self->fileBufferSize = fileBufferSize;
+    StoreGuest(self, InitParameterRtti{&rttiAllocator, userData, fileBufferSize}, __func__);
 }
 
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
-    *self = {};
-    self->specialFloatFormatType = 2;
+    InitParameter2 parameter {};
+    parameter.specialFloatFormatType = 2;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
@@ -3254,8 +3319,10 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
-    self->allocator = allocator;
-    self->userData = userData;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.allocator = allocator;
+    parameter.userData = userData;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(InitParameter2* self, void* allocParam, void* userData) {
@@ -3263,19 +3330,25 @@ void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocPa
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;
-    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    const auto callbacks = LoadGuest<AllocParamRtti>(allocParam, __func__);
     if (!callbacks.allocate || !callbacks.free) return;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
     state.rtti = callbacks;
-    self->allocator = &rttiAllocator;
-    self->userData = userData;
+    parameter.allocator = &rttiAllocator;
+    parameter.userData = userData;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(InitParameter2* self, std::size_t size) {
-    self->fileBufferSize = size;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.fileBufferSize = size;
+    StoreGuest(self, parameter, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(InitParameter2* self, std::int32_t type) {
-    self->specialFloatFormatType = type;
+    auto parameter = LoadGuest<InitParameter2>(self, __func__);
+    parameter.specialFloatFormatType = type;
+    StoreGuest(self, parameter, __func__);
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
@@ -3485,8 +3558,8 @@ bool* APS5_VABI _ZN3sce4Json5Value12referBooleanEv(Value* self) { return self->t
 std::int64_t* APS5_VABI _ZN3sce4Json5Value12referIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->integer : nullptr; }
 std::uint64_t* APS5_VABI _ZN3sce4Json5Value13referUIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->uinteger : nullptr; }
 double* APS5_VABI _ZN3sce4Json5Value9referRealEv(Value* self) { return self->type == TypeReal ? &self->real : nullptr; }
-void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return self->userData; }
-void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return self->allocator; }
-std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return self->fileBufferSize; }
-std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return self->specialFloatFormatType; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).userData; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).allocator; }
+std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).fileBufferSize; }
+std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return LoadGuest<InitParameter2>(self, __func__).specialFloatFormatType; }
 }

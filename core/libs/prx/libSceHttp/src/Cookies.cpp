@@ -396,10 +396,7 @@ bool takeString(std::vector<std::uint8_t>::const_iterator& cursor, std::vector<s
 }
 
 bool guestWrite(std::size_t* destination, std::size_t value) {
-    const int savedErrno = errno;
-    const bool written = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
-    return written;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
 }
 
 std::vector<std::uint8_t> exportBlob(const CookieJar& jar) {
@@ -480,8 +477,9 @@ int APS5_VABI sceHttpAddCookie(int contextId, const char* url, const char* cooki
     if (!url || !cookie) return ERROR_INVALID_VALUE;
     RequestUrl parsed;
     if (const int result = parseUrl(url, parsed); result != 0) return result;
-    const std::string_view header(cookie, size);
-    return storeCookie(*jar, parsed, header.substr(0, header.find('\0')), Clock::now());
+    std::string header;
+    if (!HttpGuest::CopyText(cookie, size, header)) return ERROR_INVALID_VALUE;
+    return storeCookie(*jar, parsed, header, Clock::now());
 }
 
 int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* required, std::size_t prepared) {
@@ -524,7 +522,7 @@ int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std
         }
         if (prepared != 0) {
             partial.push_back('\0');
-            if (!HttpGuest::CopyOut(cookie, partial.data(), partial.size())) return ERROR_INVALID_VALUE;
+            if (!GuestCopyOut_nid_no_patch(cookie, partial.data(), partial.size())) return ERROR_INVALID_VALUE;
         }
         return ERROR_OUT_OF_SIZE;
     }
@@ -534,7 +532,7 @@ int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std
         joined += item;
     }
     joined.append("\0 \0", 3);
-    if (!HttpGuest::CopyOut(cookie, joined.data(), joined.size())) return ERROR_INVALID_VALUE;
+    if (!GuestCopyOut_nid_no_patch(cookie, joined.data(), joined.size())) return ERROR_INVALID_VALUE;
     if (required && !guestWrite(required, total)) return ERROR_INVALID_VALUE;
     return 0;
 }
@@ -562,13 +560,13 @@ int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
     if (!stats) return ERROR_INVALID_VALUE;
     std::erase_if(jar->cookies, [now = Clock::now()](const Cookie& stored) { return expired(stored, now); });
     HttpCookieStats out{};
-    if (!HttpGuest::CopyIn(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
+    if (!GuestCopyIn_nid_no_patch(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
     out.usedBytes = jarSize(*jar);
     out.cookieCount = static_cast<std::uint32_t>(jar->cookies.size());
     out.peakUsedBytes = jar->peakSize;
     out.peakCookieCount = jar->peakNum;
     out.evictedCookieCount = jar->removedNum;
-    if (!HttpGuest::CopyOut(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
+    if (!GuestCopyOut_nid_no_patch(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -592,9 +590,7 @@ int ExportHttpCookies(int contextId, void* buffer, std::size_t size, std::size_t
     if (!guestWrite(requiredSize, required)) return ERROR_INVALID_VALUE;
     if (!buffer) return 0;
     if (size < required) return ERROR_OUT_OF_SIZE;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(buffer, blob.data(), required);
-    errno = savedErrno;
     return written ? 0 : ERROR_INVALID_VALUE;
 }
 
@@ -615,9 +611,7 @@ int ImportHttpCookies(int contextId, const void* buffer, std::size_t size) {
     } catch (const std::bad_alloc&) {
         return ERROR_OUT_OF_MEMORY;
     }
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(input.data(), buffer, size);
-    errno = savedErrno;
     if (!read) return ERROR_INVALID_VALUE;
     try {
         if (!importBlob(input, cookies)) return ERROR_INVALID_VALUE;

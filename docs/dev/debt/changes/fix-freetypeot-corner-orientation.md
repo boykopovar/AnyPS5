@@ -1,0 +1,5 @@
+# libSceFreeTypeOt
+
+## change [ft_corner_is_flat, ft_corner_orientation]
+
+- [ft_corner_is_flat, ft_corner_orientation](../../../core/libs/prx/libSceFreeTypeOt/Export.cpp) (libSceFreeTypeOt) - console prototypes and FreeType version equivalence are unverified. On a PS5 (FW 11.60, payload process) `ft_corner_orientation` returns a coordinate in four trivial cases, in this order (measured only where an input decides it): `in_y == 0` gives `out_y` (`-out_y` for a negative `in_x`), `in_x == 0` gives `-out_x` (`out_x` for a negative `in_y`), `out_y == 0` gives `in_y` (`-in_y` for a negative `out_x`), `out_x == 0` gives `-in_x` (`in_x` for a negative `out_y`); otherwise +1 or -1, as bundled FreeType 2.13.3 does. This library returns the low 32 bits; the high half (`2^40` gave `0x10000000000`) is not reproduced. `ft_corner_is_flat` is unchanged: the console gave 1 up to 90 degrees and 0 from 100 degrees at three scales, and 1 for (10, 0)/(0, 10); 10 of 46 vectors differ here, cause unknown. Closes when: compared with a console module.

@@ -10,6 +10,8 @@
 
 static_assert(std::is_same_v<decltype(&uloc_forLanguageTag),
                              std::int32_t (APS5_VABI*)(const char*, char*, std::int32_t, std::int32_t*, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&uloc_toLanguageTag),
+                             std::int32_t (APS5_VABI*)(const char*, char*, std::int32_t, std::int8_t, std::int32_t*)>);
 
 namespace {
 
@@ -146,6 +148,40 @@ constexpr Vector kVectors[] = {
     {"und-variant-u-attr", "__VARIANT@attribute=attr", 18},
     {"und-1994-u-attr", "__1994@attribute=attr", 15},
     {"und-US-u-attr", "_US@attribute=attr", 13},
+    {"zh-cmn-CH-u-co-pinyin", "cmn_CH@collation=pinyin", 21},
+    {"en-u-ca-gregory", "en@calendar=gregorian", 15},
+    {"en-U-cu-USD", "en@currency=usd", 11},
+    {"en-US-u-va-posix", "en_US_POSIX", 16},
+    {"en-us-u-ca-gregory-va-posix", "en_US_POSIX@calendar=gregorian", 27},
+    {"en-us-posix-u-va-posix", "en_US_POSIX@va=posix", 22},
+    {"en-us-u-va-posix2", "en_US@va=posix2", 17},
+    {"en-us-vari1-u-va-posix", "en_US_VARI1@va=posix", 22},
+    {"fr-u-nu-latn-cu-eur", "fr@currency=eur;numbers=latn", 19},
+    {"de-k-kext-u-co-phonebk-nu-latn", "de@collation=phonebook;k=kext;numbers=latn", 30},
+    {"ja-u-cu-jpy-ca-jp", "ja@calendar=yes;currency=jpy;jp=yes", 17},
+    {"en-us-u-tz-usnyc", "en_US@timezone=America/New_York", 16},
+    {"zh-u-ca-chinese-x-u-ca-chinese", "zh@calendar=chinese;x=u-ca-chinese", 30},
+    {"en-US-u-attr1-attr2-ca-gregory", "en_US@attribute=attr1-attr2;calendar=gregorian", 30},
+    {"sr-u-kn", "sr@colnumeric=yes", 7},
+    {"de-u-kn-co-phonebk", "de@collation=phonebook;colnumeric=yes", 18},
+    {"en-u-attr2-attr1-kn-kb", "en@attribute=attr1-attr2;colbackwards=yes;colnumeric=yes", 22},
+    {"ja-u-ijkl-efgh-abcd-ca-japanese-xx-yyy-zzz-kn", "ja@attribute=abcd-efgh-ijkl;calendar=japanese;colnumeric=yes;xx=yyy-zzz", 45},
+    {"de-u-xc-xphonebk-co-phonebk-ca-buddhist-mo-very-lo-extensi-xd-that-de-should-vc-probably-xz-killthebuffer", "de@calendar=buddhist;collation=phonebook;de=should;lo=extensi;mo=very;vc=probably;xc=xphonebk;xd=that;xz=yes", 91},
+    {"en-u-baz-ca-islamic-civil", "en@attribute=baz;calendar=islamic-civil", 25},
+    {"en-a-bar-u-ca-islamic-civil-x-u-foo", "en@a=bar;calendar=islamic-civil;x=u-foo", 35},
+    {"en-a-bar-u-baz-ca-islamic-civil-x-u-foo", "en@a=bar;attribute=baz;calendar=islamic-civil;x=u-foo", 39},
+    {"und-Arab-u-em-emoji", "_Arab@em=emoji", 19},
+    {"und-Latn-u-em-emoji", "_Latn@em=emoji", 19},
+    {"und-Latn-DE-u-em-emoji", "_Latn_DE@em=emoji", 22},
+    {"und-Zzzz-DE-u-em-emoji", "_Zzzz_DE@em=emoji", 22},
+    {"und-DE-u-em-emoji", "_DE@em=emoji", 17},
+    {"zh-hans-cn-u-ca-x_t-u", "zh_Hans_CN@calendar=yes", 15},
+    {"zh-u-ca-chinese-ca-gregory", "zh@calendar=chinese", 26},
+    {"zh-u-ca-gregory-co-pinyin-ca-chinese", "zh@calendar=gregorian;collation=pinyin", 36},
+    {"de-latn-DE-1901-u-co-phonebk-co-pinyin-ca-gregory", "de_Latn_DE_1901@calendar=gregorian;collation=phonebook", 49},
+    {"th-u-kf-nu-thai-kf-false", "th@colcasefirst=yes;numbers=thai", 24},
+    {"sgn-br-u-co-phonebk", "bzs@collation=phonebook", 19},
+    {"ja-latn-hepburn-heploc-u-ca-japanese", "ja_Latn__ALALC97@calendar=japanese", 36},
 };
 
 [[noreturn]] void Fail(const char* tag, const char* what) {
@@ -225,16 +261,31 @@ void CheckStatus() {
     if (large[0] != 'e' || large[1] != 'n' || large[2] != 'Z') Fail("attributes", "overflow output");
 }
 
-void CheckThrows(const char* tag) {
+void CheckKeywordFailure(const char* tag, const char* written, std::int32_t parsedLength) {
     char buffer[64];
-    std::int32_t parsed = 0;
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t parsed = -7;
     std::int32_t status = 0;
-    try {
-        uloc_forLanguageTag(tag, buffer, sizeof(buffer), &parsed, &status);
-    } catch (const std::exception&) {
-        return;
-    }
-    Fail(tag, "did not throw");
+    const std::int32_t length = uloc_forLanguageTag(tag, buffer, sizeof(buffer), &parsed, &status);
+    if (status != kIllegalArgument) Fail(tag, "keyword failure status");
+    if (length != static_cast<std::int32_t>(std::strlen(written)) || std::memcmp(buffer, written, std::strlen(written)) != 0) Fail(tag, "keyword failure output");
+    if (buffer[std::strlen(written)] != 'Z' || parsed != parsedLength) Fail(tag, "keyword failure length");
+}
+
+void CheckLongType() {
+    std::string type;
+    for (int index = 0; index < 13; ++index) type += "abcdefgh-";
+    const std::string fits = "en-u-zz-" + type + "ABCDE-wxyz";
+    const std::string over = "en-u-zz-" + type + "ABCDE-vwxyz";
+    const std::string expected = "en@zz=" + type + "abcde-wxyz";
+    char buffer[160];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t parsed = -7;
+    std::int32_t status = 0;
+    const std::int32_t length = uloc_forLanguageTag(fits.c_str(), buffer, sizeof(buffer), &parsed, &status);
+    if (status != 0 || length != static_cast<std::int32_t>(expected.size()) || expected != buffer) Fail("long type", "127 characters");
+    if (parsed != static_cast<std::int32_t>(fits.size())) Fail("long type", "parsed length");
+    CheckKeywordFailure(over.c_str(), "en", static_cast<std::int32_t>(over.size()));
 }
 
 void CheckInvalidArguments() {
@@ -258,16 +309,233 @@ void CheckInvalidArguments() {
     }
 }
 
+
+struct TagVector {
+    const char* locale;
+    const char* lenient;
+    const char* strict;
+};
+
+constexpr TagVector kTagVectors[] = {
+    {"", "und", "und"},
+    {"en", "en", "en"},
+    {"en_US", "en-US", "en-US"},
+    {"iw_IL", "he-IL", "he-IL"},
+    {"sr_Latn_SR", "sr-Latn-SR", "sr-Latn-SR"},
+    {"en__POSIX", "en-u-va-posix", "en-u-va-posix"},
+    {"en_POSIX", "en-u-va-posix", "en-u-va-posix"},
+    {"en_US_POSIX_VAR", "en-US-posix-x-lvariant-var", nullptr},
+    {"en_US_VAR_POSIX", "en-US-x-lvariant-var-posix", nullptr},
+    {"und_555", "und-555", "und-555"},
+    {"123", "und", nullptr},
+    {"%$#&", "und", nullptr},
+    {"_Latn", "und-Latn", "und-Latn"},
+    {"_DE", "und-DE", "und-DE"},
+    {"und_FR", "und-FR", "und-FR"},
+    {"th_TH_TH", "th-TH-x-lvariant-th", nullptr},
+    {"bogus", "bogus", "bogus"},
+    {"foooobarrr", "und", nullptr},
+    {"aa_BB_CYRL", "aa-BB-x-lvariant-cyrl", nullptr},
+    {"en_US_1234", "en-US-1234", "en-US-1234"},
+    {"en_US_VARIANTA_VARIANTB", "en-US-varianta-variantb", "en-US-varianta-variantb"},
+    {"en_US_VARIANTB_VARIANTA", "en-US-varianta-variantb", "en-US-varianta-variantb"},
+    {"ja__9876_5432", "ja-5432-9876", "ja-5432-9876"},
+    {"sl__ROZAJ_BISKE_1994", "sl-1994-biske-rozaj", "sl-1994-biske-rozaj"},
+    {"en__SCOUSE_FONIPA", "en-fonipa-scouse", "en-fonipa-scouse"},
+    {"zh_Hant__VAR", "zh-Hant-x-lvariant-var", nullptr},
+    {"es__BADVARIANT_GOODVAR", "es-goodvar", nullptr},
+    {"en@x=x-y-z;a=a-b-c", "en-x-x-y-z", nullptr},
+    {"en_US_POSIX", "en-US-u-va-posix", "en-US-u-va-posix"},
+    {"@x=elmer", "x-elmer", "x-elmer"},
+    {"en@x=elmer", "en-x-elmer", "en-x-elmer"},
+    {"@x=elmer;a=exta", "und-a-exta-x-elmer", "und-a-exta-x-elmer"},
+    {"en@a=bar;attribute=baz", "en-a-bar-u-baz", "en-a-bar-u-baz"},
+    {"en@a=bar;attribute=baz;x=u-foo", "en-a-bar-u-baz-x-u-foo", "en-a-bar-u-baz-x-u-foo"},
+    {"en@attribute=baz", "en-u-baz", "en-u-baz"},
+    {"en@9=efg;a=baz", "en-9-efg-a-baz", "en-9-efg-a-baz"},
+    {"az_AZ_CYRL", "az-AZ-x-lvariant-cyrl", nullptr},
+    {"en@attribute=baz-abc", "en-u-abc-baz", "en-u-abc-baz"},
+    {"en@attribute=baz-baz", "en-u-baz", nullptr},
+    {"en_POSIX@x=priv", "en-u-va-posix-x-priv", "en-u-va-posix-x-priv"},
+    {"en_POSIX@attribute=baz", "en-u-baz-va-posix", "en-u-baz-va-posix"},
+    {"@x=abcdefghij", "und", nullptr},
+    {"de_DD", "de-DE", "de-DE"},
+    {"mo_ZR", "ro-CD", "ro-CD"},
+    {"eng_USA", "en-US", "en-US"},
+    {"deu_DEU_1901", "de-DE-1901", "de-DE-1901"},
+    {"x-elmer", "x-elmer", "x-elmer"},
+    {"en-x-elmer", "en-x-elmer", "en-x-elmer"},
+    {"en-a-bar-u-baz", "en-a-bar-u-baz", "en-a-bar-u-baz"},
+    {"en_US_POSIX@va=posix2", "en-US-u-va-posix2", "en-US-u-va-posix2"},
+    {"en_US_POSIX@ca=japanese", "en-US-u-ca-japanese-va-posix", "en-US-u-ca-japanese-va-posix"},
+    {"en@calendar=gregorian", "en-u-ca-gregory", "en-u-ca-gregory"},
+    {"de@collation=phonebook;calendar=gregorian", "de-u-ca-gregory-co-phonebk", "de-u-ca-gregory-co-phonebk"},
+    {"th@numbers=thai;z=extz;x=priv-use;a=exta", "th-a-exta-u-nu-thai-z-extz-x-priv-use", "th-a-exta-u-nu-thai-z-extz-x-priv-use"},
+    {"en@timezone=America/New_York;calendar=japanese", "en-u-ca-japanese-tz-usnyc", "en-u-ca-japanese-tz-usnyc"},
+    {"en@timezone=US/Eastern", "en-u-tz-usnyc", "en-u-tz-usnyc"},
+    {"it@collation=badcollationtype;colStrength=identical;cu=usd-eur", "it-u-cu-usd-eur-ks-identic", nullptr},
+    {"en_US_POSIX@calendar=japanese;currency=EUR", "en-US-u-ca-japanese-cu-eur-va-posix", "en-US-u-ca-japanese-cu-eur-va-posix"},
+    {"en_US@attribute=attr1-attr2;calendar=gregorian", "en-US-u-attr1-attr2-ca-gregory", "en-US-u-attr1-attr2-ca-gregory"},
+    {"en@attribute=baz;calendar=islamic-civil", "en-u-baz-ca-islamic-civil", "en-u-baz-ca-islamic-civil"},
+    {"en@a=bar;calendar=islamic-civil;x=u-foo", "en-a-bar-u-ca-islamic-civil-x-u-foo", "en-a-bar-u-ca-islamic-civil-x-u-foo"},
+    {"en@a=bar;attribute=baz;calendar=islamic-civil;x=u-foo", "en-a-bar-u-baz-ca-islamic-civil-x-u-foo", "en-a-bar-u-baz-ca-islamic-civil-x-u-foo"},
+    {"en-u-kn-true", "en-u-kn", "en-u-kn"},
+    {"en-u-kn", "en-u-kn", "en-u-kn"},
+    {"de-u-co-yes", "de-u-co", "de-u-co"},
+    {"de-u-co", "de-u-co", "de-u-co"},
+    {"de@collation=yes", "de-u-co", "de-u-co"},
+    {"cmn-hans-cn-u-ca-t-ca-x-t-u", "cmn-Hans-CN-t-ca-u-ca-x-t-u", "cmn-Hans-CN-t-ca-u-ca-x-t-u"},
+};
+
+[[noreturn]] void TagFail(const char* locale, const char* what) {
+    std::fprintf(stderr, "uloc_toLanguageTag \"%s\": %s\n", locale, what);
+    std::abort();
+}
+
+void CheckTag(const char* locale, const char* expected, std::int8_t strict) {
+    char buffer[256];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t status = 0;
+    const std::int32_t length = uloc_toLanguageTag(locale, buffer, sizeof(buffer), strict, &status);
+    if (!expected) {
+        if (status != kIllegalArgument) TagFail(locale, "strict status");
+        return;
+    }
+    if (status != 0) TagFail(locale, "unexpected status");
+    if (length != static_cast<std::int32_t>(std::strlen(expected))) TagFail(locale, "wrong length");
+    if (std::strcmp(buffer, expected) != 0) TagFail(locale, buffer);
+}
+
+void CheckTagVectors() {
+    for (const TagVector& vector : kTagVectors) {
+        CheckTag(vector.locale, vector.lenient, 0);
+        CheckTag(vector.locale, vector.strict, 1);
+    }
+}
+
+void CheckTagRoundTrip() {
+    for (const char* tag : {"en-US", "sr-Latn-RS", "ja-5432-9876", "en-a-bar-u-baz-x-u-foo", "und-a-exta-x-elmer",
+                            "en-US-x-lvariant-var", "x-elmer"}) {
+        char locale[64];
+        std::int32_t parsed = 0;
+        std::int32_t status = 0;
+        uloc_forLanguageTag(tag, locale, sizeof(locale), &parsed, &status);
+        if (status != 0) TagFail(tag, "forLanguageTag status");
+        char back[64];
+        status = 0;
+        uloc_toLanguageTag(locale, back, sizeof(back), 0, &status);
+        if (status != 0 || std::strcmp(back, tag) != 0) TagFail(tag, back);
+    }
+}
+
+void CheckTagCapacity() {
+    const char* locale = "en_US_VARIANTA_VARIANTB";
+    const char expected[] = "en-US-varianta-variantb";
+    const std::int32_t full = sizeof(expected) - 1;
+
+    std::int32_t status = 0;
+    if (uloc_toLanguageTag(locale, nullptr, 0, 0, &status) != full || status != kBufferOverflow) TagFail(locale, "preflight");
+
+    char exact[full];
+    std::memset(exact, 'Z', sizeof(exact));
+    status = 0;
+    if (uloc_toLanguageTag(locale, exact, full, 0, &status) != full) TagFail(locale, "exact length");
+    if (status != kNotTerminated || std::memcmp(exact, expected, full) != 0) TagFail(locale, "exact capacity");
+
+    char roomy[full + 1];
+    std::memset(roomy, 'Z', sizeof(roomy));
+    status = kNotTerminated;
+    if (uloc_toLanguageTag(locale, roomy, full + 1, 0, &status) != full) TagFail(locale, "terminated length");
+    if (status != 0 || std::strcmp(roomy, expected) != 0) TagFail(locale, "terminated capacity");
+
+    char shortBuffer[full - 1];
+    std::memset(shortBuffer, 'Z', sizeof(shortBuffer));
+    status = 0;
+    if (uloc_toLanguageTag(locale, shortBuffer, full - 1, 0, &status) != full) TagFail(locale, "short length");
+    if (status != kBufferOverflow || std::memcmp(shortBuffer, expected, full - 1) != 0) TagFail(locale, "short capacity");
+
+    char negative[4];
+    status = 0;
+    if (uloc_toLanguageTag("en", negative, -1, 0, &status) != 2 || status != kBufferOverflow) TagFail("en", "negative capacity");
+}
+
+void CheckLongTag() {
+    std::string tag = "en";
+    std::string locale = "en@x=";
+    tag += "-x";
+    for (int index = 0; index < 80; ++index) {
+        tag += "-ab";
+        locale += index ? "-ab" : "ab";
+    }
+    const std::int32_t full = static_cast<std::int32_t>(tag.size());
+    if (full < 200 || locale.size() < 200) TagFail("long", "long input too short");
+
+    for (const std::string& input : {tag, locale}) {
+        for (const std::int8_t strict : {std::int8_t{0}, std::int8_t{1}}) {
+            std::string buffer(512, 'Z');
+            std::int32_t status = 0;
+            const std::int32_t length = uloc_toLanguageTag(input.c_str(), buffer.data(), 512, strict, &status);
+            if (status != 0) TagFail("long", "unexpected status");
+            if (length != full || std::strcmp(buffer.c_str(), tag.c_str()) != 0) TagFail("long", "wrong tag");
+        }
+    }
+
+    std::int32_t status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), nullptr, 0, 0, &status) != full || status != kBufferOverflow) TagFail("long", "preflight");
+
+    std::string exact(static_cast<std::size_t>(full), 'Z');
+    status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), exact.data(), full, 0, &status) != full) TagFail("long", "exact length");
+    if (status != kNotTerminated || exact != tag) TagFail("long", "exact capacity");
+
+    std::string shortBuffer(156, 'Z');
+    status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), shortBuffer.data(), 156, 0, &status) != full) TagFail("long", "short length");
+    if (status != kBufferOverflow || shortBuffer != tag.substr(0, 156)) TagFail("long", "short capacity");
+}
+
+void CheckTagStatus() {
+    char buffer[16];
+    std::memset(buffer, 'Z', sizeof(buffer));
+    std::int32_t status = kIllegalArgument;
+    if (uloc_toLanguageTag("en_US", buffer, sizeof(buffer), 0, &status) != 0) TagFail("en_US", "failure status length");
+    if (status != kIllegalArgument || buffer[0] != 'Z') TagFail("en_US", "failure status touched output");
+
+    status = 0;
+    if (uloc_toLanguageTag("en_US_POSIX_VAR", buffer, sizeof(buffer), 1, &status) != 5) TagFail("en_US_POSIX_VAR", "partial length");
+    if (status != kIllegalArgument || std::memcmp(buffer, "en-USZ", 6) != 0) TagFail("en_US_POSIX_VAR", "partial output");
+
+    std::memset(buffer, 'Z', sizeof(buffer));
+    status = 0;
+    if (uloc_toLanguageTag("en@foo", buffer, sizeof(buffer), 0, &status) != 2) TagFail("en@foo", "malformed keyword length");
+    if (status != 3 || std::memcmp(buffer, "enZ", 3) != 0) TagFail("en@foo", "malformed keyword status");
+
+    status = 0;
+    try {
+        uloc_toLanguageTag(nullptr, buffer, sizeof(buffer), 0, &status);
+        TagFail("null", "null locale did not throw");
+    } catch (const std::invalid_argument&) {
+    }
+    status = 0;
+    try {
+        uloc_toLanguageTag("en", nullptr, 4, 0, &status);
+        TagFail("en", "null buffer did not throw");
+    } catch (const std::invalid_argument&) {
+    }
+}
+
 }
 
 int main() {
     CheckVectors();
     CheckCapacity();
     CheckStatus();
-    CheckThrows("en-u-ca-gregory");
-    CheckThrows("en-u-baz-ca-gregory");
-    CheckThrows("und-u-em-emoji");
-    CheckThrows("en-US-u-va-posix");
+    CheckLongType();
     CheckInvalidArguments();
+    CheckTagVectors();
+    CheckTagRoundTrip();
+    CheckTagCapacity();
+    CheckTagStatus();
+    CheckLongTag();
     std::puts("ICU language tag tests passed");
 }

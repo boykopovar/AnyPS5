@@ -1,10 +1,13 @@
 from pathlib import Path
 import contextlib
 import io
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 
@@ -266,6 +269,24 @@ class CheckMainSyncPathTests(CheckMainSyncFixture):
         self.assertIn(f"  {name}\n", result.stdout.replace("\r", ""))
         self.assertIn("#9", result.stdout)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows filenames cannot contain carriage returns")
+    def test_carriage_return_in_path_is_preserved_in_json(self):
+        name = "line\rbreak.txt"
+        self.repo.write(name, "original\n")
+        self.repo.commit("add file")
+        self.branch("feature")
+        self.repo.write(name, "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, "upstream\n")
+        self.repo.commit("upstream edit (#77)")
+
+        result = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["conflicts"], [name])
+        self.assertEqual(report["shared"], [name])
+        self.assertEqual(set(report["pulls"]), {"77"})
 
     def test_merged_pull_history_treats_shared_names_as_literal_paths(self):
         import importlib.util
@@ -357,7 +378,7 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
             subprocess.run(["git", "-C", other, "commit", "-qm", "upstream change"], check=True, capture_output=True,
                            env={**os.environ, **IDENTITY})
             self.repo.git("remote", "add", "-t", "other", "upstream", other)
-            for options in ((), ("--base", "upstream/main")):
+            for options in ((), ("--base", "upstream/main"), ("--base", "refs/remotes/upstream/main")):
                 with self.subTest(options=options):
                     self.repo.git("update-ref", "refs/remotes/upstream/main", "HEAD")
                     result = subprocess.run(
@@ -365,7 +386,30 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+                    base = options[-1] if options else "refs/remotes/upstream/main"
+                    self.assertIn(f"0 ahead and 1 behind {base}", result.stdout)
+
+    def test_fetch_reports_main_when_a_submodule_remote_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "dependency"
+            dependency.mkdir()
+            Repo(dependency)
+            self.repo.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(dependency), "dep")
+            self.repo.commit("add dependency")
+            upstream = root / "upstream"
+            self.repo.git("clone", "-q", ".", str(upstream))
+            (upstream / "upstream.txt").write_text("new upstream commit\n", encoding="utf-8")
+            self.repo.git("-C", str(upstream), "add", "upstream.txt")
+            self.repo.git("-C", str(upstream), "commit", "-qm", "upstream change")
+            self.repo.git("remote", "add", "upstream", str(upstream))
+            self.repo.git("-C", "dep", "remote", "set-url", "origin", str(root / "missing"))
+            self.repo.git("config", "fetch.recurseSubmodules", "true")
+
+            result = run_tool(self.repo.path, "--base", "upstream/main", "--fetch", "--strict")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
 
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):
@@ -403,6 +447,89 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(strict.returncode, 1, strict.stderr)
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
+
+class RenderTests(unittest.TestCase):
+    def data(self, conflicts):
+        return {'head': 'h' * 9, 'ahead': 1, 'behind': 2, 'base': 'main', 'mergebase': 'a' * 40, 'conflicts': conflicts, 'shared': []}
+
+    def test_render_reports_a_clean_merge(self):
+        self.assertIn('merge: clean', check_main_sync.render(self.data([])))
+
+    def test_render_lists_each_conflicting_file(self):
+        text = check_main_sync.render(self.data(['f.txt']))
+        self.assertIn('merge: CONFLICT in 1 file(s)', text)
+        self.assertIn('  f.txt', text)
+
+
+class GitListTests(unittest.TestCase):
+    def make_repo(self, directory):
+        import subprocess as sp
+        sp.run(['git', '-C', directory, 'init', '-q'], check=True)
+        (Path(directory) / 'a.txt').write_text('x', encoding='utf-8')
+        sp.run(['git', '-C', directory, 'add', 'a.txt'], check=True)
+        sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'base'], check=True)
+
+    def test_lines_returns_each_non_empty_output_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(len(check_main_sync.lines(Path(directory), 'rev-list', 'HEAD')), 1)
+
+    def test_names_returns_the_tracked_file_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
+
+
+class ResolveBaseTests(unittest.TestCase):
+    @staticmethod
+    def fake_git(existing):
+        calls = []
+
+        def git(repo, *arguments, check=True):
+            calls.append(arguments[-1])
+            return types.SimpleNamespace(returncode=0 if arguments[-1] in {name + "^0" for name in existing} else 1)
+        return git, calls
+
+    def test_named_base_is_returned_when_it_resolves(self):
+        git, calls = self.fake_git({"mine"})
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            self.assertEqual(check_main_sync.resolve_base(Path("."), "mine"), "mine")
+        self.assertEqual(calls, ["mine^0"])
+
+    def test_named_base_does_not_fall_back_to_the_defaults(self):
+        git, _ = self.fake_git(set(check_main_sync.BASES))
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            with self.assertRaisesRegex(RuntimeError, r"no base ref found \(mine\)"):
+                check_main_sync.resolve_base(Path("."), "mine")
+
+    def test_first_resolving_default_wins(self):
+        bases = list(check_main_sync.BASES)
+        git, _ = self.fake_git(set(bases[1:]))
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            self.assertEqual(check_main_sync.resolve_base(Path("."), None), bases[1])
+
+    def test_no_resolving_default_names_every_candidate(self):
+        git, _ = self.fake_git(set())
+        with unittest.mock.patch.object(check_main_sync, "git", git):
+            with self.assertRaisesRegex(RuntimeError, ", ".join(map(re.escape, check_main_sync.BASES))):
+                check_main_sync.resolve_base(Path("."), None)
+
+
+class GitVersionTests(unittest.TestCase):
+    @staticmethod
+    def version(text):
+        return unittest.mock.patch.object(check_main_sync, "git", lambda *args, **kwargs: types.SimpleNamespace(stdout=text))
+
+    def test_parses_major_and_minor(self):
+        with self.version("git version 2.43.0.windows.1\n"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 43))
+        with self.version("git version 2.5"):
+            self.assertEqual(check_main_sync.git_version(Path(".")), (2, 5))
+
+    def test_unrecognised_output_has_no_version(self):
+        for text in ("", "not git\n", "git version unknown"):
+            with self.subTest(text=text), self.version(text):
+                self.assertIsNone(check_main_sync.git_version(Path(".")))
 
 
 if __name__ == "__main__":

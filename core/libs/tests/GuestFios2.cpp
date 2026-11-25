@@ -93,16 +93,30 @@ static SceFiosOpAttr CountingAttr() {
 
 static void CheckInitialization() {
     REQUIRE(!sceFiosIsInitialized(nullptr));
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
     std::uint32_t params[16] = {};
     params[0] = (sizeof(params) << 1) | 0u;
     params[3] = 0xfeedbeef;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
     REQUIRE(sceFiosIsInitialized(nullptr));
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(10) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 2);
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
     std::uint32_t copy[16] = {};
     REQUIRE(sceFiosIsInitialized(reinterpret_cast<SceFiosParams*>(copy)));
@@ -187,6 +201,14 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     std::memset(overlayResult, 0, sizeof(overlayResult));
     REQUIRE(sceFiosOverlayResolveSync(2, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG && file == overlayResult);
     REQUIRE(sceFiosOverlayResolveSync(-1, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG);
+    REQUIRE(sceFiosOverlayResolveSync(0, nullptr, nullptr, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, nullptr, overlayResult, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), nullptr, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(2, nullptr, overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(-1, file.c_str(), nullptr, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, 0) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, file.size() + 1) == SCE_FIOS_OK && file == overlayResult);
+    REQUIRE(sceFiosOverlayResolveSync(0, "", overlayResult, sizeof(overlayResult)) == SCE_FIOS_OK && std::strlen(overlayResult) == 0);
     OverlayRecordTest overlay{};
     overlay.type = 0;
     overlay.order = 1;
@@ -242,6 +264,9 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(!sceFiosFileExistsSync(nullptr, directory.c_str()));
     REQUIRE(sceFiosDirectoryExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosDirectoryExistsSync(nullptr, file.c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, (directory + "/missing").c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, nullptr));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, ""));
     REQUIRE(!sceFiosExistsSync(nullptr, nullptr));
     REQUIRE(!sceFiosExistsSync(nullptr, ""));
 
@@ -252,6 +277,7 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosFileGetSizeSync(nullptr, "") == SCE_FIOS_ERROR_BAD_PATH);
     const std::string tooLong(2000, 'a');
     REQUIRE(sceFiosFileGetSizeSync(nullptr, tooLong.c_str()) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, tooLong.c_str()));
 
     SceFiosStat stat{};
     std::memset(&stat, 0xaa, sizeof(stat));
@@ -349,6 +375,8 @@ static void CheckOperationLifecycle(const std::string& file) {
     REQUIRE(sceFiosOpSyncWait(directoryOp) == 1);
     const SceFiosOp fileAsDirectoryOp = sceFiosDirectoryExists(nullptr, file.c_str(), &exists);
     REQUIRE(!exists && sceFiosOpSyncWait(fileAsDirectoryOp) == 0);
+    const SceFiosOp missingDirOp = sceFiosDirectoryExists(nullptr, "fios2_probe/none", &exists);
+    REQUIRE(!exists && sceFiosOpSyncWait(missingDirOp) == 0);
 
     const SceFiosOp failed = sceFiosFileGetSize(nullptr, "fios2_probe/none");
     REQUIRE(sceFiosOpGetError(failed) == SCE_FIOS_ERROR_BAD_PATH);
@@ -539,6 +567,68 @@ static void CheckMutations(const std::string& directory) {
     REQUIRE(g_completed == 2 && sceFiosOpSyncWait(removed) == SCE_FIOS_OK);
 }
 
+static void CheckPathMutations(const std::string& directory) {
+    const auto holds = [](const std::string& path, const char* expected, std::size_t size) {
+        char bytes[16]{};
+        const auto count = static_cast<SceFiosSize>(size);
+        return sceFiosFileGetSizeSync(nullptr, path.c_str()) == count && sceFiosFileReadSync(nullptr, path.c_str(), bytes, count, 0) == count && std::memcmp(bytes, expected, size) == 0;
+    };
+
+    const std::string longWrite(1025, 'x');
+    REQUIRE(sceFiosFileWriteSync(nullptr, longWrite.c_str(), "data", 4, 0) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+
+    const std::string dirTarget = directory + "/pm_dir_target";
+    REQUIRE(sceFiosDirectoryCreateSync(nullptr, dirTarget.c_str()) == SCE_FIOS_OK);
+    REQUIRE(sceFiosFileWriteSync(nullptr, dirTarget.c_str(), "data", 4, 0) == SCE_FIOS_ERROR_NOT_A_FILE);
+    REQUIRE(sceFiosDirectoryExistsSync(nullptr, dirTarget.c_str()));
+    REQUIRE(sceFiosDirectoryDeleteSync(nullptr, dirTarget.c_str()) == SCE_FIOS_OK);
+
+    const std::string sparse = directory + "/pm_sparse.bin";
+    REQUIRE(sceFiosFileWriteSync(nullptr, sparse.c_str(), "tail", 4, 8) == 4);
+    REQUIRE(holds(sparse, "\0\0\0\0\0\0\0\0tail", 12));
+    REQUIRE(sceFiosDeleteSync(nullptr, sparse.c_str()) == SCE_FIOS_OK);
+
+    const std::string zeroFile = directory + "/pm_zero.bin";
+    REQUIRE(!sceFiosExistsSync(nullptr, zeroFile.c_str()));
+    REQUIRE(sceFiosFileWriteSync(nullptr, zeroFile.c_str(), "", 0, 0) == 0);
+    REQUIRE(sceFiosFileGetSizeSync(nullptr, zeroFile.c_str()) == 0);
+    REQUIRE(sceFiosDeleteSync(nullptr, zeroFile.c_str()) == SCE_FIOS_OK);
+
+    const std::string growFile = directory + "/pm_truncate.bin";
+    REQUIRE(sceFiosFileWriteSync(nullptr, growFile.c_str(), "hello", 5, 0) == 5);
+    REQUIRE(sceFiosFileTruncateSync(nullptr, growFile.c_str(), 10) == SCE_FIOS_OK);
+    REQUIRE(holds(growFile, "hello\0\0\0\0\0", 10));
+    REQUIRE(sceFiosDeleteSync(nullptr, growFile.c_str()) == SCE_FIOS_OK);
+
+    const std::string overwriteSrc = directory + "/pm_overwrite_src.bin";
+    const std::string overwriteDst = directory + "/pm_overwrite_dst.bin";
+    REQUIRE(sceFiosFileWriteSync(nullptr, overwriteSrc.c_str(), "new source", 10, 0) == 10);
+    REQUIRE(sceFiosFileWriteSync(nullptr, overwriteDst.c_str(), "old dest", 8, 0) == 8);
+    REQUIRE(sceFiosRenameSync(nullptr, overwriteSrc.c_str(), overwriteDst.c_str()) == SCE_FIOS_OK);
+    REQUIRE(!sceFiosExistsSync(nullptr, overwriteSrc.c_str()));
+    REQUIRE(holds(overwriteDst, "new source", 10));
+    REQUIRE(sceFiosDeleteSync(nullptr, overwriteDst.c_str()) == SCE_FIOS_OK);
+
+    const std::string renameSrc = directory + "/pm_long_rename.bin";
+    const std::string longRename(1025, 'y');
+    REQUIRE(sceFiosFileWriteSync(nullptr, renameSrc.c_str(), "keep", 4, 0) == 4);
+    REQUIRE(sceFiosRenameSync(nullptr, renameSrc.c_str(), longRename.c_str()) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(holds(renameSrc, "keep", 4));
+    REQUIRE(sceFiosDeleteSync(nullptr, renameSrc.c_str()) == SCE_FIOS_OK);
+
+    const std::string asyncFile = directory + "/pm_async.bin";
+    const char* data = "async write test";
+    const SceFiosSize length = 16;
+    const SceFiosOp op = sceFiosFileWrite(nullptr, asyncFile.c_str(), data, length, 0);
+    REQUIRE(op > 0);
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(op) == length);
+    sceFiosOpDelete(op);
+    REQUIRE(holds(asyncFile, "async write test", 16));
+    REQUIRE(sceFiosDeleteSync(nullptr, asyncFile.c_str()) == SCE_FIOS_OK);
+}
+
 static void CheckDirectoryCreateWithModeAnswers(const std::string& directory) {
     REQUIRE(sceFiosIsInitialized(nullptr));
     const std::string withMode = directory + "/mode777";
@@ -628,6 +718,8 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosFHReadSync(nullptr, fh, buffer, 1) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSeek(fh, 0, 0) == SCE_FIOS_ERROR_BAD_FH && sceFiosFHTell(fh) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHGetSize(fh) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHSeek(999, 0, 0) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHGetSize(999) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHStatSync(nullptr, fh, &stat) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSyncSync(nullptr, fh) == SCE_FIOS_ERROR_BAD_FH);
 
@@ -921,13 +1013,18 @@ static void CheckOverlayResolve(const std::string& directory) {
     const std::string source = directory + "/ovlsrc";
     std::filesystem::create_directories(base);
     std::filesystem::create_directories(source);
-    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
-    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(base + name) << "base";
     const auto now = std::filesystem::last_write_time(source + "/a.txt");
     std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(source + "/older.txt", now);
     std::filesystem::last_write_time(base + "/newer.txt", now);
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(base + "/same.txt", now);
+    std::filesystem::last_write_time(source + "/same.txt", now);
+    const KernelTimeval epoch[2]{};
+    REQUIRE(sceKernelUtimes_nid_postfix((base + "/epoch.txt").c_str(), epoch) == 0);
+    REQUIRE(sceKernelUtimes_nid_postfix((source + "/epoch.txt").c_str(), epoch) == 0);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
@@ -947,6 +1044,22 @@ static void CheckOverlayResolve(const std::string& directory) {
     REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
     REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
 
+    const std::int32_t rootDestination = AddOverlay(0, 0, "/", source);
+    REQUIRE(Resolve(0, "/") == source);
+    REQUIRE(Resolve(0, "/app0//./asset.bin") == source + "/app0/asset.bin");
+    REQUIRE(Resolve(0, "app0/asset.bin") == "app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootDestination) == SCE_FIOS_OK);
+
+    const std::int32_t rootSource = AddOverlay(0, 0, "/virtual/", "/");
+    REQUIRE(Resolve(0, "/virtual") == "/");
+    REQUIRE(Resolve(0, "/virtual/asset.bin") == "/asset.bin");
+    REQUIRE(Resolve(0, "/virtualized/asset.bin") == "/virtualized/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootSource) == SCE_FIOS_OK);
+
+    const std::int32_t rootToRoot = AddOverlay(0, 0, "/", "/");
+    REQUIRE(Resolve(0, "//app0/./asset.bin") == "/app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootToRoot) == SCE_FIOS_OK);
+
     for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
         const std::int32_t id = AddOverlay(type, 0, base, source);
         REQUIRE(Resolve(0, base + "/a.txt") == source + "/a.txt");
@@ -954,6 +1067,60 @@ static void CheckOverlayResolve(const std::string& directory) {
         REQUIRE(Resolve(1, base + "/b.txt") == (type == 3 ? source : base) + "/b.txt");
         REQUIRE(Resolve(0, base + "/older.txt") == source + "/older.txt");
         REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
+        REQUIRE(Resolve(0, base + "/same.txt") == (type == 2 ? base : source) + "/same.txt");
+        REQUIRE(Resolve(0, base + "/epoch.txt") == source + "/epoch.txt");
+        REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
+    }
+}
+
+static void CheckOverlayUpdates(const std::string& directory) {
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/overlay-cache/file");
+    const auto first = AddOverlay(0, 5, "/overlay-cache", "/first//./");
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/first/file");
+    const auto second = AddOverlay(0, 5, "/overlay-cache", "/second");
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/first/file");
+    OverlayRecordTest changed{};
+    changed.order = 6;
+    std::strcpy(changed.destination, "/overlay-cache");
+    std::strcpy(changed.source, "/third");
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/second/file");
+    changed.order = 5;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/third/file");
+    changed.type = 4;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_ERROR_BAD_FLAGS);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/third/file");
+    changed.type = 0;
+    std::strcpy(changed.destination, "/renamed-cache");
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/second/file");
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/third/file");
+    changed.order = 0x80;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/renamed-cache/file");
+    changed.order = 0x7f;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/third/file");
+    REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/renamed-cache/file");
+    REQUIRE(sceFiosOverlayRemove(second) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/overlay-cache/file");
+
+    const std::string base = directory + "/snapshot-base";
+    const std::string source = directory + "/snapshot-source";
+    std::filesystem::create_directories(base);
+    std::filesystem::create_directories(source);
+    std::ofstream(base + "/file") << "base";
+    for (const std::uint8_t type : {1, 2, 3}) {
+        const auto id = AddOverlay(type, 0, base, source);
+        REQUIRE(Resolve(0, base + "/file") == base + "/file");
+        std::ofstream(source + "/file") << "source";
+        const auto originalTime = std::filesystem::last_write_time(base + "/file");
+        std::filesystem::last_write_time(source + "/file", originalTime + std::chrono::hours(1));
+        REQUIRE(Resolve(0, base + "/file") == source + "/file");
+        std::filesystem::remove(source + "/file");
+        REQUIRE(Resolve(0, base + "/file") == base + "/file");
         REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
     }
 }
@@ -1123,6 +1290,7 @@ int main() {
     CheckCallbacks(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
+    CheckPathMutations(directory.generic_string());
     CheckDirectoryCreateWithModeAnswers(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckAsyncHandleAnswers(directory.generic_string(), file);
@@ -1131,6 +1299,7 @@ int main() {
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
     CheckOverlayResolve(directory.generic_string());
+    CheckOverlayUpdates(directory.generic_string());
     REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     CheckDates();
     CheckBadPointers(file);
@@ -1141,7 +1310,23 @@ int main() {
     params[0] = sizeof(params) << 1;
     params[6] = 7;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(4) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(9) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(100) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     sceFiosTerminate();
     std::filesystem::remove_all(directory);
     std::puts("guest_fios2 ok");

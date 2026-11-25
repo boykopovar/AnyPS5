@@ -223,7 +223,7 @@ int _mapFlexible(void** addr, size_t len, int prot, int flags) {
         std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, used, configured);
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    const int result = DoMapAnon(addr, len, prot, flags);
+    const int result = DoMapFlexibleAnon(addr, len, prot, flags);
     if (result == 0) {
         const auto start = reinterpret_cast<uintptr_t>(*addr);
         _releaseFlexibleLocked(start, len);
@@ -577,6 +577,9 @@ int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  if (len == 0) return 0;
+ if (type == 10) return SCE_KERNEL_ERROR_EACCES;
+ if (type < 0 || type == 127) return SCE_KERNEL_ERROR_EINVAL;
+ if (UndefinedProtection(prot) && prot != std::numeric_limits<int>::min()) return SCE_KERNEL_ERROR_EINVAL;
  return DoMtypeprotect(addr, len, type, prot, false);
 }
 
@@ -626,7 +629,6 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
 
 int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped) {
  if (!resident || !mapped) return SCE_KERNEL_ERROR_EFAULT;
- if (pid < 0) return SCE_KERNEL_ERROR_EINVAL;
  if (pid != 0 && pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_ESRCH;
  const size_t images = GuestImageSegmentBytes_nid_no_patch();
  std::lock_guard lock(g_flexibleLock);
@@ -742,6 +744,10 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
    result = DoMprotect(entry.start, entry.length, static_cast<uint8_t>(entry.protection));
    break;
   case OpTypeProtect:
+   if (UndefinedProtection(static_cast<uint8_t>(entry.protection))) {
+    result = SCE_KERNEL_ERROR_EINVAL;
+    break;
+   }
    result = DoMtypeprotect(entry.start, entry.length, static_cast<uint8_t>(entry.type), static_cast<uint8_t>(entry.protection));
    break;
   case OpMapFlexible:
@@ -769,14 +775,14 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
 int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
     constexpr size_t MaximumNameLength = 32;
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (name == nullptr) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: null name");
     std::string copy;
-    const int error = CopyRangeName(name, MaximumNameLength, copy);
-    if (error == 63) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: name of 32 bytes or more");
-    if (error != 0) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: unreadable name");
+    const int error = name == nullptr ? 0 : CopyRangeName(name, MaximumNameLength, copy);
+    if (name != nullptr && error != 0 && error != 63) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: unreadable name");
     const int result = DoMapAnon(addr_in_out, len, prot, flags);
     if (result != 0) return result;
     _releaseFlexible(reinterpret_cast<uintptr_t>(*addr_in_out), len);
+    if (name == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+    if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     NameVirtualRange(*addr_in_out, len, std::move(copy));
     return 0;
 }

@@ -57,6 +57,11 @@ def _environment(value, shared=False):
     return value
 
 
+def _requires_validation(environment):
+    layers = re.split(r"[:;]", environment.get("VK_INSTANCE_LAYERS", ""))
+    return processes.FORCED["VK_INSTANCE_LAYERS"] in layers
+
+
 def validate_replay_recipe(value, directory):
     if not isinstance(value, dict) or value.get("format") != "aps5-frame-replay-recipe/1":
         raise ValueError("expected format aps5-frame-replay-recipe/1")
@@ -151,6 +156,10 @@ def _trial_environment(recipe, arm, runtime, cache):
     environment.update(arm["environment"])
     environment.update(FORCED)
     environment["ANYPS5_SHADER_CACHE_DIR"] = str(cache)
+    if _requires_validation(recipe["environment"]):
+        flags = environment.get("VK_LOADER_DEBUG", "").split(",")
+        if "all" not in flags and "layer" not in flags:
+            environment["VK_LOADER_DEBUG"] = ",".join(filter(None, (*flags, "layer")))
     return environment
 
 
@@ -163,7 +172,7 @@ def execute_replay_trial(command, directory, environment, timeout, log_bytes):
         try:
             with path.open("wb") as output:
                 total = 0
-                while block := stream.read(65536):
+                while block := stream.read1(65536):
                     remaining = max(0, log_bytes - total)
                     output.write(block[:remaining])
                     total += len(block)
@@ -184,6 +193,8 @@ def execute_replay_trial(command, directory, environment, timeout, log_bytes):
     interrupted = False
     started = time.monotonic()
     try:
+        if os.name == "nt":
+            processes.guard()
         process = subprocess.Popen(command, cwd=directory, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    **({"creationflags": processes.CREATE_SUSPENDED} if os.name == "nt"
@@ -241,6 +252,19 @@ def _read_log(path):
         return ""
     with path.open("rb") as stream:
         return stream.read(evidence.MAX_LOG_BYTES + 1).decode("utf-8", errors="replace")
+
+
+def _assess_replay(directory, commit, requires_validation):
+    stdout = _read_log(directory / "stdout.txt")
+    stderr = _read_log(directory / "stderr.txt")
+    assessment = evidence.parse_replay_result(stdout, stderr, commit)
+    if requires_validation:
+        logs = (stdout, stderr)
+        if any(processes.MISSING_LAYER in log for log in logs):
+            assessment["issues"].append("Vulkan loader reported a requested layer missing")
+        if not any(processes.INSERTED_LAYER in log for log in logs):
+            assessment["issues"].append("Khronos validation layer insertion was not recorded")
+    return assessment
 
 
 def _inspect_replay(recipe, arm, runtime, capture, directory):
@@ -317,7 +341,7 @@ def _run_one(recipe, report, output, arm_name, phase, iteration, runtime, captur
     command = [str(runtime / arm["replay"]), str(capture), "--strict", "--no-synthesize", "--repeat", "1"]
     result = execute_replay_trial(command, root, _trial_environment(recipe, arm, runtime, cache),
                                   recipe["timeout"], recipe["log_mib"] * 1024 * 1024)
-    assessment = evidence.parse_replay_result(_read_log(root / "stdout.txt"), _read_log(root / "stderr.txt"), arm["commit"])
+    assessment = _assess_replay(root, arm["commit"], _requires_validation(recipe["environment"]))
     for key in ("timed_out", "log_limit"):
         if result[key]:
             assessment["issues"].append(key)
@@ -410,6 +434,8 @@ def _offline_report(directory):
         raise ValueError("invalid original comparison runs")
     if type(original.get("complete")) is not bool or not isinstance(original.get("recipe"), dict):
         raise ValueError("invalid original comparison state")
+    environment = _environment(original["recipe"].get("environment", {}), shared=True)
+    requires_validation = _requires_validation(environment)
     original["artifacts"] = report["artifacts"]
     for run in original["runs"]:
         if not isinstance(run, dict) or run.get("arm") not in ARMS or run.get("phase") not in ("warmup", "trial"):
@@ -433,8 +459,7 @@ def _offline_report(directory):
         commit = arms[run["arm"]].get("commit")
         if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
             raise ValueError("invalid expected runtime commit")
-        native = evidence.parse_replay_result(_read_log(root / "stdout.txt"), _read_log(root / "stderr.txt"),
-                                               commit)
+        native = _assess_replay(root, commit, requires_validation)
         for key in ("timed_out", "log_limit"):
             if run[key]:
                 native["issues"].append(key)
@@ -447,6 +472,9 @@ def _offline_report(directory):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run and compare pinned native frame replays; retain limitations and every attempt.")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")

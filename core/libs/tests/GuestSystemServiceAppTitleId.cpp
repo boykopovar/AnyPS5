@@ -93,6 +93,11 @@ void CheckNullBuffers(int runningAppId) {
     Require(sceSystemServiceGetMainAppTitleId(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(GetAppIdRejects(nullptr));
     Require(IsAppLaunchedRejects(nullptr));
+    const auto* const unreadableTitleId = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(GetAppIdRejects(unreadableTitleId));
+    Require(errno == 71);
+    Require(IsAppLaunchedRejects(unreadableTitleId));
 }
 
 void CheckKnownTitle(int runningAppId) {
