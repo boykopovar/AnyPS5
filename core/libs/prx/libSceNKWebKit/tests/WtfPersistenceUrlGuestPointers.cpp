@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -117,7 +118,7 @@ static void TestEncoder() {
     Require(FaultsAsNotImplemented([&] { _ZN3WTF11Persistence7Encoder14encodeChecksumEv(readOnly); return 0; },
         "_ZN3WTF11Persistence7Encoder14encodeChecksumEv"));
     Require(FaultsAsNotImplemented([&] { _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*readOnly, text); return 0; },
-        "_ZN3WTF11Persistence7EncoderlsEj"));
+        "_ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_"));
     Require(std::memcmp(readOnlyPages, readOnlyBytes.data(), sizeof(Encoder)) == 0);
     _ZN3WTF11Persistence7EncoderD1Ev(readOnly);
     UnmapPages(readOnlyPages, encoderPages);
@@ -144,13 +145,12 @@ static void TestEncoder() {
     }
 }
 
-static void TestEncoderGrowthThenFailedAppend(const String* prefix, unsigned failingLength) {
-    constexpr std::size_t encoderPages = (sizeof(Encoder) + pageBytes - 1) / pageBytes;
-    unsigned char* unreadableData = MapPages(1);
-    Protect(unreadableData, 1, false);
-    NKWebKit::WtfAbi::StringImpl unreadableImpl{2, failingLength, unreadableData, 4};
-    String unreadableText(&unreadableImpl);
+constexpr const char* encodeStringName = "_ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_";
+constexpr const char* encodeCStringName = "_ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_";
 
+template <typename Encode>
+static void TestFailedEncodeKeepsEncoder(const String* prefix, Encode failingEncode, const char* name) {
+    constexpr std::size_t encoderPages = (sizeof(Encoder) + pageBytes - 1) / pageBytes;
     auto* reference = new Encoder;
     _ZN3WTF11Persistence7EncoderC1Ev(reference);
     unsigned char* guestPages = MapPages(encoderPages);
@@ -160,37 +160,88 @@ static void TestEncoderGrowthThenFailedAppend(const String* prefix, unsigned fai
         _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*reference, *prefix);
         _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*guest, *prefix);
     }
-    _ZN3WTF11Persistence7EncoderlsEj(reference, failingLength);
-    _ZN3WTF11Persistence7EncoderlsEb(reference, true);
-    unsigned capacityBefore = guest->capacity;
-    Require(guest->size + 5 + failingLength > capacityBefore);
+    std::vector<unsigned char> encoderBefore(guestPages, guestPages + sizeof(Encoder));
+    std::vector<unsigned char> bufferBefore(guest->buffer, guest->buffer + guest->capacity);
 
-    Require(FaultsAsNotImplemented([&] { _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*guest, unreadableText); return 0; },
-        "_ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_"));
-    Require(guest->buffer != guest->inlineBuffer);
-    Require(guest->capacity > capacityBefore && guest->capacity >= guest->size + failingLength);
-    Require(guest->size == reference->size && std::memcmp(guest->buffer, reference->buffer, reference->size) == 0);
-    Require(std::memcmp(&guest->sha1, &reference->sha1, sizeof(reference->sha1)) == 0);
+    Require(FaultsAsNotImplemented([&] { failingEncode(*guest); return 0; }, name));
+    Require(std::memcmp(guestPages, encoderBefore.data(), sizeof(Encoder)) == 0);
+    Require(std::memcmp(guest->buffer, bufferBefore.data(), bufferBefore.size()) == 0);
 
+    String followUp = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("after"), 5);
+    _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*guest, followUp);
+    _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(*reference, followUp);
     _ZN3WTF11Persistence7EncoderlsEj(guest, 0x01020304U);
     _ZN3WTF11Persistence7EncoderlsEj(reference, 0x01020304U);
     Require(guest->size == reference->size && std::memcmp(guest->buffer, reference->buffer, reference->size) == 0);
     Require(std::memcmp(&guest->sha1, &reference->sha1, sizeof(reference->sha1)) == 0);
 
     _ZN3WTF11Persistence7EncoderD1Ev(guest);
-    Require(guest->buffer == nullptr);
     _ZN3WTF11Persistence7EncoderD1Ev(reference);
     delete reference;
     UnmapPages(guestPages, encoderPages);
+}
+
+static void TestFailedStringPayload(const String* prefix, unsigned failingLength, bool is8Bit) {
+    unsigned char* unreadableData = MapPages(1);
+    Protect(unreadableData, 1, false);
+    NKWebKit::WtfAbi::StringImpl unreadableImpl{2, failingLength, unreadableData, is8Bit ? 4U : 0U};
+    String unreadableText(&unreadableImpl);
+    TestFailedEncodeKeepsEncoder(prefix, [&](Encoder& encoder) {
+        _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(encoder, unreadableText);
+    }, encodeStringName);
     unreadableText.impl = nullptr;
     UnmapPages(unreadableData, 1);
 }
 
-static void TestEncoderGrowthThenFailedAppends() {
-    TestEncoderGrowthThenFailedAppend(nullptr, 5000);
+static void TestFailedStringImpl(const String* prefix) {
+    unsigned char* unreadableImpl = MapPages(1);
+    Protect(unreadableImpl, 1, false);
+    String unreadableText(reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(unreadableImpl));
+    TestFailedEncodeKeepsEncoder(prefix, [&](Encoder& encoder) {
+        _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(encoder, unreadableText);
+    }, encodeStringName);
+    unreadableText.impl = nullptr;
+    UnmapPages(unreadableImpl, 1);
+}
+
+static void TestFailedCStringPayload(const String* prefix, std::size_t failingLength) {
+    unsigned char* pages = MapPages(2);
+    auto* header = reinterpret_cast<NKWebKit::WtfAbi::CStringBuffer*>(pages + pageBytes - sizeof(NKWebKit::WtfAbi::CStringBuffer));
+    header->refCount = 2;
+    header->length = failingLength;
+    Protect(pages + pageBytes, 1, false);
+    NKWebKit::WtfAbi::CString unreadableText(header);
+    TestFailedEncodeKeepsEncoder(prefix, [&](Encoder& encoder) {
+        _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_(encoder, unreadableText);
+    }, encodeCStringName);
+    unreadableText.buffer = nullptr;
+    UnmapPages(pages, 2);
+}
+
+static void TestFailedCStringBuffer(const String* prefix) {
+    unsigned char* unreadableBuffer = MapPages(1);
+    Protect(unreadableBuffer, 1, false);
+    NKWebKit::WtfAbi::CString unreadableText(reinterpret_cast<NKWebKit::WtfAbi::CStringBuffer*>(unreadableBuffer));
+    TestFailedEncodeKeepsEncoder(prefix, [&](Encoder& encoder) {
+        _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_(encoder, unreadableText);
+    }, encodeCStringName);
+    unreadableText.buffer = nullptr;
+    UnmapPages(unreadableBuffer, 1);
+}
+
+static void TestFailedEncodesKeepEncoder() {
     std::string longText(5000, 'q');
     String large = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(longText.data()), static_cast<unsigned>(longText.size()));
-    TestEncoderGrowthThenFailedAppend(&large, 4000);
+    String small = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("text"), 4);
+    for (const String* prefix : std::initializer_list<const String*>{nullptr, &small, &large}) {
+        TestFailedStringPayload(prefix, 5000, true);
+        TestFailedStringPayload(prefix, 3, true);
+        TestFailedStringPayload(prefix, 3, false);
+        TestFailedStringImpl(prefix);
+        TestFailedCStringPayload(prefix, 5000);
+        TestFailedCStringPayload(prefix, 3);
+        TestFailedCStringBuffer(prefix);
+    }
 }
 
 static void TestDecoder() {
@@ -320,7 +371,7 @@ static void TestURL() {
 
 int main() {
     TestEncoder();
-    TestEncoderGrowthThenFailedAppends();
+    TestFailedEncodesKeepEncoder();
     TestDecoder();
     TestURL();
     return 0;

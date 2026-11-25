@@ -27,6 +27,7 @@ using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::CString;
+using NKWebKit::WtfAbi::CStringBuffer;
 using NKWebKit::WtfAbi::URL;
 using NKWebKit::WtfAbi::SplitResult;
 using NKWebKit::WtfAbi::SplitResultIterator;
@@ -327,14 +328,10 @@ bool EncoderEnsure(Encoder* enc, EncoderState& state, std::size_t additional) {
     return true;
 }
 
-bool EncoderAppendBytes(Encoder* enc, EncoderState& state, const uint8_t* data, std::size_t length) {
-    if (!EncoderEnsure(enc, state, length)) return false;
-    std::vector<uint8_t> appended(length);
-    if (!GuestCopyIn_nid_no_patch(appended.data(), data, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, appended.data(), length))
-        return false;
-    unsigned salt = 101;
+bool EncoderWrite(Encoder* enc, EncoderState& state, unsigned salt, const void* data, std::size_t length) {
+    if (!EncoderEnsure(enc, state, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, data, length)) return false;
     Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&salt), sizeof(salt));
-    Sha1Add(&state.sha1, appended.data(), length);
+    Sha1Add(&state.sha1, static_cast<const uint8_t*>(data), length);
     state.size += static_cast<unsigned>(length);
     return true;
 }
@@ -342,12 +339,7 @@ bool EncoderAppendBytes(Encoder* enc, EncoderState& state, const uint8_t* data, 
 template<typename T>
 bool EncoderAppendNum(Encoder* enc, unsigned salt, T val) {
     EncoderState state;
-    if (!LoadEncoder(state, enc)) return false;
-    Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&salt), sizeof(salt));
-    Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&val), sizeof(val));
-    if (!EncoderEnsure(enc, state, sizeof(T)) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, &val, sizeof(T))) return false;
-    state.size += static_cast<unsigned>(sizeof(T));
-    return StoreEncoder(enc, state);
+    return LoadEncoder(state, enc) && EncoderWrite(enc, state, salt, &val, sizeof(val)) && StoreEncoder(enc, state);
 }
 
 struct DecoderHeader {
@@ -569,7 +561,7 @@ void APS5_VABI _ZN3WTF11Persistence7Encoder14encodeChecksumEv(Encoder* self) {
     if (!LoadEncoder(state, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     uint8_t digest[20];
     Sha1Final(&state.sha1, digest);
-    if (!EncoderAppendBytes(self, state, digest, 20) || !StoreEncoder(self, state)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!EncoderWrite(self, state, 101, digest, sizeof(digest)) || !StoreEncoder(self, state)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEb(Encoder* self, bool value) {
@@ -662,29 +654,38 @@ void APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6encodeERNS0_7Encoder
 }
 
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(Encoder& encoder, const String& string) {
-    if (!string.impl) {
+    StringImpl* source = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&source, &string.impl, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!source) {
         _ZN3WTF11Persistence7EncoderlsEj(&encoder, 0xFFFFFFFFU);
         return;
     }
-    _ZN3WTF11Persistence7EncoderlsEj(&encoder, string.impl->length);
-    bool is8Bit = !!(string.impl->hashAndFlags & 4);
-    _ZN3WTF11Persistence7EncoderlsEb(&encoder, is8Bit);
-    std::size_t byteLen = string.impl->length * (is8Bit ? 1 : 2);
+    StringImpl impl;
+    if (!GuestCopyIn_nid_no_patch(&impl, source, sizeof(impl))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    bool is8Bit = !!(impl.hashAndFlags & 4);
+    std::vector<uint8_t> payload(static_cast<std::size_t>(impl.length) * (is8Bit ? 1 : 2));
     EncoderState state;
-    if (!LoadEncoder(state, &encoder) || !EncoderAppendBytes(&encoder, state, static_cast<const uint8_t*>(string.impl->data), byteLen) ||
-        !StoreEncoder(&encoder, state))
+    if (!GuestCopyIn_nid_no_patch(payload.data(), impl.data, payload.size()) || !LoadEncoder(state, &encoder) ||
+        !EncoderWrite(&encoder, state, 11, &impl.length, sizeof(impl.length)) || !EncoderWrite(&encoder, state, 3, &is8Bit, sizeof(is8Bit)) ||
+        !EncoderWrite(&encoder, state, 101, payload.data(), payload.size()) || !StoreEncoder(&encoder, state))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_(Encoder& encoder, const CString& string) {
-    if (!string.buffer) {
+    CStringBuffer* source = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&source, &string.buffer, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!source) {
         _ZN3WTF11Persistence7EncoderlsEj(&encoder, 0xFFFFFFFFU);
         return;
     }
-    _ZN3WTF11Persistence7EncoderlsEj(&encoder, static_cast<uint32_t>(string.buffer->length));
-    const auto* data = reinterpret_cast<const uint8_t*>(string.buffer + 1);
+    CStringBuffer header;
+    if (!GuestCopyIn_nid_no_patch(&header, source, sizeof(header))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    auto length = static_cast<uint32_t>(header.length);
+    std::vector<uint8_t> payload(header.length);
     EncoderState state;
-    if (!LoadEncoder(state, &encoder) || !EncoderAppendBytes(&encoder, state, data, string.buffer->length) || !StoreEncoder(&encoder, state))
+    if (!GuestCopyIn_nid_no_patch(payload.data(), source + 1, payload.size()) || !LoadEncoder(state, &encoder) ||
+        !EncoderWrite(&encoder, state, 11, &length, sizeof(length)) || !EncoderWrite(&encoder, state, 101, payload.data(), payload.size()) ||
+        !StoreEncoder(&encoder, state))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
