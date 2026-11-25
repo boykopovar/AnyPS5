@@ -371,6 +371,18 @@ const char* APS5_VABI ures_getLocaleInternal_nid_postfix(const UResourceBundle* 
         return nullptr;
     }
 
+    bool known;
+    const auto owner = Optional(bundle, &known);
+    if (known) {
+        if (!owner) NotImplemented_nid_no_patch(__func__);
+        const std::lock_guard lock(owner->mutex);
+        auto after = currentStatus;
+        const auto* name = IcuResourceBackend::Locale_nid_no_patch(owner->native.get(), &after);
+        errno = savedErrno;
+        if (after != currentStatus) CopyOut(status, &after, sizeof(after), savedErrno, __func__);
+        return name;
+    }
+
     const auto address = reinterpret_cast<std::uintptr_t>(bundle);
     if (address > UINTPTR_MAX - Icu68ResourceDataEntryOffset) NotImplemented_nid_no_patch(__func__);
     const void* entry;

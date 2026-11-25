@@ -27,6 +27,12 @@ bool HasNext_nid_no_patch(const void* handle) { return ures_hasNext(static_cast<
 std::int32_t Size_nid_no_patch(const void* handle) { return ures_getSize(static_cast<const UResourceBundle*>(handle)); }
 std::int32_t Type_nid_no_patch(const void* handle) { return ures_getType(static_cast<const UResourceBundle*>(handle)); }
 const char* Key_nid_no_patch(const void* handle) { return ures_getKey(static_cast<const UResourceBundle*>(handle)); }
+const char* Locale_nid_no_patch(const void* handle, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    const auto* name = ures_getLocaleByType(static_cast<const UResourceBundle*>(handle), ULOC_ACTUAL_LOCALE, &error);
+    *status = error;
+    return name;
+}
 const char16_t* String_nid_no_patch(const void* handle, std::int32_t mode, const char* key, std::int32_t index, std::int32_t* length, std::int32_t* status) {
     auto error = status ? static_cast<UErrorCode>(*status) : U_ZERO_ERROR;
     const auto* source = static_cast<const UResourceBundle*>(handle);
