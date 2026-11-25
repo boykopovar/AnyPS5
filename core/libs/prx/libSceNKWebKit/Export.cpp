@@ -8635,10 +8635,6 @@ int APS5_VABI WKBundleSetWebNotificationPermission() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetGeolocationManager() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextGetGlobalStatistics() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8716,24 +8712,6 @@ int APS5_VABI WKFrameGetWebArchive() {
 int APS5_VABI WKFrameStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI WKGeolocationManagerProviderDidChangePosition() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKGeolocationManagerSetProvider() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 
 int APS5_VABI WKHTTPCookieStoreDeleteAllCookies() {
     NotImplemented_nid_no_patch(__func__);

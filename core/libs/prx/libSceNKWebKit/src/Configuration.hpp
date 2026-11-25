@@ -146,6 +146,8 @@ public:
     }
 };
 
+class GeolocationManager;
+
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
 public:
     ProcessPool() : configuration(Make<ProcessPoolConfiguration>()) {}
@@ -180,8 +182,9 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
-mutable Retained<IconDatabase> iconDatabase;
+    mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    mutable Retained<GeolocationManager> geolocationManager;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
@@ -282,6 +285,25 @@ public:
     double speed = 0.0;
     bool providesFloorLevel = false;
     double floorLevel = 0.0;
+};
+
+struct GeolocationProviderBase {
+    int version = 0;
+    const void* clientInfo = nullptr;
+};
+
+struct GeolocationProviderRegistration {
+    int version = 0;
+    const void* clientInfo = nullptr;
+    const void* raw = nullptr;
+};
+
+class GeolocationManager final : public ObjectOf<ObjectType::GeolocationManager> {
+public:
+    std::optional<GeolocationProviderRegistration> provider;
+    Retained<GeolocationPosition> lastPosition;
+    bool positionFailed = false;
+    std::optional<std::u16string> errorMessage;
 };
 
 class PageGroup final : public ObjectOf<ObjectType::PageGroup> {

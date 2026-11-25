@@ -690,6 +690,11 @@ void APS5_VABI WKBundleRemoveUserStyleSheet(const void* bundleRef, const void* p
 void APS5_VABI WKBundleRemoveUserStyleSheets(const void* bundleRef, const void* pageGroupRef, const void* scriptWorldRef);
 void APS5_VABI WKBundleRemoveAllUserContent(const void* bundleRef, const void* pageGroupRef);
 void APS5_VABI WKBundleSetUserStyleSheetLocation(const void* bundleRef, const void* pageGroupRef, const void* locationRef);
+const void* APS5_VABI WKContextGetGeolocationManager(const void* contextRef);
+void APS5_VABI WKGeolocationManagerSetProvider(const void* managerRef, const void* provider);
+void APS5_VABI WKGeolocationManagerProviderDidChangePosition(const void* managerRef, const void* positionRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition(const void* managerRef);
+void APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage(const void* managerRef, const void* errorMessageRef);
 
 const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
 const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
