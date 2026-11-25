@@ -1047,6 +1047,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             if name in tuple("libSceGnmDriver_padebug" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
                 name = "libSceGnmDriver.prx"
+            if name in tuple("libSceSsl2" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
+                name = "libSceSsl.prx"
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
                     normalized = name[:-len(suffix)] + ".prx"
