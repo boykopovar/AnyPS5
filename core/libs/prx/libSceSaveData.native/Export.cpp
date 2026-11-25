@@ -259,7 +259,8 @@ static void rename_path(const std::filesystem::path& from, const std::filesystem
 static bool path_is_directory(const std::filesystem::path& path) {
     std::error_code error;
     const auto status = std::filesystem::status(path, error);
-    if (status.type() == std::filesystem::file_type::none) throw std::filesystem::filesystem_error("SaveData: cannot check for a directory", path, error);
+    if (status.type() == std::filesystem::file_type::not_found) return false;
+    if (error) throw std::filesystem::filesystem_error("SaveData: cannot check for a directory", path, error);
     return std::filesystem::is_directory(status);
 }
 
