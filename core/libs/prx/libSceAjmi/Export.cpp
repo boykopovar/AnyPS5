@@ -4,7 +4,6 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -31,15 +30,12 @@ void* APS5_VABI sceAjmBatchJobInlineBuffer_nid_disambig1(void* position, const v
     if (data_input_size > 0 && (inputStart == 0 || data_input_size > std::numeric_limits<std::uintptr_t>::max() - inputStart)) {
         throw std::runtime_error("AJMI: inline input address is invalid");
     }
-    const int savedErrno = errno;
     const auto read = [&](void* destination, const void* source, std::size_t bytes) {
         const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-        errno = savedErrno;
         return copied;
     };
     const auto write = [&](void* destination, const void* source, std::size_t bytes) {
         const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-        errno = savedErrno;
         return copied;
     };
     std::uint32_t words[2];
@@ -76,18 +72,14 @@ static void ValidateGuestRange(const void* address, std::size_t bytes, const cha
 static void ReadGuest(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (bytes == 0) return;
     ValidateGuestRange(source, bytes, message);
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
 static void WriteGuest(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (bytes == 0) return;
     ValidateGuestRange(destination, bytes, message);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
