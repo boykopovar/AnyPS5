@@ -206,11 +206,13 @@ struct Frame {
 
 inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const char*& augmentation, Byte& lsdaEncoding) {
     if (!query.fde) return false;
-    if (query.fdeEnd && (query.fdeEnd <= query.fde || static_cast<std::size_t>(query.fdeEnd - query.fde) < sizeof(std::uint32_t))) {
-        return false;
-    }
     p = query.fde;
-    auto length = Read<std::uint32_t>(p);
+    std::uint32_t length {};
+    if (query.fdeEnd) {
+        if (query.fdeEnd < p || !TryRead(p, query.fdeEnd, length)) return false;
+    } else {
+        length = Read<std::uint32_t>(p);
+    }
     if (length < 4 || length == 0xffffffff) return false;
     if (Word(p) > ~Word(0) - length) return false;
     if (query.fdeEnd && static_cast<std::size_t>(query.fdeEnd - p) < length) return false;
@@ -220,16 +222,16 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     if (!TryRead(p, frame.end, cieOffset)) return false;
     if (!cieOffset || Word(ciePointer) < Word(cieOffset)) return false;
     const Byte* cie = ciePointer - cieOffset;
-    if (query.fdeEnd && cie < query.fdeEnd && static_cast<std::size_t>(query.fdeEnd - cie) < sizeof(std::uint32_t)) {
-        return false;
-    }
     const Byte* c = cie;
-    auto cieLength = Read<std::uint32_t>(c);
+    std::uint32_t cieLength {};
+    if (query.fdeEnd) {
+        if (c >= query.fdeEnd || !TryRead(c, query.fdeEnd, cieLength)) return false;
+    } else {
+        cieLength = Read<std::uint32_t>(c);
+    }
     if (cieLength < 4 || cieLength == 0xffffffff) return false;
     if (Word(c) > ~Word(0) - cieLength) return false;
-    if (query.fdeEnd && c <= query.fdeEnd && static_cast<std::size_t>(query.fdeEnd - c) < cieLength) {
-        return false;
-    }
+    if (query.fdeEnd && static_cast<std::size_t>(query.fdeEnd - c) < cieLength) return false;
     frame.cieEnd = c + cieLength;
     std::uint32_t cieId {};
     if (!TryRead(c, frame.cieEnd, cieId) || cieId != 0) return false;

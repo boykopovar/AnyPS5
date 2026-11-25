@@ -267,6 +267,16 @@ void UnwindBounds() {
         LibcUnwind::Byte lsdaEncoding = 0;
         Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE exceeding fdeEnd");
     }
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup shortQuery{0x1000, &fdePastSection[20], 0, 0, 0, &fdePastSection[22]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, shortQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE with fewer than 4 bytes before fdeEnd");
+        LibcUnwind::Lookup emptyQuery{0x1000, &fdePastSection[20], 0, 0, 0, &fdePastSection[20]};
+        Require(!LibcUnwind::DecodeRange(frame, emptyQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an empty fdeEnd range");
+    }
 
     {
         LibcUnwind::Frame frame{};
