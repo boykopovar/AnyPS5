@@ -178,8 +178,15 @@ int APS5_VABI __sys_randomized_path_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_rdup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int GuestRdup_nid_no_patch(int pid, int fd) {
+    if (pid != 0 && pid != getpid_nid_postfix()) {
+        NotImplemented_nid_no_patch("sys_rdup: a pid other than the caller's and 0");
+    }
+    return dup_nid_postfix(fd);
+}
+
+int APS5_VABI __sys_rdup_nid_postfix(int pid, int fd) {
+    return GuestRdup_nid_no_patch(pid, fd);
 }
 
 int APS5_VABI __sys_regmgr_call_nid_postfix() {

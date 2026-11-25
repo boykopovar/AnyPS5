@@ -62,7 +62,7 @@ class FeatureTests(unittest.TestCase):
                     self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
                     self.assertIn("interval 2 starts at", strict.stderr)
 
-    def test_strict_export_rejects_duplicate_zero_length_intervals(self):
+    def test_strict_export_rejects_zero_length_intervals_between_positive_intervals(self):
         from test_trace_digest import interval_line
         path = self.root / "aps5-summary.jsonl"
         first = interval_line(0.0, 30.0, 20, 5)
@@ -75,12 +75,8 @@ class FeatureTests(unittest.TestCase):
                 ordinary = self.cli("trace_intervals_csv.py", path)
                 strict = self.cli("trace_intervals_csv.py", path, "--require-complete")
                 self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
-                if len(points) == 1:
-                    self.assertEqual(strict.returncode, 0, strict.stderr)
-                    self.assertEqual(strict.stdout, ordinary.stdout)
-                else:
-                    self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
-                    self.assertIn("interval 3 duplicates the previous interval", strict.stderr)
+                self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
+                self.assertIn("interval 2 has zero duration", strict.stderr)
 
     def test_strict_export_verifies_present_ranges(self):
         from test_trace_digest import interval_line

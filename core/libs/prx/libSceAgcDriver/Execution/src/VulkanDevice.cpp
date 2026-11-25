@@ -3279,7 +3279,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
         const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
         return range != nullptr && range->address < address + bytes.size();
     }();
-    if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) return unimported();
+    if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size()) && Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label) == nullptr) return unimported();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
     const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
     const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
@@ -4924,7 +4924,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.exactRobustLoads = state->exactRobustLoads;
     target.waveLdsMemoryBarriers = !state->subgroupControlBarriers;
-    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY || state->driverId == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
@@ -6211,7 +6211,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (record.resources != nullptr) recorder.KeepBytes(record.resources.get(), record.resources->CopiedBytes());
     if (record.bindings != nullptr) {
         recorder.Keep(record.bindings);
-        for (const auto& snapshot : record.bindings->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+        for (const auto& snapshot : record.bindings->snapshots) {
+            if (snapshot.buffer != nullptr) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+        }
     }
     recordStep(PhaseRecordKeeps);
     if (record.dataRefresh != RecordedDispatch::DataRefresh::None) {
@@ -6256,8 +6258,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             const std::pair<std::uint64_t, std::uint64_t> argumentRange{arguments, arguments + 12};
             recorder.NoteAccess(CommandClass::IndirectArguments, Graphics::Recorder::Access{std::span(&argumentRange, 1), {}, {}, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT});
         }
-        auto reads = resources.InPlaceReads();
-        if (record.bindings != nullptr) reads.insert(reads.end(), record.bindings->inPlaceReads.begin(), record.bindings->inPlaceReads.end());
+        const auto reads = resources.InPlaceReads();
         const auto images = resources.StorageImages();
         recorder.NoteAccess(CommandClass::DispatchLeading, Graphics::Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, resources.HoldsLease()});
     }
@@ -6463,7 +6464,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     recordStep(PhaseRecordBind);
     if (record.htileClear.has_value()) Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
-    resources.MarkGpuWrites(recorder, record.bindings.get());
+    resources.MarkGpuWrites(recorder);
     if (record.htileClear.has_value()) {
         Graphics::QueueHtileDepthClear(record.htileClear->first, record.htileClear->second);
         recorder.NotePendingWrite(record.htileClear->first, record.htileClear->second);

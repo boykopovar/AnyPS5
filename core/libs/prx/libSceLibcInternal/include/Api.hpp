@@ -33,6 +33,7 @@ extern "C" {
 
 bool APS5_VABI sceLibcInternalWideCtypeDoIs_nid_no_patch(const GuestLocale::Facet* self, short mask, char16_t character);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoIsRange_nid_no_patch(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination);
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanIs_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
 char16_t APS5_VABI sceLibcInternalWideCtypeDoToupper_nid_no_patch(const GuestLocale::Facet* self, char16_t character);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last);
@@ -301,6 +302,8 @@ void APS5_VABI _ZNSt8messagesIcEC2EPKcm_nid_postfix(void* self, const char* loca
 void APS5_VABI _ZNSt8messagesIwEC1Em_nid_postfix(void* self, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC2EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+std::size_t APS5_VABI _ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+std::size_t APS5_VABI _ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, long double units);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, const GuestLocale::String* digits);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, std::uint16_t fill, long double units);
