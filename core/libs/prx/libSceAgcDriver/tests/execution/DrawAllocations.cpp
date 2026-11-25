@@ -386,7 +386,7 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
     }
     std::printf("draw allocations [%s]: %llu allocations made on every draw, counted per call site\n", shape.name, static_cast<unsigned long long>(everyDraw));
     const auto perDrawBytes = PerDraw(many.bytes, base.bytes, draws);
-    const auto& ceiling = std::getenv("APS5_DRAW_PIPELINE") != nullptr ? shape.pipelined : shape.plain;
+    const auto& ceiling = std::getenv("APS5_NO_DRAW_PIPELINE") == nullptr && std::getenv("APS5_PIPELINE_DISPATCH") != nullptr ? shape.pipelined : shape.plain;
     if (std::getenv("APS5_DRAW_ALLOCATIONS_NO_LIMIT") == nullptr) {
         Require(everyDraw <= ceiling.everyDraw, std::string("draw allocations [") + shape.name + "]: call sites allocate " + std::to_string(everyDraw) + " times on every warmed draw, more than the " + std::to_string(ceiling.everyDraw) + " this shape makes");
         const auto maximum = std::getenv("APS5_DRAW_ALLOCATIONS_MAX");
