@@ -367,9 +367,12 @@ static int OpenNativeLocked(const std::filesystem::path& native, int flags, std:
     try {
         if (truncate && (flags & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDONLY) {
             FileStat opened{};
-            if (!File::IsDirectoryDescriptor(fd) && (sceKernelFstat(fd, &opened) != 0 || (opened.st_mode & 0170000) != 0040000))
+            if (File::IsDirectoryDescriptor(fd) || (sceKernelFstat(fd, &opened) == 0 && (opened.st_mode & 0170000) == 0040000))
+                error = GuestEisdir;
+            else if (flock_nid_postfix(fd, operation) != 0)
+                error = *__error_nid_postfix();
+            else
                 NotImplemented_nid_no_patch("open with O_RDONLY, O_TRUNC and O_SHLOCK or O_EXLOCK");
-            error = GuestEisdir;
         } else {
             if (File::IsVirtualDirectoryDescriptor(fd)) NotImplemented_nid_no_patch("open with O_SHLOCK or O_EXLOCK on a directory read from app0.zar");
             if (flock_nid_postfix(fd, operation) != 0 || (truncate && ftruncate_nid_postfix(fd, 0) != 0)) error = *__error_nid_postfix();

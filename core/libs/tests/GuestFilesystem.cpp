@@ -1922,6 +1922,8 @@ int main() {
         Require(_open_nid_postfix(lockedName.c_str(), sharedNonblocking) == -1 && *__error_nid_postfix() == 35);
         Require(sceKernelOpen(lockedName.c_str(), sharedNonblocking | SCE_KERNEL_O_EXLOCK, 0) == static_cast<int>(0x80020023u));
         Require(sceKernelOpen(lockedName.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_TRUNC | exclusiveNonblocking, 0) == static_cast<int>(0x80020023u));
+        Require(open_nid_postfix(lockedName.c_str(), sharedNonblocking | SCE_KERNEL_O_TRUNC, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(sceKernelOpen(lockedName.c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | exclusiveNonblocking, 0) == static_cast<int>(0x80020023u));
         Require(std::filesystem::file_size(lockedFile) == 4);
         const int reused = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY, 0);
         Require(reused == spare && close_nid_postfix(reused) == 0);
