@@ -97,7 +97,7 @@ constexpr std::uint32_t HeightAlignment = 32;
 constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
-constexpr std::size_t MaxAvcParameterSetsBytes = 2u * 1024u * 1024u;
+constexpr std::size_t MaxParameterSetsBytes = 2u * 1024u * 1024u;
 constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
 constexpr int Videodec2ErrorStructureSize = static_cast<int>(0x811D0101u);
@@ -421,6 +421,16 @@ bool CarriesAvcSlice(const std::vector<std::uint8_t>& unit) {
     return false;
 }
 
+bool CarriesHevcSlice(const std::vector<std::uint8_t>& unit) {
+    for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
+        if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
+        const auto type = (unit[index + 3] >> 1u) & 0x3fu;
+        if (type < 32) return true;
+        index += 2;
+    }
+    return false;
+}
+
 bool StartsHevcIdr(const std::vector<std::uint8_t>& unit) {
     for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
         if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
@@ -731,9 +741,10 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         return 0;
     }
     const auto* unit = ToAnnexB(decoder, auBytes.data(), auBytes.size());
-    if (decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) {
-        if (decoder.parameterSets.size() + unit->size() > MaxAvcParameterSetsBytes) throw std::runtime_error("Videodec2: invalid access unit");
-        Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit);
+    if ((decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) || (decoder.codec == CodecHevc && !CarriesHevcSlice(*unit))) {
+        if (decoder.parameterSets.size() + unit->size() > MaxParameterSetsBytes) throw std::runtime_error("Videodec2: invalid access unit");
+        if (decoder.codec == CodecAvc) Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit);
+        else Videodec2Hevc::Parse_nid_no_patch(decoder.hevc, *unit);
         decoder.parameterSets.insert(decoder.parameterSets.end(), unit->begin(), unit->end());
         EmitDecoded(handle, decoder, frame, frame ? &localFrame : nullptr, output, localOutput);
         return 0;

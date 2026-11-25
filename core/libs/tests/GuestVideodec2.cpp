@@ -1187,6 +1187,68 @@ void testParameterSetsBound() {
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
 
+void testHevcParameterSets() {
+    auto units = hevcUnits(HevcStream.data(), HevcStream.size());
+    check(!units.empty(), "HEVC stream has no units");
+    auto first = std::move(units[0]);
+    std::size_t slice = 0;
+    for (std::size_t index = 0; index + 3 < first.size(); ++index) {
+        if (first[index] != 0 || first[index + 1] != 0 || first[index + 2] != 1) continue;
+        const auto type = (first[index + 3] >> 1u) & 0x3fu;
+        if (type < 32) {
+            slice = index > 0 && first[index - 1] == 0 ? index - 1 : index;
+            break;
+        }
+        index += 2;
+    }
+    check(slice != 0, "first HEVC access unit missing slice");
+    const std::vector<std::uint8_t> parameters(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    first.erase(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    units[0] = std::move(first);
+    units.insert(units.begin(), parameters);
+    std::vector<std::uint8_t> buffer(frameBufferBytes());
+    const auto handle = createDecoder(CodecHevc, 1);
+    std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
+    for (std::size_t offset = 0; offset + parameters.size() <= largeParameters.size(); offset += parameters.size()) {
+        std::memcpy(largeParameters.data() + offset, parameters.data(), parameters.size());
+    }
+    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 998, 0, 0};
+    FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+    OutputInfo output{sizeof(OutputInfo)};
+    bool threw = false;
+    try {
+        sceVideodec2Decode_nid_postfix(handle, &largeInput, &frame, &output);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "Videodec2: invalid access unit";
+    }
+    check(threw, "oversized HEVC parameter unit did not throw");
+    std::size_t pictures = 0;
+    const auto take = [&](const OutputInfo& out, const FrameBuffer& fb) {
+        check(out.isValid == fb.isAccepted, "frame buffer acceptance disagrees with output");
+        if (!out.isValid) return false;
+        check(pictures < HevcHashes.size(), "more HEVC pictures than expected");
+        check(hashNv12(buffer.data(), out.framePitch, out.frameHeight) == HevcHashes[pictures], "HEVC picture differs after split parameter sets");
+        ++pictures;
+        return true;
+    };
+    for (std::size_t index = 0; index < units.size(); ++index) {
+        const InputData input{sizeof(InputData), units[index].data(), units[index].size(), 1000 + index, index, 0};
+        frame = {sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+        output = {sizeof(OutputInfo)};
+        check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "HEVC decode failed");
+        if (index == 0) check(!output.isValid && !frame.isAccepted, "HEVC parameter unit produced picture");
+        else take(output, frame);
+    }
+    for (;;) {
+        frame = {sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+        output = {sizeof(OutputInfo)};
+        check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "HEVC flush failed");
+        if (!take(output, frame)) break;
+    }
+    check(pictures == HevcHashes.size(), "HEVC split parameter sets lost pictures");
+    check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+}
+
 }
 
 void testComputeQueues() {
@@ -1259,6 +1321,7 @@ int main() {
         testPictureOwnership();
         testConcurrentOwnership();
         testParameterSetsBound();
+        testHevcParameterSets();
         std::puts("Videodec2 tests passed");
         return 0;
     } catch (const std::exception& error) {
