@@ -1,6 +1,5 @@
 #include "prx/libSceNpCommerce/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -88,9 +87,7 @@ int APS5_VABI sceNpCommerceDialogInitialize() {
 int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  NpCommerceDialogParam localParam{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
- errno = savedErrno;
  if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
@@ -116,22 +113,18 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
  const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
  const std::uint8_t authorized = 0;
  const std::uint64_t userData = g_userData;
- const int savedErrno = errno;
  if (!GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult)) ||
      !GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized)) ||
      !GuestCopyOut_nid_no_patch(&result->userData, &userData, sizeof(userData))) {
-  errno = savedErrno;
   return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  }
  const auto sdkVersion = ApplicationCompiledSdkVersion();
  if (sdkVersion >= 0x01700000) {
   const std::uint8_t zeroReserved[sizeof(result->reserved)] = {0};
   if (!GuestCopyOut_nid_no_patch(result->reserved, zeroReserved, sizeof(zeroReserved))) {
-   errno = savedErrno;
    return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
   }
  }
- errno = savedErrno;
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 
@@ -165,9 +158,7 @@ int APS5_VABI sceNpCommerceSetPsStoreIconLayout(int layout) {
 int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  NpCommerceDialogParam2 localParam{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
- errno = savedErrno;
  if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
