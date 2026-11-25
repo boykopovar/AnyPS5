@@ -106,10 +106,12 @@ std::uint32_t TranslationContext::interpolationModeF16(const RdnaInstruction& in
     const auto mode = floatMode->floatMode;
     const auto denorm32 = (mode >> 4u) & 3u;
     const auto denorm16 = (mode >> 6u) & 3u;
-    if ((mode & 0xfu) != 0u || (denorm32 != 0u && denorm32 != 3u) || (denorm16 != 0u && denorm16 != 3u)) {
-        throw std::runtime_error("16-bit interpolation at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(mode) + " is not measured");
+    const bool half = inst.op == RdnaOpcode::VInterpP2F16;
+    if (!half && (mode & 3u) != 0u) {
+        throw std::runtime_error("16-bit interpolation with an f32 result at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(mode) + " needs f32 directed rounding, which is not implemented");
     }
-    return (floatMode->ieeeMode ? InterpolationQuiet : 0u) | (denorm32 == 0u ? InterpolationFlush32 : 0u) | (denorm16 == 0u ? InterpolationFlush16 : 0u);
+    const auto flushes = ((denorm32 & 1u) == 0u ? InterpolationFlush32 : 0u) | ((denorm32 & 2u) == 0u ? InterpolationFlushResult32 : 0u) | ((denorm16 & 1u) == 0u ? InterpolationFlush16 : 0u) | ((denorm16 & 2u) == 0u ? InterpolationFlushResult16 : 0u);
+    return (floatMode->ieeeMode ? InterpolationQuiet : 0u) | flushes | (half ? ((mode >> 2u) & 3u) << InterpolationRound16Shift : 0u);
 }
 
 void TranslationContext::vInterpP1F16(const RdnaInstruction& inst) {

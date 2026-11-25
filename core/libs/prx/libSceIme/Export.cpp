@@ -1,11 +1,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
+#include "prx/libSceIme/include/ImeClipboard.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -70,6 +72,11 @@ constexpr uint32_t EventUpdateText = 1;
 constexpr uint32_t EventUpdateCaret = 2;
 constexpr uint32_t EventPressClose = 4;
 constexpr uint32_t EventPressEnter = 5;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
@@ -101,6 +108,7 @@ std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
 std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeHostClipboardSink> g_clipboardSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
@@ -282,9 +290,7 @@ std::size_t UnitsAfter(const Session& session) {
 std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
     const ImeHostInput& input = pending.input;
     if (input.kind == ImeHostInputKind::Preedit) {
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        session.composition.Set(pending.paste, input.start, input.length);
         return std::nullopt;
     }
     if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
@@ -322,20 +328,34 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             return std::nullopt;
         }
         case ImeHostInputKind::Home: {
-            const std::size_t units = session.caret;
-            session.caret = 0;
+            std::size_t target = 0;
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0 && session.caret > 0) {
+                const std::size_t previous = session.text.find_last_of(u"\r\n", session.caret - 1);
+                if (previous != std::u16string::npos) target = previous + 1;
+            }
+            const std::size_t units = session.caret - target;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveLeft, units);
             return std::nullopt;
         }
         case ImeHostInputKind::End: {
-            const std::size_t units = session.text.size() - session.caret;
-            session.caret = static_cast<uint32_t>(session.text.size());
+            std::size_t target = session.text.size();
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0) {
+                const std::size_t next = session.text.find_first_of(u"\r\n", session.caret);
+                if (next != std::u16string::npos) target = next;
+            }
+            const std::size_t units = target - session.caret;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveRight, units);
             return std::nullopt;
         }
         case ImeHostInputKind::Enter:
             if ((session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
+            }
+            if (const ImeHostClipboardSink clipboardSink = g_clipboardSink.load(); clipboardSink && ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) {
+                const std::string utf8 = ImeClipboard::Utf8(session.text);
+                clipboardSink(utf8.c_str(), utf8.size());
             }
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
@@ -475,21 +495,18 @@ int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* 
 extern "C" {
 
 void ImePublishInput_nid_postfix(const ImeHostInput& input) {
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        ImePublishPreedit_nid_postfix(input.text, size, input.start, input.length);
+        return;
+    }
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
             g_session->hostInputs.push_back({input, {}});
             return;
         }
-    }
-    if (input.kind == ImeHostInputKind::Preedit) {
-        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
-        if (preeditSink == nullptr) return;
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
-        preeditSink(units.data(), units.size(), input.start, input.length);
-        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -500,6 +517,24 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
         units = DecodeUtf8(input.text, size);
     }
     sink(input.kind, units.data(), units.size());
+}
+
+void ImePublishPreedit_nid_postfix(const char* text, std::size_t size, std::int32_t start, std::int32_t length) {
+    if (text == nullptr) return;
+    std::u16string units = ImeHostText::PreeditUnits(text, size);
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Preedit;
+            input.start = start;
+            input.length = length;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostPreeditSink sink = g_preeditSink.load();
+    if (sink != nullptr) sink(units.data(), units.size(), start, length);
 }
 
 void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
@@ -545,6 +580,10 @@ void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
 
 void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
     g_padSink = sink;
+}
+
+void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink) {
+    g_clipboardSink = sink;
 }
 
 void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {

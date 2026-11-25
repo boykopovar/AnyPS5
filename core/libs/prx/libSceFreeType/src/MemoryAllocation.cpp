@@ -4,7 +4,6 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
@@ -12,24 +11,15 @@
 namespace {
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes)) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes)) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
-    if (!writable) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+    if (!GuestWritable_nid_no_patch(destination, bytes)) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 FreeType::GuestMemoryRec Record(FreeType::GuestMemoryRec* memory, const char* caller) {
