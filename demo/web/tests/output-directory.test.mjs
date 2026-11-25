@@ -10,6 +10,22 @@ function missingDirectory() {
   return error;
 }
 
+test("names an existing file that blocks the output folder", async () => {
+  const parent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "app-linux");
+      assert.equal(options, undefined);
+      throw new DOMException("Not a directory", "TypeMismatchError");
+    },
+    async removeEntry() { assert.fail("existing file must not be removed"); }
+  };
+
+  await assert.rejects(
+    OutputDirectoryTransaction.create(parent, "app-linux", uncontendedLocks, "es"),
+    { message: "Colisión de ruta de salida: app-linux" }
+  );
+});
+
 test("creates a new output root only after confirming the destination is absent", async () => {
   const directory = {};
   const calls = [];

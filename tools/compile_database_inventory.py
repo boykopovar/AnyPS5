@@ -19,9 +19,11 @@ def main(argv=None):
             raise ValueError(f"{args.database}: compilation database must be a regular file")
         entries = compilation_database(args.database.read_text(encoding="utf-8-sig"), args.database)
         units = {}
-        for item in entries:
+        for index, item in enumerate(entries):
             record = {"arguments": item["arguments"]} if "arguments" in item else {"command": item["command"]}
             if "output" in item:
+                if not isinstance(item["output"], str):
+                    raise ValueError(f"{args.database}: entry {index}: output must be a string")
                 record["output"] = item["output"]
             units.setdefault((item["directory"], item["file"]), []).append(record)
     except (OSError, ValueError, RecursionError) as error:
