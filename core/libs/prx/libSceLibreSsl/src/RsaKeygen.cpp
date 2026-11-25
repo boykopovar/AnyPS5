@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -224,16 +225,54 @@ int BuiltinKeygen(LibreSslRsa& rsa, int bits, const Bignum* exponentValue, const
     return 1;
 }
 
+constexpr void* LibreSslRsa::* KeyFields[] = {
+    &LibreSslRsa::n, &LibreSslRsa::e, &LibreSslRsa::d, &LibreSslRsa::p,
+    &LibreSslRsa::q, &LibreSslRsa::dmp1, &LibreSslRsa::dmq1, &LibreSslRsa::iqmp,
+};
+constexpr std::size_t KeyFieldsSize = offsetof(LibreSslRsa, exData) - offsetof(LibreSslRsa, n);
+static_assert(KeyFieldsSize == sizeof(KeyFields) / sizeof(KeyFields[0]) * sizeof(void*));
+
+void StoreKeyFields(LibreSslRsa* rsa, const LibreSslRsa& record, const LibreSslRsa& original, int savedErrno, const char* function) {
+    const bool stored = GuestCopyOut_nid_no_patch(&rsa->n, &record.n, KeyFieldsSize);
+    errno = savedErrno;
+    if (stored) return;
+    for (auto field : KeyFields) {
+        if (!(original.*field) && record.*field) BN_free_nid_postfix(static_cast<Bignum*>(record.*field));
+    }
+    throw std::invalid_argument(std::string(function) + ": unwritable RSA");
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI RSA_generate_key_ex_nid_postfix(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback) {
     if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null RSA");
-    if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null RSA method");
-    if (rsa->meth->keygen) return reinterpret_cast<Keygen>(rsa->meth->keygen)(rsa, bits, exponent, callback);
+    const int savedErrno = errno;
+    LibreSslRsa record {};
+    bool copied = GuestCopyIn_nid_no_patch(&record, rsa, sizeof(record));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable RSA");
+    if (!record.meth) throw std::invalid_argument(std::string(__func__) + ": null RSA method");
+    void* keygen = nullptr;
+    copied = GuestCopyIn_nid_no_patch(&keygen, &record.meth->keygen, sizeof(keygen));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable RSA method");
+    if (keygen) return reinterpret_cast<Keygen>(keygen)(rsa, bits, exponent, callback);
     if (callback) NotImplemented_nid_no_patch("RSA_generate_key_ex: a BN_GENCB progress callback");
-    return BuiltinKeygen(*rsa, bits, exponent, __func__);
+    copied = GuestCopyOut_nid_no_patch(&rsa->n, &record.n, KeyFieldsSize);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unwritable RSA");
+    const LibreSslRsa original = record;
+    int result = 0;
+    try {
+        result = BuiltinKeygen(record, bits, exponent, __func__);
+    } catch (...) {
+        StoreKeyFields(rsa, record, original, savedErrno, __func__);
+        throw;
+    }
+    StoreKeyFields(rsa, record, original, savedErrno, __func__);
+    return result;
 }
 
 }

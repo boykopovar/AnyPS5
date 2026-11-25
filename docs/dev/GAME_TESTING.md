@@ -81,7 +81,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - **Slowdown:** presents per 10 s far below earlier runs of the same scene. Record the scene (save file or level), since it changes the numbers, and check power and caches first.
 - **Crash on Linux:** take the `ip` from `dmesg` and its offset in the image. Repeat the run under `gdb` (launched by gdb, not attached) for registers, the faulting instructions and all thread stacks.
 - **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` (Windows) prints the crash report with every thread n seconds after start-up and then aborts the title, so set it to a time after the title has stopped. `APS5_TRACE_EXIT=1` reports the process exit point.
-- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with a bar per traced slice on a time axis, one row per thread; `--from-ms`, `--to-ms`, `--thread` and `--max-slices` narrow it. Traces slow the title and can move the crash; say so when reporting.
+- **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with nested slice bars on each thread's track and a track for presents. Use `--from-ms` and `--to-ms` to narrow the time window, `--thread` to select threads and `--max-slices` to cap slice bars. Present markers remain visible when filtering threads. `python tools/trace_diff.py A.json.gz B.json.gz` compares two captures per frame: the busy and wait time of each thread, and the largest slices, with B minus A as the delta. Traces slow the title and can move the crash, so mention the trace when reporting.
 
 ## Measuring performance
 
@@ -121,6 +121,16 @@ Include, in this order:
 
 Keep AI-generated analysis separate from measured data, and say which is which.
 
+## Comparing saved smoke runs
+
+Compare two smoke-run summaries without a build or extracted titles:
+
+```sh
+python tools/title_run.py compare baseline/summary.json candidate/summary.json
+```
+
+The table groups saved outcomes by title and by cold or warm run label. A run with no recognized label appears under `unknown`. FPS samples, medians and ranges use only rendering runs with a recorded FPS. Missing titles are listed on the side where they were absent. Use `--json` to retain the outcome order in each group. Compare runs made on the same machine with matched content, settings and scenes.
+
 ## Clean window captures
 
 Use the opt-in performance profile from an interactive terminal to produce the native evidence required by the [performance report](../../.github/ISSUE_TEMPLATE/performance.yml):
@@ -138,6 +148,10 @@ The launcher verifies output console handles and never tees the native output to
 Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+
+If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
+`tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.
+Each selector must match exactly one row.
 
 ## External PresentMon comparisons
 

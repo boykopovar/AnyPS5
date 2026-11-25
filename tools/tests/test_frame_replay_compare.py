@@ -170,6 +170,38 @@ class RecipeTests(ReplayFixture):
         self.assertEqual(env["ANYPS5_HOST_REPORT"], "1")
         self.assertEqual(env["ANYPS5_SHADER_CACHE_DIR"], str(self.root / "cache"))
 
+    def test_stage_replay_runtime_copies_files_and_rejects_changed_bytes(self):
+        source = self.root / "baseline"
+        manifest = runner.evidence.replay_tree_manifest(source)
+        staged = runner.stage_replay_runtime(source, self.root / "staged", manifest)
+        self.assertEqual(staged, self.root / "staged")
+        self.assertEqual((staged / "replay.exe").read_bytes(), b"replay baseline")
+        self.assertEqual(runner.evidence.replay_tree_manifest(staged), manifest)
+        (source / "replay.exe").write_bytes(b"replay changed")
+        with self.assertRaises(ValueError):
+            runner.stage_replay_runtime(source, self.root / "second", manifest)
+
+    def test_requested_validation_adds_layer_logging_without_replacing_flags(self):
+        layer = runner.processes.FORCED["VK_INSTANCE_LAYERS"]
+        max_length_flags = "error," * 682 + "warn"
+        cases = ((layer, None, "layer"),
+                 (f"VK_LAYER_example:{layer}", "warn", "warn,layer"),
+                 (f"{layer};VK_LAYER_example", "error,layer", "error,layer"),
+                 (layer, "all", "all"),
+                 (layer, max_length_flags, max_length_flags + ",layer"),
+                 (f"{layer}_other", None, None))
+        for layers, flags, expected in cases:
+            with self.subTest(layers=layers, flags=flags):
+                shared = {"VK_INSTANCE_LAYERS": layers}
+                if flags is not None:
+                    shared["VK_LOADER_DEBUG"] = flags
+                self.recipe["environment"] = shared
+                recipe = self.validate()
+                env = runner._trial_environment(recipe, recipe["arms"]["baseline"], self.root / "baseline", self.root / "cache")
+                self.assertEqual(env["VK_INSTANCE_LAYERS"], layers)
+                self.assertEqual(env.get("VK_LOADER_DEBUG"), expected)
+                self.assertEqual(recipe["environment"].get("VK_LOADER_DEBUG"), flags)
+
 
 class RunnerTests(ReplayFixture):
     def setUp(self):
@@ -183,6 +215,7 @@ class RunnerTests(ReplayFixture):
         self.workload_mismatch = False
         self.bad_inspection = False
         self.interrupt_trial = False
+        self.loader_logs = {}
 
     def execute(self, command, directory, environment, timeout, log_bytes):
         self.commands.append(command)
@@ -211,8 +244,9 @@ class RunnerTests(ReplayFixture):
                 code = 3
             commit = ("c" * 40 if self.mismatch and arm == "candidate"
                       else self.recipe["arms"][arm]["commit"])
-            stdout = json.dumps(native)
-            stderr = host_report(commit)
+            loader_stdout, loader_stderr = self.loader_logs.get(arm, ("", ""))
+            stdout = loader_stdout + json.dumps(native)
+            stderr = loader_stderr + host_report(commit)
             if self.device_mismatch and arm == "candidate":
                 stderr = stderr.replace("Test GPU", "Other GPU")
             if self.mutate_input and directory.name.startswith("trial"):
@@ -350,6 +384,17 @@ class RunnerTests(ReplayFixture):
             self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 2)
         self.assertEqual(len(json.loads(output.getvalue())["runs"]), 4)
 
+    def test_report_prints_a_path_outside_the_ansi_code_page_as_utf8(self):
+        self.recipe["warmups"] = 0
+        self.recipe["capture"] = "测-capture"
+        (self.root / "capture").rename(self.root / self.recipe["capture"])
+        self.run_comparison()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 0)
+            stdout.flush()
+        self.assertIn("测-capture", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_offline_recomputes_assessments_from_original_logs(self):
         self.recipe["warmups"] = 0
         self.run_comparison()
@@ -361,6 +406,35 @@ class RunnerTests(ReplayFixture):
         report = runner._offline_report(path.parent)
         self.assertEqual(report["runs"][0]["assessment"]["issues"], [])
         self.assertEqual(report["observations"]["baseline"]["healthy_trials"], 2)
+
+    def test_requested_validation_requires_loader_evidence_live_and_offline(self):
+        self.recipe["warmups"] = 0
+        self.recipe["trials"] = 1
+        layer = runner.processes.FORCED["VK_INSTANCE_LAYERS"]
+        self.recipe["environment"] = {**{f"APS5_TEST_OPTION_{index}": "1" for index in range(127)}, "VK_INSTANCE_LAYERS": layer}
+        inserted = runner.processes.INSERTED_LAYER + "\n"
+        missing = f"WARNING: {layer} {runner.processes.MISSING_LAYER}\n"
+        cases = (
+            ("inserted", inserted, [], 0),
+            ("absent", "", ["Khronos validation layer insertion was not recorded"], 2),
+            ("missing", inserted + missing, ["Vulkan loader reported a requested layer missing"], 2),
+        )
+        path = self.root / "recipe.json"
+        path.write_text(json.dumps(self.recipe), encoding="utf-8")
+        for name, messages, issues, status in cases:
+            with self.subTest(case=name):
+                self.loader_logs = {"baseline": (inserted, ""), "candidate": ("", messages)}
+                bundle = self.root / name
+                with mock.patch.object(runner, "execute_replay_trial", side_effect=self.execute), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(runner.main(["run", str(path), "--output", str(bundle)]), status)
+                live = json.loads((bundle / "report.json").read_text(encoding="utf-8"))
+                offline = io.StringIO()
+                with mock.patch.object(runner, "execute_replay_trial", side_effect=AssertionError("offline launched a process")), contextlib.redirect_stdout(offline):
+                    self.assertEqual(runner.main(["report", str(bundle), "--json"]), status)
+                for report in (live, json.loads(offline.getvalue())):
+                    self.assertEqual([run["assessment"]["issues"] for run in report["runs"]], [[], issues])
+                    self.assertEqual(report["recipe"]["environment"], self.recipe["environment"])
+                self.assertTrue(all(call["environment"]["VK_LOADER_DEBUG"] == "layer" for call in self.calls[-2:]))
 
     def test_interrupted_trial_is_retained_and_cli_returns_130(self):
         self.recipe["warmups"] = 0
@@ -399,16 +473,38 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(missing["io_errors"])
         self.assertTrue((self.root / "missing" / "process.json").is_file())
 
+    def test_log_limit_stops_running_child_after_partial_block(self):
+        limit = 1024 * 1024
+        for fd, name in ((1, "stdout.txt"), (2, "stderr.txt")):
+            with self.subTest(stream=name):
+                directory = self.root / name
+                child = f"import os,time;os.write({fd},b'x'*{limit + 1});time.sleep(20)"
+                result = runner.execute_replay_trial([sys.executable, "-c", child], directory,
+                                                     dict(os.environ), 5, limit)
+                self.assertTrue(result["log_limit"])
+                self.assertFalse(result["timed_out"])
+                self.assertFalse(result["io_errors"])
+                self.assertFalse(result["cleanup_failed"])
+                self.assertEqual((directory / name).read_bytes(), b"x" * limit)
+
     def test_real_log_quota_and_owned_descendant_cleanup(self):
         result = runner.execute_replay_trial([sys.executable, "-c", "import os;os.write(1,b'x'*262144);os.write(2,b'y'*262144)"],
                                             self.root / "quota", dict(os.environ), 5, 1024)
         self.assertTrue(result["log_limit"])
         for name in ("stdout.txt", "stderr.txt"):
             self.assertLessEqual((self.root / "quota" / name).stat().st_size, 1024)
+        ready = self.root / "descendant-spawned"
+        release = self.root / "descendant-release"
         marker = self.root / "descendant-survived"
-        child = "import pathlib,time;time.sleep(0.8);pathlib.Path(" + repr(str(marker)) + ").write_text('survived')"
-        parent = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);print('spawned',flush=True);time.sleep(10)"
-        result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 0.25, 1024)
+        child = ("import pathlib,time\nend=time.monotonic()+30\n"
+                 "while time.monotonic()<end and not pathlib.Path(" + repr(str(release)) + ").exists():\n    time.sleep(0.01)\n"
+                 "pathlib.Path(" + repr(str(marker)) + ").write_text('survived')")
+        parent = ("import pathlib,subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);"
+                  "print('spawned',flush=True);pathlib.Path(" + repr(str(ready)) + ").touch();time.sleep(30)")
+        monotonic = time.monotonic
+        with mock.patch.object(runner.time, "monotonic", side_effect=lambda: monotonic() + (30 if ready.exists() else 0)):
+            result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 20, 1024)
+        release.touch()
         self.assertTrue(result["timed_out"])
         self.assertIn("spawned", (self.root / "descendants" / "stdout.txt").read_text())
         time.sleep(0.9)
@@ -421,6 +517,16 @@ class ProcessTests(unittest.TestCase):
                                                 self.root / "containment", dict(os.environ), 1, 1024)
         self.assertTrue(any("synthetic containment failure" in error for error in result["io_errors"]))
         self.assertTrue((self.root / "containment" / "process.json").is_file())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process containment")
+    def test_guard_failure_stops_before_launch_and_retains_process_receipt(self):
+        with mock.patch.object(runner.processes, "guard", side_effect=runner.processes.GateError("synthetic guard failure")):
+            with mock.patch.object(runner.subprocess, "Popen", side_effect=AssertionError("replay started before guard")) as launch:
+                result = runner.execute_replay_trial(["replay"], self.root / "guard-failure", dict(os.environ), 1, 1024)
+        launch.assert_not_called()
+        self.assertIsNone(result["returncode"])
+        self.assertIn("synthetic guard failure", result["io_errors"])
+        self.assertTrue((self.root / "guard-failure" / "process.json").is_file())
 
     def test_wait_interrupt_cleans_owned_child_and_retains_receipt(self):
         sleep = time.sleep

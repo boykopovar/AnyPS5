@@ -1,0 +1,5 @@
+# libcurl
+
+## add Functional
+
+- [Options that name files](../../../core/libs/prx/libcurl/Export.cpp) (libcurl) - files curl writes for `CURLOPT_COOKIEJAR`, `CURLOPT_HSTS` and `CURLOPT_ALTSVC` are not recorded as written guest paths, and on Windows the backend opens these files through the ANSI API, so a host path outside the active code page cannot be used. Only `COOKIEFILE`, `COOKIEJAR`, `NETRC_FILE`, `CAINFO` and `UNIX_SOCKET_PATH` are run by a test. `CURLOPT_ABSTRACT_UNIX_SOCKET`, `CURLOPT_RANDOM_FILE`, `CURLOPT_EGDSOCKET` and the SSH key options still take host paths. Only a host process can serve `UNIX_SOCKET_PATH`: the guest `socket` rejects `AF_UNIX`. `CAINFO`, `CAPATH`, `CRLFILE`, `ISSUERCERT`, `SSLCERT`, `SSLKEY`, `PINNEDPUBLICKEY` and their `PROXY_` forms, `COOKIEFILE`, `COOKIEJAR`, `NETRC_FILE`, `HSTS`, `ALTSVC` and `UNIX_SOCKET_PATH` are resolved like `fopen` when set; an empty name, `-` for the cookie options and a `sha256//` pin pass unchanged, and a path that does not resolve becomes an empty name.

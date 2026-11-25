@@ -35,6 +35,20 @@ class AccessTests(unittest.TestCase):
             ("sceExampleRead", "attr", ["dereference"]),
         ])
 
+    def test_array_parameters_are_pointer_parameters(self):
+        source = (
+            "int APS5_VABI sceExampleValues(const int values[]) { return values[0]; }\n"
+            "int APS5_VABI sceExampleTable(const Info* const table[], int count) { return table[0]->size + count; }\n"
+            "int APS5_VABI sceExampleSized(struct waitfd fds[4]) { fds[0].fd = 1; return 0; }\n"
+            "int APS5_VABI sceExampleCopied(int values[]) { int first = 0;\n"
+            "  if (!GuestCopyIn_nid_no_patch(&first, values, sizeof(first))) return 14; return first; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleValues", "values", ["index"]),
+            ("sceExampleTable", "table", ["index"]),
+            ("sceExampleSized", "fds", ["index"]),
+        ])
+
     def test_accesses_through_a_cast_are_reported(self):
         source = (
             "void APS5_VABI sceExampleInit(void* self) { *static_cast<std::uint8_t*>(self) = 0; }\n"
@@ -356,6 +370,66 @@ class CheckedDereferenceTests(unittest.TestCase):
 
     def test_checked_argument_dereferences_ignores_a_plain_pointer_argument(self):
         self.assertEqual(guest_pointer_audit.checked_argument_dereferences("GuestCopyIn_nid_no_patch(p, q, 1)", "p"), [])
+
+    def test_internal_linkage_detects_static_and_anonymous_namespace_definitions(self):
+        text = "static int a() {}\nint b() {}\nnamespace { int c() {} }\n"
+        spans = guest_pointer_audit.anonymous_spans(text)
+        self.assertEqual(len(spans), 1)
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int a"), spans))
+        self.assertFalse(guest_pointer_audit.internal_linkage(text, text.index("int b"), spans))
+        self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int c"), spans))
+
+
+class SourceCodeBlankingTests(unittest.TestCase):
+    def test_comments_become_spaces_and_literals_become_a_placeholder(self):
+        text = 'int a; /* c1\nc2 */ const char *s = "x\\ny"; // tail\nint b;\n'
+        code = guest_pointer_audit.source_code(text)
+        self.assertEqual(code.count("\n"), text.count("\n"))
+        self.assertIn("LITERAL", code)
+        for gone in ("c1", "c2", "tail", "x\\ny"):
+            self.assertNotIn(gone, code)
+        for kept in ("int a;", "const char *s =", "int b;"):
+            self.assertIn(kept, code)
+
+    def test_multi_line_literal_keeps_its_line_count(self):
+        text = 'f("a\\\nb");\ng();\n'
+        code = guest_pointer_audit.source_code(text)
+        self.assertEqual(code.count("\n"), text.count("\n"))
+        self.assertIn("g();", code)
+
+    def test_digit_separators_and_character_literals_do_not_hide_following_code(self):
+        source = (
+            "int APS5_VABI sceExampleQuotes(int* out) {\n"
+            "  int n = 1'000 + 0x1F'FF;\n"
+            "  int c = x'\\n';\n"
+            '  const char* s = 9.L"/* not a comment";\n'
+            "  *out = n + c;\n"
+            "  return 0;\n"
+            "}\n"
+        )
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual((entry["function"], entry["parameter"], entry["line"], entry["kinds"]),
+                         ("sceExampleQuotes", "out", 5, ["dereference"]))
+
+    def test_multiple_parameters_report_each_parameters_earliest_line(self):
+        source = (
+            "int APS5_VABI sceExampleMulti(Info* first, int* second) {\n"
+            "  *second = 1;\n"
+            "  first->size = 2;\n"
+            "  return 0;\n"
+            "}\n"
+        )
+        entries = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual([(e["parameter"], e["line"], e["kinds"]) for e in entries], [
+            ("first", 3, ["member"]),
+            ("second", 2, ["dereference"]),
+        ])
+
+    def test_line_spliced_vabi_definition_is_still_audited(self):
+        source = "int APS5_\\\nVABI sceExampleSplit(int* out) {\n  *out = 1;\n  return 0;\n}\n"
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual((entry["function"], entry["parameter"], entry["line"], entry["kinds"]),
+                         ("sceExampleSplit", "out", 3, ["dereference"]))
 
 
 if __name__ == "__main__":

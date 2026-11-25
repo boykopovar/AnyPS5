@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## change [Inspector controls and state]
+
+- [Inspector controls and state](../../../core/libs/prx/libSceNKWebKit/src/Inspector.cpp) (libSceNKWebKit) - not compared with a console module. WKPageGetInspector lazily creates the page's host `WKInspector` and returns NULL for a closed page. The PlayStation build has only the stub `platformCreateFrontendPage` ([WebInspectorUIProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/Inspector/WebInspectorUIProxy.cpp#L782-L834)), so no frontend page exists: WKInspectorConnect, Show, ShowConsole, ShowResources, Attach, Detach, Close and the two toggles check their argument and leave the state as it is, WKInspectorHide clears the visible flag, and the WKInspectorIs* queries read flags that no export sets. The messages these functions send to the web process, and the element selection and timeline recording changes it reports back, are not modelled. Closes when: compared with a console module.
