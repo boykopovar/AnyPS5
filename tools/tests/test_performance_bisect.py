@@ -570,6 +570,48 @@ class BuildPathSafetyTests(unittest.TestCase):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(tracked.read_text(encoding="utf-8"), "tracked source")
 
+    def test_build_directory_with_brackets_is_checked_literally(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.make_repo(Path(directory))
+            tracked = repo / "buildd"
+            tracked.write_text("tracked source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "buildd"], check=True)
+            build = repo / "build[d]"
+            build.mkdir()
+            (build / "stale").touch()
+            performance_bisect.reset_build_dir(repo, build)
+            self.assertFalse(build.exists())
+            self.assertEqual(tracked.read_text(encoding="utf-8"), "tracked source")
+
+    def test_refuses_tracked_sources_through_a_parent_directory_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.make_repo(Path(directory))
+            real_parent = repo / "project"
+            tracked = real_parent / "build" / "source.cpp"
+            tracked.parent.mkdir(parents=True)
+            tracked.write_text("tracked source", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "project/build/source.cpp"], check=True)
+            alias = repo / "alias"
+            if os.name == "nt":
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                     "New-Item -ItemType Junction -Path $env:ANYPS5_TEST_LINK -Value $env:ANYPS5_TEST_TARGET"],
+                    env={**os.environ, "ANYPS5_TEST_LINK": str(alias), "ANYPS5_TEST_TARGET": str(real_parent)},
+                    capture_output=True, timeout=10)
+                if result.returncode:
+                    self.skipTest("junction creation is unavailable")
+            else:
+                alias.symlink_to(real_parent, target_is_directory=True)
+            try:
+                with patch.object(performance_bisect.shutil, "rmtree") as remove, \
+                        self.assertRaisesRegex(ValueError, "contains tracked source"):
+                    performance_bisect.reset_build_dir(repo, alias / "build")
+                remove.assert_not_called()
+                self.assertEqual(tracked.read_text(encoding="utf-8"), "tracked source")
+            finally:
+                if os.name == "nt":
+                    alias.rmdir()
+
 
 class BuildSymlinkSafetyTests(unittest.TestCase):
     def test_refuses_to_follow_a_build_directory_symlink_outside_the_worktree(self):
