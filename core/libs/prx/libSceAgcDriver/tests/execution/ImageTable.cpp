@@ -938,6 +938,32 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     munmap(reserved, 65536);
 #endif
 
+    void* tail = nullptr;
+#ifdef _WIN32
+    tail = VirtualAlloc(nullptr, 131072, MEM_RESERVE, PAGE_NOACCESS);
+    Require(tail == nullptr || VirtualAlloc(static_cast<std::byte*>(tail) + 65536, 65536, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot commit the second half of a reserved range");
+#else
+    tail = mmap(nullptr, 131072, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (tail == MAP_FAILED) tail = nullptr;
+    Require(tail == nullptr || mprotect(static_cast<std::byte*>(tail) + 65536, 65536, PROT_READ | PROT_WRITE) == 0, "cannot commit the second half of a reserved range");
+#endif
+    Require(tail != nullptr, "cannot reserve a range with an inaccessible first half");
+    auto baseUnmappedImage = Image(tail, Format32Float);
+    baseUnmappedImage[2] = (baseUnmappedImage[2] & ~(0x3fffu << 14u)) | (511u << 14u);
+    SetRecord(8, PointClamp, baseUnmappedImage);
+    Keys[0] = 0;
+    const auto baseUnmappedUnused = Run(device, TableCode, 1, Lanes, 64);
+    Require(!Faulted(baseUnmappedUnused) && Group(baseUnmappedUnused, 0) == Group(classes, 0), "image table: an unreferenced entry whose base address is not mapped changed the result:\n" + baseUnmappedUnused.log);
+    Keys[0] = 8;
+    const auto baseUnmappedUsed = Run(device, TableCode, 1, Lanes, 64);
+    Require(Faulted(baseUnmappedUsed) && baseUnmappedUsed.log.find("rejected by the driver") != std::string::npos && baseUnmappedUsed.log.find("is not mapped at its base address") != std::string::npos && Zeros(baseUnmappedUsed), "image table: an entry whose base address is not mapped, with a mapped page later in its surface, was bound instead of faulting when selected:\n" + baseUnmappedUsed.log);
+    SetRecord(8, PointClamp, floatImage);
+#ifdef _WIN32
+    VirtualFree(tail, 0, MEM_RELEASE);
+#else
+    munmap(tail, 131072);
+#endif
+
     const auto srgbImage = Image(UintTexels.data(), Format8_8Srgb);
     SetRecord(9, PointClamp, srgbImage);
     Keys[0] = 0;

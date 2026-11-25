@@ -6584,8 +6584,8 @@ void ShaderResources::resolveImageTables() {
                 return decoded;
             }
             decoded.guestBytes = SurfaceGuestBytes(resource);
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
-                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), 1u)) {
+                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped at its base address";
                 return decoded;
             }
             static_cast<void>(ResolveTextureFormat(resource.format));
