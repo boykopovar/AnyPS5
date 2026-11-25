@@ -77,7 +77,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* d
     std::optional<std::uint16_t> port;
     if (!portString.empty()) {
         std::size_t idx = 0;
-        while (idx < portString.size() && (portString[idx] == u' ' || portString[idx] == u'\t' || portString[idx] == u'\r' || portString[idx] == u'\n')) {
+        while (idx < portString.size() && (portString[idx] == u' ' || portString[idx] == u'\t' || portString[idx] == u'\r' || portString[idx] == u'\n' || portString[idx] == u'\f')) {
             ++idx;
         }
         if (idx < portString.size() && portString[idx] == u'+') ++idx;

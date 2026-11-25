@@ -83,6 +83,12 @@ int main() {
     Require(idUpperFile != nullptr);
     Require(WKStringIsEqualToUTF8CString(idUpperFile, "file__0"));
 
+    const void* originFileWithHost = WKSecurityOriginCreate(fileProto, exampleHost, 80);
+    Require(originFileWithHost != nullptr);
+    const void* idFileWithHost = WKSecurityOriginCopyDatabaseIdentifier(originFileWithHost);
+    Require(idFileWithHost != nullptr);
+    Require(WKStringIsEqualToUTF8CString(idFileWithHost, "file__0"));
+
     const void* originEncoded = WKSecurityOriginCreate(httpProto, encodedHost, 0);
     Require(originEncoded != nullptr);
     const void* idEncoded = WKSecurityOriginCopyDatabaseIdentifier(originEncoded);
@@ -101,6 +107,19 @@ int main() {
     const void* emptyPortOrigin = WKSecurityOriginCreateFromDatabaseIdentifier(emptyPortId);
     Require(emptyPortOrigin != nullptr);
     Require(WKSecurityOriginGetPort(emptyPortOrigin) == 0);
+
+    const void* zeroPortId = WKStringCreateWithUTF8CString("http_example.com_0");
+    const void* zeroPortOrigin = WKSecurityOriginCreateFromDatabaseIdentifier(zeroPortId);
+    Require(zeroPortOrigin != nullptr);
+    const void* zeroPortStr = WKSecurityOriginCopyToString(zeroPortOrigin);
+    Require(WKStringIsEqualToUTF8CString(zeroPortStr, "http://example.com"));
+
+    for (const char* portCase : {"http_example.com_ 80", "http_example.com_\t80", "http_example.com_+80", "http_example.com_80abc", "http_example.com_\f80"}) {
+        const void* caseStr = WKStringCreateWithUTF8CString(portCase);
+        const void* caseOrigin = WKSecurityOriginCreateFromDatabaseIdentifier(caseStr);
+        Require(caseOrigin != nullptr);
+        Require(WKSecurityOriginGetPort(caseOrigin) == 80);
+    }
 
     const char* malformedCases[] = {
         "",
