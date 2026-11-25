@@ -1,5 +1,4 @@
 #include "prx/libkernel/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -285,9 +284,7 @@ thread_local PendingModuleArgs pendingModuleArgs;
 thread_local int pendingModuleInitResult = 0;
 
 bool StoreModuleResult(int* result, int value) {
-    const int savedErrno = errno;
     const bool stored = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-    errno = savedErrno;
     return stored;
 }
 
@@ -342,9 +339,7 @@ int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void
         ModuleSegmentInfo segments[std::size(ModuleInfoEx{}.segments)];
         std::uint32_t segment_count;
     } table{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&table, &module->segments, sizeof(table.segments) + sizeof(table.segment_count));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("__elf_phdr_match_addr: module info is unreadable");
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
     for (std::uint32_t i = 0; i < table.segment_count && i < std::size(table.segments); ++i) {
