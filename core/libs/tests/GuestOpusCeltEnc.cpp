@@ -264,6 +264,213 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(errno == 71);
 }
 
+void RequireMultistreamState(const std::uint8_t* state, std::uint32_t expectedContextId, int rate, int streams, int coupledStreams, const std::uint8_t* mapping, std::uint8_t canary) {
+    constexpr std::size_t msStateSize = 0x2A0u;
+    const int channels = streams + coupledStreams;
+    const int flagChannels = (streams < 6) ? channels : (channels >= 10 ? channels : 9);
+    const std::uint64_t expectedFlags = 0x100000001ULL | (static_cast<std::uint64_t>(flagChannels) << 3);
+    const std::uint32_t expectedBitrate = static_cast<std::uint32_t>(channels * rate + 0xBB8);
+    const std::uint32_t expectedFrame = static_cast<std::uint32_t>(rate / 50);
+
+    Require(Word(state, 0x00u) != 0u);
+    std::uint64_t flags = 0;
+    std::memcpy(&flags, state + 0x08u, sizeof flags);
+    Require(flags == expectedFlags);
+    Require(Word(state, 0x10u) == static_cast<std::uint32_t>(streams));
+    Require(Word(state, 0x14u) == static_cast<std::uint32_t>(coupledStreams));
+    for (int i = 0; i < channels; ++i) Require(state[0x18u + static_cast<std::size_t>(i)] == mapping[i]);
+    Require(Word(state, 0x24u) == static_cast<std::uint32_t>(rate));
+    Require(Word(state, 0x28u) == expectedBitrate);
+    Require(Word(state, 0x2Cu) == 2u);
+    Require(Word(state, 0x30u) == 0x451u);
+    Require(Word(state, 0x34u) == 10u);
+    Require(Word(state, 0x4Cu) == expectedFrame);
+    Require(Word(state, 0x78u) == 0x803u);
+    Require(Word(state, 0x7Cu) == 0x451u);
+    Require(Word(state, 0x80u) == 0x451u);
+    Require(Word(state, 0x84u) == 1u);
+    Require(Word(state, 0x88u) == 1u);
+    Require(Word(state, 0x8Cu) == 0xFFFFFC18u);
+    Require(Word(state, 0x90u) == expectedBitrate);
+    Require(Word(state, 0x94u) == expectedFrame);
+    Require(Word(state, 0x98u) == 0x17B2u);
+    Require(Word(state, 0x9Cu) == 0u);
+    Require(Word(state, 0xA0u) == expectedContextId);
+
+    std::array<bool, msStateSize> covered{};
+    for (std::size_t b = 0; b < 4; ++b) {
+        covered[0x00u + b] = true;
+        covered[0x10u + b] = true;
+        covered[0x14u + b] = true;
+        covered[0x24u + b] = true;
+        covered[0x28u + b] = true;
+        covered[0x2Cu + b] = true;
+        covered[0x30u + b] = true;
+        covered[0x34u + b] = true;
+        covered[0x4Cu + b] = true;
+        covered[0x78u + b] = true;
+        covered[0x7Cu + b] = true;
+        covered[0x80u + b] = true;
+        covered[0x84u + b] = true;
+        covered[0x88u + b] = true;
+        covered[0x8Cu + b] = true;
+        covered[0x90u + b] = true;
+        covered[0x94u + b] = true;
+        covered[0x98u + b] = true;
+        covered[0xA0u + b] = true;
+    }
+    for (std::size_t b = 0; b < 8; ++b) covered[0x08u + b] = true;
+    for (int i = 0; i < channels; ++i) covered[0x18u + static_cast<std::size_t>(i)] = true;
+    for (std::size_t i = 0; i < msStateSize; ++i)
+        if (!covered[i]) Require(state[i] == 0u);
+    Require(state[msStateSize] == canary);
+}
+
+void RequireMultistream(int callerApplication) {
+    constexpr std::size_t msStateSize = 0x2A0u;
+    const std::array<std::uint8_t, 12> identity{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    const std::array<std::uint8_t, 3> reversed{2, 1, 0};
+
+    std::array<std::uint8_t, 1024> state{};
+    state.fill(0xA5u);
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(state), 48000, 2, 1, reversed.data(), callerApplication) == 0);
+    Require(errno == 71);
+    RequireMultistreamState(state.data(), 0u, 48000, 2, 1, reversed.data(), 0xA5u);
+    const std::uint32_t firstInstance = Word(state.data(), 0x00u);
+
+    const std::uint32_t contextId = 0x42u;
+    state.fill(0x5Au);
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCreateEx(&contextId, ToMultistreamState(state), 48000, 6, 0, identity.data(), callerApplication) == 0);
+    Require(errno == 71);
+    RequireMultistreamState(state.data(), contextId, 48000, 6, 0, identity.data(), 0x5Au);
+    Require(Word(state.data(), 0x00u) != firstInstance);
+
+    RequireThrows([&] { sceOpusCeltMultistreamEncCreateEx(reinterpret_cast<const std::uint32_t*>(0x10), ToMultistreamState(state), 48000, 1, 0, identity.data(), callerApplication); });
+
+    for (const int unsupported : std::array<int, 8>{4012, 4013, 4016, 4017, 4018, 4019, 4026, 4030}) {
+        std::int32_t dummy = static_cast<std::int32_t>(0xA5A5A5A5u);
+        Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), unsupported, &dummy) == EncoderError(0x08));
+        Require(dummy == static_cast<std::int32_t>(0xA5A5A5A5u));
+    }
+
+    std::int32_t out = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_APPLICATION_REQUEST, nullptr) == EncoderError(0x19));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_APPLICATION_REQUEST, &out) == 0);
+    Require(out == callerApplication);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_APPLICATION_REQUEST, OPUS_APPLICATION_AUDIO) == EncoderError(0x11));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_APPLICATION_REQUEST, callerApplication) == 0);
+
+    out = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_BITRATE_REQUEST, nullptr) == EncoderError(0x19));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_BITRATE_REQUEST, &out) == 0);
+    Require(out == 6 * 48000 + 3000);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_BITRATE_REQUEST, 5999) == EncoderError(0x09));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_BITRATE_REQUEST, 1080001) == EncoderError(0x09));
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_BITRATE_REQUEST, 720001) == 0);
+    Require(errno == 71);
+    Require(Word(state.data(), 0x8Cu) == 720001u);
+    Require(Word(state.data(), 0x9Cu) == 1u);
+
+    std::array<std::uint8_t, 1024> smallState{};
+    smallState.fill(0xA5u);
+    Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(smallState), 16000, 5, 3, identity.data(), callerApplication) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(smallState), OPUS_SET_BITRATE_REQUEST, 720001) == EncoderError(0x09));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(smallState), OPUS_SET_BITRATE_REQUEST, 720000) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(smallState), OPUS_SET_BITRATE_REQUEST, 6000) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(smallState), OPUS_SET_BITRATE_REQUEST, OPUS_AUTO) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(smallState), OPUS_SET_BITRATE_REQUEST, OPUS_BITRATE_MAX) == 0);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_MAX_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_MEDIUMBAND) == EncoderError(0x0F));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_MAX_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_WIDEBAND) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_MAX_BANDWIDTH_REQUEST, &out) == 0);
+    Require(out == OPUS_BANDWIDTH_WIDEBAND);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_VBR_REQUEST, 2) == EncoderError(0x0A));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_VBR_REQUEST, 0) == 0);
+    out = 99;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_VBR_REQUEST, &out) == 0);
+    Require(out == 0);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_MEDIUMBAND) == EncoderError(0x0E));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_BANDWIDTH_REQUEST, OPUS_BANDWIDTH_NARROWBAND) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_BANDWIDTH_REQUEST, &out) == 0);
+    Require(out == OPUS_BANDWIDTH_NARROWBAND);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_COMPLEXITY_REQUEST, 11) == EncoderError(0x13));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_COMPLEXITY_REQUEST, 3) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_COMPLEXITY_REQUEST, &out) == 0);
+    Require(out == 3);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_PACKET_LOSS_PERC_REQUEST, 101) == EncoderError(0x14));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_PACKET_LOSS_PERC_REQUEST, 12) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_PACKET_LOSS_PERC_REQUEST, &out) == 0);
+    Require(out == 12);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_VBR_CONSTRAINT_REQUEST, 2) == EncoderError(0x0B));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_VBR_CONSTRAINT_REQUEST, 0) == 0);
+    out = 99;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_VBR_CONSTRAINT_REQUEST, &out) == 0);
+    Require(out == 0);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 3) == EncoderError(0x0C));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 2);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, OPUS_AUTO) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 0);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_SIGNAL_REQUEST, 3003) == EncoderError(0x12));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_SIGNAL_REQUEST, OPUS_SIGNAL_VOICE) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_SIGNAL_REQUEST, &out) == 0);
+    Require(out == OPUS_SIGNAL_VOICE);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_SIGNAL_REQUEST, OPUS_AUTO) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_SIGNAL_REQUEST, &out) == 0);
+    Require(out == 0);
+
+    out = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_LOOKAHEAD_REQUEST, &out) == 0);
+    Require(out == 120);
+    out = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_SAMPLE_RATE_REQUEST, &out) == 0);
+    Require(out == 48000);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_PREDICTION_DISABLED_REQUEST, 2) == EncoderError(0x1E));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_PREDICTION_DISABLED_REQUEST, 1) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_PREDICTION_DISABLED_REQUEST, &out) == 0);
+    Require(out == 1);
+
+    SetWord(state.data(), 0x70u, 0x11223344u);
+    SetWord(state.data(), 0x74u, 0x55667788u);
+    std::int32_t r0 = static_cast<std::int32_t>(0xA5A5A5A5u);
+    std::int32_t r1 = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), -1, nullptr, &r1) == EncoderError(0x19));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), -1, &r0, nullptr) == EncoderError(0x19));
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), -1, &r0, &r1) == 0);
+    Require(r0 == 0x11223344 && r1 == 0x55667788);
+
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_RESET_STATE) == 0);
+    Require(Word(state.data(), 0x9Cu) == 0u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_COMPLEXITY_REQUEST, &out) == 0);
+    Require(out == 10);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_VBR_REQUEST, &out) == 0);
+    Require(out == 1);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_PREDICTION_DISABLED_REQUEST, &out) == 0);
+    Require(out == 0);
+    Require(state[msStateSize] == 0x5Au);
+}
+
 using State = OpusCeltEncoder;
 
 constexpr int CtlLastRequest = 4047;
@@ -559,6 +766,7 @@ int main() {
     Require(sceOpusCeltEncDestroy(ToState(liveState)) == 0);
     RequireCtl(callerApplication, codecApplication);
     RequireEarlyAnswers(callerApplication);
+    RequireMultistream(callerApplication);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
