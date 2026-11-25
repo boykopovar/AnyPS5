@@ -357,6 +357,10 @@ def main():
         high_subpage_gnu = build_guest_module(
             relro_headers=[(PT_GNU_RELRO, PF_R, 0, 0xFFFFFFFFFFFFF000, 0, 0xFFF, 1)],
         )
+        aligned_tail_gnu = build_guest_module(
+            data_loads=[(PT_LOAD, PF_R | PF_W, 0x2000, 0x2000, 0x1000, 0x1000, 0x2000)],
+            relro_headers=[(PT_GNU_RELRO, PF_R, 0x2000, 0x2000, 0x1000, 0x2000, 1)],
+        )
         unmapped_partial_tail = build_guest_module(
             data_loads=[(PT_LOAD, PF_R | PF_W, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000)],
             relro_headers=[(PT_GNU_RELRO, PF_R, 0x2000, 0x2000, 0x1000, 0x1800, 1)],
@@ -383,6 +387,7 @@ def main():
                 False,
                 0x2000,
             ),
+            ("aligned-tail-gnu", aligned_tail_gnu, (0x2000, 0x1000, 0x1000), True, False, 0x2000),
             ("unmapped-partial-tail", unmapped_partial_tail, (0x2000, 0x1000, 0x1800), True, False, 0x2000),
             ("readonly-load", readonly_covered, (0x2000, 0x1000, 0x1000), True, False, 0x4500),
             ("rx-load", rx_covered, (0x2000, 0x1000, 0x1000), True, False, 0x4500),
@@ -390,6 +395,7 @@ def main():
             ("high-subpage", high_subpage_gnu, (0xFFFFFFFFFFFFF000, 0, 0xFFF), False, False, 0x2000),
         )
 
+        unmapped_trailing_cases = {"aligned-tail-gnu"}
         for name, mod, expected_relro, expects_ro_page, expects_writable_trailing, relocation_slot in positive_cases:
             res, out, guest_prx = convert(relinker, work / f"valid-{name}", mod)
             assert res.returncode == 0, (name, res.stdout, res.stderr)
@@ -404,7 +410,10 @@ def main():
                     assert wr_run.returncode == -signal.SIGSEGV, (name, wr_run.returncode, wr_run.stdout, wr_run.stderr)
                 else:
                     assert wr_run.returncode == 0, (name, wr_run.returncode, wr_run.stdout, wr_run.stderr)
-                if expects_writable_trailing or (expects_ro_page and expected_relro[2] <= 0x1000):
+                if name in unmapped_trailing_cases:
+                    tr_run = probe_linux_runtime(guest_prx, "write_trailing")
+                    assert tr_run.returncode == -signal.SIGSEGV, (name, tr_run.returncode, tr_run.stdout, tr_run.stderr)
+                elif expects_writable_trailing or (expects_ro_page and expected_relro[2] <= 0x1000):
                     tr_run = probe_linux_runtime(guest_prx, "write_trailing")
                     assert tr_run.returncode == 0, (name, tr_run.returncode, tr_run.stdout, tr_run.stderr)
 
