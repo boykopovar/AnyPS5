@@ -59,7 +59,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace NKWebKit::WtfAbi {
@@ -154,18 +153,17 @@ void APS5_VABI _ZN3WTF10WorkerPool8postTaskEONS_8FunctionIFvvEEE(WorkerPool* sel
     WorkerPoolState& state = StateOf(self);
     if (!task) throw std::invalid_argument("null WTF::Function reference for WTF::WorkerPool::postTask");
     if (!task->callableWrapper) throw std::invalid_argument("null WTF::Function for WTF::WorkerPool::postTask");
-    VoidCallableWrapper* callable = std::exchange(task->callableWrapper, nullptr);
     {
         std::lock_guard lock(state.mutex);
-        state.tasks.push_back(callable);
-        if (state.waiting) {
-            --state.waiting;
-        } else if (state.threads.size() < state.numberOfWorkers) {
+        if (!state.waiting && state.threads.size() < state.numberOfWorkers) {
             Pthread thread = nullptr;
             if (const int error = pthread_create_nid_postfix(&thread, nullptr, &RunWorker, &state))
                 throw std::runtime_error("WTF::WorkerPool: pthread_create failed with " + std::to_string(error));
             state.threads.push_back(thread);
         }
+        state.tasks.push_back(task->callableWrapper);
+        task->callableWrapper = nullptr;
+        if (state.waiting) --state.waiting;
     }
     state.condition.notify_one();
 }
