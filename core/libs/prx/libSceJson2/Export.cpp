@@ -342,13 +342,44 @@ bool SearchEqual(const char* left, const char* right, std::size_t count) {
     return bounded <= 0 || std::strncmp(left, right, static_cast<std::size_t>(bounded)) == 0;
 }
 
+bool GuestBufferReadable(const void* address, std::size_t size) {
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < size;) {
+        const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
+        const std::size_t step = std::min(sizeof(chunk) - current % sizeof(chunk), size - offset);
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(chunk, static_cast<const char*>(address) + offset, step);
+        errno = savedErrno;
+        if (!read) return false;
+        offset += step;
+    }
+    return true;
+}
+
+bool GuestTextLength(const char* text, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
+        errno = savedErrno;
+        if (!read) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
+}
+
 std::size_t FindText(const String& string, const char* needle, std::size_t position, std::size_t count) {
     constexpr auto missing = std::numeric_limits<std::size_t>::max();
     if (!string.text) return missing;
     const std::size_t length = string.text->length;
     if (!count) return position <= length ? position : missing;
     if (position >= length || count > length - position) return missing;
-    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    if (!needle || !GuestBufferReadable(needle, count)) { NotImplemented_nid_no_patch(__func__); return missing; }
     const char* begin = string.text->characters;
     const char* cursor = begin + position;
     while (cursor < begin + length) {
@@ -366,7 +397,7 @@ std::size_t ReverseFindText(const String& string, const char* needle, std::size_
     const std::size_t length = string.text->length;
     if (!count) return std::min(position, length);
     if (count > length) return missing;
-    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    if (!needle || !GuestBufferReadable(needle, count)) { NotImplemented_nid_no_patch(__func__); return missing; }
     std::size_t index = std::min(position, length - count);
     for (;;) {
         const char* candidate = string.text->characters + index;
@@ -1918,20 +1949,6 @@ int CompareText(const char* left, const char* right) {
     return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
 }
 
-bool GuestTextLength(const char* text, std::size_t& length) {
-    char chunk[4096];
-    for (std::size_t offset = 0;;) {
-        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
-        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
-        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, count)) return false;
-        if (const void* end = std::memchr(chunk, 0, count)) {
-            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
-            return true;
-        }
-        offset += count;
-    }
-}
-
 struct ScopedString {
     String string{};
     explicit ScopedString(std::string_view text) { Construct(string, text); }
@@ -2764,7 +2781,11 @@ Object* _ZN3sce4Json5Value12s_nullobjectE = nullptr;
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
 
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string_view{}); }
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String* self, const char* text) { Construct(*self, text ? text : ""); }
+void APS5_VABI _ZN3sce4Json6StringC1EPKc(String* self, const char* text) {
+    std::size_t length = 0;
+    if (text && !GuestTextLength(text, length)) text = nullptr;
+    Construct(*self, text ? std::string_view{text, length} : std::string_view{""});
+}
 void APS5_VABI _ZN3sce4Json6StringC1ERKS1_(String* self, const String* other) { Construct(*self, *other); }
 void APS5_VABI _ZN3sce4Json6StringD1Ev(String* self) { Destroy(*self); }
 String* APS5_VABI _ZN3sce4Json6StringaSERKS1_(String* self, const String* other) {
@@ -2776,7 +2797,10 @@ bool APS5_VABI _ZNK3sce4Json6String5emptyEv(const String* self) { return View(*s
 std::size_t APS5_VABI _ZNK3sce4Json6String6lengthEv(const String* self) { return View(*self).size(); }
 std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String* self) { return View(*self).size(); }
 std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String* self) { return self->text ? self->text->capacity : 0; }
-bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && CompareText(Characters(*self), text) == 0; }
+bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) {
+    std::size_t length = 0;
+    return text != nullptr && GuestTextLength(text, length) && CompareText(Characters(*self), text) == 0;
+}
 bool APS5_VABI _ZNK3sce4Json6StringeqERKS1_(const String* self, const String* other) { return other != nullptr && CompareText(Characters(*self), Characters(*other)) == 0; }
 void APS5_VABI _ZN3sce4Json6String5clearEv(String* self) { ClearText(*self); }
 void APS5_VABI _ZN3sce4Json6String6resizeEm(String* self, std::size_t count) {
@@ -2797,11 +2821,14 @@ String* APS5_VABI _ZN3sce4Json6String6appendERKS1_(String* self, const String* o
 }
 String* APS5_VABI _ZN3sce4Json6String6appendEPKc(String* self, const char* text) {
     if (!text) throw std::invalid_argument("sce::Json::String::append: null text");
-    AppendText(*self, text);
+    std::size_t length = 0;
+    if (!GuestTextLength(text, length)) throw std::invalid_argument("sce::Json::String::append: unreadable text");
+    AppendText(*self, std::string_view{text, length});
     return self;
 }
 String* APS5_VABI _ZN3sce4Json6String6appendEPKcm(String* self, const char* text, std::size_t length) {
     if (!text && length) throw std::invalid_argument("sce::Json::String::append: null text");
+    if (length && !GuestBufferReadable(text, length)) throw std::invalid_argument("sce::Json::String::append: unreadable text");
     AppendText(*self, {text ? text : "", length});
     return self;
 }
@@ -2821,16 +2848,26 @@ String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* s
 char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) {
     return !self->text ? 0 : index < self->text->length ? self->text->characters[index] : emptyCharacters[0];
 }
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* needle, std::size_t position) { return FindText(*self, needle, position, needle ? std::strlen(needle) : 0); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* needle, std::size_t position) {
+    std::size_t length = 0;
+    if (needle && !GuestTextLength(needle, length)) return static_cast<std::size_t>(-1);
+    return FindText(*self, needle, position, needle ? length : 0);
+}
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) { return FindText(*self, needle, position, count); }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* needle, std::size_t position) { return FindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* needle, std::size_t position) { return ReverseFindText(*self, needle, position, needle ? std::strlen(needle) : 0); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* needle, std::size_t position) {
+    std::size_t length = 0;
+    if (needle && !GuestTextLength(needle, length)) return static_cast<std::size_t>(-1);
+    return ReverseFindText(*self, needle, position, needle ? length : 0);
+}
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) { return ReverseFindText(*self, needle, position, count); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* needle, std::size_t position) { return ReverseFindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return FindText(*self, &character, position, 1); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return ReverseFindText(*self, &character, position, 1); }
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
     if (!text) throw std::invalid_argument("sce::Json::String::compare: null text");
+    std::size_t length = 0;
+    if (!GuestTextLength(text, length)) throw std::invalid_argument("sce::Json::String::compare: unreadable text");
     return CompareText(Characters(*self), text);
 }
 int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const String* other) {
