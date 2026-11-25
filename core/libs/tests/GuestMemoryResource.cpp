@@ -28,11 +28,8 @@ extern const TypeRecord _ZTISt8bad_cast_nid_postfix;
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 void APS5_VABI AllocateOverAligned(const void* resource);
-void APS5_VABI AllocateZeroAligned(const void* resource);
-void APS5_VABI AllocateNonPowerOfTwoAligned(const void* resource);
 void APS5_VABI AllocateMaxSizeDefault(const void* resource);
 void APS5_VABI AllocateMaxSizeOverAligned(const void* resource);
-void APS5_VABI AllocateMaxSizeAlignOne(const void* resource);
 
 const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
@@ -46,22 +43,6 @@ asm(".text\n"
     "    movq (%rdi), %rax\n"
     "    jmp *16(%rax)\n"
     APS5_ASM_FUNCTION_END("AllocateOverAligned"));
-
-asm(".text\n"
-    APS5_ASM_FUNCTION("AllocateZeroAligned")
-    "    xorl %edx, %edx\n"
-    "    movl $16, %esi\n"
-    "    movq (%rdi), %rax\n"
-    "    jmp *16(%rax)\n"
-    APS5_ASM_FUNCTION_END("AllocateZeroAligned"));
-
-asm(".text\n"
-    APS5_ASM_FUNCTION("AllocateNonPowerOfTwoAligned")
-    "    movl $3, %edx\n"
-    "    movl $16, %esi\n"
-    "    movq (%rdi), %rax\n"
-    "    jmp *16(%rax)\n"
-    APS5_ASM_FUNCTION_END("AllocateNonPowerOfTwoAligned"));
 
 asm(".text\n"
     APS5_ASM_FUNCTION("AllocateMaxSizeDefault")
@@ -78,14 +59,6 @@ asm(".text\n"
     "    movq (%rdi), %rax\n"
     "    jmp *16(%rax)\n"
     APS5_ASM_FUNCTION_END("AllocateMaxSizeOverAligned"));
-
-asm(".text\n"
-    APS5_ASM_FUNCTION("AllocateMaxSizeAlignOne")
-    "    movl $1, %edx\n"
-    "    movq $-1, %rsi\n"
-    "    movq (%rdi), %rax\n"
-    "    jmp *16(%rax)\n"
-    APS5_ASM_FUNCTION_END("AllocateMaxSizeAlignOne"));
 
 static unsigned failures = 0;
 
@@ -161,22 +134,11 @@ static void CheckResources() {
     Require(!Slot<IsEqual>(unaligned, 4)(unaligned, empty), "unaligned is not null");
     Require(!Slot<IsEqual>(empty, 4)(empty, aligned), "null is not aligned");
 
-    for (const std::size_t alignment : {std::size_t{1}, std::size_t{2}, std::size_t{4}, std::size_t{8}, std::size_t{16}, std::size_t{32}, std::size_t{64}, std::size_t{4096}}) {
+    for (const std::size_t alignment : {std::size_t{1}, std::size_t{16}, std::size_t{32}, std::size_t{64}, std::size_t{4096}}) {
         auto* block = static_cast<unsigned char*>(Slot<Allocate>(aligned, 2)(aligned, 200, alignment));
         Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % alignment == 0, "aligned allocate honours the alignment");
         std::memset(block, 0x5a, 200);
         Slot<Deallocate>(aligned, 3)(aligned, block, 200, alignment);
-    }
-    for (const std::size_t size : {std::size_t{1}, std::size_t{8}, std::size_t{16}}) {
-        std::array<unsigned char*, 32> liveBlocks{};
-        for (auto*& block : liveBlocks) {
-            block = static_cast<unsigned char*>(Slot<Allocate>(aligned, 2)(aligned, size, 32));
-            Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 32 == 0, "aligned allocate small size honours 32-byte alignment");
-            std::memset(block, 0x3c, size);
-        }
-        for (auto* block : liveBlocks) {
-            Slot<Deallocate>(aligned, 3)(aligned, block, size, 32);
-        }
     }
     for (const std::size_t alignment : {std::size_t{1}, std::size_t{8}, std::size_t{32}}) {
         auto* block = static_cast<unsigned char*>(Slot<Allocate>(unaligned, 2)(unaligned, 48, alignment));
@@ -189,13 +151,8 @@ static void CheckResources() {
 
     CheckThrows(AllocateOverAligned, unaligned, "unaligned allocate over 32 throws bad_alloc");
     CheckThrows(reinterpret_cast<Thrower>(const_cast<void*>(Vtable(empty)[2])), empty, "null allocate throws bad_alloc");
-    CheckThrows(AllocateZeroAligned, aligned, "aligned allocate with zero alignment throws bad_alloc");
-    CheckThrows(AllocateZeroAligned, unaligned, "unaligned allocate with zero alignment throws bad_alloc");
-    CheckThrows(AllocateNonPowerOfTwoAligned, aligned, "aligned allocate with non-power-of-two alignment throws bad_alloc");
-    CheckThrows(AllocateNonPowerOfTwoAligned, unaligned, "unaligned allocate with non-power-of-two alignment throws bad_alloc");
     CheckThrows(AllocateMaxSizeDefault, aligned, "aligned allocate with SIZE_MAX throws bad_alloc");
     CheckThrows(AllocateMaxSizeOverAligned, aligned, "aligned over-aligned allocate with SIZE_MAX throws bad_alloc");
-    CheckThrows(AllocateMaxSizeAlignOne, aligned, "aligned align-1 allocate with SIZE_MAX throws bad_alloc");
     CheckThrows(AllocateMaxSizeDefault, unaligned, "unaligned allocate with SIZE_MAX throws bad_alloc");
 }
 

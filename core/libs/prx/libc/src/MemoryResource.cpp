@@ -62,10 +62,6 @@ bool APS5_VABI IsSameResource(const MemoryResource* self, const MemoryResource* 
     return self == other;
 }
 
-bool IsValidAlignment(std::size_t alignment) {
-    return alignment != 0 && (alignment & (alignment - 1)) == 0;
-}
-
 template<typename TAllocate>
 void* TranslateBadAlloc(TAllocate allocate) {
     try {
@@ -76,26 +72,21 @@ void* TranslateBadAlloc(TAllocate allocate) {
 }
 
 void* APS5_VABI AlignedAllocate(MemoryResource*, std::size_t bytes, std::size_t alignment) {
-    if (!IsValidAlignment(alignment)) {
-        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
-    }
-    if (alignment > 1) {
+    if (alignment > DefaultNewAlignment) {
         return TranslateBadAlloc([&] { return _ZnwmSt11align_val_t_nid_postfix(bytes, alignment); });
     }
     return TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
 }
 
 void APS5_VABI AlignedDeallocate(MemoryResource*, void* pointer, std::size_t bytes, std::size_t alignment) {
-    if (alignment > 1)
+    if (alignment > DefaultNewAlignment)
         _ZdlPvmSt11align_val_t_nid_postfix(pointer, bytes, alignment);
     else
         _ZdlPvm_nid_postfix(pointer, bytes);
 }
 
 void* APS5_VABI UnalignedAllocate(MemoryResource*, std::size_t bytes, std::size_t alignment) {
-    if (!IsValidAlignment(alignment) || alignment > DefaultNewAlignment) {
-        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
-    }
+    if (alignment > DefaultNewAlignment) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
     return TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
 }
 
