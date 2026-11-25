@@ -5,7 +5,6 @@
 
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -24,9 +23,7 @@ bool GuestTextLength(const char* text, std::size_t& length) {
     for (std::size_t offset = 0;;) {
         const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
         const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
-        const int savedErrno = errno;
         const bool read = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
-        errno = savedErrno;
         if (!read) return false;
         if (const void* end = std::memchr(chunk, 0, count)) {
             length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
@@ -41,9 +38,7 @@ bool GuestBufferReadable(const void* address, std::size_t size) {
     for (std::size_t offset = 0; offset < size;) {
         const auto current = reinterpret_cast<std::uintptr_t>(address) + offset;
         const std::size_t step = std::min(sizeof(chunk) - current % sizeof(chunk), size - offset);
-        const int savedErrno = errno;
         const bool read = GuestCopyIn_nid_no_patch(chunk, static_cast<const char*>(address) + offset, step);
-        errno = savedErrno;
         if (!read) return false;
         offset += step;
     }
@@ -183,9 +178,7 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
         if (written > std::numeric_limits<std::uintptr_t>::max() - base) return false;
         const auto address = base + written;
         if (pending > std::numeric_limits<std::uintptr_t>::max() - address) return false;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), staging.data(), pending);
-        errno = savedErrno;
         if (!copied) return false;
         written += pending;
         pending = 0;
