@@ -21,6 +21,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -77,6 +81,14 @@ bool DrawThreadFlag(std::uint8_t bit) {
 void SetDrawThreadFlag(std::uint8_t bit, bool on) {
     const auto flags = DrawThreadFlags::Get();
     DrawThreadFlags::Set(static_cast<std::uint8_t>(on ? flags | bit : flags & ~bit));
+}
+
+std::uint64_t CurrentThreadId() {
+#if defined(__linux__)
+    return static_cast<std::uint64_t>(::syscall(SYS_gettid));
+#else
+    return 0;
+#endif
 }
 }
 
@@ -509,6 +521,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    committerThread.store(CurrentThreadId(), std::memory_order_release);
     NameDriverThread("draw-commit");
     struct CommitterScope {
         explicit CommitterScope(DrawPipeline* self) { committerPipeline = self; }

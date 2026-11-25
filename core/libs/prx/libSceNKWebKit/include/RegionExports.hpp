@@ -428,8 +428,6 @@ static_assert(sizeof(FilterOperation) == 16);
 struct DefaultFilterOperation : public FilterOperation {
     FilterOperationType m_representedType{FilterOperationType::Default};
     std::uint8_t m_subPad[7]{0, 0, 0, 0, 0, 0, 0};
-
-    FilterOperationType representedType() const { return m_representedType; }
 };
 
 static_assert(sizeof(DefaultFilterOperation) == 24);

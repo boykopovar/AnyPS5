@@ -348,6 +348,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length);
 int APS5_VABI sceKernelFtruncate(int d, int64_t length);
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence);
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode);
+int APS5_VABI mkfifo_nid_postfix(const char* path, uint16_t mode);
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
 int APS5_VABI creat_nid_postfix(const char* path, int mode);
 int APS5_VABI _open_nid_postfix(const char* path, int flags, ...);
@@ -787,6 +788,8 @@ NewReplace* APS5_VABI sceKernelGetSanitizerNewReplaceExternal(void);
 int APS5_VABI getitimer_nid_postfix(int which, GuestItimerval* output);
 int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous);
 GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler);
+GuestHandler APS5_VABI sigset_nid_postfix(int guest, GuestHandler disposition);
+int APS5_VABI sigpause_nid_postfix(int mask);
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
 int APS5_VABI raise_nid_postfix(int guest);
@@ -888,6 +891,7 @@ int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t s
 int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut);
 int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment);
 int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len);
-int APS5_VABI sceKernelSetProcessProperty(void);
+int APS5_VABI sceKernelSetProcessProperty(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
 
 }

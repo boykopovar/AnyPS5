@@ -220,4 +220,9 @@ XmlString* ContainerGetValue(XmlString* result, const XmlHandle* self) {
     return result;
 }
 
+const std::vector<Attribute>* ContainerAttributes(const XmlHandle* self) {
+    if (self == nullptr || self->impl == nullptr) return nullptr;
+    return &StateOf(self)->attributes;
+}
+
 }
