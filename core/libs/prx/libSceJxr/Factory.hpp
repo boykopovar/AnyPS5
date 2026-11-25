@@ -60,6 +60,13 @@ struct CodecFactory {
     std::int64_t (APS5_VABI* release)(CodecFactory**);
 };
 
+struct ImageDecodeHead {
+    std::int64_t (APS5_VABI* initialize)(ImageDecodeHead*, Stream*);
+    void* methods[10];
+    Stream* stream;
+    std::int32_t streamOwner;
+};
+
 struct FormatConverter {
     std::int64_t (APS5_VABI* initialize)(FormatConverter*, void*, char*, PixelGuid);
     std::int64_t (APS5_VABI* initializeConvert)(FormatConverter*, PixelGuid, char*, PixelGuid);
@@ -77,6 +84,7 @@ struct FormatConverter {
 static_assert(sizeof(PlainStream) == 24);
 static_assert(sizeof(Factory) == 32);
 static_assert(sizeof(CodecFactory) == 40 && offsetof(CodecFactory, release) == 0x20);
+static_assert(offsetof(ImageDecodeHead, stream) == 88 && offsetof(ImageDecodeHead, streamOwner) == 96);
 static_assert(sizeof(FormatConverter) == 96 && offsetof(FormatConverter, decoder) == 72);
 
 } // namespace Jxr
