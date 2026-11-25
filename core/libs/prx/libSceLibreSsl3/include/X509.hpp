@@ -3,7 +3,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include "prx/libSceLibreSsl/include/Api.hpp"
+
+LibreSslX509Name* LibreSsl3DecodeX509Name_nid_no_patch(std::span<const unsigned char>& input);
 
 struct LibreSsl3X509CertInfo {
     Asn1String* version;

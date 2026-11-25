@@ -6,14 +6,24 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
 namespace GuestRune {
 
+struct RangeEntry {
+    std::int32_t min;
+    std::int32_t max;
+    std::int32_t map;
+    const std::uint64_t* types;
+};
+static_assert(offsetof(RangeEntry, types) == 16);
+static_assert(sizeof(RangeEntry) == 24);
+
 struct Range {
     std::int32_t count;
-    void* entries;
+    const RangeEntry* entries;
 };
 
 struct Locale {
@@ -91,8 +101,49 @@ namespace GuestRune {
 
 constexpr std::uint32_t Weof = 0xffffffff;
 
+const Locale* ActiveLocale() {
+    return _CurrentRuneLocale_nid_postfix != nullptr ? _CurrentRuneLocale_nid_postfix : &_DefaultRuneLocale_nid_postfix;
+}
+
+const RangeEntry* FindEntry(const Range& range, std::int32_t rune) {
+    if (rune < 0 || range.count <= 0 || range.entries == nullptr) return nullptr;
+    std::int32_t low = 0;
+    std::int32_t high = range.count - 1;
+    while (low <= high) {
+        const std::int32_t mid = low + (high - low) / 2;
+        const RangeEntry& entry = range.entries[mid];
+        if (rune < entry.min) {
+            high = mid - 1;
+        } else if (rune > entry.max) {
+            low = mid + 1;
+        } else {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 int Is(std::uint32_t c, std::uint64_t mask) {
-    return c < 256 && (_CurrentRuneLocale_nid_postfix->types[c] & mask) != 0;
+    const Locale* locale = ActiveLocale();
+    if (c < 256) return (locale->types[c] & mask) != 0;
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return 0;
+    const auto rune = static_cast<std::int32_t>(c);
+    const RangeEntry* entry = FindEntry(locale->typeRanges, rune);
+    if (entry == nullptr) return 0;
+    const std::uint64_t type = entry->types != nullptr
+        ? entry->types[rune - entry->min]
+        : static_cast<std::uint64_t>(static_cast<std::uint32_t>(entry->map));
+    return (type & mask) != 0;
+}
+
+std::uint32_t MapCase(std::uint32_t c, const std::int32_t (Locale::*table)[256], const Range Locale::*ranges) {
+    const Locale* locale = ActiveLocale();
+    if (c < 256) return static_cast<std::uint32_t>((locale->*table)[c]);
+    if (c > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return c;
+    const auto rune = static_cast<std::int32_t>(c);
+    const RangeEntry* entry = FindEntry(locale->*ranges, rune);
+    if (entry == nullptr) return c;
+    return static_cast<std::uint32_t>(entry->map) + static_cast<std::uint32_t>(rune - entry->min);
 }
 
 }
@@ -146,11 +197,11 @@ std::uint64_t APS5_VABI wctype_nid_postfix(const char* property) {
 }
 
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c) {
-    return c < 256 ? static_cast<std::uint32_t>(_CurrentRuneLocale_nid_postfix->lower[c]) : c;
+    return GuestRune::MapCase(c, &GuestRune::Locale::lower, &GuestRune::Locale::lowerRanges);
 }
 
 std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c) {
-    return c < 256 ? static_cast<std::uint32_t>(_CurrentRuneLocale_nid_postfix->upper[c]) : c;
+    return GuestRune::MapCase(c, &GuestRune::Locale::upper, &GuestRune::Locale::upperRanges);
 }
 
 std::uint32_t APS5_VABI btowc_nid_postfix(int c) {

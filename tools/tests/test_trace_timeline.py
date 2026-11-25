@@ -62,6 +62,29 @@ class TimelineTests(unittest.TestCase):
                 page = out.read_text(encoding="utf-8")
                 self.assertIn(expected, page)
                 self.assertNotIn("Driver.Present", page)
+                self.assertIn("No presents recorded in this window.", page)
+
+    def test_cli_keeps_present_markers_with_thread_filter(self):
+        path = Path(self.tmp.name) / "capture.json"
+        events = [
+            {"name": "present", "ph": "i", "ts": ts, "tid": 2, "args": {"present": number}}
+            for ts, number in ((1000, 1), (2000, 2), (5000, 3), (9000, 4), (10000, 5))
+        ]
+        path.write_text(json.dumps(document(self.items + events)), encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--thread", "queue worker",
+                               "--from-ms", "2", "--to-ms", "9", "--max-slices", "1"],
+                              capture_output=True, text=True, timeout=5)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        page = path.with_suffix(".html").read_text(encoding="utf-8")
+        self.assertIn(">Presents</text>", page)
+        self.assertEqual(page.count("<line "), 3)
+        self.assertIn('<line x1="120.00" x2="120.00"', page)
+        self.assertIn('<line x1="1120.00" x2="1120.00"', page)
+        for number, ms in ((2, 2), (3, 5), (4, 9)):
+            self.assertIn(f"<title>Present {number} at {ms:.3f} ms</title>", page)
+        self.assertNotIn("Driver.Present", page)
+        self.assertNotIn("No presents recorded in this window.", page)
+        self.assertEqual(page.count("<rect "), 1)
 
     def test_cli_default_window_includes_events_after_the_last_slice(self):
         trailing_events = [
@@ -149,13 +172,45 @@ class TimelineTests(unittest.TestCase):
 
     def test_layout_orders_rows_by_thread_name(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
-        self.assertEqual(laid["threads"], ["presenter", "queue worker"])
+        self.assertEqual(laid["threads"], [("presenter", 0), ("queue worker", trace_timeline.ROW_HEIGHT)])
+
+    def test_layout_scales_narrow_windows_and_their_present_markers_to_the_full_axis(self):
+        trace = trace_of([complete(1, "tiny interval", 5e-11, 5e-11)])
+        slices = trace_timeline.window_slices(trace, 0, 1e-10)
+        result = trace_timeline.layout(slices, 0, 1e-10, 1000, presents=[(1e-10, 7)])
+        self.assertAlmostEqual(result["bars"][0]["x"], trace_timeline.LABEL_WIDTH + 500)
+        self.assertAlmostEqual(result["bars"][0]["w"], 500)
+        self.assertEqual(result["presents"][0][0], result["width"])
+
+    def test_last_subpixel_slice_keeps_its_visible_width_inside_the_plot(self):
+        slices = trace_timeline_slices([complete(1, "last", 9999, 1)])
+        result = trace_timeline.layout(slices, 0, 10000, 100)
+        bar = result["bars"][0]
+        self.assertEqual(bar["w"], 1.0)
+        self.assertEqual(bar["x"] + bar["w"], result["width"])
+
+    def test_layout_places_nested_slices_on_separate_rows(self):
+        items = [
+            complete(1, "Dispatch", 0, 10000),
+            complete(1, "WaitForPipeline", 2000, 5000),
+            complete(1, "RecordCompute", 7000, 2000),
+        ]
+        slices = trace_timeline.window_slices(trace_of(items), 3000, 9000)
+        laid = trace_timeline.layout(slices, 3000, 9000, 600)
+        bars = {bar["name"]: bar for bar in laid["bars"]}
+        self.assertEqual(bars["Dispatch"]["x"], bars["WaitForPipeline"]["x"])
+        self.assertEqual(bars["Dispatch"]["y"], 0)
+        self.assertEqual(bars["WaitForPipeline"]["y"], trace_timeline.ROW_HEIGHT)
+        self.assertEqual(bars["RecordCompute"]["y"], trace_timeline.ROW_HEIGHT)
+        self.assertEqual(laid["height"], 2 * trace_timeline.ROW_HEIGHT)
+        capped = trace_timeline.layout(slices, 3000, 9000, 600, max_slices=1)
+        self.assertEqual(capped["height"], trace_timeline.ROW_HEIGHT)
 
     def test_threads_that_share_a_name_get_their_own_rows(self):
         names = [{"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": tid, "args": {"name": "shader prepare"}} for tid in (1, 2)]
         items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
         laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
-        self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
+        self.assertEqual(laid["threads"], [("shader prepare", 0), ("shader prepare", trace_timeline.ROW_HEIGHT)])
         self.assertEqual(sorted((bar["tid"], bar["y"]) for bar in laid["bars"]),
                          [(1, 0), (2, trace_timeline.ROW_HEIGHT)])
         path = Path(self.tmp.name) / "a.json"
