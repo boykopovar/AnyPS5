@@ -7,9 +7,11 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -64,9 +66,22 @@ struct ClearOnExit {
 }
 
 namespace {
-thread_local bool finisherThread = false;
-thread_local bool finisherProducer = false;
 thread_local DrawPipeline* committerPipeline = nullptr;
+
+struct DrawThreadFlagsTag {};
+using DrawThreadFlags = HostThreadSlot<std::uint8_t, DrawThreadFlagsTag>;
+constexpr std::uint8_t ActiveBit = 1u;
+constexpr std::uint8_t FinisherThreadBit = 2u;
+constexpr std::uint8_t FinisherProducerBit = 4u;
+
+bool DrawThreadFlag(std::uint8_t bit) {
+    return (DrawThreadFlags::Get() & bit) != 0;
+}
+
+void SetDrawThreadFlag(std::uint8_t bit, bool on) {
+    const auto flags = DrawThreadFlags::Get();
+    DrawThreadFlags::Set(static_cast<std::uint8_t>(on ? flags | bit : flags & ~bit));
+}
 
 std::uint64_t CurrentThreadId() {
 #if defined(__linux__)
@@ -111,7 +126,7 @@ bool DrawFinisher::Overlap() {
 }
 
 bool DrawFinisher::PendingOverlaps(std::uint64_t begin, std::uint64_t end) {
-    if (!Busy() || !finisherProducer) return false;
+    if (!Busy() || !DrawThreadFlag(FinisherProducerBit)) return false;
     std::lock_guard lock(mutex);
     for (const auto& held : pending) {
         if (held.unknown) return true;
@@ -123,7 +138,7 @@ bool DrawFinisher::PendingOverlaps(std::uint64_t begin, std::uint64_t end) {
 }
 
 DrawFinisher::LabelLookup DrawFinisher::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value) {
-    if (!Busy() || !finisherProducer) return LabelLookup::NotHeld;
+    if (!Busy() || !DrawThreadFlag(FinisherProducerBit)) return LabelLookup::NotHeld;
     const auto end = address + bytes;
     std::lock_guard lock(mutex);
     for (auto held = pending.rbegin(); held != pending.rend(); ++held) {
@@ -139,7 +154,7 @@ DrawFinisher::LabelLookup DrawFinisher::PendingLabel(std::uint64_t address, std:
 }
 
 bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
-    if (!Busy() || !finisherProducer) return false;
+    if (!Busy() || !DrawThreadFlag(FinisherProducerBit)) return false;
     std::lock_guard lock(mutex);
     for (const auto& held : pending) {
         if (held.unknown) return true;
@@ -153,7 +168,7 @@ bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
 }
 
 bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
-    if (!Busy() || !finisherProducer) return false;
+    if (!Busy() || !DrawThreadFlag(FinisherProducerBit)) return false;
     std::lock_guard lock(mutex);
     return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); });
 }
@@ -199,7 +214,7 @@ std::string DrawFinisher::DrainText() {
 }
 
 bool DrawFinisher::OnFinisherThread() {
-    return finisherThread;
+    return DrawThreadFlag(FinisherThreadBit);
 }
 
 void DrawFinisher::Enqueue(Job job) {
@@ -207,7 +222,7 @@ void DrawFinisher::Enqueue(Job job) {
 }
 
 void DrawFinisher::Enqueue(Job job, Pending held) {
-    finisherProducer = true;
+    SetDrawThreadFlag(FinisherProducerBit, true);
     constexpr std::size_t depth = 16;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Job>, ReclaimStorage>();
@@ -223,7 +238,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     if (!running) {
         running = true;
         thread = std::thread([this] {
-            finisherThread = true;
+            SetDrawThreadFlag(FinisherThreadBit, true);
             run();
         });
     }
@@ -310,9 +325,13 @@ std::size_t DrawPipeline::QueuedItems() {
     return pipeline.items.size();
 }
 
-bool& DrawPipeline::Active() {
-    static thread_local bool active = false;
-    return active;
+DrawPipeline::ActiveFlag::operator bool() const {
+    return DrawThreadFlag(ActiveBit);
+}
+
+DrawPipeline::ActiveFlag& DrawPipeline::ActiveFlag::operator=(bool active) {
+    SetDrawThreadFlag(ActiveBit, active);
+    return *this;
 }
 
 std::atomic<std::uint64_t>& DrawPipeline::EpochToken() {
@@ -369,23 +388,34 @@ void DrawPipeline::Enqueue(CommitKind kind, Commit commit, std::vector<Range> wr
     enqueue({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw, false, kind});
 }
 
+namespace {
+
+constexpr std::size_t RecentSlots = 4096;
+
+struct DrawKeyHistory {
+    std::array<std::uint64_t, RecentSlots> recent{};
+    std::uint64_t previous = 0;
+    std::array<std::uint64_t, RecentSlots> recentShapes{};
+    std::uint64_t previousShape = 0;
+};
+
+struct DrawKeyHistoryTag {};
+
+}
+
 void DrawPipeline::NoteDrawKey(std::uint64_t key, std::uint64_t shape) {
-    constexpr std::size_t RecentSlots = 4096;
-    thread_local std::array<std::uint64_t, RecentSlots> recent{};
-    thread_local std::uint64_t previous = 0;
-    thread_local std::array<std::uint64_t, RecentSlots> recentShapes{};
-    thread_local std::uint64_t previousShape = 0;
+    auto& history = ThreadScratch<DrawKeyHistory, DrawKeyHistoryTag>();
     const auto shapeSlot = static_cast<std::size_t>((shape ^ (shape >> 29u)) % RecentSlots);
     const auto slot = static_cast<std::size_t>((key ^ (key >> 29u)) % RecentSlots);
     drawKeys.Add(1);
-    if (key == previous) drawKeysSameAsPrevious.Add(1);
-    if (recent[slot] == key) drawKeysSeenRecently.Add(1);
-    if (shape == previousShape) drawShapesSameAsPrevious.Add(1);
-    if (recentShapes[shapeSlot] == shape) drawShapesSeenRecently.Add(1);
-    recent[slot] = key;
-    previous = key;
-    recentShapes[shapeSlot] = shape;
-    previousShape = shape;
+    if (key == history.previous) drawKeysSameAsPrevious.Add(1);
+    if (history.recent[slot] == key) drawKeysSeenRecently.Add(1);
+    if (shape == history.previousShape) drawShapesSameAsPrevious.Add(1);
+    if (history.recentShapes[shapeSlot] == shape) drawShapesSeenRecently.Add(1);
+    history.recent[slot] = key;
+    history.previous = key;
+    history.recentShapes[shapeSlot] = shape;
+    history.previousShape = shape;
 }
 
 void DrawPipeline::EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes) {
@@ -763,7 +793,7 @@ bool DrawPipeline::WrittenSince(Watch& watch, const std::vector<Range>& reads) {
 }
 
 bool DrawPipeline::Busy() const {
-    return outstanding.load(std::memory_order_acquire) != 0 || (finisherProducer && DrawFinisher::Busy() && DrawFinisher::Overlap());
+    return outstanding.load(std::memory_order_acquire) != 0 || (DrawThreadFlag(FinisherProducerBit) && DrawFinisher::Busy() && DrawFinisher::Overlap());
 }
 
 bool DrawPipeline::OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {

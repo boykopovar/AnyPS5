@@ -46,7 +46,12 @@ public:
     static std::size_t Depth();
     static std::size_t ResumeDepth();
     static std::size_t QueuedItems();
-    static bool& Active();
+    class ActiveFlag {
+    public:
+        operator bool() const;
+        ActiveFlag& operator=(bool active);
+    };
+    static ActiveFlag Active() { return {}; }
     static std::atomic<std::uint64_t>& EpochToken();
     static void FollowEpoch(std::uint64_t token);
     static void NoteEpochSince(std::uint64_t token, std::uint64_t since);

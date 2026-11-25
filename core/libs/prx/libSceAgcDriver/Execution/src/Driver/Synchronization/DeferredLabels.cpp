@@ -195,10 +195,8 @@ namespace {
 
 std::atomic<void (*)()> captureCheckHook{nullptr};
 
-bool& recapturing() {
-    static thread_local bool active = false;
-    return active;
-}
+struct RecapturingTag {};
+using Recapturing = HostThreadSlot<bool, RecapturingTag>;
 
 }
 
@@ -211,7 +209,7 @@ void Driver::runCaptureCheckHook() {
 }
 
 bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared, const PreparedShaderState::UserDataLink* linking) {
-    if (recapturing()) return false;
+    if (Recapturing::Get()) return false;
     const bool mark = compared.size() == regions.size();
     std::vector<VouchedRegions> vouched;
     if (linking != nullptr && vouchedValidation() && !validateLegacy()) linking->VouchRegions(regions, vouched);
@@ -229,12 +227,12 @@ bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegio
 }
 
 Driver::RecaptureScope::RecaptureScope() {
-    recapturing() = true;
+    Recapturing::Set(true);
     ++captureChangeRetries;
 }
 
 Driver::RecaptureScope::~RecaptureScope() {
-    recapturing() = false;
+    Recapturing::Set(false);
 }
 
 void Driver::noteQueuedLabels(std::uint32_t queue) {

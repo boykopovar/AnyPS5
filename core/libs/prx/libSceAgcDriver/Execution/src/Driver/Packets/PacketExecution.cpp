@@ -119,8 +119,12 @@ bool sealsWriteOnly(std::span<const std::uint32_t> packet, std::uint32_t opcode)
     }
 }
 
-bool& drawnSinceSeal() {
-    static thread_local bool drawn = false;
+struct DrawnSinceSealTag {};
+using DrawnSinceSeal = HostThreadSlot<bool, DrawnSinceSealTag>;
+
+bool TakeDrawnSinceSeal() {
+    const bool drawn = DrawnSinceSeal::Get();
+    DrawnSinceSeal::Set(false);
     return drawn;
 }
 
@@ -534,7 +538,7 @@ void Driver::execute(Submission& submission) {
         } else if (drawPacket) {
             landPendingWaits(submission.queue);
             packetCounters.CountDraw();
-            drawnSinceSeal() = true;
+            DrawnSinceSeal::Set(true);
             bool drawn = false;
             timed(&WorkerProfile::drawMs, [&] {
                 static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
@@ -584,7 +588,7 @@ void Driver::execute(Submission& submission) {
         } else if (sampleDump && !wroteOnGpu) {
             dumpSampleCounters(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         } else if (submission.queue == 0 && sealsWriteOnly(packet, opcode)) {
-            if (std::exchange(drawnSinceSeal(), false)) {
+            if (TakeDrawnSinceSeal()) {
                 const auto seal = [this] {
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());

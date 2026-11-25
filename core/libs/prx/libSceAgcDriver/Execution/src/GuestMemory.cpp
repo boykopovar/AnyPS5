@@ -537,16 +537,23 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
 #endif
 }
 
+struct ReadSampledTag {};
+struct WriteSampledTag {};
+
 void CountReadCaller(const void* returnAddress) {
-    thread_local std::uint32_t sampled = 0;
+    using Held = HostThreadSlot<std::uint32_t, ReadSampledTag>;
+    auto sampled = Held::Get();
     // Sampled at the same rate as the callers, in step with them (CountCaller advances the counter).
     if ((sampled + 1) % 256 == 0) readSiteSamples[static_cast<std::size_t>(CurrentReadSite())].fetch_add(256, std::memory_order_relaxed);
     CountCaller(Profile().callers, sampled, 256, returnAddress);
+    Held::Set(sampled);
 }
 
 void CountWriteCaller(const void* returnAddress) {
-    thread_local std::uint32_t sampled = 0;
+    using Held = HostThreadSlot<std::uint32_t, WriteSampledTag>;
+    auto sampled = Held::Get();
     CountCaller(Profile().writeCallers, sampled, 16, returnAddress);
+    Held::Set(sampled);
 }
 
 bool MemoryProfiled() {

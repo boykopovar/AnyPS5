@@ -1165,9 +1165,10 @@ std::map<std::vector<std::uint64_t>, std::string>& validationFailures() {
     return failures;
 }
 
+struct ValidationKeyTag {};
+
 std::vector<std::uint64_t>& validationKeyScratch() {
-    thread_local std::vector<std::uint64_t>* keySlot = nullptr;
-    auto& key = ShaderRecompiler::ThreadOwned(keySlot);
+    auto& key = ThreadScratch<std::vector<std::uint64_t>, ValidationKeyTag>();
     key.clear();
     return key;
 }
