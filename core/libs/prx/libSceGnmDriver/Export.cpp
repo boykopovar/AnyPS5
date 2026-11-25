@@ -3,7 +3,6 @@
 #include <array>
 #include <atomic>
 #include <bit>
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -673,9 +672,7 @@ int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id) {
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
     if (!ev) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
     KernelEvent local{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&local, ev, sizeof(local));
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(std::string(__func__) + ": unreadable event");
     if (local.filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
     return static_cast<int>(local.ident);
