@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,10 +40,20 @@ def commit_on_base(base, message, files):
 
 
 class NamesLookupTests(unittest.TestCase):
-    def setUp(self):
-        self.old = os.getcwd()
-        self.tmp = tempfile.TemporaryDirectory()
-        os.chdir(self.tmp.name)
+    @classmethod
+    def setUpClass(cls):
+        seed = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(seed.cleanup)
+        cls.seed = seed.name
+        original_directory = os.getcwd()
+        try:
+            os.chdir(seed.name)
+            cls.numbers = cls.build_fixture()
+        finally:
+            os.chdir(original_directory)
+
+    @staticmethod
+    def build_fixture():
         run("init", "-q")
         run("config", "core.safecrlf", "false")
         write("core/libs/prx/libSceExample/Export.cpp", BASE_SOURCE)
@@ -59,12 +70,17 @@ class NamesLookupTests(unittest.TestCase):
         }
         for number, sha in numbers.items():
             run("update-ref", f"refs/pr/{number}", sha)
-        self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "title": f"title {n}", "depends": set()}
-                    for n, sha in numbers.items()}
+        return numbers
 
-    def tearDown(self):
-        os.chdir(self.old)
-        self.tmp.cleanup()
+    def setUp(self):
+        self.old = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(os.chdir, self.old)
+        shutil.copytree(self.seed, self.tmp.name, dirs_exist_ok=True)
+        os.chdir(self.tmp.name)
+        self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "title": f"title {n}", "depends": set()}
+                    for n, sha in self.numbers.items()}
 
     def test_finds_the_pull_requests_that_add_each_name(self):
         found = pr_overlap.pull_requests_with(["pending_nid_postfix", "legacy_target", "done", "absent"], self.prs, 2)

@@ -57,6 +57,8 @@ def needed_module_import(exported, imported, owner, needed_module_tags=(0x610000
 
 def importing_executable(names, modules=(), own_modules=()):
     image = main_fixture()
+    if names:
+        struct.pack_into("<I", image, 64 + 4, 7)
     needed = [module + ".prx" for module in modules]
     strings, offsets = string_table([*names, *needed, *modules])
     image[STRINGS:STRINGS + len(strings)] = strings
