@@ -53,6 +53,8 @@ def validate(summary):
                 raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
             if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
                 raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
+            if not summary["trace_dropped"] and (thread.get("events_lost", 0) or thread.get("totals_full", False)):
+                raise ValueError(f"trace_dropped_threads.{name} disagrees with trace_dropped")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
@@ -100,23 +102,38 @@ def unique_json_object(pairs):
     return result
 
 
+def check_finite_json(record):
+    pending = list(record.values())
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("summary contains a non-finite JSON number")
+
+
 def load_summary(path, trace=None):
     selected = None
     count = 0
-    with Path(path).open(encoding="utf-8-sig") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line, object_pairs_hook=unique_json_object)
-                if not isinstance(record, dict):
-                    raise ValueError("summary must be an object")
-            except (ValueError, RecursionError) as error:
-                raise ValueError(f"{path}:{line_number}: {error}") from error
-            if trace is None or record.get("trace") == trace:
-                count += 1
-                if count == 1:
-                    selected = (line_number, record)
+    try:
+        with Path(path).open(encoding="utf-8-sig") as source:
+            for line_number, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line, object_pairs_hook=unique_json_object)
+                    if not isinstance(record, dict):
+                        raise ValueError("summary must be an object")
+                except (ValueError, RecursionError) as error:
+                    raise ValueError(f"{path}:{line_number}: {error}") from error
+                if trace is None or record.get("trace") == trace:
+                    count += 1
+                    if count == 1:
+                        selected = (line_number, record)
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path}: {error}") from error
     if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
         raise ValueError(f"{path}: expected one summary{selection}, found {count}; "
@@ -124,7 +141,9 @@ def load_summary(path, trace=None):
                          "or provide a file containing one summary line")
     line_number, record = selected
     try:
-        return validate(record)
+        validate(record)
+        check_finite_json(record)
+        return record
     except ValueError as error:
         raise ValueError(f"{path}:{line_number}: {error}") from error
 
@@ -216,6 +235,8 @@ def compare(baseline, candidate):
 
 
 def cell(value):
+    if value is None:
+        return "<em>not recorded</em>"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
 

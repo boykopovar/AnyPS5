@@ -43,6 +43,18 @@ class FeatureTests(unittest.TestCase):
         result = self.cli("preview_pad_input.py", path, "cross")
         self.assertEqual((result.returncode, result.stdout), (2, ""))
 
+    def test_preview_rejects_an_unavailable_command_parent_without_writes(self):
+        non_directory = self.root / "file"
+        non_directory.write_bytes(b"keep")
+        for parent in (self.root / "missing", non_directory):
+            with self.subTest(parent=parent):
+                result = self.cli("preview_pad_input.py", parent / "command", "cross")
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertIn(f"directory does not exist: {parent}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(list(self.root.iterdir()), [non_directory])
+                self.assertEqual(non_directory.read_bytes(), b"keep")
+
     def test_preview_accepts_the_full_touch_height_that_pad_input_queues(self):
         from pad_input import previous_sequence
         path = self.root / "command"

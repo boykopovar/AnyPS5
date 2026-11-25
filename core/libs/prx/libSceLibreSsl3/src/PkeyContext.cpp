@@ -601,6 +601,12 @@ constexpr int Sha224Type = 675;
 constexpr int Sha256Type = 672;
 constexpr int Sha384Type = 673;
 constexpr int Sha512Type = 674;
+constexpr int Sha512_224Type = 1029;
+constexpr int Sha512_256Type = 1030;
+constexpr int Sha3_224Type = 1031;
+constexpr int Sha3_256Type = 1032;
+constexpr int Sha3_384Type = 1033;
+constexpr int Sha3_512Type = 1034;
 
 constexpr int MaxDigestSize = 64;
 
@@ -651,6 +657,12 @@ bool CheckPaddingDigest(const DigestMethod* digest, int padding) {
     case Sha256Type:
     case Sha384Type:
     case Sha512Type:
+    case Sha512_224Type:
+    case Sha512_256Type:
+    case Sha3_224Type:
+    case Sha3_256Type:
+    case Sha3_384Type:
+    case Sha3_512Type:
         return true;
     default:
         QueueRsaError(ReasonInvalidDigest);
@@ -1042,10 +1054,13 @@ badPadding:
 
     case LibreSsl3PkeyControlDigestInit:
     case LibreSsl3PkeyControlPkcs7Sign:
+    case LibreSsl3PkeyControlCmsSign:
         return 1;
 
     case LibreSsl3PkeyControlPkcs7Encrypt:
     case LibreSsl3PkeyControlPkcs7Decrypt:
+    case LibreSsl3PkeyControlCmsDecrypt:
+    case LibreSsl3PkeyControlCmsEncrypt:
         if (method->keyType != LibreSsl3PkeyRsaPss) return 1;
         QueueRsaError(ReasonKeyTypeOperationNotSupported);
         return -2;

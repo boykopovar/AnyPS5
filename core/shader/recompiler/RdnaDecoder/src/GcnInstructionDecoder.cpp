@@ -191,13 +191,18 @@ bool gcnVop3bCarryOut(std::uint32_t opcode) {
     }
 }
 
+std::uint32_t vop3Opcode(std::uint32_t word0) {
+    return ((word0 >> 17u) & 0x1ffu) | (((word0 >> 16u) & 1u) << 9u);
+}
+
 Encoded encodeVop3(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
     if (index + 1 >= code.size()) throw std::out_of_range("truncated GCN VOP3 instruction");
     const auto word0 = code[index];
-    const auto opcode = (word0 >> 17u) & 0x1ffu;
+    const auto opcode = vop3Opcode(word0);
     if (const auto shift = reversedShift(opcode)) return encodeVop3Words(swapAbsolute(word0), swapSources(code[index + 1]), *shift, false);
     const auto mapped = opcode < 0x40u ? mapOpcode(GcnTables::Vopc, opcode) : mapOpcode(GcnTables::Vop3, opcode);
     if (!mapped) unsupported("VOP3", opcode, programCounter);
+    if (opcode >= 0x200u && ((word0 >> 12u) & 0xfu) != 0u) throw UnsupportedInstructionError("GCN VOP3 opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " sets OP_SEL bits 15:12, which are not implemented", "VOP3", opcode, __FILE__, __LINE__);
     auto out = encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
     if (compareWritesExec(opcode)) out.compareDestination = word0 & 0xffu;
     return out;

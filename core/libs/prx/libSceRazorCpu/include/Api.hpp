@@ -30,7 +30,7 @@ int APS5_VABI sceRazorCpuFiberLogNameChange(void);
 int APS5_VABI sceRazorCpuFiberSwitch(void);
 int APS5_VABI sceRazorCpuGpuMarkerSync(void);
 int APS5_VABI sceRazorCpuInitializeGpuMarkerContext(const uint8_t* context);
-int APS5_VABI sceRazorCpuInitializeInternal(void);
+int APS5_VABI sceRazorCpuInitializeInternal(void* context);
 void APS5_VABI sceRazorCpuSetPopMarkerCallback(void* callback);
 void APS5_VABI sceRazorCpuSetPushMarkerCallback(void* callback);
 void APS5_VABI sceRazorCpuSetPushMarkerStaticCallback(void* callback);

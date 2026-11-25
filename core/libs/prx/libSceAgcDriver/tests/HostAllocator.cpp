@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -19,6 +20,7 @@
 #include <psapi.h>
 
 std::size_t HostAllocatorLargeBytes() noexcept;
+std::size_t HostAllocatorDepotBytes(std::size_t blockBytes) noexcept;
 #endif
 
 namespace {
@@ -457,6 +459,95 @@ void BlocksGrowPastTheLargestClass() {
         SizedDelete(block, size);
     }
 }
+
+constexpr std::size_t DepotSlots = 64;
+constexpr std::size_t DepotClassBytes = 256 * 1024;
+constexpr std::size_t OldDepotLists = 8;
+
+std::size_t DepotListBlocks(std::size_t blockBytes) {
+    return blockBytes <= 256 ? 64 : 16;
+}
+
+std::size_t DepotListBytes(std::size_t blockBytes) {
+    return DepotListBlocks(blockBytes) * blockBytes;
+}
+
+std::size_t DepotLists(std::size_t blockBytes) {
+    return std::min(DepotSlots, DepotClassBytes / DepotListBytes(blockBytes));
+}
+
+std::size_t BurstBlocks(std::size_t blockBytes, std::size_t freers) {
+    return freers * (DepotSlots / freers + 2) * DepotListBlocks(blockBytes);
+}
+
+void EmptyDepot(std::size_t blockBytes) {
+    OnFreshThread([&] {
+        std::vector<void*> taken;
+        const auto count = (DepotSlots + 2) * DepotListBlocks(blockBytes);
+        taken.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) taken.push_back(OperatorNew(blockBytes));
+        for (auto* block : taken) std::free(block);
+    });
+    Check(HostAllocatorDepotBytes(blockBytes) == 0, "taking more blocks than a depot holds empties it");
+}
+
+void FreeOnOtherThreads(std::size_t blockBytes, std::size_t freers, std::size_t count, std::vector<void*>& made) {
+    made.reserve(count);
+    OnFreshThread([&] {
+        for (std::size_t i = 0; i < count; ++i) made.push_back(OperatorNew(blockBytes));
+    });
+    for (std::size_t freer = 0; freer < freers; ++freer) {
+        OnFreshThread([&] {
+            for (std::size_t i = freer * count / freers; i < (freer + 1) * count / freers; ++i) SizedDelete(made[i], blockBytes);
+        });
+    }
+}
+
+void DepotsKeepABurstFromAnotherThread() {
+    for (std::size_t blockBytes = 16; blockBytes <= 1024; blockBytes += 16) {
+        EmptyDepot(blockBytes);
+        std::vector<void*> made;
+        FreeOnOtherThreads(blockBytes, 1, BurstBlocks(blockBytes, 1), made);
+        const auto kept = HostAllocatorDepotBytes(blockBytes);
+        Check(kept == DepotLists(blockBytes) * DepotListBytes(blockBytes), "a depot keeps a burst up to its share of bytes and no more");
+        Check(kept <= DepotClassBytes, "a depot stays within its byte bound");
+        Check(kept > OldDepotLists * DepotListBytes(blockBytes), "a depot keeps more than the eight lists it once kept");
+    }
+}
+
+void DepotListsComeBackToTheNextThread(std::size_t blockBytes, std::size_t freers) {
+    EmptyDepot(blockBytes);
+    std::vector<void*> made;
+    FreeOnOtherThreads(blockBytes, freers, BurstBlocks(blockBytes, freers), made);
+    std::sort(made.begin(), made.end());
+    const auto count = DepotLists(blockBytes) * DepotListBlocks(blockBytes);
+    std::size_t left = 1;
+    std::size_t distinct = 0;
+    std::size_t fromBurst = 0;
+    bool intact = true;
+    OnFreshThread([&] {
+        std::vector<unsigned char*> taken;
+        taken.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            auto* block = static_cast<unsigned char*>(OperatorNew(blockBytes));
+            for (std::size_t k = 0; k < blockBytes; ++k) block[k] = static_cast<unsigned char>(i + k);
+            taken.push_back(block);
+        }
+        left = HostAllocatorDepotBytes(blockBytes);
+        for (std::size_t i = 0; i < count; ++i) {
+            for (std::size_t k = 0; k < blockBytes; ++k) intact = intact && taken[i][k] == static_cast<unsigned char>(i + k);
+        }
+        auto sorted = taken;
+        std::sort(sorted.begin(), sorted.end());
+        distinct = static_cast<std::size_t>(std::unique(sorted.begin(), sorted.end()) - sorted.begin());
+        for (auto* block : taken) fromBurst += std::binary_search(made.begin(), made.end(), static_cast<void*>(block)) ? 1 : 0;
+        for (auto* block : taken) SizedDelete(block, blockBytes);
+    });
+    Check(left == 0, "a thread takes every list a burst left in the depot");
+    Check(fromBurst == count, "the blocks a thread takes from the depot are the ones the burst freed");
+    Check(distinct == count, "blocks taken from the depot are distinct");
+    Check(intact, "blocks taken from the depot do not overlap");
+}
 #endif
 
 void ThreadsEndWithCachedBlocks() {
@@ -484,9 +575,33 @@ void ThreadsEndWithCachedBlocks() {
     delete[] after;
 }
 
+void InlineAttachmentLists() {
+    for (std::size_t count = 0; count < 34; ++count) {
+        auto owner = std::make_shared<int>(7);
+        {
+            AgcDriver::Graphics::InlineList<int, 8> values;
+            AgcDriver::Graphics::InlineList<std::shared_ptr<int>, 8> owners;
+            for (std::size_t index = 0; index < count; ++index) {
+                values.EmplaceBack(static_cast<int>(index));
+                owners.EmplaceBack(owner);
+            }
+            Check(values.Span().size() == count && owners.Span().size() == count, "an attachment list changed size across its inline bound");
+            for (std::size_t index = 0; index < count; ++index) {
+                Check(values.Span()[index] == static_cast<int>(index) && owners.Span()[index] == owner, "an attachment list lost order or ownership at its inline bound");
+            }
+            Check(owner.use_count() == static_cast<long>(count + 1), "an attachment list duplicated an owner while spilling");
+        }
+        Check(owner.use_count() == 1, "an attachment list retained its owners after destruction");
+    }
+    AgcDriver::Graphics::InlineList<int, 0> emptyInline;
+    emptyInline.EmplaceBack(9);
+    Check(emptyInline.Span().size() == 1 && emptyInline.Span()[0] == 9, "an attachment list without inline slots lost its fallback");
+}
+
 }
 
 int main() {
+    InlineAttachmentLists();
     OnFreshThread(EverySizeRoundTrips);
     OnFreshThread(SizedDeletesKeepTheirClass);
     OnFreshThread(BlocksCrossIntoLibstdcxx);
@@ -504,6 +619,11 @@ int main() {
     LargeBlocksFlowToAnotherThread();
     LargeBlocksOfEndedThreadsGoBack();
     OnFreshThread(BlocksGrowPastTheLargestClass);
+    DepotsKeepABurstFromAnotherThread();
+    DepotListsComeBackToTheNextThread(288, 1);
+    DepotListsComeBackToTheNextThread(288, 4);
+    DepotListsComeBackToTheNextThread(144, 4);
+    DepotListsComeBackToTheNextThread(16, 3);
 #endif
     BlocksMoveBetweenThreads();
     BlocksFlowToAnotherThread();
