@@ -291,6 +291,10 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         if (now[w] == was[w]) continue;
                         if (w >= 64u || ((variant->userDataMask >> w) & 1u) == 0u) continue;
                         if (((variant->valueWords >> w) & 1u) != 0u) {
+                            if (!ValueWordChangeAllowed(variant->valueHalfWords, static_cast<std::uint32_t>(w), was[w], now[w])) {
+                                usedEqual = false;
+                                break;
+                            }
                             moves.push_back({i, static_cast<std::uint32_t>(w), now[w]});
                             continue;
                         }
@@ -330,6 +334,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         auto relocated = cloneVariant(*variant);
                         for (const auto& move : moves) {
                             const bool value = ((variant->valueWords >> move.index) & 1u) != 0u;
+                            const auto patched = PatchedValueWord(variant->valueHalfWords, move.index, was[move.index], move.value);
                             if (!value) {
                                 const auto delta = static_cast<std::uint64_t>(move.value & ~3u) - static_cast<std::uint64_t>(was[move.index] & ~3u);
                                 for (std::size_t run = 0; run < relocated->runs.size() && run < relocated->runBases.size(); ++run) {
@@ -339,11 +344,11 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                                 }
                             }
                             for (const auto& [index, binding, word] : variant->valueSlots) {
-                                if (index == move.index) relocated->descriptorPatches.push_back({binding, word, move.value});
+                                if (index == move.index) relocated->descriptorPatches.push_back({binding, word, patched});
                             }
                             const auto& forwarded = variant->compiled->shaderDataUserWords;
                             for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
-                                if (forwarded[slot] == move.index) relocated->shaderDataPatches.emplace_back(slot, move.value);
+                                if (forwarded[slot] == move.index) relocated->shaderDataPatches.emplace_back(slot, patched);
                             }
                         }
                         applyShaderDataPatches(*relocated);

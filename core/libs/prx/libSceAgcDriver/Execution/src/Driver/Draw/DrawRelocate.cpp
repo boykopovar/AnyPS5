@@ -130,6 +130,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         variant.valueWords |= std::uint64_t {1} << index;
         variant.valueSlots.push_back({index, binding, word});
         variant.valueWords |= std::uint64_t {1} << (index + 1);
+        variant.valueHalfWords |= std::uint64_t {1} << (index + 1);
         variant.valueSlots.push_back({index + 1, binding, word + 1});
         const auto records = program.userData[index + 2];
         if (records != 0 && !taken(index + 2) && !upperHalf(index + 2) && bound(records) == 1 && !elsewhere(index + 2, records)) {
@@ -327,7 +328,9 @@ void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& ali
             if (now != program.userData[index]) current.push_back({i, index, now});
             if (donor == nullptr || now == donor->userData[index]) continue;
             const auto from = donor->userData[index];
-            if (index >= 64 || from == 0 || now == 0 || !(((((variant->relocatableWords | variant->calleeWords) >> index) & 1u) != 0 && ((from ^ now) & 3u) == 0) || ((variant->valueWords >> index) & 1u) != 0)) allowed = false;
+            const bool pointer = index < 64 && (((variant->relocatableWords | variant->calleeWords) >> index) & 1u) != 0u && ((from ^ now) & 3u) == 0u;
+            const bool value = index < 64 && ((variant->valueWords >> index) & 1u) != 0u && ValueWordChangeAllowed(variant->valueHalfWords, index, from, now);
+            if (index >= 64 || from == 0 || now == 0 || !(pointer || value)) allowed = false;
             moves.push_back({index, from, now});
         }
         if (!allowed) {
@@ -351,17 +354,18 @@ void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& ali
         copy->donor = variant->donor != nullptr ? variant->donor : variant;
         for (const auto& move : moves) {
             const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
+            const auto value = PatchedValueWord(variant->valueHalfWords, move.index, move.from, move.to);
             for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
                 if (copy->runBases[run] != static_cast<std::int8_t>(move.index)) continue;
                 copy->runs[run].first += delta;
                 copy->runs[run].second += delta;
             }
             for (const auto& [index, binding, word] : variant->valueSlots) {
-                if (index == move.index) copy->descriptorPatches.push_back({binding, word, move.to});
+                if (index == move.index) copy->descriptorPatches.push_back({binding, word, value});
             }
             const auto& forwarded = variant->compiled->shaderDataUserWords;
             for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
-                if (forwarded[slot] == move.index) copy->shaderDataPatches.emplace_back(slot, move.to);
+                if (forwarded[slot] == move.index) copy->shaderDataPatches.emplace_back(slot, value);
             }
         }
         relocated->stages[i].push_back(std::move(copy));
@@ -380,6 +384,7 @@ std::shared_ptr<DispatchVariant> Driver::cloneVariant(const DispatchVariant& var
     copy->userDataMask = variant.userDataMask;
     copy->userWordsWalked = variant.userWordsWalked;
     copy->valueWords = variant.valueWords;
+    copy->valueHalfWords = variant.valueHalfWords;
     copy->valueSlots = variant.valueSlots;
     copy->descriptorPatches = variant.descriptorPatches;
     copy->calleeWords = variant.calleeWords;

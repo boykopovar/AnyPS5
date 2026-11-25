@@ -69,6 +69,7 @@ struct DispatchVariant {
     std::uint64_t relocatableWords = 0;
     std::uint64_t userWordsWalked = 0;
     std::uint64_t valueWords = 0;
+    std::uint64_t valueHalfWords = 0;
     std::vector<std::array<std::uint32_t, 3>> valueSlots;
     std::vector<std::array<std::uint32_t, 3>> descriptorPatches;
     std::uint64_t calleeWords = 0;
@@ -98,6 +99,14 @@ struct DispatchEntry {
 
 inline bool UsesPatchedPushConstants(bool drawHit, bool stageReused, bool dataCandidate, const DispatchVariant& variant) {
     return (drawHit || stageReused || dataCandidate) && !variant.patchedPushConstants.empty();
+}
+
+inline bool ValueWordChangeAllowed(std::uint64_t valueHalfWords, std::uint32_t index, std::uint32_t from, std::uint32_t to) {
+    return ((valueHalfWords >> index) & 1u) == 0u || ((from ^ to) & 0xffff0000u) == 0u;
+}
+
+inline std::uint32_t PatchedValueWord(std::uint64_t valueHalfWords, std::uint32_t index, std::uint32_t from, std::uint32_t to) {
+    return ((valueHalfWords >> index) & 1u) != 0u ? ((from & 0xffff0000u) | (to & 0xffffu)) : to;
 }
 
 struct EntryCounters {
