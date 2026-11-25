@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceFsInternalForVsh/include/InventoryExports.hpp"
 #include "prx/libSceFsInternalForVsh/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstddef>
@@ -12,9 +11,7 @@ namespace {
 
 int InitWorkspaceOpt(void* opt) {
     const std::uint32_t zero = 0;
-    const int savedErrno = errno;
     const bool copied = opt != nullptr && GuestCopyOut_nid_no_patch(opt, &zero, sizeof(zero));
-    errno = savedErrno;
     return copied ? 0 : static_cast<int>(0x80020016u);
 }
 
@@ -26,7 +23,6 @@ struct OptStore {
 
 int InitOpt(void* opt, const OptStore* stores, std::size_t count) {
     if (opt == nullptr) return static_cast<int>(0x80020016u);
-    const int savedErrno = errno;
     bool copied = true;
     for (std::size_t s = 0; copied && s < count; ++s) {
         std::uint8_t bytes[32] = {};
@@ -35,7 +31,6 @@ int InitOpt(void* opt, const OptStore* stores, std::size_t count) {
         }
         copied = GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(opt) + stores[s].offset, bytes, stores[s].size);
     }
-    errno = savedErrno;
     return copied ? 0 : static_cast<int>(0x80020016u);
 }
 
