@@ -6545,6 +6545,17 @@ void growingVertexCopyTests(const Device& device) {
     copyOf(65536, bytes, index);
     const auto longerIndex = copyOf(70000, bytes, index);
     Require(!longerIndex.reused && longerIndex.buffer->Bytes().size() == 70000 && matches(longerIndex), "an index copy took headroom");
+    Recorder paddedCache(device.GetContext());
+    auto paddedContext = device.GetContext();
+    paddedContext.recorder = &paddedCache;
+    const auto padded = CopyDrawInput(paddedContext, &paddedCache, address, 80, 1, vertex, 0, false, 0, 96);
+    Require(!padded.reused && padded.guestBytes == 80 && padded.buffer->Bytes().size() == 96 && std::memcmp(padded.buffer->Bytes().data(), guest, 80) == 0 && std::all_of(padded.buffer->Bytes().begin() + 80, padded.buffer->Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "a strided vertex copy did not zero-pad its final record");
+    KeepDrawInput(&paddedCache, address, padded, vertex, 0);
+    Require(paddedCache.ReusableDrawSnapshot(address, 96, vertex) == nullptr, "vertex binding padding was kept as guest snapshot bytes");
+    const auto paddedAgain = CopyDrawInput(paddedContext, &paddedCache, address, 80, 1, vertex, 0, false, 0, 96);
+    Require(paddedAgain.reused && paddedAgain.buffer->Size() == 96, "a padded vertex copy was not reused with its binding range");
+    const auto widerPadding = CopyDrawInput(paddedContext, &paddedCache, address, 80, 1, vertex, 0, false, 0, 112);
+    Require(!widerPadding.reused && widerPadding.guestBytes == 80 && widerPadding.buffer->Bytes().size() == 112 && std::all_of(widerPadding.buffer->Bytes().begin() + 80, widerPadding.buffer->Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "a cached vertex copy with a short binding range was reused");
 }
 
 void grownVertexCopyShadowTests(const Device& device) {
@@ -7095,6 +7106,8 @@ void drawInputMirrorTests(const Device& device) {
         return;
     }
     Require(firstMirror != nullptr && firstMirror != firstHost && !firstMirror->Mapped(), "a reused draw input came back without its device-local mirror");
+    const auto firstSized = CopyDrawInput(context, &cache, first, held, 1, Use::Vertex, 0, false, 0, held);
+    Require(firstSized.reused && firstSized.buffer == firstMirror, "a draw input mirror could not be reused for its binding range");
     Require(drawInputHolds(context, cache, firstMirror, first, held), "a draw input mirror does not hold the bytes of its snapshot");
     Require(reuse(first) == firstMirror, "a draw input mirror was made again");
     Require(use(3 * half + 8192, half + 4096), "a draw input mirror is not counted in the draw input budget");
@@ -7339,6 +7352,9 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     }
     const auto* import = InPlaceDrawInput(context, vertices, 256, 4);
     Require(import != nullptr && import->base <= vertices && vertices + 256 <= import->base + import->bytes, "an imported draw input was not bound in place");
+    const auto importTail = address + bytes - 128;
+    Require(InPlaceDrawInput(context, importTail, 64, 4, nullptr, 64, 1, 128) != nullptr, "an in-place vertex input was refused when its import covered the whole binding record");
+    Require(InPlaceDrawInput(context, importTail, 64, 4, nullptr, 64, 1, 256) == nullptr, "an in-place vertex input used an import shorter than its binding record");
     const auto read = recorder.DescribePendingRead(vertices, 256);
     Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput && read->open, "an in-place draw input's read was not noted on the open batch");
     Require(InPlaceDrawInput(context, vertices + 2, 256, 4) == nullptr, "a draw input misaligned for its format was bound in place");
