@@ -1,6 +1,5 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 
 extern "C" int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
     constexpr int statusFinished = 3;
@@ -14,9 +13,7 @@ extern "C" int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
     if (status != statusFinished) return errorNotFinished;
     MsgDialogResult value{};
     value.button_id = buttonId;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return errorArgNull;
     return 0;
 }
