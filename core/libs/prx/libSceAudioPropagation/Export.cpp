@@ -7,12 +7,10 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include <condition_variable>
 #include <cstring>
-#include <cerrno>
 #include <mutex>
 #include <memory>
 #include <stdexcept>
@@ -132,9 +130,7 @@ std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint3
     for (std::uint32_t done = 0; done < count;) {
         const std::uint32_t step = std::min(Chunk, count - done);
         copied.resize(done + step);
-        const int savedErrno = errno;
         const bool read = GuestCopyIn_nid_no_patch(copied.data() + done, attributes + done, step * sizeof(Attribute));
-        errno = savedErrno;
         require(read, function);
         done += step;
     }
@@ -203,17 +199,13 @@ void requireNoPropagation(bool none, const char* function) {
 
 template <typename T>
 bool copyGuestIn(T& dst, const T* src) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
 template <typename T>
 bool copyGuestOut(T* dst, const T& src) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
@@ -237,9 +229,7 @@ bool StoreSourceAttribute(SourceInfo& info, const Attribute& attribute) {
     if (attribute.id > 3) return true;
     if (attribute.valueSize != 16) return false;
     std::array<std::uint32_t, 4> words{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(words.data(), attribute.value, sizeof(words));
-    errno = savedErrno;
     if (!copied) return false;
     switch (attribute.id) {
         case 0: std::memcpy(info.position, words.data(), sizeof(info.position)); break;
@@ -715,9 +705,7 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
     const auto address = reinterpret_cast<std::uintptr_t>(attributes);
     const auto readAttribute = [&](std::uint32_t index, Attribute& attribute) {
         if (index > (UINTPTR_MAX - address) / sizeof(Attribute)) return false;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&attribute, reinterpret_cast<const void*>(address + static_cast<std::size_t>(index) * sizeof(Attribute)), sizeof(attribute));
-        errno = savedErrno;
         return copied;
     };
     auto& state = registry();
@@ -733,9 +721,7 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
             if (handle) {
                 const std::size_t roomCount = attribute.id == 0x10001 ? 2 : 1;
                 std::array<AudioPropagationHandle, 2> rooms{};
-                const int savedErrno = errno;
                 const bool copied = GuestCopyIn_nid_no_patch(rooms.data(), attribute.value, roomCount * sizeof(AudioPropagationHandle));
-                errno = savedErrno;
                 if (!copied) return ErrorInvalidArgument;
                 for (std::size_t slot = 0; slot < roomCount; ++slot) {
                     const auto room = rooms[slot];
@@ -773,9 +759,7 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
             case 0x10004: value[1] = 0x3f800000; bytes = 12; break;
             default: return ErrorInvalidArgument;
         }
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(const_cast<void*>(attribute.value), value.data(), bytes);
-        errno = savedErrno;
         if (!copied) return ErrorNullPointer;
     }
     return 0;
@@ -815,9 +799,7 @@ int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, 
     if (!liveSystem(state, system) || !info || size != sizeof(SystemInfo)) return ErrorInvalidHandle;
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
     SystemInfo localInfo{};
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
-    errno = savedErrno;
     if (!read) return ErrorInvalidHandle;
     localInfo.cpuMemory = configuration.cpuMemory;
     localInfo.cpuMemorySize = configuration.cpuMemorySize;
@@ -829,7 +811,6 @@ int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, 
     localInfo.pathCapacityPerSource = configuration.pathCapacityPerSource;
     localInfo.propagationSpeed = configuration.propagationSpeed;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidHandle;
     return 0;
 }
