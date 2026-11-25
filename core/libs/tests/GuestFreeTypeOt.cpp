@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
@@ -10,6 +11,7 @@
 #include FT_GLYPH_H
 #include FT_MODULE_H
 #include FT_RENDER_H
+#include FT_TRUETYPE_TABLES_H
 #include FT_TYPE1_TABLES_H
 #include FT_SYNTHESIS_H
 #include <algorithm>
@@ -518,6 +520,58 @@ void Resolve(Function& function, void* library, bool patched, const char* nid, c
 
 }
 
+static void SfntTables(void* library, void* dependency, bool patched) {
+    decltype(&FT_Get_Sfnt_Table_nid_postfix) query = nullptr;
+#ifdef _WIN32
+    Resolve(query, library, patched, "omDz0x8lyHk", "FT_Get_Sfnt_TableForward_nid_no_patch");
+#else
+    Resolve(query, library, patched, "omDz0x8lyHk", "FT_Get_Sfnt_Table_nid_postfix");
+#endif
+    Require(query(nullptr, FT_SFNT_HEAD) == nullptr, "SFNT query without a face");
+    decltype(&FT_Init_FreeType_nid_postfix) initialize = nullptr;
+    decltype(&FT_Done_FreeType_nid_postfix) finish = nullptr;
+    decltype(&FT_New_Memory_Face_nid_postfix) open = nullptr;
+    decltype(&FT_Reference_Face_nid_postfix) retain = nullptr;
+    decltype(&FT_Done_Face_nid_postfix) release = nullptr;
+    Resolve(initialize, dependency, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
+    Resolve(finish, dependency, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
+    Resolve(open, dependency, patched, "40Wa2neSLM0", "FT_New_Memory_Face_nid_postfix");
+    Resolve(retain, dependency, patched, "HkSJXCHCQCU", "FT_Reference_Face_nid_postfix");
+    Resolve(release, dependency, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
+
+    const auto firstFont = FontFixture::BuildFont(3, {});
+    const auto secondFont = FontFixture::BuildFont(4, {});
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FreeType::GuestFaceRec* first = nullptr;
+    FreeType::GuestFaceRec* second = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face native = nullptr;
+    Require(initialize(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init SFNT libraries");
+    Require(open(guestLibrary, firstFont.data(), firstFont.size(), 0, &first) == 0, "open first guest SFNT face");
+    Require(open(guestLibrary, secondFont.data(), secondFont.size(), 0, &second) == 0, "open second guest SFNT face");
+    Require(FT_New_Memory_Face(nativeLibrary, firstFont.data(), firstFont.size(), 0, &native) == 0, "open native SFNT face");
+    for (int tag = FT_SFNT_HEAD; tag <= FT_SFNT_MAX; ++tag) {
+        const void* result = query(first, tag);
+        const void* expected = FT_Get_Sfnt_Table(native, static_cast<FT_Sfnt_Tag>(tag));
+        Require((result != nullptr) == (expected != nullptr), "SFNT table availability");
+        Require(query(first, tag) == result, "stable SFNT pointer on repeated lookup");
+    }
+    const auto* firstMaxp = static_cast<const FreeType::GuestTtMaxProfile*>(query(first, FT_SFNT_MAXP));
+    const auto* secondMaxp = static_cast<const FreeType::GuestTtMaxProfile*>(query(second, FT_SFNT_MAXP));
+    const auto* expected = static_cast<const TT_MaxProfile*>(FT_Get_Sfnt_Table(native, FT_SFNT_MAXP));
+    Require(firstMaxp && secondMaxp && expected && firstMaxp != secondMaxp, "distinct SFNT storage for each face");
+    Require(firstMaxp->version == expected->version && firstMaxp->numGlyphs == expected->numGlyphs && secondMaxp->numGlyphs == 4,
+            "SFNT maximum profiles");
+    Require(FT_Reference_Face(native) == 0 && FT_Done_Face(native) == 0, "drop one native face reference");
+    Require(FT_Get_Sfnt_Table(native, FT_SFNT_MAXP) == expected, "native SFNT pointer lives with retained face");
+    Require(retain(first) == 0 && release(first) == 0, "drop one face reference");
+    Require(firstMaxp->numGlyphs == expected->numGlyphs && query(first, FT_SFNT_MAXP) == firstMaxp, "SFNT pointer lives with retained face");
+    Require(release(first) == 0, "release first SFNT face");
+    Require(secondMaxp->numGlyphs == 4 && query(second, FT_SFNT_MAXP) == secondMaxp, "second SFNT face keeps its table");
+    Require(release(second) == 0 && FT_Done_Face(native) == 0, "release remaining SFNT faces");
+    Require(finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release SFNT libraries");
+}
+
 int main(int argc, char** argv) {
     Require(argc == 3, "expected library and export mode");
     const bool patched = std::strcmp(argv[2], "patched") == 0;
@@ -596,6 +650,7 @@ int main(int argc, char** argv) {
         Resolve(strokers.borderCounts, library, patched, "LfyUi-LkdCk", "FT_Stroker_GetBorderCounts_nid_postfix");
         Resolve(strokers.exportBorder, library, patched, "7cIS2cFG3PE", "FT_Stroker_ExportBorder_nid_postfix");
     }
+    SfntTables(library, dependency, patched);
     Trigonometry();
     Outlines();
     if (forwards) Strokers();
