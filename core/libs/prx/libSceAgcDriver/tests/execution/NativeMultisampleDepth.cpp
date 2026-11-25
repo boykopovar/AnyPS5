@@ -4823,18 +4823,18 @@ void CheckColourOverOwner(Context context, std::uint32_t samples, ColourOver mod
     } cleanup{recorder, context};
     if (mode == ColourOver::Unpublishable) {
         std::memset(metadata.Data(), 0, static_cast<std::size_t>(HtileMetadataBytes(extent)));
-        DepthTarget plain{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, samples};
+        DepthTarget plain{memory.Address(), 0u, extent, VK_FORMAT_D16_UNORM, 0.0f, 0u, metadata.Address(), false, samples};
         plain.depthSwizzle = 24u;
         plain.pipeBankXor = color.pipeBankXor;
         plain.iterate256 = plain.htilePipeAligned = plain.htileDepthOnly = true;
         const auto view = DepthSurfaceView(context, plain);
-        Require(view != VK_NULL_HANDLE && ResidentDepthGuardOverlaps_nid_no_patch(color.address, colorBytes), "the D32 owner under the colour target has no resident depth guard");
+        Require(view != VK_NULL_HANDLE && ResidentDepthGuardOverlaps_nid_no_patch(color.address, colorBytes), "the D16 owner under the colour target has no resident depth guard");
         NoteDepthSurfaceWrite(context, plain);
         const auto serial = DepthSurfacesSerial();
         const std::vector<std::byte> before(memory.Data(), memory.Data() + bytes);
         TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, color); }, "sample-preserving guest publication of native multisample depth is not implemented for this owner");
-        Require(DepthSurfaceAt(plain.address) && DepthSurfaceView(context, plain) == view && DepthSurfacesSerial() == serial && !MultisampleColorTargetOver(color.address, colorBytes) && std::equal(before.begin(), before.end(), memory.Data()), "a colour import refused over a written D32 owner retired it, imported or changed guest memory");
-        std::printf("Native depth under an initial colour import samples=%u mode=%u: a written D32 owner the publication cannot handle refuses the import and stays resident\n", samples, static_cast<std::uint32_t>(mode));
+        Require(DepthSurfaceAt(plain.address) && DepthSurfaceView(context, plain) == view && DepthSurfacesSerial() == serial && !MultisampleColorTargetOver(color.address, colorBytes) && std::equal(before.begin(), before.end(), memory.Data()), "a colour import refused over a written D16 owner retired it, imported or changed guest memory");
+        std::printf("Native depth under an initial colour import samples=%u mode=%u: a written D16 owner the publication cannot handle refuses the import and stays resident\n", samples, static_cast<std::uint32_t>(mode));
         return;
     }
     DepthTarget target{memory.Address(), memory.Address() + depthBytes, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};

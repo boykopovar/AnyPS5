@@ -1813,13 +1813,13 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
     Require(current && current->active == original->active && original->active->load(std::memory_order_acquire), "refused replacement retired the original owner");
     CheckUniform(LoadSamples(device, block), Ones, "after refused owner replacement");
     Block depthMemory(4u * BlockBytes, true), htile(BlockBytes, true);
-    DepthTarget depth{depthMemory.Address(), 0u, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, htile.Address(), false, Samples};
+    DepthTarget depth{depthMemory.Address(), 0u, {Side, Side}, VK_FORMAT_D16_UNORM, 0.0f, 0u, htile.Address(), false, Samples};
     depth.depthSwizzle = 24u;
     depth.iterate256 = depth.htilePipeAligned = depth.htileDepthOnly = true;
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto view = DepthSurfaceView(context, depth);
-        Require(ResidentDepthGuardOverlaps_nid_no_patch(depth.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(depth.extent, 4u, Samples))), "initial color refusal fixture has no resident depth guard");
+        Require(ResidentDepthGuardOverlaps_nid_no_patch(depth.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(depth.extent, 2u, Samples))), "initial color refusal fixture has no resident depth guard");
         NoteDepthSurfaceWrite(context, depth);
         std::string refusal;
         try { PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(depthMemory)); }
