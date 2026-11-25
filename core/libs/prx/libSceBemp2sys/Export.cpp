@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceBemp2sys/include/InventoryExports.hpp"
 #include "prx/libSceBemp2sys/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -30,17 +29,13 @@ MemoryManager memoryManager;
 
 template <typename T>
 bool loadGuest(T& value, const void* address) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
 template <typename T>
 bool storeGuest(void* address, const T& value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(address, &value, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
