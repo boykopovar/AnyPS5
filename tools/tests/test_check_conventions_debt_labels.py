@@ -59,5 +59,23 @@ class DebtLabelTests(unittest.TestCase):
         self.assertEqual(status, 0)
 
 
+class ListedTests(unittest.TestCase):
+    def test_listed_accepts_the_exact_path_and_a_same_library_mention(self):
+        debt = [("sceFoo entry", [(0, "core/libs/prx/libA/x.cpp")])]
+        self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/x.cpp"))
+        self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/y.cpp"))
+
+    def test_listed_refuses_another_name_or_another_library(self):
+        debt = [("sceFoo entry", [(0, "core/libs/prx/libA/x.cpp")])]
+        self.assertFalse(check_conventions.listed(debt, "sceBar", "core/libs/prx/libA/y.cpp"))
+        self.assertFalse(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libB/y.cpp"))
+
+
+class DebtEntryLineTests(unittest.TestCase):
+    def test_debt_entries_lists_items_by_line_number_and_skips_headings(self):
+        text = '### Silent stubs\n\n- [sceFoo](x) - a\n- [sceBar](y) - b\n'
+        self.assertEqual(check_conventions.debt_entries(text), {3: '- [sceFoo](x) - a', 4: '- [sceBar](y) - b'})
+
+
 if __name__ == "__main__":
     unittest.main()

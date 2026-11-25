@@ -548,6 +548,8 @@ void testToggleRequests() {
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, true), now).toggleMouse, "F7 asks to toggle the mouse");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, false), now).toggleMouse, "releasing F7 asks for nothing");
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F11, true), now).toggleFullscreen, "F11 asks to toggle fullscreen");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F2, true), now).toggleBorderless, "F2 asks to toggle borderless");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F2, false), now).toggleBorderless, "releasing F2 asks for nothing");
     const auto overlay = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, true), now);
     check(overlay.togglePerformanceOverlay && !overlay.toggleFullscreen, "F10 asks to toggle the performance overlay");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, false), now).togglePerformanceOverlay, "releasing F10 asks for nothing");

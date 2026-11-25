@@ -285,6 +285,17 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"), moved.replace(stub, stub + "\n" + extra.replace("../../", "../../../")))
         self.assertEqual(self.read(INDEX).count("[debt](debt/)"), 1)
 
+    @unittest.skipIf(os.name == "nt", "Windows paths cannot end in a space")
+    def test_split_runs_in_a_checkout_whose_path_ends_in_a_space(self):
+        self.root = Path(self.directory.name) / "checkout "
+        self.root.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.write(INDEX, ORIGINAL)
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("docs/dev/debt/libSceA.md", result.stdout.split())
+        self.assertNotIn(A_STUB.split(" - ")[0], self.read(INDEX))
+
     def rebase(self, stubs, functional):
         self.commit("docs: record technical debt")
         self.git("checkout", "-qb", "change")

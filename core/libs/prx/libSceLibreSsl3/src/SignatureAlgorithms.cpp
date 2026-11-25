@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -50,18 +51,12 @@ static_assert(std::all_of(SignatureAlgorithms.begin(), SignatureAlgorithms.end()
 
 template <typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<const T>(source).CopyIn(destination);
 }
 
 template <typename T>
 bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return ok;
+    return GuestPtr<T>(destination).CopyOut(value);
 }
 
 }

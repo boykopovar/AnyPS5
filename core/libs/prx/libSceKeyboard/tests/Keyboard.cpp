@@ -244,6 +244,10 @@ int main() {
     Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(0x7fff, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(0x7fff, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(-1, 0, 0, nullptr) == KEYBOARD_ERROR_INVALID_USER_ID);
     Require(sceKeyboardOpen(0, 0, 0, nullptr) == KEYBOARD_ERROR_UNKNOWN_USER);
