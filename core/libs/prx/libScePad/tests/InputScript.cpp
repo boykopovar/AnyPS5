@@ -36,6 +36,12 @@ int main() {
         Check(entries[4].startMs == 5000 && entries[5].startMs == 5100 && entries[6].startMs == 5200 && entries[6].buttons == Up && entries[6].holdMs == 20, "repeat with start");
         Check(entries[7].startMs == 0 && entries[8].startMs == 10 && entries[8].buttons == Touchpad, "repeat without start");
 
+        const auto plainUtf8 = Pad::InputScript::ParseText("0 cross # caf\xc3\xa9\n");
+        Check(plainUtf8.size() == 1 && plainUtf8.front().buttons == Cross, "plain UTF-8 script");
+        const auto bomUtf8 = Pad::InputScript::ParseText("\xef\xbb\xbf" "0 cross # caf\xc3\xa9\n");
+        Check(bomUtf8.size() == 1 && bomUtf8.front().buttons == Cross, "UTF-8 BOM before the first command");
+        Check(Fails("0 cross\n" "\xef\xbb\xbf" "1 circle\n", "line 2"), "embedded BOM names the malformed line");
+
         Check(Fails("1000 cross\n2000 bogus\n", "line 2"), "unknown button names the line");
         Check(Fails("1000 cross\n2000 bogus\n", "bogus"), "unknown button names the token");
         Check(Fails("abc cross\n", "line 1"), "bad start");
@@ -127,7 +133,7 @@ int main() {
         live.Start(1000000);
         Check(live.Sample(1000000).buttons == 0, "missing live file");
         const auto append = [&](const std::string& text) { std::ofstream(path, std::ios::app | std::ios::binary) << text; };
-        append("0 cross\n200 circle 100\n0 nonsense\n");
+        append("\xef\xbb\xbf" "0 cross\n200 circle 100\n0 nonsense\n");
         Pad::InputScript::Report liveReport;
         Check(live.Sample(1100000, &liveReport).buttons == 0, "poll throttled");
         auto liveFrame = live.Sample(2000000, &liveReport);

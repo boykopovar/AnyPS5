@@ -127,6 +127,7 @@ enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedF
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
+    std::shared_ptr<int> owner;
     bool pipe = false;
     bool fixedSizeWrites = false;
 };
@@ -549,7 +550,13 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
         case SetOwner: {
             const auto kind = Classify(fd, "fcntl");
             if (!kind) return Fail(GuestEbadf);
-            Unsupported("fcntl", command == GetOwner ? "F_GETOWN" : "F_SETOWN", *kind, fd);
+            if (*kind != Kind::Pipe) Unsupported("fcntl", command == GetOwner ? "F_GETOWN" : "F_SETOWN", *kind, fd);
+            std::lock_guard lock(g_mutex);
+            auto& owner = Materialize(fd).owner;
+            if (!owner) owner = std::make_shared<int>(0);
+            if (command == GetOwner) return *owner;
+            *owner = static_cast<int>(argument);
+            return 0;
         }
         case OldGetLock:
         case OldSetLock:
@@ -641,7 +648,9 @@ void RememberPipe(int fd, int openFlags) {
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto copy = Materialize(from);
+    auto& source = Materialize(from);
+    if (source.pipe && !source.owner) source.owner = std::make_shared<int>(0);
+    auto copy = source;
     copy.closeOnExec = false;
     g_entries[to] = std::move(copy);
 #ifdef _WIN32

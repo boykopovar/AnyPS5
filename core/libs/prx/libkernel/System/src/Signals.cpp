@@ -1068,6 +1068,40 @@ int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
     return sigsuspend_nid_postfix(set);
 }
 
+constexpr std::uintptr_t GuestSigHold = 3;
+
+int ChangeBlockedSignal(int how, int guest) {
+    GuestSignalSet set{};
+    set.bits[static_cast<std::size_t>(guest - 1) >> 5] = 1u << ((guest - 1) & 31);
+    return ChangeBlockedMask(how, &set, nullptr, true);
+}
+
+GuestHandler APS5_VABI sigset_nid_postfix(int guest, GuestHandler disposition) {
+    const auto hold = reinterpret_cast<GuestHandler>(GuestSigHold);
+    const auto invalid = reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1));
+    if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return invalid; }
+    const bool blocked = SignalBlocked(guest);
+    if (disposition == hold) {
+        if (blocked) return hold;
+        ChangeBlockedSignal(GuestSigblock, guest);
+        std::lock_guard lock(registration);
+        return reinterpret_cast<GuestHandler>(dispositions[guest].handler);
+    }
+    GuestSigaction action{reinterpret_cast<std::uintptr_t>(disposition), 0, {}};
+    GuestSigaction previous{};
+    if (sigaction_nid_postfix(guest, &action, &previous) != 0) return invalid;
+    const auto previousHandler = reinterpret_cast<GuestHandler>(previous.handler);
+    if (!blocked) return previousHandler;
+    ChangeBlockedSignal(GuestSigunblock, guest);
+    return hold;
+}
+
+int APS5_VABI sigpause_nid_postfix(int mask) {
+    GuestSignalSet set{};
+    set.bits[0] = static_cast<std::uint32_t>(mask);
+    return sigsuspend_nid_postfix(&set);
+}
+
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
     if (set == nullptr) { *__error_nid_postfix() = 14; return -1; }
     GuestSignalSet result{};

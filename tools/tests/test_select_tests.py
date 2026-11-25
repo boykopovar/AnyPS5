@@ -143,6 +143,18 @@ class SelectTests(SelectFixture):
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
 
+class DuplicateGraphKeyTests(unittest.TestCase):
+    def test_rejects_duplicate_graph_object_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            for content in ('{"tests":{},"tests":{},"closures":{}}',
+                            '{"tests":{},"closures":{},"closures":{}}'):
+                with self.subTest(content=content):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate"):
+                        select_tests.load_graph(path)
+
+
 class FixtureSelectionTests(unittest.TestCase):
     def test_changed_setup_selects_all_consumers_and_their_other_setups(self):
         def test(target, sets=(), requires=()):
@@ -306,6 +318,28 @@ class TargetsTests(SelectFixture):
 
 
 class SelectArgumentTests(SelectFixture):
+    def test_cmake_env_wrapper_uses_its_test_executable(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        configure = ["cmake", "-S", str(self.source), "-B", str(self.build)]
+        try:
+            cmake.write_text(original + '\nadd_test(NAME alpha_env COMMAND ${CMAKE_COMMAND} -E env '
+                             '--unset=SELECTOR_MODE SELECTOR-CHECK=1 -- "$<TARGET_FILE:alpha_tests>")\n'
+                             'add_test(NAME alpha_env_relative COMMAND ${CMAKE_COMMAND} -E env '
+                             '"./$<TARGET_FILE_NAME:alpha_tests>" WORKING_DIRECTORY "$<TARGET_FILE_DIR:alpha_tests>")\n',
+                             encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+            relative = subprocess.run(["ctest", "--test-dir", str(self.build), "-R", "^alpha_env_relative$",
+                                       "--no-tests=error", "--output-on-failure"], capture_output=True, text=True)
+            self.assertEqual(relative.returncode, 0, relative.stdout + relative.stderr)
+            graph = self.build / "env-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"beta", "beta_setup", "script"})
+            self.assertEqual(self.select("alpha/alpha.h", graph=graph)[1], {"alpha", "alpha_data", "alpha_env", "alpha_env_relative", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+
     def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
         cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
         original = cmake.read_text(encoding="utf-8")
@@ -628,13 +662,38 @@ class BuildErrorTests(unittest.TestCase):
         self.assertIn("CMAKE_CACHEFILE_DIR", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "needs CMake and Ninja")
+    def test_copied_build_cache_cannot_change_the_original_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.20)\nproject(copy NONE)\n", encoding="utf-8")
+            original, copied = root / "original build", root / "copied build"
+            subprocess.run(["cmake", "-S", str(source), "-B", str(original), "-G", "Ninja"],
+                           check=True, capture_output=True)
+            copied.mkdir()
+            shutil.copyfile(original / "CMakeCache.txt", copied / "CMakeCache.txt")
+            saved = {"select.ninja": b"include build.ninja\nbuild selected: phony\n", "select.tests": b"0,0,0,1\n"}
+            for name, contents in saved.items():
+                (original / name).write_bytes(contents)
+            result = self.run_tool("select", copied, root / "missing.json", root / "changed.txt")
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("cache belongs to", result.stderr)
+            self.assertIn(os.path.normcase(str(original)), os.path.normcase(result.stderr))
+            self.assertNotIn("Traceback", result.stderr)
+            for name, contents in saved.items():
+                self.assertEqual((original / name).read_bytes(), contents)
+                self.assertFalse((copied / name).exists())
+
     def test_cache_with_utf8_bom_is_read(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
-            cache.write_text("\ufeffCMAKE_CACHEFILE_DIR:INTERNAL=C:/work/build\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
+            cache.write_text(f"\ufeffCMAKE_CACHEFILE_DIR:INTERNAL={directory}\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
             with mock.patch.object(select_tests.Build, "run", return_value="Build file encoding: UTF-8"):
                 build = select_tests.Build(directory)
-                self.assertEqual(build.path, os.path.normpath("C:/work/build"))
+                self.assertEqual(build.path, os.path.normpath(directory))
                 self.assertEqual(build.source, os.path.normpath("C:/work/source"))
 
     def test_explain_accepts_utf8_bom_in_graph_and_changed(self):

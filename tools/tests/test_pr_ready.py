@@ -163,6 +163,27 @@ class BlockerTests(unittest.TestCase):
     def test_more_checks_than_one_page_is_not_ready(self):
         self.assertEqual(pr_ready.blockers(make(more=True)), ["too many checks to read"])
 
+    def test_a_later_label_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["labels"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete labels"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
+    def test_a_later_review_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["latestOpinionatedReviews"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete reviews"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
+    def test_a_later_review_request_page_keeps_an_incomplete_pull_out_of_the_queue(self):
+        data = node()
+        data["reviewRequests"]["pageInfo"] = {"hasNextPage": True}
+        pr = pr_ready.pull(data)
+        self.assertEqual(pr_ready.blockers(pr), ["incomplete review requests"])
+        self.assertEqual(pr_ready.ranked([pr]), [])
+
     def test_no_checks_at_all_is_not_ready(self):
         data = node()
         data["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
@@ -191,6 +212,24 @@ class BlockerTests(unittest.TestCase):
 
 
 class PullTests(unittest.TestCase):
+    def test_checks_must_belong_to_the_reported_head(self):
+        data = node()
+        data["headRefOid"] = "a" * 40
+        commit = data["commits"]["nodes"][0]["commit"]
+        commit["oid"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "head commit changed"):
+            pr_ready.pull(data)
+        commit["oid"] = data["headRefOid"]
+        self.assertTrue(pr_ready.pull(data)["checks"])
+
+    def test_pull_request_number_must_be_a_positive_integer(self):
+        for number in (True, 0, -1):
+            with self.subTest(number=number), self.assertRaisesRegex(ValueError, "positive pull request number"):
+                pr_ready.pull(node(number=number))
+
+    def test_rereview_requests_match_the_reviewer_regardless_of_login_case(self):
+        self.assertEqual(make(changes=("CodeReviewer", "Other"), requested=("codereviewer",))["changes"], ["Other"])
+
     def test_a_missing_number_is_rejected(self):
         with self.assertRaises(ValueError):
             pr_ready.pull({"isDraft": False})
@@ -440,6 +479,15 @@ class MainTests(unittest.TestCase):
         self.assertEqual([pr["number"] for pr in prs], [1, 2])
         self.assertIn("after=c1", seen[1])
 
+    def test_repeated_pull_number_in_open_pages_is_rejected(self):
+        replies = [
+            {"data": {"repository": {"pullRequests": {"nodes": [node()], "pageInfo": page}}}}
+            for page in ({"hasNextPage": True, "endCursor": "next"}, {"hasNextPage": False})
+        ]
+        with patch("pr_ready.pr_labels.gh", side_effect=list(map(json.dumps, replies))):
+            with self.assertRaisesRegex(ValueError, "duplicate pull request #7"):
+                pr_ready.fetch("o/r")
+
     def test_closed_labels_follow_all_pages_before_cleanup(self):
         pages = [
             {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
@@ -467,6 +515,16 @@ class MainTests(unittest.TestCase):
 
 
 class AuthorFetchTests(unittest.TestCase):
+    def test_repeated_pull_number_in_author_pages_is_rejected(self):
+        matching = {"repository": {"nameWithOwner": "owner/repo"}, **node()}
+        replies = [
+            {"data": {"user": {"pullRequests": {"nodes": [matching], "pageInfo": page}}}}
+            for page in ({"hasNextPage": True, "endCursor": "next"}, {"hasNextPage": False})
+        ]
+        with patch("pr_ready.pr_labels.gh", side_effect=list(map(json.dumps, replies))):
+            with self.assertRaisesRegex(ValueError, "duplicate pull request #7"):
+                pr_ready.fetch_author("owner/repo", "alice")
+
     def test_author_lookup_follows_pages_and_keeps_only_the_requested_repository(self):
         matching = {"repository": {"nameWithOwner": "Owner/Repo"}, **node(number=3)}
         another = {"repository": {"nameWithOwner": "owner/other"}, **node(number=4)}
