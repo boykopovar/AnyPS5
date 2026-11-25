@@ -20,6 +20,4 @@ int APS5_VABI u_charFromName_nid_postfix();
 int APS5_VABI u_charName_nid_postfix();
 int APS5_VABI u_digit_nid_postfix(std::int32_t character, std::int8_t radix);
 int APS5_VABI u_enumCharNames_nid_postfix();
-int APS5_VABI u_getDefaultConverter_nid_postfix();
-int APS5_VABI u_releaseDefaultConverter_nid_postfix();
 }

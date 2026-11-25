@@ -271,7 +271,7 @@ PathState validatedPath(Registry& state, AudioPropagationHandle path, const Audi
         const auto& point = replacement.points[index];
         requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), function);
         require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), function);
-        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, function).system == system, function);
+        if (point.material != 0) require(requireObject(state, point.material, Kind::Material, function).system == system, function);
     }
     return PathState{replacement, gain};
 }
@@ -522,7 +522,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagationHandle source, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    requireObject(state, source, Kind::Source, __func__);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;
@@ -539,9 +540,20 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     return 0;
 }
 
+std::int32_t APS5_VABI sceAudioPropagationSourceQueryAudioPaths(AudioPropagationHandle source, std::uint64_t* paths, std::size_t size) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+    if (!paths) return ErrorNullPointer;
+    static_cast<void>(size);
+    return 0;
+}
+
 std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
+    if (state.objects.find(path) == state.objects.end()) return ErrorInvalidHandle;
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;

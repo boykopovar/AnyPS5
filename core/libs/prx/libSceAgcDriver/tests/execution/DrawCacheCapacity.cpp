@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -22,6 +23,8 @@ namespace {
 using AgcDriver::Graphics::Require;
 
 constexpr std::size_t Draws = 4352;
+constexpr std::size_t PreviousEntryCap = 65536;
+constexpr std::size_t DefaultEntryCap = 262144;
 using ShaderInput = std::array<float, 4>;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
@@ -110,7 +113,7 @@ void RegisterShaders() {
 void CacheDistinctDraws(bool testMetadataBudget) {
     RegisterShaders();
     for (std::size_t i = 0; i < Sources.size(); ++i) Sources[i] = {static_cast<float>(i + 1) / static_cast<float>(Draws + 1), 0.0f, 0.0f, 1.0f};
-    auto commands = EveryDraw();
+    auto commands = EveryDraw(Sources);
     const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     const auto seen = Pass(commands);
     const auto inserted = Pass(commands);
@@ -148,6 +151,16 @@ void SharedResultsAreChargedOnce() {
     Require(three.variantBytes == two.variantBytes, "evicting one shared result reference changed the shader metadata charge");
 }
 
+void DefaultEntryCapExceedsThePreviousOne() {
+    Require(std::getenv("APS5_DRAW_CACHE_ENTRIES") == nullptr, "APS5_DRAW_CACHE_ENTRIES must be unset for this test");
+    const auto cap = AgcDriver::DriverDetail::Driver::DrawCacheEntries();
+    Require(cap == DefaultEntryCap, "the default draw cache entry cap is " + std::to_string(cap) + ", not " + std::to_string(DefaultEntryCap));
+    Require(cap > PreviousEntryCap, "the default draw cache entry cap " + std::to_string(cap) + " does not exceed the previous " + std::to_string(PreviousEntryCap));
+    const auto sightings = AgcDriver::DriverDetail::Driver::DrawKeySightingKeys();
+    const auto previousSightings = PreviousEntryCap * AgcDriver::DriverDetail::DrawKeySightings::Ways;
+    Require(sightings == previousSightings, "the draw key sightings hold " + std::to_string(sightings) + " keys, not the " + std::to_string(previousSightings) + " of the previous entry cap");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -160,8 +173,9 @@ int main(int argc, char** argv) {
         }
         if (test == "--shared-result") SharedResultsAreChargedOnce();
         else CacheDistinctDraws(test == "--metadata-budget");
+        if (test.empty()) DefaultEntryCapExceedsThePreviousOne();
         AgcDriverShutdown_nid_postfix();
-        if (test.empty()) std::cout << Draws << " distinct draws stayed in the draw cache under the default entry cap\n";
+        if (test.empty()) std::cout << Draws << " distinct draws stayed in the draw cache under a default entry cap of " << DefaultEntryCap << "\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

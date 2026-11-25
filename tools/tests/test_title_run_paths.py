@@ -41,8 +41,16 @@ def is_app_execution_alias(program):
     return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
 
 
+def launcher_interpreter():
+    launcher = shutil.which("py")
+    if launcher is None:
+        return None
+    result = subprocess.run([launcher, "-X", "utf8", "-c", "import sys; print(sys.executable)"], capture_output=True, encoding="utf-8", timeout=30)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def copyable_executable():
-    for program in (sys.executable, shutil.which("py")):
+    for program in (getattr(sys, "_base_executable", sys.executable), launcher_interpreter()):
         if program and Path(program).is_file() and not is_app_execution_alias(program):
             return program
     return None
