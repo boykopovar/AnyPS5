@@ -1,5 +1,4 @@
 #include "prx/libSceBluetoothHid/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -7,7 +6,6 @@
 
 #include <stdexcept>
 #include <string>
-#include <cerrno>
 #include <mutex>
 
 static_assert(sizeof(BluetoothHidThreadParam) == 24);
@@ -41,16 +39,12 @@ std::int32_t APS5_VABI sceBluetoothHidRegisterCallback(BluetoothHidCallback call
     if (callback == nullptr) return InvalidArgument;
     if (param != nullptr) {
         BluetoothHidParam localParam{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-        errno = savedErrno;
         if (!copied) return InvalidArgument;
         if (localParam.reserved != 0) return InvalidArgument;
         if (localParam.threadParam != nullptr) {
             BluetoothHidThreadParam localThreadParam{};
-            const int savedErrnoThread = errno;
             const bool copiedThread = GuestCopyIn_nid_no_patch(&localThreadParam, localParam.threadParam, sizeof(localThreadParam));
-            errno = savedErrnoThread;
             if (!copiedThread) return InvalidArgument;
             if (localThreadParam.reserved != 0) return InvalidArgument;
             throw std::runtime_error("sceBluetoothHidRegisterCallback: custom worker scheduling is not implemented");
@@ -151,18 +145,14 @@ int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::ui
 int APS5_VABI sceBluetoothHidParamInitialize(BluetoothHidParam* param, const BluetoothHidThreadParam* threadParam) {
     if (param == nullptr) return InvalidArgument;
     BluetoothHidParam localParam{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
-        errno = savedErrno;
         return InvalidArgument;
     }
     localParam.threadParam = threadParam;
     localParam.reserved = 0;
     if (!GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam))) {
-        errno = savedErrno;
         return InvalidArgument;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -175,21 +165,16 @@ int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::u
 
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
     if (param == nullptr) return InvalidArgument;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(&param->priority, &priority, sizeof(priority))) {
-        errno = savedErrno;
         return InvalidArgument;
     }
     if (!GuestCopyOut_nid_no_patch(&param->affinityMask, &affinityMask, sizeof(affinityMask))) {
-        errno = savedErrno;
         return InvalidArgument;
     }
     const std::uint32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(&param->reserved, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return InvalidArgument;
     }
-    errno = savedErrno;
     return 0;
 }
 
