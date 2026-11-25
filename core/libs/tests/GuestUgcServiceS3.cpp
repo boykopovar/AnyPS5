@@ -1,8 +1,11 @@
 #include "prx/libSceUgcServiceS3/libSceUgcServiceS3.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
+#include <thread>
 
 namespace {
 
@@ -137,10 +140,52 @@ void TestClientLifecycleAndRequests() {
     Require(sceUgcServiceS3Unknown01() == 0);
 }
 
+void TestWraparoundAndConcurrentDeinit() {
+    Require(sceUgcServiceS3Unknown00() == 0);
+    const int req = sceUgcServiceS3CreateRequest(nullptr);
+    Require(req > 0);
+
+    constexpr std::uintptr_t kMaxAddr = (std::numeric_limits<std::uintptr_t>::max)();
+    const auto* nearEndStr = reinterpret_cast<const char*>(kMaxAddr);
+    const auto* nearEndMid = reinterpret_cast<const char*>(kMaxAddr - 3u);
+    const auto* nearEndPart = reinterpret_cast<const void*>(kMaxAddr - 4u);
+    Require(sceUgcServiceS3CreateRequest(nearEndStr) == kErrInvalidArg);
+    Require(sceUgcServiceS3CreateRequest(nearEndMid) == kErrInvalidArg);
+    Require(sceUgcServiceS3UploadFileWithGmsResponse(req, 1, nearEndMid, "{}") == kErrInvalidArg);
+    Require(sceUgcServiceS3Unknown07(req, 1, "/tmp/a", "{}", nearEndPart, nullptr) == kErrInvalidArg);
+    Require(sceUgcServiceS3Unknown02(req) == 0);
+    Require(sceUgcServiceS3Unknown01() == 0);
+
+    std::atomic<bool> done{false};
+    std::thread lifecycle([&]() {
+        for (int i = 0; i < 200; ++i) {
+            (void)sceUgcServiceS3Unknown00();
+            (void)sceUgcServiceS3Unknown01();
+        }
+        done.store(true, std::memory_order_release);
+    });
+    std::thread requests([&]() {
+        while (!done.load(std::memory_order_acquire)) {
+            const int id = sceUgcServiceS3CreateRequest(nullptr);
+            Require(id > 0 || id == kErrNoClient);
+            if (id > 0) {
+                const int cancelRet = sceUgcServiceS3CancelRequest(id);
+                Require(cancelRet == 0 || cancelRet == kErrNoClient || cancelRet == kErrNotFoundRequest);
+                const int delRet = sceUgcServiceS3Unknown02(id);
+                Require(delRet == 0 || delRet == kErrNoClient || delRet == kErrNotFoundRequest);
+            }
+        }
+    });
+    lifecycle.join();
+    requests.join();
+    Require(sceUgcServiceS3Unknown01() == 0);
+}
+
 }
 
 int main() {
     TestUninitializedBehavior();
     TestClientLifecycleAndRequests();
+    TestWraparoundAndConcurrentDeinit();
     return 0;
 }
