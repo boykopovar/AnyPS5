@@ -53,7 +53,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
@@ -64,16 +63,12 @@ namespace {
 constexpr unsigned char DefaultIv[8] = {0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6};
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
