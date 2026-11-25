@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -2453,7 +2454,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
+    surface.dccAddress = color.chainDccAddress != 0 ? color.chainDccAddress : color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
@@ -2743,6 +2744,9 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.chainDccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
+                if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
+            }
         } else {
             static bool reported = false;
             if (!reported) {

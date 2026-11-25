@@ -290,9 +290,7 @@ std::size_t UnitsAfter(const Session& session) {
 std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
     const ImeHostInput& input = pending.input;
     if (input.kind == ImeHostInputKind::Preedit) {
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        session.composition.Set(pending.paste, input.start, input.length);
         return std::nullopt;
     }
     if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
@@ -497,21 +495,18 @@ int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* 
 extern "C" {
 
 void ImePublishInput_nid_postfix(const ImeHostInput& input) {
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        ImePublishPreedit_nid_postfix(input.text, size, input.start, input.length);
+        return;
+    }
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
             g_session->hostInputs.push_back({input, {}});
             return;
         }
-    }
-    if (input.kind == ImeHostInputKind::Preedit) {
-        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
-        if (preeditSink == nullptr) return;
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
-        preeditSink(units.data(), units.size(), input.start, input.length);
-        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -522,6 +517,24 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
         units = DecodeUtf8(input.text, size);
     }
     sink(input.kind, units.data(), units.size());
+}
+
+void ImePublishPreedit_nid_postfix(const char* text, std::size_t size, std::int32_t start, std::int32_t length) {
+    if (text == nullptr) return;
+    std::u16string units = ImeHostText::PreeditUnits(text, size);
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Preedit;
+            input.start = start;
+            input.length = length;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostPreeditSink sink = g_preeditSink.load();
+    if (sink != nullptr) sink(units.data(), units.size(), start, length);
 }
 
 void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {

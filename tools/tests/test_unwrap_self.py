@@ -1222,6 +1222,13 @@ class UnwrapTest(unittest.TestCase):
         self.assertIn("not a SELF container", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_metadata_elf_marker_does_not_mask_the_inner_elf(self):
+        container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+        container[0x100:0x104] = b"\x7fELF"
+        result, output = self.convert(bytes(container))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
     def test_a_container_without_an_inner_elf_is_refused(self):
         container = build_container(default_segments(), default_records(), default_payloads(), inner_elf=False)
         result, output = self.convert(container)

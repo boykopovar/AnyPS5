@@ -63,4 +63,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_common_rtc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
     endif()
+
+    add_test_executable(guest_np_dbg_dump_text_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpDbgDumpText.cpp)
+    target_include_directories(guest_np_dbg_dump_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_dbg_dump_text_tests PRIVATE libSceNpCommon libc)
+    configure_windows_unwind(guest_np_dbg_dump_text_tests)
+    add_test(NAME guest_np_dbg_dump_text COMMAND guest_np_dbg_dump_text_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_dbg_dump_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
 endif()

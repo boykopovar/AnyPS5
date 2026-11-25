@@ -465,8 +465,9 @@ std::optional<std::uint8_t> overwrittenStencil(const State& state) {
 }
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
-    if (color.mipCount != 1 || color.depth != 1 || !color.dccPipeAligned) return DccKeyBytes(bytes);
-    return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    if (color.mipCount == 1 && color.depth == 1 && color.dccPipeAligned) return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+    if (color.mipCount > 1 && color.depth == 1 && color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX) return DccMipKeySlice(color.extent.width, color.extent.height, color.elementBytes);
+    return DccKeyBytes(bytes);
 }
 
 std::array<std::byte, 16> clearTexel(const ColorTarget& color, DccKeys keys) {
@@ -2249,6 +2250,34 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
+bool materializeMipClear(const Context& context, const ColorTarget& color, std::shared_ptr<StorageTexture>& resident) {
+    if (color.dccAddress == 0 || color.mipCount <= 1 || color.mipTail) return false;
+    const auto keyCount = std::max<std::size_t>(colorKeyCount(color, color.bytes), 1u);
+    const auto landed = LandedDccKeys(color.dccAddress, color.bytes, keyCount);
+    DccKeys keys;
+    bool verified;
+    if (landed == DccKeys::Unreadable) {
+        keys = CurrentDccKeys(color.dccAddress, color.bytes, keyCount);
+        verified = false;
+    } else {
+        keys = landed;
+        verified = true;
+    }
+    if (!IsDccClear(keys) || keys == DccKeys::ClearSingle || (keys == DccKeys::ClearRegister && color.elementBytes > 8u)) return false;
+    const auto texel = clearTexel(color, keys);
+    if (resident != nullptr) {
+        const char* refusal = nullptr;
+        if (resident->ClearMip(texel, color.mip, verified, refusal)) {
+            MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+            return true;
+        }
+        MarkDccUncompressed(context, color.dccAddress, color.bytes, keyCount);
+    }
+    StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
+    writeTexels(color, texel);
+    return true;
+}
+
 template<typename TLookup>
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const TLookup& lookup) {
     const auto lookupStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2265,6 +2294,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
     if (resident != nullptr) materializeCmaskClear(context, color, resident);
+    if (resident != nullptr) materializeMipClear(context, color, resident);
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -3245,12 +3275,20 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
-    if (timeEachDraw) {
-        std::uint64_t key = 0;
-        for (const auto& shader : shaders) {
-            if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+    if (timeEachDraw && Recorder::GpuTimingEnabled()) {
+        if (Recorder::DrawStageTimingEnabled()) {
+            std::vector<std::pair<std::uint32_t, std::uint64_t>> stages;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr) stages.emplace_back(static_cast<std::uint32_t>(shader.stage), shader.program->variantId);
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawStageTimingKey(stages));
+        } else {
+            std::uint64_t key = 0;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
         }
-        eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
@@ -5311,6 +5349,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
             MaterializeMultisampleTargetClear(context, color);
             continue;
         }
+        ClaimMultisampleTargetMemory(color.MemoryAddress(), color.bytes);
         if (color.cmaskAddress != 0) {
             const auto resident = metadataPassResident(context, color);
             if (materializeCmaskClear(context, color, resident) && resident != nullptr) resident->MarkDirty();
@@ -5335,6 +5374,10 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
                 MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
                 continue;
             }
+        }
+        if (color.mipCount > 1 && resident == nullptr) {
+            std::shared_ptr<StorageTexture> chain = CachedStorageSurface(context, SurfaceForTarget(color));
+            if (materializeMipClear(context, color, chain)) continue;
         }
         storeClearTexels(context, color, texel);
     }
