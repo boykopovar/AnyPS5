@@ -1434,7 +1434,6 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
 const bool g_libcWriteHookRegistered = (LibcSetGuestWriteHook_nid_no_patch(&_write_nid_postfix), true);
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
-    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
@@ -1442,7 +1441,6 @@ int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
 }
 
 int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
-    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
