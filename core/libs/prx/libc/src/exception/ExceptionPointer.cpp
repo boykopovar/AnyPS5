@@ -41,6 +41,7 @@ void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(std::excep
 }
 
 const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const std::exception_ptr* self) noexcept {
+    if (!self) return nullptr;
     return ExceptionPointerType(self);
 }
 
@@ -89,6 +90,7 @@ void* exception_ptr::_M_get() const noexcept {
 }
 
 const type_info* exception_ptr::__cxa_exception_type() const noexcept {
+    if (!_M_exception_object) return nullptr;
     return LibcException::FromObject(_M_exception_object)->type;
 }
 
@@ -126,6 +128,7 @@ void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(GuestExcep
 }
 
 const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const GuestExceptionPointer* self) noexcept {
+    if (!self || !self->object) return nullptr;
     return LibcException::FromObject(self->object)->type;
 }
 
@@ -141,3 +144,21 @@ GuestExceptionPointer APS5_VABI _ZSt17current_exceptionv_nid_postfix() noexcept 
 }
 
 #endif
+
+extern "C" {
+
+void APS5_VABI _ZNSt13exception_ptrC1ERKS__nid_postfix(GuestLibcxxExceptionPointer* self, const GuestLibcxxExceptionPointer* source) noexcept {
+    self->object = source->object;
+    __cxa_increment_exception_refcount_nid_postfix(self->object);
+}
+
+void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer* self) noexcept {
+    __cxa_decrement_exception_refcount_nid_postfix(self->object);
+}
+
+[[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionSt13exception_ptr_nid_postfix(const GuestLibcxxExceptionPointer* exception) {
+    __cxa_rethrow_primary_exception_nid_postfix(exception->object);
+    LibcException::Terminate();
+}
+
+}

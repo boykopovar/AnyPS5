@@ -57,19 +57,23 @@ int APS5_VABI _ZN3sce16CommonDialogUtil6Client15launchCmnDialogEv(void* self) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD0Ev() {
+void APS5_VABI _ZN3sce16CommonDialogUtil6ClientD0Ev(void* self) {
+    (void)self;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD1Ev() {
+void APS5_VABI _ZN3sce16CommonDialogUtil6ClientD1Ev(void* self) {
+    if (!HasClientImplementation(self)) {
+        return;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI _ZN3sce16CommonDialogUtil6ClientD2Ev() {
+void APS5_VABI _ZN3sce16CommonDialogUtil6ClientD2Ev(void* self) {
+    if (!HasClientImplementation(self)) {
+        return;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI _ZNK3sce16CommonDialogUtil6Client10isCloseReqEv(const void* self) {

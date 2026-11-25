@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Type1Fixture {
@@ -65,13 +66,13 @@ inline std::vector<unsigned char> Empty() {
     return out;
 }
 
-inline std::vector<unsigned char> Font() {
-    const std::string header =
+inline std::vector<unsigned char> Font(std::string_view fontDictionary = {}) {
+    constexpr std::string_view header =
         "%!PS-AdobeFont-1.0: FixtureType1 001.000\n%%Title: FixtureType1\n/FontInfo 10 dict dup begin\n/version (001.000) readonly def\n"
         "/Notice (Fixture) readonly def\n/FullName (Fixture Type1 Regular) readonly def\n/FamilyName (Fixture Type1) readonly def\n"
         "/Weight (Regular) readonly def\n/ItalicAngle 0 def\n/isFixedPitch false def\n/UnderlinePosition -100 def\n/UnderlineThickness 50 def\n"
         "end readonly def\n/FontName /FixtureType1 def\n/PaintType 0 def\n/FontType 1 def\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n"
-        "/Encoding StandardEncoding def\n/FontBBox {0 0 600 700} readonly def\ncurrentdict end\ncurrentfile eexec\n";
+        "/Encoding StandardEncoding def\n/FontBBox {0 0 600 700} readonly def\n";
     const std::string beginPrivate =
         "dup /Private 8 dict dup begin\n/RD {string currentfile exch readstring pop} executeonly def\n/ND {noaccess def} executeonly def\n"
         "/NP {noaccess put} executeonly def\n/BlueValues [] def\n/MinFeature{16 16} def\n/password 5839 def\n/lenIV 4 def\n/Subrs 0 array\nND\n"
@@ -89,7 +90,13 @@ inline std::vector<unsigned char> Font() {
     }
     priv.insert(priv.end(), endPrivate.begin(), endPrivate.end());
     const std::vector<unsigned char> encryptedPrivate = Encrypt(priv, 55665);
-    std::vector<unsigned char> font(header.begin(), header.end());
+    constexpr std::string_view eexec = "currentdict end\ncurrentfile eexec\n";
+    constexpr std::string_view trailer = "cleartomark\n";
+    std::vector<unsigned char> font;
+    font.reserve(header.size() + fontDictionary.size() + eexec.size() + encryptedPrivate.size() * 2 + 1 + 8 * 65 + trailer.size());
+    font.insert(font.end(), header.begin(), header.end());
+    if (!fontDictionary.empty()) font.insert(font.end(), fontDictionary.begin(), fontDictionary.end());
+    font.insert(font.end(), eexec.begin(), eexec.end());
     constexpr char digits[] = "0123456789abcdef";
     for (const unsigned char byte : encryptedPrivate) {
         font.push_back(static_cast<unsigned char>(digits[byte >> 4]));
@@ -100,9 +107,15 @@ inline std::vector<unsigned char> Font() {
         font.insert(font.end(), 64, '0');
         font.push_back('\n');
     }
-    const std::string trailer = "cleartomark\n";
     font.insert(font.end(), trailer.begin(), trailer.end());
     return font;
+}
+
+inline std::vector<unsigned char> MultipleMasterFont() {
+    return Font("/BlendAxisTypes [/Slant] def\n"
+                "/BlendDesignPositions [[0] [1]] def\n"
+                "/BlendDesignMap [[[-20 0] [20 1]]] def\n"
+                "/WeightVector [0.5 0.5] def\n");
 }
 
 inline std::string Afm() {

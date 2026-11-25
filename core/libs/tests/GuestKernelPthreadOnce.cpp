@@ -191,14 +191,10 @@ static void TestInvalidArguments() {
     GuestOnce invalidState3{3, nullptr};
     Require(pthread_once_nid_postfix(&invalidState3, DummyInit) == POSIX_EINVAL);
 
-    GuestOnce invalidState42{42, nullptr};
-    Require(pthread_once_nid_postfix(&invalidState42, DummyInit) == POSIX_EINVAL);
-
-    GuestOnce invalidStateNeg{-1, nullptr};
-    Require(pthread_once_nid_postfix(&invalidStateNeg, DummyInit) == POSIX_EINVAL);
-
-    GuestOnce invalidStateLarge{9999, nullptr};
-    Require(pthread_once_nid_postfix(&invalidStateLarge, DummyInit) == POSIX_EINVAL);
+    for (const int state : {-1000, -50, -1, 3, 4, 10, 42, 100, 9999}) {
+        GuestOnce badOnce{state, nullptr};
+        Require(pthread_once_nid_postfix(&badOnce, DummyInit) == POSIX_EINVAL);
+    }
 
     Require(scePthreadOnce(nullptr, DummyInit) == SCE_KERNEL_ERROR_EINVAL);
     int32_t validSce = 0;

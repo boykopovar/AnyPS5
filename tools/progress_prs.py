@@ -27,19 +27,31 @@ def timestamp():
 
 def collect_open_prs(repo, root):
     pr_overlap.REPO = repo
-    pull_requests = pr_overlap.open_prs("main")
-    refspecs = [f"+refs/heads/main:{REFS}/base"]
-    for number, pr in sorted(pull_requests.items()):
-        pr["ref"] = f"{REFS}/{number}"
-        refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
     remote = f"{REMOTE}/{repo}.git"
-    for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
-        git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
-    changed = [number for number, pr in pull_requests.items()
-               if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
-    if changed:
-        raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
+    pull_requests = pr_overlap.open_prs("main")
+    git(root, "fetch", "--no-tags", "-q", remote, f"+refs/heads/main:{REFS}/base")
+    numbers = sorted(pull_requests)
+    for number in numbers:
+        pull_requests[number]["ref"] = f"{REFS}/{number}"
+    for start in range(0, len(numbers), pr_overlap.FETCH_REFS):
+        batch = numbers[start:start + pr_overlap.FETCH_REFS]
+        refspecs = [head_refspec(pull_requests[number]) for number in batch]
+        if git(root, "fetch", "--no-tags", "-q", remote, *refspecs, check=False).returncode:
+            for number in batch:
+                fetch_head(root, remote, number, pull_requests[number])
     return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+
+
+def head_refspec(pr):
+    return f"+{pr['sha']}:{pr['ref']}"
+
+
+def fetch_head(root, remote, number, pr):
+    result = git(root, "fetch", "--no-tags", "-q", remote, head_refspec(pr), check=False)
+    if result.returncode and "not our ref" not in result.stderr:
+        raise RuntimeError(result.stderr.strip() or f"could not fetch the head of pull request #{number}")
+    if result.returncode:
+        pr["unavailable"] = True
 
 
 def closed_dependency_status(repo, number):
@@ -69,6 +81,13 @@ def dependency_order(pull_requests, root, base_sha, repo):
     dependencies = {number: set(pr["depends"]) for number, pr in pull_requests.items()}
     excluded = {}
     for number, required in dependencies.items():
+        pr = pull_requests[number]
+        if pr.get("unavailable"):
+            excluded[number] = "head_unavailable"
+            continue
+        if is_ancestor(root, pr["sha"], base_sha):
+            required.clear()
+            continue
         missing = required - pull_requests.keys()
         for dependency in sorted(missing):
             merge_sha = closed_dependency_status(repo, dependency)
@@ -76,18 +95,28 @@ def dependency_order(pull_requests, root, base_sha, repo):
                 excluded[number] = "unresolved_dependency"
                 break
             dependencies[number].discard(dependency)
-    for number, pr in pull_requests.items():
-        if is_ancestor(root, pr["sha"], base_sha):
-            excluded.pop(number, None)
-            dependencies[number] = set()
     pending = set(pull_requests) - excluded.keys()
     order = []
     while pending:
         ready = sorted(number for number in pending if dependencies[number] <= (set(order) | excluded.keys()))
         if not ready:
-            for number in pending:
+            cycles = set()
+            for start in pending:
+                reachable = list(dependencies[start] & pending)
+                visited = set()
+                while reachable:
+                    number = reachable.pop()
+                    if number == start:
+                        cycles.add(start)
+                        break
+                    if number in visited:
+                        continue
+                    visited.add(number)
+                    reachable.extend(dependencies[number] & pending)
+            for number in cycles:
                 excluded[number] = "dependency_cycle"
-            break
+            pending -= cycles
+            continue
         number = ready[0]
         pending.remove(number)
         order.append(number)
@@ -106,7 +135,7 @@ def integrate_pull_requests(root, pull_requests, base_sha, repo):
     included = set()
     for number in order:
         pr = pull_requests[number]
-        if dependencies_blocked(pr, excluded):
+        if dependencies_blocked(pr, excluded) and not is_ancestor(root, pr["sha"], base_sha):
             excluded[number] = "dependency_excluded"
             continue
         result = git(root, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only",
@@ -156,10 +185,16 @@ def estimate(repo, root):
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return {"available": False, "generated_at": timestamp(), "reason": str(error)}
     finally:
-        refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
-        if refs.returncode == 0:
-            for ref in refs.stdout.splitlines():
-                git(root, "update-ref", "-d", ref, check=False)
+        try:
+            refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
+        except OSError:
+            refs = None
+        if refs is not None and refs.returncode == 0:
+            try:
+                for ref in refs.stdout.splitlines():
+                    git(root, "update-ref", "-d", ref, check=False)
+            except OSError:
+                pass
 
 
 def main(argv=None):

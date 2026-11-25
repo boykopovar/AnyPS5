@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -115,8 +116,10 @@ void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyPar
 
 int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text) {
     if (!text) throw std::invalid_argument(std::string(__func__) + ": null address text");
+    std::string copied;
+    if (CopyGuestString_nid_no_patch(text, 65536, copied) != 0) return 0;
     unsigned char address[16];
-    const std::size_t length = AddressFromText(address, text);
+    const std::size_t length = AddressFromText(address, copied.c_str());
     if (length == 0) return 0;
     auto* id = Identity(param, __func__);
     auto* copy = static_cast<unsigned char*>(malloc_nid_postfix(length));

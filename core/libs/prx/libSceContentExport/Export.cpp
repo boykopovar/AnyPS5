@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -35,13 +36,6 @@ constexpr int ErrorDataCallback = static_cast<int>(0x809D301Bu);
 std::atomic<bool> g_initialized{false};
 std::mutex g_sessionMutex;
 std::set<std::int32_t> g_sessions;
-
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version;
-}
 
 void RequireSession(const char* function, std::int32_t expId) {
     if (!g_initialized.load()) throw std::logic_error(std::string(function) + ": not initialized");
@@ -79,7 +73,7 @@ int APS5_VABI sceContentExportFinish(std::int32_t expId) {
 }
 
 int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportParam* param, std::size_t contentLength, ContentExportDataCallback callback, void* userData, char* path, std::size_t pathBufferLength) {
-    const std::int32_t sdkVersion = static_cast<std::int32_t>(CompiledSdkVersion());
+    const std::int32_t sdkVersion = static_cast<std::int32_t>(ApplicationCompiledSdkVersion());
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
     ContentExportParam localParam{};
@@ -91,6 +85,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     }
+    if (std::memchr(localParam.content_type, '\0', sizeof(localParam.content_type)) == nullptr) return ErrorInvalidArgument;
     if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
     const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;
@@ -107,14 +102,25 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         const void* data = nullptr;
         std::size_t size = 0;
         std::size_t written = 0;
+        std::array<char, 4096> staging{};
         const bool modernCallback = sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion);
         for (;;) {
             const std::int32_t result = callback(&data, &size, userData);
             if (modernCallback && result != 0 && result != 1) return ErrorDataCallback;
             if (size != 0) {
                 if (data == nullptr) return ErrorStorage;
-                file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-                if (!file) return ErrorStorage;
+                const auto address = reinterpret_cast<std::uintptr_t>(data);
+                if (size > std::numeric_limits<std::uintptr_t>::max() - address) return ErrorStorage;
+                for (std::size_t offset = 0; offset < size;) {
+                    const std::size_t count = std::min(staging.size(), size - offset);
+                    const int savedErrno = errno;
+                    const bool copied = GuestCopyIn_nid_no_patch(staging.data(), reinterpret_cast<const void*>(address + offset), count);
+                    errno = savedErrno;
+                    if (!copied) return ErrorStorage;
+                    file.write(staging.data(), static_cast<std::streamsize>(count));
+                    if (!file) return ErrorStorage;
+                    offset += count;
+                }
                 written += size;
             }
             if (result == 1 || (!modernCallback && result < 0)) break;

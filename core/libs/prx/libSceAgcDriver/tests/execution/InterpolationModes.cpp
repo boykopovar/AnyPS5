@@ -28,9 +28,16 @@ struct Row {
 
 constexpr std::array<const char*, 8> ModeNames{"IEEE=0 f32-flush f16-flush", "IEEE=0 f32-flush f16-keep", "IEEE=0 f32-keep f16-flush", "IEEE=0 f32-keep f16-keep",
     "IEEE=1 f32-flush f16-flush", "IEEE=1 f32-flush f16-keep", "IEEE=1 f32-keep f16-flush", "IEEE=1 f32-keep f16-keep"};
+constexpr std::uint32_t Flush32 = InterpolationFlush32 | InterpolationFlushResult32;
+constexpr std::uint32_t Flush16 = InterpolationFlush16 | InterpolationFlushResult16;
 constexpr std::array<std::uint32_t, 8> ModeFlags{
-    InterpolationFlush32 | InterpolationFlush16, InterpolationFlush32, InterpolationFlush16, 0u,
-    InterpolationQuiet | InterpolationFlush32 | InterpolationFlush16, InterpolationQuiet | InterpolationFlush32, InterpolationQuiet | InterpolationFlush16, InterpolationQuiet};
+    Flush32 | Flush16, Flush32, Flush16, 0u,
+    InterpolationQuiet | Flush32 | Flush16, InterpolationQuiet | Flush32, InterpolationQuiet | Flush16, InterpolationQuiet};
+
+constexpr std::uint32_t DenormalFlags(std::uint32_t ieee, std::uint32_t denorm32, std::uint32_t denorm16) {
+    return (ieee != 0u ? InterpolationQuiet : 0u) | ((denorm32 & 1u) == 0u ? InterpolationFlush32 : 0u) | ((denorm32 & 2u) == 0u ? InterpolationFlushResult32 : 0u)
+        | ((denorm16 & 1u) == 0u ? InterpolationFlush16 : 0u) | ((denorm16 & 2u) == 0u ? InterpolationFlushResult16 : 0u);
+}
 constexpr std::array<const char*, 3> OpNames{"v_interp_p1ll_f16", "v_interp_p2_f16", "v_interp_p1lv_f16"};
 
 constexpr std::array<Row, 32> Rows{{
@@ -66,6 +73,44 @@ constexpr std::array<Row, 32> Rows{{
     {{0xffc02000u, 0x80400000u, 0xb8000000u, 0xffc02000u, 0x00000000u, 0xabcd7c00u, 0xffc02000u, 0x80400000u, 0x7f800000u}, {{{0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}, {0xffc02000u, 0x0000fe01u, 0xffc02000u}}}},
     {{0x7f800000u, 0xffc00001u, 0x7fa00000u, 0x7f800000u, 0xff800000u, 0xabcd0000u, 0x7f800000u, 0xffc00001u, 0x00000000u}, {{{0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}, {0xffc00001u, 0x0000fc00u, 0xffc00001u}}}},
     {{0x80000000u, 0x7f800000u, 0x43000000u, 0x80000000u, 0x3f800000u, 0xabcd0000u, 0x80000000u, 0x7f800000u, 0x00000000u}, {{{0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}}}},
+}};
+
+constexpr std::array<const char*, 8> SplitModeNames{"IEEE=0 denorm32=1 denorm16=3 round16=0", "IEEE=0 denorm32=2 denorm16=3 round16=0", "IEEE=0 denorm32=3 denorm16=1 round16=0", "IEEE=0 denorm32=3 denorm16=2 round16=0", "IEEE=1 denorm32=1 denorm16=2 round16=0", "IEEE=1 denorm32=2 denorm16=1 round16=1", "IEEE=0 denorm32=2 denorm16=1 round16=2", "IEEE=1 denorm32=1 denorm16=2 round16=3"};
+constexpr std::array<std::uint32_t, 8> SplitModeFlags{DenormalFlags(0u, 1u, 3u), DenormalFlags(0u, 2u, 3u), DenormalFlags(0u, 3u, 1u), DenormalFlags(0u, 3u, 2u), DenormalFlags(1u, 1u, 2u), DenormalFlags(1u, 2u, 1u) | (1u << InterpolationRound16Shift), DenormalFlags(0u, 2u, 1u) | (2u << InterpolationRound16Shift), DenormalFlags(1u, 1u, 2u) | (3u << InterpolationRound16Shift)};
+
+constexpr std::array<Row, 32> SplitRows{{
+    {{0x477fe000u, 0x00400000u, 0x00000000u, 0xc77fe000u, 0x00400000u, 0x00000000u, 0x477fe000u, 0x00400000u, 0x00000000u}, {{{0x07ffe000u, 0x00008000u, 0x07ffe000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x07ffe000u, 0x00008000u, 0x07ffe000u}, {0x07ffe000u, 0x00008000u, 0x07ffe000u}, {0x07ffe000u, 0x00008000u, 0x07ffe000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00008000u, 0x00000000u}, {0x07ffe000u, 0x00008000u, 0x07ffe000u}}}},
+    {{0x38800000u, 0x03800000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x80400000u, 0x38800000u, 0x03800000u, 0x00000000u}, {{{0x00000000u, 0x00008000u, 0x00000000u}, {0x00008000u, 0x00000000u, 0x00008000u}, {0x00008000u, 0x00008000u, 0x00008000u}, {0x00008000u, 0x00008000u, 0x00008000u}, {0x00000000u, 0x00008000u, 0x00000000u}, {0x00008000u, 0x00000000u, 0x00008000u}, {0x00008000u, 0x00008000u, 0x00008000u}, {0x00000000u, 0x00008000u, 0x00000000u}}}},
+    {{0x33800000u, 0x40000000u, 0x3f800000u, 0x33800000u, 0x44800000u, 0x00000000u, 0x33800000u, 0x40000000u, 0x3f800000u}, {{{0x3f800001u, 0x00000400u, 0x3f800001u}, {0x3f800001u, 0x00000400u, 0x3f800001u}, {0x3f800001u, 0x00000400u, 0x3f800001u}, {0x3f800000u, 0x00000000u, 0x3f800000u}, {0x3f800000u, 0x00000000u, 0x3f800000u}, {0x3f800001u, 0x00000400u, 0x3f800001u}, {0x3f800001u, 0x00000400u, 0x3f800001u}, {0x3f800000u, 0x00000000u, 0x3f800000u}}}},
+    {{0x00000000u, 0x00000000u, 0x33800000u, 0x38800000u, 0x3f000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x33800000u}, {{{0x33800000u, 0x00000200u, 0x33800000u}, {0x33800000u, 0x00000200u, 0x33800000u}, {0x33800000u, 0x00000000u, 0x33800000u}, {0x00000000u, 0x00000200u, 0x00000000u}, {0x00000000u, 0x00000200u, 0x00000000u}, {0x33800000u, 0x00000000u, 0x33800000u}, {0x33800000u, 0x00000000u, 0x33800000u}, {0x00000000u, 0x00000200u, 0x00000000u}}}},
+    {{0xc77fe000u, 0x00400000u, 0x80000000u, 0x3f800000u, 0x3f800000u, 0x30800000u, 0x38800000u, 0x83800000u, 0x00000000u}, {{{0x87ffe000u, 0x00003c00u, 0x80000000u}, {0x80000000u, 0x00003c00u, 0x80008000u}, {0x87ffe000u, 0x00003c00u, 0x80008000u}, {0x87ffe000u, 0x00003c00u, 0x80008000u}, {0x87ffe000u, 0x00003c00u, 0x80000000u}, {0x80000000u, 0x00003c01u, 0x80008000u}, {0x80000000u, 0x00003c00u, 0x80008000u}, {0x87ffe000u, 0x00003c00u, 0x80000000u}}}},
+    {{0xb3800000u, 0x40800000u, 0x3f800000u, 0x38800000u, 0x3f000010u, 0x00000000u, 0x00000000u, 0x00000000u, 0xb3800000u}, {{{0x3f7ffffcu, 0x00000200u, 0xb3800000u}, {0x3f7ffffcu, 0x00000200u, 0xb3800000u}, {0x3f7ffffcu, 0x00000000u, 0xb3800000u}, {0x3f800000u, 0x00000200u, 0x00000000u}, {0x3f800000u, 0x00000200u, 0x00000000u}, {0x3f7ffffcu, 0x00000000u, 0xb3800000u}, {0x3f7ffffcu, 0x00000000u, 0xb3800000u}, {0x3f800000u, 0x00000200u, 0x00000000u}}}},
+    {{0x38800000u, 0x01000000u, 0x00000000u, 0xb8800000u, 0x3f000010u, 0x00000000u, 0x477fe000u, 0x80400000u, 0x00000000u}, {{{0x00000000u, 0x00008200u, 0x87ffe000u}, {0x00000400u, 0x00008200u, 0x00000000u}, {0x00000400u, 0x00008000u, 0x87ffe000u}, {0x00000400u, 0x00008200u, 0x87ffe000u}, {0x00000000u, 0x00008200u, 0x87ffe000u}, {0x00000400u, 0x00008000u, 0x00000000u}, {0x00000400u, 0x00008000u, 0x00000000u}, {0x00000000u, 0x00008200u, 0x87ffe000u}}}},
+    {{0x3f800000u, 0x3f800000u, 0xbf800000u, 0x3f800000u, 0x3f800000u, 0xbf800000u, 0x3f800000u, 0x3f800000u, 0xbf800000u}, {{{0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}, {0x00000000u, 0x00008000u, 0x00000000u}, {0x00000000u, 0x00000000u, 0x00000000u}}}},
+    {{0xc77fe000u, 0x80400000u, 0x00000000u, 0x3f800000u, 0x00400000u, 0x3f800000u, 0xc77fe000u, 0x80400000u, 0x00000000u}, {{{0x07ffe000u, 0x00003c00u, 0x07ffe000u}, {0x00000000u, 0x00003c00u, 0x00000000u}, {0x07ffe000u, 0x00003c00u, 0x07ffe000u}, {0x07ffe000u, 0x00003c00u, 0x07ffe000u}, {0x07ffe000u, 0x00003c00u, 0x07ffe000u}, {0x00000000u, 0x00003c00u, 0x00000000u}, {0x00000000u, 0x00003c00u, 0x00000000u}, {0x07ffe000u, 0x00003c00u, 0x07ffe000u}}}},
+    {{0xb8800000u, 0x03800000u, 0x80000000u, 0x3f800000u, 0x3f800000u, 0x00000001u, 0xb8800000u, 0x83800000u, 0x80000000u}, {{{0x80000000u, 0x00003c00u, 0x00000000u}, {0x80008000u, 0x00003c00u, 0x00008000u}, {0x80008000u, 0x00003c00u, 0x00008000u}, {0x80008000u, 0x00003c00u, 0x00008000u}, {0x80000000u, 0x00003c00u, 0x00000000u}, {0x80008000u, 0x00003c00u, 0x00008000u}, {0x80008000u, 0x00003c00u, 0x00008000u}, {0x80000000u, 0x00003c00u, 0x00000000u}}}},
+    {{0xb3800000u, 0x40000000u, 0xbf800000u, 0x33800000u, 0x49800000u, 0x00000000u, 0xb3800000u, 0x40000000u, 0xbf800000u}, {{{0xbf800001u, 0x00002c00u, 0xbf800001u}, {0xbf800001u, 0x00002c00u, 0xbf800001u}, {0xbf800001u, 0x00002c00u, 0xbf800001u}, {0xbf800000u, 0x00000000u, 0xbf800000u}, {0xbf800000u, 0x00000000u, 0xbf800000u}, {0xbf800001u, 0x00002c00u, 0xbf800001u}, {0xbf800001u, 0x00002c00u, 0xbf800001u}, {0xbf800000u, 0x00000000u, 0xbf800000u}}}},
+    {{0x00000000u, 0x00000000u, 0xb3800000u, 0xb8800000u, 0x3f000000u, 0x80000000u, 0x00000000u, 0x00000000u, 0x33800000u}, {{{0xb3800000u, 0x00008200u, 0x33800000u}, {0xb3800000u, 0x00008200u, 0x33800000u}, {0xb3800000u, 0x00008000u, 0x33800000u}, {0x00000000u, 0x00008200u, 0x00000000u}, {0x00000000u, 0x00008200u, 0x00000000u}, {0xb3800000u, 0x00008000u, 0x33800000u}, {0xb3800000u, 0x00008000u, 0x33800000u}, {0x00000000u, 0x00008200u, 0x00000000u}}}},
+    {{0x33800000u, 0x7fa00000u, 0x43000000u, 0x33800000u, 0x4f000000u, 0xabcd0001u, 0x33800000u, 0x7fa00000u, 0x33800000u}, {{{0x7fa00000u, 0x00005800u, 0x7fa00000u}, {0x7fa00000u, 0x00005800u, 0x7fa00000u}, {0x7fa00000u, 0x00005800u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x00005800u, 0x7fe00000u}, {0x7fa00000u, 0x000057ffu, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
+    {{0xbf800000u, 0x00000001u, 0x7fa00000u, 0xbf800000u, 0x477ff000u, 0xabcd8200u, 0xbf800000u, 0x00000001u, 0xb8000000u}, {{{0x7fa00000u, 0x0000fc00u, 0xb8000000u}, {0x7fa00000u, 0x0000fc00u, 0xb8000000u}, {0x7fa00000u, 0x0000fc00u, 0xb8000000u}, {0x7fa00000u, 0x0000fc00u, 0x80000001u}, {0x7fe00000u, 0x0000fc00u, 0x80000000u}, {0x7fe00000u, 0x0000fbffu, 0xb8000000u}, {0x7fa00000u, 0x0000fc00u, 0xb8000000u}, {0x7fe00000u, 0x0000fbffu, 0x80000000u}}}},
+    {{0x33800000u, 0x7fa00000u, 0xff800000u, 0x33800000u, 0x7f7fffffu, 0xabcdbc00u, 0x33800000u, 0x7fa00000u, 0xbf800000u}, {{{0x7fa00000u, 0x00007c00u, 0x7fa00000u}, {0x7fa00000u, 0x00007c00u, 0x7fa00000u}, {0x7fa00000u, 0x00007c00u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x00007c00u, 0x7fe00000u}, {0x7fa00000u, 0x00007bffu, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
+    {{0xb8000000u, 0x7fa00000u, 0x80000000u, 0xb8000000u, 0x7f7fffffu, 0xabcdbc00u, 0xb8000000u, 0x7fa00000u, 0xbf800000u}, {{{0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x0000fbffu, 0x7fe00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
+    {{0x33800000u, 0xff800000u, 0xff800000u, 0x33800000u, 0x7f800000u, 0xabcd0000u, 0x33800000u, 0xff800000u, 0x00000000u}, {{{0xff800000u, 0x00007c00u, 0xff800000u}, {0xff800000u, 0x00007c00u, 0xff800000u}, {0xff800000u, 0x00007c00u, 0xff800000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}, {0xff800000u, 0x00007c00u, 0xff800000u}, {0xff800000u, 0x00007c00u, 0xff800000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}}}},
+    {{0x33800000u, 0x7f800000u, 0xffc02000u, 0x33800000u, 0x47800000u, 0xabcd8000u, 0x33800000u, 0x7f800000u, 0x80000000u}, {{{0xffc02000u, 0x00001c00u, 0x7f800000u}, {0xffc02000u, 0x00001c00u, 0x7f800000u}, {0xffc02000u, 0x00001c00u, 0x7f800000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc02000u, 0x00001c00u, 0x7f800000u}, {0xffc02000u, 0x00001bffu, 0x7f800000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}}}},
+    {{0xb8000000u, 0x477ff000u, 0x00000000u, 0xb8000000u, 0x4f000000u, 0xabcd5800u, 0xb8000000u, 0x477ff000u, 0x43000000u}, {{{0xbffff000u, 0x0000fc00u, 0x42fc0040u}, {0xbffff000u, 0x0000fc00u, 0x42fc0040u}, {0xbffff000u, 0x0000fc00u, 0x42fc0040u}, {0x00000000u, 0x00008000u, 0x43000000u}, {0x00000000u, 0x00008000u, 0x43000000u}, {0xbffff000u, 0x0000fbffu, 0x42fc0040u}, {0xbffff000u, 0x0000fc00u, 0x42fc0040u}, {0x00000000u, 0x00008000u, 0x43000000u}}}},
+    {{0x33800000u, 0x7fa00000u, 0x477fe000u, 0x33800000u, 0x47800000u, 0xabcd7d00u, 0x33800000u, 0x7fa00000u, 0x7fa00000u}, {{{0x7fa00000u, 0x00001c00u, 0x7fa00000u}, {0x7fa00000u, 0x00001c00u, 0x7fa00000u}, {0x7fa00000u, 0x00001c00u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x00001c00u, 0x7fe00000u}, {0x7fa00000u, 0x00001bffu, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
+    {{0xb8000000u, 0x47800000u, 0x7fa00000u, 0xb8000000u, 0x7f7fffffu, 0xabcd7bffu, 0xb8000000u, 0x47800000u, 0x477fe000u}, {{{0x7fa00000u, 0x0000fc00u, 0x477fde00u}, {0x7fa00000u, 0x0000fc00u, 0x477fde00u}, {0x7fa00000u, 0x0000fc00u, 0x477fde00u}, {0x7fa00000u, 0x00008000u, 0x477fe000u}, {0x7fe00000u, 0x00008000u, 0x477fe000u}, {0x7fe00000u, 0x0000fbffu, 0x477fde00u}, {0x7fa00000u, 0x0000fc00u, 0x477fde00u}, {0x7fe00000u, 0x00008000u, 0x477fe000u}}}},
+    {{0x33800000u, 0xff800000u, 0xbf800000u, 0x33800000u, 0x3f800000u, 0xabcd7bffu, 0x33800000u, 0xff800000u, 0x477fe000u}, {{{0xff800000u, 0x00000001u, 0xff800000u}, {0xff800000u, 0x00000001u, 0xff800000u}, {0xff800000u, 0x00000000u, 0xff800000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}, {0xff800000u, 0x00000000u, 0xff800000u}, {0xff800000u, 0x00000000u, 0xff800000u}, {0xffc00000u, 0x00008000u, 0xffc00000u}}}},
+    {{0xb8000000u, 0x477ff000u, 0x33800000u, 0xb8000000u, 0x3f800000u, 0xabcd8200u, 0xb8000000u, 0x477ff000u, 0xb8000000u}, {{{0xbffff000u, 0x00008200u, 0xbffff100u}, {0xbffff000u, 0x00008200u, 0xbffff100u}, {0xbffff000u, 0x00008000u, 0xbffff100u}, {0x00000000u, 0x00008000u, 0x80000000u}, {0x00000000u, 0x00008000u, 0x80000000u}, {0xbffff000u, 0x00008000u, 0xbffff100u}, {0xbffff000u, 0x00008000u, 0xbffff100u}, {0x00000000u, 0x00008000u, 0x80000000u}}}},
+    {{0x33800000u, 0x7fa00000u, 0xb8000000u, 0x33800000u, 0xff800000u, 0xabcd7bffu, 0x33800000u, 0x7fa00000u, 0x477fe000u}, {{{0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fe00u, 0x7fa00000u}, {0x7fe00000u, 0x0000fe00u, 0x7fe00000u}, {0x7fe00000u, 0x0000fc00u, 0x7fe00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fe00000u, 0x0000fe00u, 0x7fe00000u}}}},
+    {{0xff800000u, 0x00000001u, 0x43000000u, 0xff800000u, 0x47800000u, 0xabcd7d00u, 0xff800000u, 0x00000001u, 0x7fa00000u}, {{{0xff800000u, 0x0000fc00u, 0x7fa00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0xff800000u, 0x0000fc00u, 0x7fa00000u}, {0xff800000u, 0x0000fc00u, 0x7fa00000u}, {0xff800000u, 0x0000fc00u, 0x7fe00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0xff800000u, 0x0000fc00u, 0x7fe00000u}}}},
+    {{0x7f800000u, 0x7fa00000u, 0x33800000u, 0x7f800000u, 0x80400000u, 0xabcd3c00u, 0x7f800000u, 0x7fa00000u, 0x3f800000u}, {{{0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fe00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fe00000u, 0x0000fc00u, 0x7fe00000u}, {0x7fe00000u, 0x0000fe00u, 0x7fe00000u}, {0x7fa00000u, 0x0000fe00u, 0x7fa00000u}, {0x7fe00000u, 0x0000fc00u, 0x7fe00000u}}}},
+    {{0x3f800000u, 0x00000001u, 0x7fa00000u, 0x3f800000u, 0xff800000u, 0xabcd0001u, 0x3f800000u, 0x00000001u, 0x33800000u}, {{{0x7fa00000u, 0x0000fc00u, 0x33800000u}, {0x7fa00000u, 0x0000fc00u, 0x33800000u}, {0x7fa00000u, 0x0000fc00u, 0x33800000u}, {0x7fa00000u, 0x0000fc00u, 0x00000001u}, {0x7fe00000u, 0x0000fc00u, 0x00000000u}, {0x7fe00000u, 0x0000fc00u, 0x33800000u}, {0x7fa00000u, 0x0000fc00u, 0x33800000u}, {0x7fe00000u, 0x0000fc00u, 0x00000000u}}}},
+    {{0xb8000000u, 0x7fa00000u, 0x33800000u, 0xb8000000u, 0x4f000000u, 0xabcd7e00u, 0xb8000000u, 0x7fa00000u, 0x7fc00000u}, {{{0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x0000fbffu, 0x7fe00000u}, {0x7fa00000u, 0x0000fc00u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
+    {{0xff800000u, 0x80400000u, 0x43000000u, 0xff800000u, 0x477ff000u, 0xabcd7d00u, 0xff800000u, 0x80400000u, 0x7fa00000u}, {{{0x7f800000u, 0x0000fc00u, 0x7fa00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0x7f800000u, 0x0000fc00u, 0x7fa00000u}, {0x7f800000u, 0x0000fc00u, 0x7fa00000u}, {0x7f800000u, 0x0000fc00u, 0x7fe00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0xffc00000u, 0x0000fc00u, 0xffc00000u}, {0x7f800000u, 0x0000fc00u, 0x7fe00000u}}}},
+    {{0x33800000u, 0x4f000000u, 0x3f800000u, 0x33800000u, 0x47800000u, 0xabcdbc00u, 0x33800000u, 0x4f000000u, 0xbf800000u}, {{{0x43010000u, 0x00001c00u, 0x42fe0000u}, {0x43010000u, 0x00001c00u, 0x42fe0000u}, {0x43010000u, 0x00001c00u, 0x42fe0000u}, {0x3f800000u, 0x00008000u, 0xbf800000u}, {0x3f800000u, 0x00008000u, 0xbf800000u}, {0x43010000u, 0x00001c00u, 0x42fe0000u}, {0x43010000u, 0x00001bffu, 0x42fe0000u}, {0x3f800000u, 0x00008000u, 0xbf800000u}}}},
+    {{0x7f800000u, 0x00000001u, 0x3f800000u, 0x7f800000u, 0x80400000u, 0xabcd5800u, 0x7f800000u, 0x00000001u, 0x43000000u}, {{{0x7f800000u, 0x0000fc00u, 0x7f800000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}, {0x7f800000u, 0x0000fc00u, 0x7f800000u}, {0x7f800000u, 0x0000fc00u, 0x7f800000u}, {0x7f800000u, 0x0000fc00u, 0x7f800000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}, {0xffc00000u, 0x0000fe00u, 0xffc00000u}, {0x7f800000u, 0x0000fc00u, 0x7f800000u}}}},
+    {{0x33800000u, 0x7fa00000u, 0x7fc00000u, 0x33800000u, 0x3f800000u, 0xabcd7d00u, 0x33800000u, 0x7fa00000u, 0x7fa00000u}, {{{0x7fa00000u, 0x00000001u, 0x7fa00000u}, {0x7fa00000u, 0x00000001u, 0x7fa00000u}, {0x7fa00000u, 0x00000000u, 0x7fa00000u}, {0x7fa00000u, 0x00008000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}, {0x7fe00000u, 0x00000000u, 0x7fe00000u}, {0x7fa00000u, 0x00000000u, 0x7fa00000u}, {0x7fe00000u, 0x00008000u, 0x7fe00000u}}}},
 }};
 
 constexpr std::uint32_t Words = 12;
@@ -146,23 +191,23 @@ RecompileResult Compile(std::span<const std::uint32_t> modes, bool integer, bool
     return result;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t mode, bool integer) {
+void Run(AgcDriver::VulkanDevice& device, const std::array<Row, 32>& table, std::uint32_t flags, const char* name, std::uint32_t mode, bool integer) {
     Data.fill(Sentinel);
-    for (std::uint32_t row = 0; row < Rows.size(); ++row) std::copy(Rows[row].input.begin(), Rows[row].input.end(), Data.begin() + row * Words);
-    const std::array<std::uint32_t, 1> modes{ModeFlags[mode]};
+    for (std::uint32_t row = 0; row < table.size(); ++row) std::copy(table[row].input.begin(), table[row].input.end(), Data.begin() + row * Words);
+    const std::array<std::uint32_t, 1> modes{flags};
     device.Dispatch(Compile(modes, integer, false, Words), 1u, 1u, 1u);
     device.WaitIdle();
-    for (std::uint32_t row = 0; row < Rows.size(); ++row) {
-        for (std::uint32_t input = 0; input < 9u; ++input) Require(Data[row * Words + input] == Rows[row].input[input], "interpolation modes changed an input");
+    for (std::uint32_t row = 0; row < table.size(); ++row) {
+        for (std::uint32_t input = 0; input < 9u; ++input) Require(Data[row * Words + input] == table[row].input[input], "interpolation modes changed an input");
         for (std::uint32_t op = 0; op < 3u; ++op) {
             const auto actual = Data[row * Words + 9u + op];
-            const auto expected = Rows[row].expected[mode][op];
+            const auto expected = table[row].expected[mode][op];
             char message[200];
-            std::snprintf(message, sizeof(message), "%s (%s), %s, row %u: got 0x%08x, expected 0x%08x", OpNames[op], integer ? "integer" : "Float64", ModeNames[mode], row, actual, expected);
+            std::snprintf(message, sizeof(message), "%s (%s), %s, row %u: got 0x%08x, expected 0x%08x", OpNames[op], integer ? "integer" : "Float64", name, row, actual, expected);
             Require(actual == expected, message);
         }
     }
-    for (std::size_t index = Rows.size() * Words; index < Data.size(); ++index) Require(Data[index] == Sentinel, "interpolation modes wrote beyond the rows");
+    for (std::size_t index = table.size() * Words; index < Data.size(); ++index) Require(Data[index] == Sentinel, "interpolation modes wrote beyond the rows");
 }
 
 }
@@ -181,6 +226,8 @@ std::uint32_t Reference(std::uint32_t delta, std::uint32_t coordinate, std::uint
     const bool quiet = half || (mode & InterpolationQuiet) != 0u;
     const bool flush32 = (mode & InterpolationFlush32) != 0u;
     const bool flush16 = (mode & InterpolationFlush16) != 0u;
+    const bool flushResult32 = (mode & InterpolationFlushResult32) != 0u;
+    const bool flushResult16 = (mode & InterpolationFlushResult16) != 0u;
     const std::uint32_t rounding = half ? (mode >> InterpolationRound16Shift) & 3u : 0u;
     const auto d = Flush(delta, flush16, 0x38800000u);
     const auto c = Flush(coordinate, flush32, 0x00800000u);
@@ -224,7 +271,7 @@ std::uint32_t Reference(std::uint32_t delta, std::uint32_t coordinate, std::uint
         }
         result = std::bit_cast<std::uint32_t>(static_cast<float>(rounded));
     }
-    return half ? Flush(result, flush16, 0x38800000u) : Flush(result, flush32, 0x00800000u);
+    return half ? Flush(result, flushResult16, 0x38800000u) : Flush(result, flushResult32, 0x00800000u);
 }
 
 struct Generator {
@@ -271,7 +318,7 @@ struct Generator {
 
 void RunRandom(AgcDriver::VulkanDevice& device, bool integer) {
     std::array<std::uint32_t, RandomModes> modes{};
-    for (std::uint32_t slot = 0; slot < RandomModes; ++slot) modes[slot] = ModeFlags[slot % ModeFlags.size()] | ((slot / ModeFlags.size()) << InterpolationRound16Shift);
+    for (std::uint32_t slot = 0; slot < RandomModes; ++slot) modes[slot] = DenormalFlags(slot >> 4u, (slot >> 2u) & 3u, slot & 3u) | (((slot + (slot >> 2u)) & 3u) << InterpolationRound16Shift);
     Generator generator{0x6b5f00000000ull};
     Data.fill(Sentinel);
     for (std::uint32_t row = 0; row < RandomRows; ++row) {
@@ -426,7 +473,7 @@ std::uint32_t ChainReference(const std::uint32_t* row, std::span<const std::uint
 void RunChains(AgcDriver::VulkanDevice& device, bool integer) {
     constexpr std::uint32_t lanes = 8192;
     std::array<std::uint32_t, 2 * RandomModes> steps{};
-    for (std::uint32_t step = 0; step < steps.size(); ++step) steps[step] = ModeFlags[step % ModeFlags.size()] | (((step / ModeFlags.size()) % 4u) << InterpolationRound16Shift);
+    for (std::uint32_t step = 0; step < steps.size(); ++step) steps[step] = DenormalFlags((step >> 4u) & 1u, (step >> 2u) & 3u, step & 3u) | (((step + (step >> 3u)) & 3u) << InterpolationRound16Shift);
     for (const bool half : {false, true}) {
         FillChains(lanes, half, true);
         device.Dispatch(CompileChain(steps, half, integer), lanes / ChainGroup, 1u, 1u);
@@ -475,15 +522,17 @@ int main(int argc, char** argv) {
             return 0;
         }
         for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) {
-            Run(*device, mode, true);
-            if (float64) Run(*device, mode, false);
+            Run(*device, Rows, ModeFlags[mode], ModeNames[mode], mode, true);
+            if (float64) Run(*device, Rows, ModeFlags[mode], ModeNames[mode], mode, false);
+            Run(*device, SplitRows, SplitModeFlags[mode], SplitModeNames[mode], mode, true);
+            if (float64) Run(*device, SplitRows, SplitModeFlags[mode], SplitModeNames[mode], mode, false);
         }
         RunRandom(*device, true);
         if (float64) RunRandom(*device, false);
         RunChains(*device, true);
         if (float64) RunChains(*device, false);
-        std::puts(float64 ? "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer and Float64 paths"
-                          : "interpolation modes passed: 32 hardware rows and 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer path (the device has no Float64)");
+        std::puts(float64 ? "interpolation modes passed: 32 hardware rows in 8 float modes, 32 in 8 split denormal and f16 rounding modes, 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer and Float64 paths"
+                          : "interpolation modes passed: 32 hardware rows in 8 float modes, 32 in 8 split denormal and f16 rounding modes, 2048 random rows against the reference in 32 float modes, 3 ops, 8192 chains of 64 f32 and f16 interpolations, integer path (the device has no Float64)");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
