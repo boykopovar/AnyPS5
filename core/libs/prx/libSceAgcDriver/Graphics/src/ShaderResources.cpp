@@ -1900,7 +1900,10 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
     std::uint64_t freed = 0;
     std::size_t sampledEntries = 0;
     std::size_t storageEntries = 0;
-    std::size_t storageKept = 0;
+    std::size_t storageCached = 0;
+    std::size_t storagePending = 0;
+    std::size_t storageRecent = 0;
+    bool storageScanned = false;
     bool sampledSkipped = false;
     bool storageSkipped = false;
     {
@@ -1938,13 +1941,20 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                             storageSkipped = true;
                             break;
                         }
-                        storageKept = 0;
+                        if (!storageScanned) storageCached = cache.entries.size();
+                        storageScanned = true;
+                        storagePending = 0;
+                        storageRecent = 0;
                         bool spared = false;
                         const auto present = Recorder::Presents();
                         for (auto it = cache.entries.end(); it != cache.entries.begin();) {
                             --it;
-                            if (it->texture->Dirty() || (present != 0u && it->lastPresent + 1u >= present)) {
-                                ++storageKept;
+                            if (it->texture->Dirty()) {
+                                ++storagePending;
+                                continue;
+                            }
+                            if (present != 0u && it->lastPresent + 1u >= present) {
+                                ++storageRecent;
                                 continue;
                             }
                             if (it->texture->TakeUsed()) {
@@ -1979,7 +1989,9 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         }
     }
     freed = ImageMemoryReleasedBytes() - releasedBefore;
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
+    char kept[192] = "";
+    if (storageScanned) std::snprintf(kept, sizeof(kept), "; of the %zu cached storage images, %zu with pending results and %zu used in this or the previous present were kept", storageCached, storagePending, storageRecent);
+    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s%s\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", kept);
     return freed;
 }
 
