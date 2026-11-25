@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -42,9 +41,7 @@ std::int64_t* CheckedLibcxxAtomic(const std::int64_t* storage, const char* funct
     if (!storage || address % alignof(std::int64_t) != 0)
         throw std::invalid_argument(std::string(function) + ": invalid 64-bit atomic address");
     std::int64_t probe = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&probe, storage, sizeof(probe));
-    errno = savedErrno;
     if (!readable)
         throw std::invalid_argument(std::string(function) + ": invalid 64-bit atomic address");
     return const_cast<std::int64_t*>(storage);
