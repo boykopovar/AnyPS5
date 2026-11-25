@@ -194,6 +194,11 @@ int main(int argc, char** argv) {
             Input[tid * 4u + 2u] = Values[(tid * 13u + 7u) % Values.size()];
             Input[tid * 4u + 3u] = 0u;
         }
+        for (std::uint32_t tid = 0; tid < MeasuredRows.size(); ++tid) {
+            Input[tid * 4u] = MeasuredRows[tid].a;
+            Input[tid * 4u + 1u] = MeasuredRows[tid].b;
+            Input[tid * 4u + 2u] = MeasuredRows[tid].c;
+        }
         std::uint64_t compared = 0u;
         for (const std::uint32_t denorm : {0u, 3u}) {
             for (const bool ieee : {false, true}) {
