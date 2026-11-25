@@ -199,6 +199,9 @@ private:
     static bool insertCompare();
     static std::size_t dispatchCacheEntries();
     static std::uint64_t variantBytes(const DispatchVariant& variant);
+    static std::uint64_t decodeBytes(const DrawDecode& decode);
+    void acquireDecode(const std::shared_ptr<const DrawDecode>& decode);
+    void releaseDecode(const std::shared_ptr<const DrawDecode>& decode);
     void accountVariant(const DispatchVariant& variant, bool added);
     void eraseDispatchEntry(std::unordered_map<std::uint64_t, std::shared_ptr<DispatchEntry>>::iterator it);
     void classifyDiffering(std::uint64_t program, std::uint64_t key, const DispatchVariant& old, const DispatchVariant& fresh, const ShaderRecompiler::ResourceCapture* capture, EntryCounters& counters);
@@ -492,6 +495,8 @@ private:
     std::unordered_map<std::uint64_t, std::deque<std::uint64_t>> priorValueSets;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, std::size_t> drawCacheResultReferences;
+    std::unordered_map<const DrawDecode*, std::size_t> drawCacheDecodeReferences;
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;
