@@ -566,6 +566,53 @@ static void MutexOwnershipFollowsTheConsole() {
     Require(FailsWith(Umtx(nullptr, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EFAULT));
 }
 
+static void PriorityProtectedUnlockChecksTheProtocolThenTheOwner() {
+    Umutex protect;
+    protect.flags = PRIO_PROTECT;
+    Require(FailsWith(Umtx(&protect, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && protect.owner == 0);
+    protect.owner = 12345;
+    Require(FailsWith(Umtx(&protect, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && protect.owner == 12345);
+    protect.owner = CONTESTED | 12345;
+    Require(FailsWith(Umtx(&protect, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && protect.owner == (CONTESTED | 12345));
+    protect.owner = Self();
+    bool threw = false;
+    try { Umtx(&protect, UMTX_OP_MUTEX_UNLOCK, 0); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && protect.owner == Self());
+
+    for (const std::uint32_t flags : {PRIO_INHERIT | PRIO_PROTECT, ROBUST | PRIO_INHERIT | PRIO_PROTECT}) {
+        Umutex both;
+        both.flags = flags;
+        for (const std::uint32_t owner : {0u, 12345u, Self()}) {
+            both.owner = owner;
+            Require(FailsWith(Umtx(&both, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EINVAL) && both.owner == owner);
+        }
+    }
+
+    Umutex robustProtect;
+    robustProtect.flags = ROBUST | PRIO_PROTECT;
+    Require(FailsWith(Umtx(&robustProtect, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EINVAL) && robustProtect.owner == 0);
+    Require(FailsWith(Umtx(&robustProtect, UMTX_OP_MUTEX_LOCK, 0), GUEST_EINVAL) && robustProtect.owner == 0);
+    robustProtect.owner = RB_OWNERDEAD;
+    Require(FailsWith(Umtx(&robustProtect, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EINVAL) && robustProtect.owner == RB_OWNERDEAD);
+    Require(FailsWith(Umtx(&robustProtect, UMTX_OP_MUTEX_LOCK, 0), GUEST_EINVAL) && robustProtect.owner == RB_OWNERDEAD);
+    Require(FailsWith(Umtx(&robustProtect, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && robustProtect.owner == RB_OWNERDEAD);
+}
+
+static void PriorityInheritingMutexWaitTakesTheMutexWithoutBlocking() {
+    Umutex inherit;
+    inherit.flags = PRIO_INHERIT;
+    Require(Umtx(&inherit, UMTX_OP_MUTEX_WAIT, 0) == 0 && inherit.owner == Self());
+    Require(Umtx(&inherit, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && inherit.owner == 0);
+    inherit.owner = 12345;
+    UmtxTime timeout = ShortTimeout();
+    Require(FailsWith(Umtx(&inherit, UMTX_OP_MUTEX_WAIT, 0, SizeOf(sizeof(timeout)), &timeout), GUEST_EBUSY) && inherit.owner == 12345);
+    Require(FailsWith(Umtx(&inherit, UMTX_OP_MUTEX_WAIT, 0), GUEST_EBUSY) && inherit.owner == 12345);
+    inherit.owner = CONTESTED;
+    Require(Umtx(&inherit, UMTX_OP_MUTEX_WAIT, 0) == 0 && inherit.owner == (CONTESTED | Self()));
+    Require(Umtx(&inherit, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && inherit.owner == 0);
+}
+
 static void MutexLockWaitsForTheOwnerToUnlock() {
     Umutex mutex;
     Require(Umtx(&mutex, UMTX_OP_MUTEX_LOCK, 0) == 0);
@@ -773,16 +820,32 @@ static void RwlockDoesNotLoseAWakeupUnderContention() {
     Require(rwlock.state == 0 && rwlock.blockedReaders == 0 && rwlock.blockedWriters == 0);
 }
 
-static void ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter() {
+static void ConditionWaitRejectsPriorityProtectedMutexesWithoutLeakingAWaiter() {
     Ucond condition;
     Umutex protect;
     protect.flags = PRIO_PROTECT;
     KernelTimespec timeout{0, 1000000};
-    try {
-        Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &timeout);
-    } catch (const std::runtime_error&) {
-    }
+    Require(FailsWith(Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &timeout), GUEST_EPERM) && protect.owner == 0);
     Require(condition.hasWaiters == 0);
+    protect.owner = CONTESTED | 12345;
+    Require(FailsWith(Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &timeout), GUEST_EPERM) && protect.owner == (CONTESTED | 12345));
+    Require(condition.hasWaiters == 0);
+    protect.owner = Self();
+    KernelTimespec invalid{0, 1000000000};
+    Require(FailsWith(Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &invalid), GUEST_EINVAL) && protect.owner == Self());
+    Require(condition.hasWaiters == 0);
+    bool threw = false;
+    try { Umtx(&condition, UMTX_OP_CV_WAIT, 0, &protect, &timeout); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && condition.hasWaiters == 0 && protect.owner == Self());
+
+    Umutex both;
+    both.flags = PRIO_INHERIT | PRIO_PROTECT;
+    for (const std::uint32_t owner : {0u, 12345u, Self()}) {
+        both.owner = owner;
+        Require(FailsWith(Umtx(&condition, UMTX_OP_CV_WAIT, 0, &both, &timeout), GUEST_EINVAL) && both.owner == owner);
+        Require(condition.hasWaiters == 0);
+    }
 
     Umutex mutex;
     Require(Umtx(&mutex, UMTX_OP_MUTEX_TRYLOCK, 0) == 0);
@@ -872,6 +935,39 @@ static void RobustMutexOfAnExitedOwnerIsRecoverable() {
 
     Require(FailsWith(Umtx(&inactive, UMTX_OP_MUTEX_LOCK, 0), GUEST_EOWNERDEAD) && inactive.owner == (CONTESTED | Self()));
     Require(Umtx(&inactive, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && inactive.owner == 0);
+}
+
+static void RobustPriorityInheritingMutexOfAnExitedOwnerIsRecoverable() {
+    Umutex first;
+    first.flags = ROBUST | PRIO_INHERIT;
+    Umutex second;
+    second.flags = ROBUST | PRIO_INHERIT;
+    Umutex third;
+    third.flags = ROBUST | PRIO_INHERIT;
+    RobustOwner owner;
+    owner.linked[0] = &first;
+    owner.linked[1] = &third;
+    owner.inactive = &second;
+    RunRobustOwner(owner);
+    Require(owner.id != Self());
+    Require(first.owner == RB_OWNERDEAD && second.owner == RB_OWNERDEAD && third.owner == RB_OWNERDEAD);
+
+    Require(FailsWith(Umtx(&first, UMTX_OP_MUTEX_WAIT, 0), GUEST_EOWNERDEAD) && first.owner == (CONTESTED | Self()));
+    Require(Umtx(&first, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && first.owner == 0);
+    Require(Umtx(&first, UMTX_OP_MUTEX_TRYLOCK, 0) == 0 && first.owner == Self());
+    Require(Umtx(&first, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && first.owner == 0);
+
+    Require(FailsWith(Umtx(&third, UMTX_OP_MUTEX_LOCK, 0), GUEST_EOWNERDEAD) && third.owner == (CONTESTED | Self()));
+    Require(Umtx(&third, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && third.owner == 0);
+
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EOWNERDEAD) && second.owner == (CONTESTED | Self()));
+    second.flags |= NONCONSISTENT;
+    Require(Umtx(&second, UMTX_OP_MUTEX_UNLOCK, 0) == 0 && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_LOCK, 0), GUEST_ENOTRECOVERABLE) && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_ENOTRECOVERABLE) && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_WAIT, 0), GUEST_ENOTRECOVERABLE) && second.owner == RB_NOTRECOV);
+    Require(FailsWith(Umtx(&second, UMTX_OP_MUTEX_UNLOCK, 0), GUEST_EPERM) && second.owner == RB_NOTRECOV);
+    Require(Umtx(&second, UMTX_OP_MUTEX_WAKE, 0) == 0 && second.owner == RB_NOTRECOV);
 }
 
 static void RobustMutexWaiterGetsOwnerDeadWhenTheOwnerExits() {
@@ -992,6 +1088,8 @@ int main() {
     Sem2RejectsABadPointer();
     RejectsBadObjectsAndOperations();
     MutexOwnershipFollowsTheConsole();
+    PriorityProtectedUnlockChecksTheProtocolThenTheOwner();
+    PriorityInheritingMutexWaitTakesTheMutexWithoutBlocking();
     MutexLockWaitsForTheOwnerToUnlock();
     MutexWake2LeavesAnUnwaitedMutexAlone();
     MutexWake2RepairsTheContestedBitAndWakesOneWaiter();
@@ -1000,9 +1098,10 @@ int main() {
     RwlockUnlockWakesTheBlockedWriter();
     RwlockReaderPreferenceFollowsTheConsole();
     RwlockDoesNotLoseAWakeupUnderContention();
-    ConditionWaitRejectsAPriorityProtectedMutexWithoutLeakingAWaiter();
+    ConditionWaitRejectsPriorityProtectedMutexesWithoutLeakingAWaiter();
     RobustListsRejectsAnOversizedParameterBlock();
     RobustMutexOfAnExitedOwnerIsRecoverable();
+    RobustPriorityInheritingMutexOfAnExitedOwnerIsRecoverable();
     RobustMutexWaiterGetsOwnerDeadWhenTheOwnerExits();
     MutexWakeReleasesAWaiterOnAnOwnerDeadMutex();
     ExitDoesNotReleaseANonRobustMutex();

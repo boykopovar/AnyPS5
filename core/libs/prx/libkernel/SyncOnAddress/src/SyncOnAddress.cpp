@@ -607,10 +607,6 @@ int CheckMutex(UserMutex* mutex) {
     if (!IsAlignedAddress<std::uint32_t>(reinterpret_cast<std::uintptr_t>(mutex))) {
         APS5_INVALID_ARG_EX;
     }
-    const std::uint32_t flags = std::atomic_ref<std::uint32_t>(mutex->flags).load();
-    if ((flags & UMUTEX_ROBUST) != 0 && (flags & (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) != 0) {
-        NotImplemented_nid_no_patch("_umtx_op on a priority-inheriting or priority-protected robust umutex");
-    }
     return 0;
 }
 
@@ -676,6 +672,11 @@ int MutexLock(UserMutex* mutex, bool acquire, const void* sizeArgument, const vo
         return error;
     }
     const std::uint32_t id = CurrentOwnerId();
+    if (!acquire && (std::atomic_ref<std::uint32_t>(mutex->flags).load() & UMUTEX_PRIO_INHERIT) != 0) {
+        int error = 0;
+        TryAcquireMutex(mutex, id, error);
+        return error;
+    }
     const auto key = reinterpret_cast<std::uintptr_t>(&mutex->owner);
     for (;;) {
         bool done = false;
@@ -716,12 +717,15 @@ int MutexUnlock(UserMutex* mutex, bool ownerDied = false) {
         return error;
     }
     const std::uint32_t flags = std::atomic_ref<std::uint32_t>(mutex->flags).load();
-    if ((flags & UMUTEX_PRIO_PROTECT) != 0) {
-        NotImplemented_nid_no_patch("_umtx_op unlock of a priority-protected umutex");
+    if ((flags & (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) == (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) {
+        return GUEST_EINVAL;
     }
     std::atomic_ref<std::uint32_t> owner(mutex->owner);
     if ((owner.load() & ~UMUTEX_CONTESTED) != CurrentOwnerId()) {
         return GUEST_EPERM;
+    }
+    if ((flags & UMUTEX_PRIO_PROTECT) != 0) {
+        NotImplemented_nid_no_patch("_umtx_op unlock of a priority-protected umutex");
     }
     const auto key = reinterpret_cast<std::uintptr_t>(&mutex->owner);
     owner.store(UnlockedOwner(flags, ownerDied) | (WaiterCount(key) > 1 ? UMUTEX_CONTESTED : UMUTEX_UNOWNED));
@@ -778,12 +782,13 @@ int ConditionWait(UserCondition* condition, UserMutex* mutex, std::uint64_t flag
     if (const int error = CheckMutex(mutex); error != 0) {
         return error;
     }
-    if ((std::atomic_ref<std::uint32_t>(mutex->flags).load() & UMUTEX_PRIO_PROTECT) != 0) {
-        NotImplemented_nid_no_patch("_umtx_op condition wait on a priority-protected umutex");
-    }
     std::optional<std::uint64_t> deadline;
     if (const int error = ConditionDeadline(condition, flags, timeArgument, deadline); error != 0) {
         return error;
+    }
+    if ((std::atomic_ref<std::uint32_t>(mutex->flags).load() & (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) == UMUTEX_PRIO_PROTECT &&
+        (std::atomic_ref<std::uint32_t>(mutex->owner).load() & ~UMUTEX_CONTESTED) == CurrentOwnerId()) {
+        NotImplemented_nid_no_patch("_umtx_op condition wait on a priority-protected umutex");
     }
     const auto key = reinterpret_cast<std::uintptr_t>(condition);
     auto& bucket = BucketOf(key);
