@@ -400,6 +400,14 @@ void TestArguments() {
     const int reopened = sceKernelOpen(path.c_str(), 0, 0);
     Require(reopened == probe && sceKernelClose(reopened) == 0);
 
+    ReadFails("missing_15c.png", kNotFound);
+
+    const int dirProbe = sceKernelOpen(path.c_str(), 0, 0);
+    Require(dirProbe >= 0 && sceKernelClose(dirProbe) == 0);
+    Require(Throws<std::runtime_error>(kDir));
+    const int dirReopened = sceKernelOpen(path.c_str(), 0, 0);
+    Require(dirReopened == dirProbe && sceKernelClose(dirReopened) == 0);
+
     g_fieldCount = 1;
     const std::uint64_t before = NotImplementedCalls_nid_no_patch();
     Require(Throws<std::runtime_error>(path));
