@@ -60,7 +60,6 @@ enum class RequestOwner {
 struct RequestEntry {
     int id = 0;
     bool aborted = false;
-    bool inProgress = false;
     RequestOwner owner = RequestOwner::Internal;
 };
 
@@ -168,7 +167,6 @@ int ValidateRequestForUse(int reqId, RequestOwner expectedOwner = RequestOwner::
     for (const auto& entry : g_requests) {
         if (entry.id == reqId) {
             if (!matchAnyOwner && entry.owner != expectedOwner) return kErrIdNotFound;
-            if (entry.inProgress) return kErrInvalidArg;
             if (entry.aborted) return kErrAborted;
             return 0;
         }
