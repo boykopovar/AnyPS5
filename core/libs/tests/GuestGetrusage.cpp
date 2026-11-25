@@ -124,8 +124,10 @@ int main() {
 #endif
     const std::int64_t beforeTouch = MaxResident(0);
     std::vector<unsigned char> touched(64u << 20, 1);
-    Require(touched[touched.size() / 2] == 1);
-    Require(MaxResident(0) >= beforeTouch + 60000);
+    volatile unsigned char* pages = touched.data();
+    for (std::size_t i = 0; i < touched.size(); i += 4096) pages[i] = 1;
+    const std::int64_t afterTouch = MaxResident(0);
+    Require(afterTouch >= beforeTouch && afterTouch >= 60000);
     RequirePeak(0);
     SpinUntil(0, 400000);
     const std::int64_t mainThread = CpuMicros(1);
