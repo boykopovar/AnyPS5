@@ -2,7 +2,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceBgft/include/InventoryExports.hpp"
 #include "prx/libSceBgft/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -34,9 +33,7 @@ static int Initialize(const BgftInitParam* params, const char* name) {
     if (g_initialized) return SCE_BGFT_ERROR_ALREADY_INITIALIZED;
     if (params == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     BgftInitParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, params, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     if (localParam.heapSize == 0) NotImplemented_nid_no_patch(name);
     g_initialized = true;
@@ -157,9 +154,7 @@ int APS5_VABI sceBgftServiceIntDownloadPauseTask(int32_t taskId) {
 }
 static bool validGuestString(const char* text, std::size_t limit) {
     std::string value;
-    const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(text, limit, value);
-    errno = savedErrno;
     return result == 0;
 }
 
@@ -167,9 +162,7 @@ int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorageEx(const BgftStorage
     if (!g_initialized) return SCE_BGFT_ERROR_NOT_INITIALIZED;
     if (params == nullptr || taskId == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     BgftStorageTaskParam localParams{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
-    errno = savedErrno;
     if (!copied) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     if (localParams.contentId == nullptr || !validGuestString(localParams.contentId, 0x31)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     if (localParams.text16 != nullptr && !validGuestString(localParams.text16, 0x800)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
