@@ -3,7 +3,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <limits>
 
@@ -11,9 +10,7 @@ namespace {
 
 template<typename T>
 bool GuestCopyInErrno_nid_no_patch(T* dest, const void* src) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(dest, src, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
