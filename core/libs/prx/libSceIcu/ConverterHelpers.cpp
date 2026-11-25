@@ -5,7 +5,6 @@
 #include "ustr_cnv.h"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -31,10 +30,8 @@ void CopyOut(void* destination, const void* source, std::size_t bytes, const cha
 }
 
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const GuestArena::HostWrite guard(destination, bytes);
     const bool ok = guard.Open() && GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
@@ -77,9 +74,7 @@ std::string CopyConverterName(const char* source, const char* caller) {
     constexpr int GuestNameTooLong = 63;
     std::string name;
     for (std::size_t capacity = UCNV_MAX_CONVERTER_NAME_LENGTH; capacity <= name.max_size() / 2; capacity *= 2) {
-        const int savedErrno = errno;
         const int error = CopyGuestString_nid_no_patch(source, capacity, name);
-        errno = savedErrno;
         if (error == 0) return name;
         if (error != GuestNameTooLong) break;
     }
