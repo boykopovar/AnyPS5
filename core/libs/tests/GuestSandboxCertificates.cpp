@@ -10,6 +10,16 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -18,6 +28,21 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+static unsigned long CurrentProcessId() {
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
+static void RemoveDirectoryTree(const std::filesystem::path& path) {
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) return;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(path, error)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, error);
+    }
+    std::filesystem::remove_all(path, error);
+}
 static std::string ReadKernel(const std::string& path) {
     const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
     Require(descriptor >= 0);
@@ -95,11 +120,37 @@ int main() {
     FileStat status{};
     Require(sceKernelStat(path.c_str(), &status) == 0);
     Require(status.st_size == static_cast<std::int64_t>(text.size()));
-    const auto cached = std::filesystem::current_path() / "cert_cache" / "CA_LIST.cer";
+    const auto originalRoot = std::filesystem::current_path();
+    const auto cached = originalRoot / "cert_cache" / "CA_LIST.cer";
     Require(std::filesystem::is_regular_file(cached));
     Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
     Require(sceKernelOpen((directory + "/CA_LIST2.cer").c_str(), 0, 0) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelOpen((directory + "/CA_LIST.cer.bak").c_str(), 0, 0) == SCE_KERNEL_ERROR_ENOENT);
     Require(fopen_nid_postfix((directory + "/CA_LIST2.cer").c_str(), "rb") == nullptr);
+
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    auto conflictTemp = cached;
+    conflictTemp += "." + std::to_string(CurrentProcessId()) + ".tmp";
+    RemoveDirectoryTree(conflictTemp);
+    {
+        std::ofstream file(conflictTemp, std::ios::binary | std::ios::trunc);
+        file << "stale temporary certificate\n";
+        Require(static_cast<bool>(file));
+    }
+    std::filesystem::permissions(
+        conflictTemp,
+        std::filesystem::perms::owner_read | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
+    Require((std::filesystem::status(conflictTemp).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(!std::filesystem::exists(conflictTemp));
     return 0;
 }

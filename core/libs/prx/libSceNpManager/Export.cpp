@@ -67,6 +67,16 @@ std::set<const void*> g_asmConnections;
 std::set<const void*> g_asmRequests;
 }
 
+static bool AsmInitialized() {
+    std::lock_guard lock(g_asmMutex);
+    return g_asmInitialized;
+}
+
+static bool AsmClientInitialized() {
+    std::lock_guard lock(g_asmMutex);
+    return g_asmClientInitialized;
+}
+
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND = static_cast<int>(0x80552B05);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_NOT_CONNECTED = static_cast<int>(0x80552B08);
@@ -173,34 +183,42 @@ int APS5_VABI sceNpAsmClientAbortRequest(void) {
     return 0;
 }
 int APS5_VABI sceNpAsmClientClearNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientClearNpTitleTokenA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateRequest2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateResourceContext(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateResourceContext2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteRequest(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteResourceContext(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteResourceContext2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -209,86 +227,107 @@ int APS5_VABI sceNpAsmClientGetAppId(void) {
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetCacheControlMaxAge(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameNpTitleInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameTitleBanInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo2A(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo3(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo4(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleId(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleToken2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleTokenA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIds(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIdsA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIdsResult(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrl(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlWithNpTitleId(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceIdInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceIdInfoA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -350,30 +389,37 @@ int APS5_VABI sceNpAsmDeleteRequest(void* request) {
     return 0;
 }
 int APS5_VABI sceNpAsmGenerateNpTitleToken(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGenerateNpTitleToken2(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetNpCommInfo(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetNpCommInfo2(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetRelatedGameNpTitleIds(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetServiceBaseUrl(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetServiceIdInfo(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -418,9 +464,7 @@ int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* s
 int APS5_VABI sceNpGetGamePresenceStatusA(int userId, uint32_t* status) {
     if (!status || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
     const uint32_t presence = NP_GAME_PRESENCE_STATUS_OFFLINE;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &presence, sizeof(presence));
-    errno = savedErrno;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -1276,9 +1320,7 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
     std::array<char, 0x50> localInfo{};
     std::memcpy(localInfo.data(), Platform, sizeof(Platform));
     std::memcpy(localInfo.data() + 0x28, Environment, sizeof(Environment));
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(sandbox_info, localInfo.data(), localInfo.size());
-    errno = savedErrno;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }

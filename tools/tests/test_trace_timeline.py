@@ -1,4 +1,5 @@
 import gzip
+import argparse
 import json
 import os
 import subprocess
@@ -46,6 +47,62 @@ class TimelineTests(unittest.TestCase):
     def test_window_keeps_only_the_selected_threads(self):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
+
+    def test_cli_thread_filter_preserves_the_default_window_end(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        for start, expected in ((0, "window 0.000 to 9.000 ms, 1 threads, 2 bars"),
+                                (8, "window 8.000 to 9.000 ms, 0 threads, 0 bars")):
+            with self.subTest(start=start):
+                out = path.with_name(f"capture-{start}.html")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", str(start)],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                page = out.read_text(encoding="utf-8")
+                self.assertIn(expected, page)
+                self.assertNotIn("Driver.Present", page)
+                self.assertIn("No presents recorded in this window.", page)
+
+    def test_cli_keeps_present_markers_with_thread_filter(self):
+        path = Path(self.tmp.name) / "capture.json"
+        events = [
+            {"name": "present", "ph": "i", "ts": ts, "tid": 2, "args": {"present": number}}
+            for ts, number in ((1000, 1), (2000, 2), (5000, 3), (9000, 4), (10000, 5))
+        ]
+        path.write_text(json.dumps(document(self.items + events)), encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--thread", "queue worker",
+                               "--from-ms", "2", "--to-ms", "9", "--max-slices", "1"],
+                              capture_output=True, text=True, timeout=5)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        page = path.with_suffix(".html").read_text(encoding="utf-8")
+        self.assertIn(">Presents</text>", page)
+        self.assertEqual(page.count("<line "), 3)
+        self.assertIn('<line x1="120.00" x2="120.00"', page)
+        self.assertIn('<line x1="1120.00" x2="1120.00"', page)
+        for number, ms in ((2, 2), (3, 5), (4, 9)):
+            self.assertIn(f"<title>Present {number} at {ms:.3f} ms</title>", page)
+        self.assertNotIn("Driver.Present", page)
+        self.assertNotIn("No presents recorded in this window.", page)
+        self.assertEqual(page.count("<rect "), 1)
+
+    def test_cli_default_window_includes_events_after_the_last_slice(self):
+        trailing_events = [
+            {"name": "present", "ph": "i", "ts": 12000, "tid": 2, "args": {"present": 1}},
+            {"name": "trace buffer full", "ph": "i", "ts": 13000, "tid": 2, "args": {"events_lost": 8}},
+            {"name": "presenter folded", "ph": "C", "ts": 14000, "tid": 2, "args": {"ms": 2}},
+        ]
+        path = Path(self.tmp.name) / "capture.json"
+        out = path.with_suffix(".html")
+        for event in trailing_events:
+            with self.subTest(event=event["name"]):
+                path.write_text(json.dumps(document(self.items + [event])), encoding="utf-8")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", "10"],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                window_end_ms = event["ts"] / 1000
+                self.assertIn(f"window 10.000 to {window_end_ms:.3f} ms, 0 threads, 0 bars", out.read_text(encoding="utf-8"))
 
     def test_cli_reports_event_loss_in_plain_and_compressed_captures(self):
         capture = document(self.items + [
@@ -102,7 +159,7 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("Incomplete trace: 8 events lost", text)
         self.assertIn("tid 9: buffer full at 1.500 ms; 8 events lost across the capture", text)
-        self.assertIn("0 threads, 0 bars", text)
+        self.assertIn("window 0.000 to 1.500 ms, 0 threads, 0 bars", text)
 
     def test_layout_places_bars_and_gives_tiny_slices_a_pixel(self):
         items = [complete(1, "Driver.Packet", 0, 5000), complete(1, "Tiny", 6000, 1)]
@@ -115,14 +172,47 @@ class TimelineTests(unittest.TestCase):
 
     def test_layout_orders_rows_by_thread_name(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
-        self.assertEqual(laid["threads"], ["presenter", "queue worker"])
+        self.assertEqual(laid["threads"], [("presenter", 0), ("queue worker", trace_timeline.ROW_HEIGHT)])
+
+    def test_layout_scales_narrow_windows_and_their_present_markers_to_the_full_axis(self):
+        trace = trace_of([complete(1, "tiny interval", 5e-11, 5e-11)])
+        slices = trace_timeline.window_slices(trace, 0, 1e-10)
+        result = trace_timeline.layout(slices, 0, 1e-10, 1000, presents=[(1e-10, 7)])
+        self.assertAlmostEqual(result["bars"][0]["x"], trace_timeline.LABEL_WIDTH + 500)
+        self.assertAlmostEqual(result["bars"][0]["w"], 500)
+        self.assertEqual(result["presents"][0][0], result["width"])
+
+    def test_last_subpixel_slice_keeps_its_visible_width_inside_the_plot(self):
+        slices = trace_timeline_slices([complete(1, "last", 9999, 1)])
+        result = trace_timeline.layout(slices, 0, 10000, 100)
+        bar = result["bars"][0]
+        self.assertEqual(bar["w"], 1.0)
+        self.assertEqual(bar["x"] + bar["w"], result["width"])
+
+    def test_layout_places_nested_slices_on_separate_rows(self):
+        items = [
+            complete(1, "Dispatch", 0, 10000),
+            complete(1, "WaitForPipeline", 2000, 5000),
+            complete(1, "RecordCompute", 7000, 2000),
+        ]
+        slices = trace_timeline.window_slices(trace_of(items), 3000, 9000)
+        laid = trace_timeline.layout(slices, 3000, 9000, 600)
+        bars = {bar["name"]: bar for bar in laid["bars"]}
+        self.assertEqual(bars["Dispatch"]["x"], bars["WaitForPipeline"]["x"])
+        self.assertEqual(bars["Dispatch"]["y"], 0)
+        self.assertEqual(bars["WaitForPipeline"]["y"], trace_timeline.ROW_HEIGHT)
+        self.assertEqual(bars["RecordCompute"]["y"], trace_timeline.ROW_HEIGHT)
+        self.assertEqual(laid["height"], 2 * trace_timeline.ROW_HEIGHT)
+        capped = trace_timeline.layout(slices, 3000, 9000, 600, max_slices=1)
+        self.assertEqual(capped["height"], trace_timeline.ROW_HEIGHT)
 
     def test_threads_that_share_a_name_get_their_own_rows(self):
         names = [{"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": tid, "args": {"name": "shader prepare"}} for tid in (1, 2)]
         items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
         laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
-        self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
-        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        self.assertEqual(laid["threads"], [("shader prepare", 0), ("shader prepare", trace_timeline.ROW_HEIGHT)])
+        self.assertEqual(sorted((bar["tid"], bar["y"]) for bar in laid["bars"]),
+                         [(1, 0), (2, trace_timeline.ROW_HEIGHT)])
         path = Path(self.tmp.name) / "a.json"
         path.write_text(json.dumps(items), encoding="utf-8")
         out = Path(self.tmp.name) / "a.html"
@@ -132,12 +222,25 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("2 threads, 2 bars", text)
         self.assertEqual(text.count(">shader prepare</text>"), 2)
+        for tid in (1, 2):
+            self.assertIn(f"<title>Shader.Prepare (8.000 ms), tid {tid}</title>", text)
 
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
         self.assertEqual(len(laid["bars"]), 1)
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
+
+    def test_layout_preserves_tied_slice_order_at_the_limit(self):
+        items = [complete(1, f"slice {index}", index * 100, duration)
+                 for index, duration in enumerate((2000, 5000, 3000, 5000, 3000, 5000))]
+        slices = trace_timeline_slices(items)
+        for limit in (0, 1, 2, 3, 4, 6, 8):
+            with self.subTest(limit=limit):
+                laid = trace_timeline.layout(slices, 0, 10000, 1000, max_slices=limit)
+                expected = sorted(slices, key=lambda entry: -entry["dur"])[:limit]
+                self.assertEqual([bar["name"] for bar in laid["bars"]], [entry["name"] for entry in expected])
+                self.assertEqual(laid["left_out"], len(slices) - len(expected))
 
     def test_svg_escapes_slice_names(self):
         laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
@@ -215,6 +318,30 @@ class TimelineTests(unittest.TestCase):
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_width_that_overflows_layout(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = path.with_suffix(".html")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "--width", str(10**309)],
+                              capture_output=True, text=True, timeout=15)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--width", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(out.exists())
+
+    def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
+        directory = Path(self.tmp.name) / "界"
+        directory.mkdir()
+        path = directory / "a.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = directory / "a.html"
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(out)],
+                              capture_output=True, env=environment)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        self.assertEqual(done.stdout.decode("utf-8"), f"wrote {out}\n".replace("\n", os.linesep))
+        self.assertIn("<svg", out.read_text(encoding="utf-8"))
+
 
     def check_input_alias(self, path, output=None, cwd=None):
         before = path.read_bytes()
@@ -259,6 +386,15 @@ class TimelineTests(unittest.TestCase):
         self.check_input_alias(path, alias)
         self.check_input_alias(alias, path)
 
+    def test_cli_renders_unpaired_surrogates_in_slice_names(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document([complete(1, "worker \u03b1\ud800", 0, 100)])), encoding="utf-8")
+        output = path.with_suffix(".html")
+        output.write_text("previous report", encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("worker \u03b1\\ud800", output.read_text(encoding="utf-8"))
+
     def test_cli_allows_distinct_existing_output_with_identical_contents(self):
         path = Path(self.tmp.name) / "capture.json"
         path.write_text(json.dumps(document(self.items)), encoding="utf-8")
@@ -274,6 +410,29 @@ class TimelineTests(unittest.TestCase):
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+    def test_positive_integer_accepts_one_and_up(self):
+        self.assertEqual(trace_timeline.positive_integer('3'), 3)
+        for value in ('0', '-2', 'x', '1.5'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.positive_integer(value)
+
+
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
 
 
 if __name__ == "__main__":

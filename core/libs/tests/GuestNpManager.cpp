@@ -1126,6 +1126,82 @@ void CheckAsmLifecycle() {
     Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
 }
 
+void CheckAsmCallsBeforeInitialization() {
+    struct Entry {
+        decltype(&sceNpAsmGenerateNpTitleToken) function;
+        const char* name;
+    };
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    const Entry asmEntries[] = {
+        {sceNpAsmGenerateNpTitleToken, "sceNpAsmGenerateNpTitleToken"},
+        {sceNpAsmGenerateNpTitleToken2, "sceNpAsmGenerateNpTitleToken2"},
+        {sceNpAsmGetNpCommInfo, "sceNpAsmGetNpCommInfo"},
+        {sceNpAsmGetNpCommInfo2, "sceNpAsmGetNpCommInfo2"},
+        {sceNpAsmGetRelatedGameNpTitleIds, "sceNpAsmGetRelatedGameNpTitleIds"},
+        {sceNpAsmGetServiceBaseUrl, "sceNpAsmGetServiceBaseUrl"},
+        {sceNpAsmGetServiceIdInfo, "sceNpAsmGetServiceIdInfo"},
+    };
+    const Entry clientEntries[] = {
+        {sceNpAsmClientClearNpTitleToken, "sceNpAsmClientClearNpTitleToken"},
+        {sceNpAsmClientClearNpTitleTokenA, "sceNpAsmClientClearNpTitleTokenA"},
+        {sceNpAsmClientCreateRequest2, "sceNpAsmClientCreateRequest2"},
+        {sceNpAsmClientCreateResourceContext, "sceNpAsmClientCreateResourceContext"},
+        {sceNpAsmClientCreateResourceContext2, "sceNpAsmClientCreateResourceContext2"},
+        {sceNpAsmClientDeleteRequest, "sceNpAsmClientDeleteRequest"},
+        {sceNpAsmClientDeleteResourceContext, "sceNpAsmClientDeleteResourceContext"},
+        {sceNpAsmClientDeleteResourceContext2, "sceNpAsmClientDeleteResourceContext2"},
+        {sceNpAsmClientGetCacheControlMaxAge, "sceNpAsmClientGetCacheControlMaxAge"},
+        {sceNpAsmClientGetGameNpTitleInfo, "sceNpAsmClientGetGameNpTitleInfo"},
+        {sceNpAsmClientGetGameNpTitleToken, "sceNpAsmClientGetGameNpTitleToken"},
+        {sceNpAsmClientGetGameTitleBanInfo, "sceNpAsmClientGetGameTitleBanInfo"},
+        {sceNpAsmClientGetNpComInfo2, "sceNpAsmClientGetNpComInfo2"},
+        {sceNpAsmClientGetNpComInfo2A, "sceNpAsmClientGetNpComInfo2A"},
+        {sceNpAsmClientGetNpComInfo3, "sceNpAsmClientGetNpComInfo3"},
+        {sceNpAsmClientGetNpComInfo4, "sceNpAsmClientGetNpComInfo4"},
+        {sceNpAsmClientGetNpTitleId, "sceNpAsmClientGetNpTitleId"},
+        {sceNpAsmClientGetNpTitleToken, "sceNpAsmClientGetNpTitleToken"},
+        {sceNpAsmClientGetNpTitleToken2, "sceNpAsmClientGetNpTitleToken2"},
+        {sceNpAsmClientGetNpTitleTokenA, "sceNpAsmClientGetNpTitleTokenA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIds, "sceNpAsmClientGetRelatedGameNpTitleIds"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsA, "sceNpAsmClientGetRelatedGameNpTitleIdsA"},
+        {sceNpAsmClientGetRelatedGameNpTitleIdsResult, "sceNpAsmClientGetRelatedGameNpTitleIdsResult"},
+        {sceNpAsmClientGetServiceBaseUrl, "sceNpAsmClientGetServiceBaseUrl"},
+        {sceNpAsmClientGetServiceBaseUrlA, "sceNpAsmClientGetServiceBaseUrlA"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleId, "sceNpAsmClientGetServiceBaseUrlWithNpTitleId"},
+        {sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA, "sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA"},
+        {sceNpAsmClientGetServiceIdInfo, "sceNpAsmClientGetServiceIdInfo"},
+        {sceNpAsmClientGetServiceIdInfoA, "sceNpAsmClientGetServiceIdInfoA"},
+    };
+    const auto requireAnswer = [](const Entry& entry, int expected) {
+        Require(entry.function() == expected, entry.name);
+    };
+    const auto requireThrow = [](const Entry& entry) {
+        try {
+            entry.function();
+            Require(false, entry.name);
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()) == std::string(entry.name) + " not implemented", entry.name);
+        }
+    };
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    for (const Entry& entry : asmEntries) requireThrow(entry);
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    for (const Entry& entry : clientEntries) requireThrow(entry);
+    for (const Entry& entry : asmEntries) requireAnswer(entry, AsmNotInitialized);
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    for (const Entry& entry : clientEntries) requireAnswer(entry, ClientNotInitialized);
+}
+
 void CheckEmptyDestructors() {
     unsigned char object[0x40];
     unsigned char untouched[sizeof(object)];
@@ -1174,9 +1250,20 @@ void CheckUnknownFieldComparisons() {
     }
 }
 
+void CheckSilentStubs() {
+    const auto* const unreadableTitleId = reinterpret_cast<const NpTitleId*>(std::uintptr_t{0x10});
+    const auto* const unreadableTitleSecret = reinterpret_cast<const NpTitleSecret*>(std::uintptr_t{0x20});
+    const auto* const unreadablePremiumParam = reinterpret_cast<const void*>(std::uintptr_t{0x30});
+    Require(sceNpSetNpTitleId(nullptr, nullptr) == 0, "sceNpSetNpTitleId accepts null silent-stub inputs");
+    Require(sceNpSetNpTitleId(unreadableTitleId, unreadableTitleSecret) == 0, "sceNpSetNpTitleId must not read its silent-stub inputs");
+    Require(sceNpNotifyPremiumFeature(nullptr) == 0, "sceNpNotifyPremiumFeature accepts a null silent-stub parameter");
+    Require(sceNpNotifyPremiumFeature(unreadablePremiumParam) == 0, "sceNpNotifyPremiumFeature must not read its silent-stub parameter");
+}
+
 int main() {
     CheckNpOfflineGetters();
     CheckAsmLifecycle();
+    CheckAsmCallsBeforeInitialization();
     CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckTicketTeardown();
@@ -1203,6 +1290,7 @@ int main() {
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
+    CheckSilentStubs();
     CheckUnknownFieldComparisons();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));

@@ -19,6 +19,7 @@
 namespace {
 
 constexpr int StatusNone = 0;
+constexpr int NotPresent = static_cast<int>(0x80a80001);
 constexpr int InvalidArgument = static_cast<int>(0x80a80003);
 constexpr int NotOpen = static_cast<int>(0x80a80006);
 constexpr int NoVideoFormat = static_cast<int>(0x80a80008);
@@ -366,6 +367,21 @@ int main(int argc, char** argv) {
     Require(std::abs(static_cast<int>(nv12[0]) - 63) <= 1 && std::abs(static_cast<int>(nv12[1]) - 32) <= 1, "checkerboard first row luma");
     Require(std::abs(static_cast<int>(nv12[2]) - 32) <= 1 && std::abs(static_cast<int>(nv12[3]) - 63) <= 1, "checkerboard second row luma");
     Require(std::abs(static_cast<int>(nv12[4]) - 171) <= 1 && std::abs(static_cast<int>(nv12[5]) - 179) <= 1, "checkerboard averaged chroma");
+
+    Require(sceVideoRecordingGetCopyrightImageMemory(nullptr, nullptr) == InvalidArgument, "null pointers to copyright image memory");
+    void* copyrightAddr = reinterpret_cast<void*>(0x12345);
+    std::size_t copyrightSize = 0x9999;
+    Require(sceVideoRecordingGetCopyrightImageMemory(nullptr, &copyrightSize) == InvalidArgument, "null address pointer");
+    Require(sceVideoRecordingGetCopyrightImageMemory(&copyrightAddr, nullptr) == InvalidArgument, "null size pointer");
+    errno = 71;
+    Require(sceVideoRecordingGetCopyrightImageMemory(reinterpret_cast<void**>(0x10), &copyrightSize) == InvalidArgument, "unmapped address pointer");
+    Require(errno == 71, "errno preserved across unmapped address pointer");
+    Require(sceVideoRecordingGetCopyrightImageMemory(&copyrightAddr, reinterpret_cast<std::size_t*>(0x10)) == InvalidArgument, "unmapped size pointer");
+    Require(errno == 71, "errno preserved across unmapped size pointer");
+    Require(sceVideoRecordingGetCopyrightImageMemory(&copyrightAddr, &copyrightSize) == NotPresent, "copyright image memory query when none set");
+    Require(copyrightAddr == nullptr, "output address when none set");
+    Require(copyrightSize == 0, "output size when none set");
+
     std::puts("VideoRecording tests passed");
     return 0;
 }

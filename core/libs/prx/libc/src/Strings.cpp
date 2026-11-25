@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cfenv>
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
@@ -36,7 +37,7 @@ size_t BlocksInPage(const char16_t* s) {
 }
 
 template<bool StopAtZero>
-[[gnu::no_sanitize("address")]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
+[[gnu::no_sanitize_address]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
     const __m128i left = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s1));
     const __m128i right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s2));
     unsigned mask = ~static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, right))) & 0xffff;
@@ -69,6 +70,18 @@ size_t EqualUnits(const char16_t* s1, const char16_t* s2, size_t n) {
 int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     const auto* left = static_cast<const unsigned char*>(s1);
     const auto* right = static_cast<const unsigned char*>(s2);
+    if (!stopAtNul) {
+        while (n >= sizeof(std::uint64_t)) {
+            std::uint64_t leftWord;
+            std::uint64_t rightWord;
+            std::memcpy(&leftWord, left, sizeof(leftWord));
+            std::memcpy(&rightWord, right, sizeof(rightWord));
+            if (leftWord != rightWord) break;
+            left += sizeof(leftWord);
+            right += sizeof(rightWord);
+            n -= sizeof(leftWord);
+        }
+    }
     for (size_t index = 0; index < n; ++index) {
         if (left[index] != right[index]) return left[index] - right[index];
         if (stopAtNul && left[index] == 0) return 0;
@@ -136,12 +149,12 @@ const char16_t* UnitAt(uintptr_t block, unsigned mask) {
     return reinterpret_cast<const char16_t*>(block + std::countr_zero(mask));
 }
 
-[[gnu::no_sanitize("address")]] unsigned MatchUnits(uintptr_t block, __m128i target) {
+[[gnu::no_sanitize_address]] unsigned MatchUnits(uintptr_t block, __m128i target) {
     const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
     return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target)));
 }
 
-[[gnu::no_sanitize("address")]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
+[[gnu::no_sanitize_address]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
     const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
     const __m128i matches = _mm_or_si128(_mm_cmpeq_epi16(units, target), _mm_cmpeq_epi16(units, _mm_setzero_si128()));
     return static_cast<unsigned>(_mm_movemask_epi8(matches));
@@ -178,7 +191,7 @@ const char16_t* FindUnit(const char16_t* s, char16_t c, size_t n) {
     }
 }
 
-[[gnu::no_sanitize("address")]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
+[[gnu::no_sanitize_address]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
     const __m128i target = _mm_set1_epi16(static_cast<short>(c));
     const __m128i zero = _mm_setzero_si128();
     const auto address = reinterpret_cast<uintptr_t>(s);
@@ -498,6 +511,20 @@ HexadecimalSubject ReadHexadecimalSubject(const char* digits, const char* parsed
     return {(significand << shift) | (sticky ? 1u : 0u), exponent - shift};
 }
 
+double RoundHexadecimalSubnormal(const HexadecimalSubject& exact, bool negative) {
+    const int shift = static_cast<int>(-1074 - exact.exponent);
+    const std::uint64_t remainder = exact.significand & ((1ull << shift) - 1);
+    const std::uint64_t half = 1ull << (shift - 1);
+    std::uint64_t bits = exact.significand >> shift;
+    switch (std::fegetround()) {
+    case FE_UPWARD: bits += remainder != 0 && !negative; break;
+    case FE_DOWNWARD: bits += remainder != 0 && negative; break;
+    case FE_TOWARDZERO: break;
+    default: bits += remainder > half || (remainder == half && (bits & 1) != 0); break;
+    }
+    return std::bit_cast<double>(bits | (negative ? 0x8000000000000000ull : 0));
+}
+
 template<typename TParse>
 auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     const std::string prefix = AsciiPrefix(text);
@@ -562,7 +589,8 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         const long long leadingExponent = exact.exponent + 63;
         if (exact.significand == 0 || leadingExponent > -1075) {
             if (std::isfinite(value)) errno = saved;
-            return value;
+            if (exact.significand == 0 || leadingExponent > -1023) return value;
+            return RoundHexadecimalSubnormal(exact, std::signbit(value));
         }
         errno = ERANGE;
         const bool smallest = leadingExponent == -1075 && (exact.significand & 0x7fffffffffffffffull) >= (1ull << 11);
@@ -860,11 +888,13 @@ int APS5_VABI wmemcmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t
 }
 
 char16_t* APS5_VABI wmemcpy_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) throw std::invalid_argument(std::string(__func__) + ": count overflows the byte size");
     if (n != 0) std::memcpy(dest, src, n * sizeof(char16_t));
     return dest;
 }
 
 char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    if (n > SIZE_MAX / sizeof(char16_t)) throw std::invalid_argument(std::string(__func__) + ": count overflows the byte size");
     if (n != 0) std::memmove(dest, src, n * sizeof(char16_t));
     return dest;
 }

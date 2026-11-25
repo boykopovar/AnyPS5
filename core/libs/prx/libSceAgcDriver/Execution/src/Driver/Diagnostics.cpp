@@ -104,6 +104,14 @@ bool AsyncDrawCompile() {
     return enabled;
 }
 
+std::size_t AsyncComputePipelineWords() {
+    static const std::size_t words = [] {
+        const char* text = std::getenv("APS5_ASYNC_COMPUTE_WORDS");
+        return text != nullptr ? static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) : std::size_t{32768};
+    }();
+    return words;
+}
+
 namespace {
 
 struct RefusedShaders {

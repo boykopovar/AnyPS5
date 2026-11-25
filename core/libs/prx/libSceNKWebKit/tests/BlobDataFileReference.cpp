@@ -192,7 +192,8 @@ static void CreateUsesTheVtable(const std::filesystem::path& root) {
         object = created.ptr;
     }
     Require(object && object->refCount == 1 && object->size == 0);
-    Require(guestAllocations.size() == 1 && guestAllocations.count(object) == 1);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(object) == sizeof(BlobDataFileReference));
     Require(_ZN7WebCore21BlobDataFileReference4pathEv(object) == &object->replacementPath);
     Slot(*object, 2)(object);
     Slot(*object, 3)(object);
@@ -202,6 +203,15 @@ static void CreateUsesTheVtable(const std::filesystem::path& root) {
     Require(guestAllocations.empty());
     Require(std::filesystem::exists(root / "created.bin"));
     Require(!std::filesystem::exists(root / "created-replacement.bin"));
+
+    String none;
+    auto* inlined = static_cast<BlobDataFileReference*>(_ZN3WTF10fastMallocEm(sizeof(BlobDataFileReference)));
+    _ZN7WebCore21BlobDataFileReferenceC1ERKN3WTF6StringES4_(inlined, &path, &none);
+    Require(inlined->refCount == 1 && path.impl->refCount == 4);
+    Slot(*inlined, 1)(inlined);
+    Require(path.impl->refCount == 2);
+    Require(guestAllocations.empty());
+    Require(std::filesystem::exists(root / "created.bin"));
 
     WriteFile(root / "complete.bin", 4);
     auto completePath = Guest("/nkwebkit-blob/complete.bin");

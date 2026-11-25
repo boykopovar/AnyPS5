@@ -1,0 +1,5 @@
+# libSceVoiceQoS
+
+## add Functional
+
+- [sceVoiceQoSSetConnectionAttribute and sceVoiceQoSGetConnectionAttribute](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - follow PS4's `libSceVoiceQoS.sprx` (SHA-256 `9bafbf6a352500df3f026a393c42cf8df3bbd08c7c3d8009a0f7bb223d4b872e`, exports at `0x1c30` and `0x1e60`, read from disassembly, not run on a console). Attributes 4 (maximum bitrate) and 9 (bitrate) take four bytes. Any connection ID below the 7 or 15 limit is accepted, connected or not. Init sets every record to maximum 7300 (app type `0x20000000`) or 22533 (`0x10000000`) and bitrate 3850. A new maximum is raised to the current bitrate and capped at that app type's maximum. A new bitrate is raised to 3850, capped at the maximum and rounded down to one of 14 rates from 3850 to 48000. PS4's `sceVoiceQoSInitHQ` uses a separate mode (maximum 48000, minimum 24000); AnyPS5's `sceVoiceQoSInitHQ` still forwards to `sceVoiceQoSInit`, so that mode is not modelled. The bitrate is only stored; no encoder uses it.

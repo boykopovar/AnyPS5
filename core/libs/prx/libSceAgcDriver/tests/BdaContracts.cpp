@@ -358,4 +358,11 @@ void RunBdaContractTests() {
         AgcDriver::Graphics::Require(nesting.has_value(), "a four-dword BDA read has no call from " + span + " to " + loader);
         AgcDriver::Graphics::Require(*nesting == 0u, span + " calls " + loader + " inside a selection or loop; NVIDIA's Blackwell driver then gives the lanes that take the dword path the results of other lanes");
     }
+    const std::array<std::uint32_t, 4> dwordValues{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
+    for (const std::uint32_t dwords : {2u, 3u, 4u}) {
+        const auto shader = MakeBdaDwordWriteTestShader(0x7fff12340f82ULL, dwords, dwordValues.data());
+        const auto lookups = CallSites(shader, "get_bda_write_pointer");
+        const auto loops = CallSites(shader, "write_bda_bytes");
+        AgcDriver::Graphics::Require(lookups == 2u && loops == 1u, "the dword-by-dword fallback of a " + std::to_string(dwords) + "-dword write has " + std::to_string(lookups) + " write lookups and " + std::to_string(loops) + " byte-loop calls, not one dword store looped over its dwords");
+    }
 }

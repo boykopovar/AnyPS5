@@ -129,6 +129,8 @@ def package(platform, build, output, version):
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/LICENSE", "libs/licenses/libyuv.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/PATENTS", "libs/licenses/libyuv-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
@@ -146,6 +148,14 @@ def package(platform, build, output, version):
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
+    if expected & {"libSceAjm.native.prx", "libSceAudiodec.prx", "libSceAvPlayer.prx", "libSceVdecCore.prx", "libSceVideodec2.prx"}:
+        ffmpeg_manifest = build / "release-ffmpeg-notices.txt"
+        if not ffmpeg_manifest.is_file():
+            raise RuntimeError(f"Missing FFmpeg notice manifest: {ffmpeg_manifest}; reconfigure the build")
+        ffmpeg_notices = Path(ffmpeg_manifest.read_text(encoding="utf-8").removesuffix("\n"))
+        if not ffmpeg_notices.is_absolute():
+            raise RuntimeError(f"Invalid FFmpeg notice directory in: {ffmpeg_manifest}")
+        licenses.extend((ffmpeg_notices / name, "libs/licenses/ffmpeg/" + name) for name in ("copyright", "SOURCE.txt"))
     files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
@@ -193,7 +203,8 @@ def package(platform, build, output, version):
         staging = Path(temporary)
         if needs_freetype_notices:
             attribution = staging / "freetype-attribution.txt"
-            attribution.write_text("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n", encoding="utf-8", newline="\n")
+            with attribution.open("w", encoding="utf-8", newline="\n") as notice:
+                notice.write("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n")
             licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:

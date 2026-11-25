@@ -106,6 +106,11 @@ void TestUnsupported() {
     Require(space[0] == UINT64_MAX && space[1] == UINT64_MAX && space[2] == UINT64_MAX && space[3] == 4, "_Statvfs reports unknown space in three fields");
     Require(_ZNSt10filesystem13_Current_set2EPKc_nid_postfix("/") == 0, "_Current_set2 keeps the root");
     Require(_ZNSt10filesystem13_Current_set2EPKc_nid_postfix("d") == NotSupported, "_Current_set2 refuses any other directory");
+    const auto workingDirectory = std::filesystem::current_path();
+    Require(_ZNSt10filesystem12_Current_setEPKc_nid_postfix("/"), "_Current_set reports success for the root");
+    Require(!_ZNSt10filesystem12_Current_setEPKc_nid_postfix("d"), "_Current_set reports failure for another directory");
+    Require(!_ZNSt10filesystem12_Current_setEPKc_nid_postfix(nullptr), "_Current_set reports failure for a null path");
+    Require(std::filesystem::current_path() == workingDirectory, "_Current_set preserves the host working directory");
 }
 
 } // namespace

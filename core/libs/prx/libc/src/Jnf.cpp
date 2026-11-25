@@ -143,6 +143,7 @@ float APS5_VABI ynf_nid_postfix(int n, float x) {
     std::int32_t i, hx, ix, ib;
     std::int32_t sign;
     float a, b, temp;
+    static volatile float vzero = 0.0f;
 
     hx = std::bit_cast<std::int32_t>(x);
     ix = 0x7fffffff & hx;
@@ -152,7 +153,7 @@ float APS5_VABI ynf_nid_postfix(int n, float x) {
     if (ix == 0)
         return -std::numeric_limits<float>::infinity();
     if (hx < 0)
-        return ix == 0x7f800000 ? zero / zero : std::numeric_limits<float>::quiet_NaN();
+        return ix == 0x7f800000 ? vzero / vzero : std::numeric_limits<float>::quiet_NaN();
     sign = 1;
     if (n < 0) {
         n = std::bit_cast<std::int32_t>(0u - static_cast<std::uint32_t>(n));
