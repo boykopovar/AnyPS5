@@ -1,7 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
@@ -49,13 +48,10 @@ int APS5_VABI fetestexcept_nid_postfix(int exceptions) {
 
 int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) {
     if (flags == nullptr) throw std::invalid_argument("fegetexceptflag: null flags");
-    const int savedErrno = errno;
     const auto result = static_cast<std::uint16_t>(fetestexcept_nid_postfix(exceptions));
     if (!GuestCopyOut_nid_no_patch(flags, &result, sizeof(result))) {
-        errno = savedErrno;
         throw std::invalid_argument("fegetexceptflag: unwritable flags");
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -74,13 +70,10 @@ void APS5_VABI _Feraise_nid_postfix(int exceptions) {
 
 int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int exceptions) {
     if (flags == nullptr) throw std::invalid_argument("fesetexceptflag: null flags");
-    const int savedErrno = errno;
     std::uint16_t flagValue = 0;
     if (!GuestCopyIn_nid_no_patch(&flagValue, flags, sizeof(flagValue))) {
-        errno = savedErrno;
         throw std::invalid_argument("fesetexceptflag: unreadable flags");
     }
-    errno = savedErrno;
     ReplaceFlags(static_cast<unsigned>(exceptions) & Exceptions, flagValue);
     return 0;
 }
