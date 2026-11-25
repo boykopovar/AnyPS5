@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
 #include <cstdio>
@@ -52,13 +53,44 @@ int main() {
     Require(!WKPageIsPinnedToTopSide(pageRef));
     Require(!WKPageIsPinnedToBottomSide(pageRef));
 
+    page->canGoForward = false;
+    WKPageGoBack(pageRef);
+    Require(page->canGoForward);
+
+    page->canGoBack = false;
+    WKPageGoForward(pageRef);
+    Require(page->canGoBack);
+
+    auto item = NKWebKit::Make<NKWebKit::BackForwardListItem>();
+    const void* itemRef = NKWebKit::ToRef(item);
+    WKPageGoToBackForwardListItem(pageRef, itemRef);
+
+    page->estimatedProgress = 0.5;
+    WKPageStopLoading(pageRef);
+    Require(page->estimatedProgress == 1.0);
+
+    Require(!page->isClosed);
+    WKPageTryClose(pageRef);
+    Require(page->isClosed);
+
+    auto bundle = NKWebKit::Make<NKWebKit::Bundle>();
+
     RequireInvalidArgument([] { WKPageCanGoBack(nullptr); });
     RequireInvalidArgument([] { WKPageCanGoForward(nullptr); });
     RequireInvalidArgument([] { WKPageIsPinnedToLeftSide(nullptr); });
     RequireInvalidArgument([] { WKPageIsPinnedToRightSide(nullptr); });
     RequireInvalidArgument([] { WKPageIsPinnedToTopSide(nullptr); });
     RequireInvalidArgument([] { WKPageIsPinnedToBottomSide(nullptr); });
+    RequireInvalidArgument([] { WKPageGoBack(nullptr); });
+    RequireInvalidArgument([] { WKPageGoForward(nullptr); });
+    RequireInvalidArgument([&] { WKPageGoToBackForwardListItem(nullptr, itemRef); });
+    RequireInvalidArgument([&] { WKPageGoToBackForwardListItem(pageRef, nullptr); });
+    RequireInvalidArgument([&] { WKPageGoToBackForwardListItem(bundle.Get(), itemRef); });
+    RequireInvalidArgument([&] { WKPageGoToBackForwardListItem(pageRef, bundle.Get()); });
+    RequireInvalidArgument([] { WKPageStopLoading(nullptr); });
+    RequireInvalidArgument([] { WKPageTryClose(nullptr); });
 
     WKRelease(pageRef);
+    WKRelease(itemRef);
     return 0;
 }

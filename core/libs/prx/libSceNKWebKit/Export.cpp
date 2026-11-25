@@ -8902,17 +8902,6 @@ int APS5_VABI WKPageGetSourceForFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGoBack() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGoForward() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageGoToBackForwardListItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageHandleImeEvent() {
     NotImplemented_nid_no_patch(__func__);
@@ -9150,17 +9139,11 @@ int APS5_VABI WKPageSetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageStopLoading() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageSupportsTextEncoding() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageTryClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageTryRestoreScrollPosition() {
     NotImplemented_nid_no_patch(__func__);
