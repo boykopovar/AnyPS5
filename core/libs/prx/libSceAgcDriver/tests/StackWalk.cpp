@@ -25,16 +25,28 @@ void Check(bool condition, const char* message) {
 
 class Section {
 public:
-    explicit Section(Byte returnColumn) : bytes(0x200, 0) {
+    explicit Section(Byte returnColumn, bool withLsda = false, Byte fdeAugSize = 4) : bytes(0x200, 0) {
         const std::size_t cie = append32(0);
         append32(0);
-        append({1, 'z', 'R', 0, 1, 0x78, returnColumn, 1, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
+        if (withLsda) {
+            append({1, 'z', 'L', 'R', 0, 1, 0x78, returnColumn, 2, 0x1b, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
+        } else {
+            append({1, 'z', 'R', 0, 1, 0x78, returnColumn, 1, 0x1b, 0x0c, 7, 8, static_cast<Byte>(0x80 | returnColumn), 1});
+        }
         patch32(cie, static_cast<std::uint32_t>(cursor - cie - 4));
         const std::size_t fde = append32(0);
         append32(static_cast<std::uint32_t>(cursor - cie));
         append32(static_cast<std::uint32_t>(Function() - Address(cursor)));
         append32(FunctionSize);
-        append({0, 0x41, 0x0e, 0x10, 0x86, 0x02, 0x43, 0x0d, 0x06, 0, 0});
+        if (withLsda) {
+            append({fdeAugSize});
+            for (Byte i = 0; i < fdeAugSize; ++i) {
+                append({static_cast<Byte>(i == 0 ? 0x10 : 0)});
+            }
+            append({0x41, 0x0e, 0x10, 0x86, 0x02, 0x43, 0x0d, 0x06, 0, 0});
+        } else {
+            append({0, 0x41, 0x0e, 0x10, 0x86, 0x02, 0x43, 0x0d, 0x06, 0, 0});
+        }
         patch32(fde, static_cast<std::uint32_t>(cursor - fde - 4));
         end = cursor;
         append32(0);
@@ -163,6 +175,22 @@ void Collapsed() {
     Check(stacks.Truncated() == 1, "the truncated walk was not counted");
 }
 
+void LsdaAugmentation() {
+    const Section validSection(16, true, 4);
+    const auto validFrames = validSection.Frames();
+    Stack stack;
+    stack.words[32] = 0x5555;
+    stack.words[33] = 0x1234;
+    auto registers = Registers(validSection.Function() + 0x20, stack.At(8), stack.At(32));
+    Check(validFrames.Unwind(registers, false, stack.Reader()) == Step::Stepped, "zL FDE with valid LSDA did not step");
+    Check(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x5555, "zL FDE restored wrong registers");
+
+    const Section truncatedSection(16, true, 2);
+    const auto truncatedFrames = truncatedSection.Frames();
+    auto badRegisters = Registers(truncatedSection.Function() + 0x20, stack.At(8), stack.At(32));
+    Check(truncatedFrames.Unwind(badRegisters, false, stack.Reader()) == Step::Failed, "zL FDE with truncated LSDA payload was not rejected");
+}
+
 }
 
 int main() {
@@ -171,6 +199,7 @@ int main() {
         Outside();
         ReturnColumn32();
         Collapsed();
+        LsdaAugmentation();
         std::cout << "stack walk tests passed\n";
         return 0;
     } catch (const std::exception& error) {
