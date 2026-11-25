@@ -101,6 +101,9 @@ void TestLibcxxErrorCategory() {
 
     const TestErrorCategory missing{};
     RequireThrows<std::invalid_argument>([&] { CompareCondition(&missing, 0, &mapped); });
+    const DefaultErrorCondition missingDefaultTable[]{nullptr, nullptr, nullptr, nullptr, nullptr};
+    const TestErrorCategory missingDefault{missingDefaultTable, nullptr};
+    RequireThrows<std::invalid_argument>([&] { CompareCondition(&missingDefault, 0, &mapped); });
     RequireThrows<std::invalid_argument>([&] { CompareCode(&base, nullptr, 0); });
 }
 
