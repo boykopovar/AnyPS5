@@ -164,6 +164,9 @@ void FixupRelocationSymbolIndices(
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
         if (shdr.sh_type != kShtRela) continue;
         if (shdr.sh_link != dynSymSectionIndex) continue;
+        if (shdr.sh_entsize != sizeof(Elf64_Rela) || shdr.sh_size % sizeof(Elf64_Rela))
+            throw std::runtime_error("invalid ELF relocation section layout");
+        RequireElfRange(elf, shdr.sh_offset, shdr.sh_size, "relocation");
 
         const std::size_t relaOffset = static_cast<std::size_t>(shdr.sh_offset);
         const std::size_t relaCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Rela);
