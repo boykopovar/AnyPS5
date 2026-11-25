@@ -2,7 +2,6 @@
 #include "prx/libSceIme/Export.cpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -73,9 +72,7 @@ void APS5_VABI sceImeBackendParamInit(void* param) {
     if (param == nullptr) return;
     unsigned char local[0x28] = {};
     std::memset(local, 0xff, 4);
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(param, local, sizeof(local));
-    errno = savedErrno;
 }
 
 int APS5_VABI sceImeBackendOpen(const SceImeBackendParam* param, void* reserved) {
