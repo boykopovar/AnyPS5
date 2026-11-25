@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "prx/libSceIme/include/ModalDialog.hpp"
 
@@ -24,6 +25,41 @@ inline std::string HostMessageLabel(const std::u16string& label) {
 inline std::optional<std::size_t> IndexOfHostButton(int pressed, std::size_t count, std::size_t) {
     if (pressed < 0 || static_cast<std::size_t>(pressed) >= count) return std::nullopt;
     return static_cast<std::size_t>(pressed);
+}
+
+struct HostBoxButton {
+    std::string label;
+    bool isFocus = false;
+    bool isCancel = false;
+};
+
+struct HostBoxSpec {
+    std::string message;
+    std::vector<HostBoxButton> buttons;
+};
+
+inline std::optional<HostBoxSpec> BuildHostMessageBoxSpec(std::string_view message, const ModalDialogRequest& request) {
+    if (request.buttons.empty() || request.buttons.size() > ModalDialogMaxButtons) {
+        return std::nullopt;
+    }
+
+    HostBoxSpec spec;
+    spec.message.reserve(message.size());
+    for (const char ch : message) {
+        if (ch != '\0') spec.message.push_back(ch);
+    }
+
+    const std::size_t focus = request.focus < request.buttons.size() ? request.focus : 0;
+    spec.buttons.reserve(request.buttons.size());
+    for (std::size_t index = 0; index < request.buttons.size(); ++index) {
+        spec.buttons.push_back({
+            HostMessageLabel(request.buttons[index]),
+            index == focus,
+            index == request.cancel,
+        });
+    }
+
+    return spec;
 }
 
 struct HostBoxAnswer {
