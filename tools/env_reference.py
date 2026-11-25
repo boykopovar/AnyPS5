@@ -111,8 +111,8 @@ def default_of(match, window):
     default = match.groupdict().get("default")
     if default:
         return default
-    found = re.search(r"\?[\s\S]*?:\s*(" + INTEGER + ")", window)
-    return found.group(1) if found else ""
+    found = re.search(r"\?[\s\S]*?:\s*([+-]?)\s*(" + INTEGER + ")", window)
+    return "".join(found.groups()) if found else ""
 
 
 def expression_window(text, code, matches, match, start, end):
@@ -268,13 +268,13 @@ def computed_reads(text, prefixes=PREFIXES):
                      default=None)
         bound = _loop_bound(expand[3], text) if expand else None
         ident = match.group("ident")
-        if bound is not None and bound > 0:
+        if bound is not None:
             start = _integer(expand[2])
             offset = _integer(match.group("offset")) if match.group("offset") else 0
             if match.group("sign") == "-":
                 offset = -offset
             names.setdefault(ident, set()).update(match.group("prefix") + str(value) + match.group("suffix")
-                                                  for value in range(start + offset, start + offset + bound))
+                                                  for value in range(start + offset, bound + offset))
         else:
             wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + match.group("suffix"))
     found = []

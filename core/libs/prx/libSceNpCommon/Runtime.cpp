@@ -48,9 +48,7 @@ bool GuestTextLength(const char* text, std::size_t maximum, std::size_t& length)
     for (std::size_t offset = 0; offset < maximum;) {
         const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
         const std::size_t count = std::min(sizeof(chunk) - address % sizeof(chunk), maximum - offset);
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, text + offset, count);
-        errno = savedErrno;
         if (!copied) return false;
         if (const void* end = std::memchr(chunk, 0, count)) {
             length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
@@ -65,9 +63,7 @@ bool GuestTextLength(const char* text, std::size_t maximum, std::size_t& length)
 char* DuplicateGuestText(NpAllocatorEx* allocator, const char* text, std::size_t length) {
     auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
     if (copy == nullptr) return nullptr;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(copy, text, length);
-    errno = savedErrno;
     if (!copied) {
         _sceNpAllocatorExFree(allocator, copy);
         return nullptr;
@@ -221,9 +217,7 @@ static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 template <typename T>
 void WriteOptionalGuest(T* output, T value) {
     if (output == nullptr) return;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
-    errno = savedErrno;
 }
 
 std::uint32_t SystemVersion() {
@@ -741,9 +735,7 @@ int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, 
 int APS5_VABI sceNpThreadGetId(Pthread* thread) {
     if (thread == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     const Pthread self = scePthreadSelf();
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(thread, &self, sizeof(self));
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -804,7 +796,8 @@ void APS5_VABI sceNpHeapDestroy(NpHeap* heap) {
 }
 
 void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
-    *allocator = {HeapAllocate, HeapReallocate, HeapRelease, heap};
+    const NpAllocator value{HeapAllocate, HeapReallocate, HeapRelease, heap};
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
@@ -846,19 +839,27 @@ void APS5_VABI sceNpMemoryHeapDestroy(NpMemoryHeap* heap) {
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocator(NpMemoryHeap* heap, NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(heap);
+    const NpAllocator value = MemoryHeapAllocator(heap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocatorEx(NpMemoryHeap* heap, int outOfMemoryError, NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(heap), outOfMemoryError};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(heap);
+    value.outOfMemoryError = outOfMemoryError;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(&g_globalHeap);
+    const NpAllocator value = MemoryHeapAllocator(&g_globalHeap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(&g_globalHeap), NP_ERROR_OUT_OF_MEMORY};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(&g_globalHeap);
+    value.outOfMemoryError = NP_ERROR_OUT_OF_MEMORY;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void) {
@@ -959,17 +960,13 @@ int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory) {
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
     const std::uint32_t value = SystemVersion();
     if (version == nullptr) return;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
-    errno = savedErrno;
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
     if (tick == nullptr || seconds == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     RtcTick localTick{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(localTick));
-    errno = savedErrno;
     if (!copied || localTick.tick == 0) return NP_ERROR_INVALID_ARGUMENT;
     RtcDateTime time {};
     const int result = sceRtcSetTick(&time, &localTick);
@@ -999,9 +996,7 @@ int APS5_VABI _ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(const NpTime* self, R
     RtcDateTime converted {};
     const int result = sceRtcSetTick(&converted, self);
     if (result < 0) return result;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(dateTime, &converted, sizeof(converted));
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -1158,9 +1153,7 @@ int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick*
     const int result = sceRtcFormatRFC3339(text, utc, timeZoneMinutes);
     if (result < 0) return result;
     const char terminator = 0;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(text + size - 1, &terminator, sizeof(terminator));
-    errno = savedErrno;
     return written ? 0 : RTC_ERROR_INVALID_POINTER;
 }
 
@@ -1174,10 +1167,8 @@ int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* coun
     int found = 0;
     for (const int user : registered.user_id)
         if (user != USER_ID_INVALID) ids[found++] = user;
-    const int savedErrno = errno;
     const bool copied = (found == 0 || GuestCopyOut_nid_no_patch(users, ids.data(), found * sizeof(int))) &&
         GuestCopyOut_nid_no_patch(count, &found, sizeof(found));
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -1272,7 +1263,8 @@ void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
 int APS5_VABI sceNpCalloutStartOnCtx64(NpCalloutContext* context, NpCallout* callout, std::uint64_t usec,
     void (APS5_VABI *handler)(void* arg), void* arg) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
-    const std::uint64_t deadline = ClockUsec() + usec;
+    const std::uint64_t now = ClockUsec();
+    const std::uint64_t deadline = usec > UINT64_MAX - now ? UINT64_MAX : now + usec;
     sceNpMutexLock(&context->mutex);
 
     for (NpCallout* entry = context->pending; entry != nullptr; entry = entry->next) {
@@ -1331,9 +1323,7 @@ int APS5_VABI sceNpCmpNpId(const void* npId1, const void* npId2) {
     if (!npId1 || !npId2) return NP_ERROR_NULL_ARGUMENT;
     NpIdFull leftId {};
     NpIdFull rightId {};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&leftId, npId1, sizeof(leftId)) && GuestCopyIn_nid_no_patch(&rightId, npId2, sizeof(rightId));
-    errno = savedErrno;
     if (!copied) return NP_ERROR_NULL_ARGUMENT;
     const auto* left = reinterpret_cast<const std::uint8_t*>(&leftId);
     const auto* right = reinterpret_cast<const std::uint8_t*>(&rightId);
@@ -1354,9 +1344,7 @@ int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
     if (codes == nullptr || code == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     char localCode[NP_LANGUAGE_CODE_SIZE]{};
     CopyText(localCode, codes->code, NP_LANGUAGE_CODE_SIZE);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(code, localCode, NP_LANGUAGE_CODE_SIZE);
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
@@ -1366,9 +1354,7 @@ int APS5_VABI sceNpUtilGetNpLanguageCode2(int language, char* tag) {
     if (codes == nullptr || tag == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     char localTag[NP_LANGUAGE_CODE2_SIZE]{};
     CopyText(localTag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(tag, localTag, NP_LANGUAGE_CODE2_SIZE);
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
@@ -1414,9 +1400,14 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     for (std::size_t line = 0; line < size; line += NP_DUMP_LINE_BYTES) {
         const std::size_t count = std::min(NP_DUMP_LINE_BYTES, size - line);
+        std::uint8_t copied[NP_DUMP_LINE_BYTES];
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(copied, bytes + line, count);
+        errno = savedErrno;
+        if (!readable) break;
         for (std::size_t i = 0; i < NP_DUMP_LINE_BYTES; ++i) {
             if (i < count) {
-                std::printf("%02x", bytes[line + i]);
+                std::printf("%02x", copied[i]);
             } else {
                 std::printf("  ");
             }
@@ -1424,7 +1415,7 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
         }
         std::putchar(' ');
         for (std::size_t i = 0; i < count; ++i) {
-            const std::uint8_t c = bytes[line + i];
+            const std::uint8_t c = copied[i];
             std::putchar(c >= 0x20 && c <= 0x7E ? c : '.');
         }
         std::putchar('\n');
@@ -1768,9 +1759,7 @@ int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const ch
 int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size) {
     if (size <= NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL;
     if (!ClearGuestBytes(text, size)) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
@@ -2077,9 +2066,7 @@ int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char*
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
     if (length != NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_INVALID;
     char copy[NP_TITLE_ID_LENGTH + 1] = {};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(copy, text, NP_TITLE_ID_LENGTH);
-    errno = savedErrno;
     if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     if (!IsCommIdText(copy)) return NP_ERROR_TITLE_ID_INVALID;
     return NpResult(sceNpUtilParseTitleId(&out->commId, copy));

@@ -140,6 +140,8 @@ void CheckOfflineSetters(int context) {
 }
 
 void CheckOfflineSettersBeforeInit() {
+    Require(sceHttpSetChunkedTransferEnabled(UnknownId, std::numeric_limits<int>::min()) == 0, "sceHttpSetChunkedTransferEnabled started requiring initialisation");
+    Require(sceHttpsSetMinSslVersion(UnknownId, std::numeric_limits<std::uint32_t>::max()) == 0, "sceHttpsSetMinSslVersion started requiring initialisation");
     Require(sceHttpGetEpollId(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpGetEpollId answered before sceHttpInit");
     Require(sceHttpSetEpollId(UnknownId, std::numeric_limits<int>::min(), reinterpret_cast<void*>(std::uintptr_t{0x10})) == BeforeInit, "sceHttpSetEpollId answered before sceHttpInit");
     Require(sceHttpSetHttp09Enabled(UnknownId, 1) == BeforeInit, "sceHttpSetHttp09Enabled answered before sceHttpInit");
@@ -282,6 +284,10 @@ void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
     const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    for (const int id : {pattern, connection, request, UnknownId}) {
+        Require(sceHttpSetChunkedTransferEnabled(id, -1) == 0 && sceHttpSetChunkedTransferEnabled(id, 0) == 0 && sceHttpSetChunkedTransferEnabled(id, 1) == 0, "sceHttpSetChunkedTransferEnabled started validating or storing its inputs");
+        Require(sceHttpsSetMinSslVersion(id, 0) == 0 && sceHttpsSetMinSslVersion(id, std::numeric_limits<std::uint32_t>::max()) == 0, "sceHttpsSetMinSslVersion started validating or storing its inputs");
+    }
     Require(sceHttpAddRequestHeader(request, "X-Test", "value", 0) == 0 && sceHttpRemoveRequestHeader(request, "X-Test") == 0, "offline request header calls failed");
     Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
