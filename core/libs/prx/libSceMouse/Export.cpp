@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
-#include <cerrno>
 #include <cstdint>
 
 extern "C" {
@@ -143,14 +142,11 @@ int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint1
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (position == nullptr || scale == 0) return MOUSE_ERROR_INVALID_ARG;
     std::uint16_t value = 0;
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&value, position, sizeof(value));
-    errno = savedErrno;
     if (!read) return MOUSE_ERROR_INVALID_ARG;
     const std::uint32_t scaled = static_cast<std::uint32_t>(value) * (scale - 1u);
     value = static_cast<std::uint16_t>((scaled + 0xfffeu) / 0xffffu);
     const bool written = GuestCopyOut_nid_no_patch(position, &value, sizeof(value));
-    errno = savedErrno;
     if (!written) return MOUSE_ERROR_INVALID_ARG;
     return MOUSE_OK;
 }
