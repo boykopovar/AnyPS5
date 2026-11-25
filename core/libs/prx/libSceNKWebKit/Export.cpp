@@ -9207,18 +9207,6 @@ int APS5_VABI WKViewSetViewAccessibilityClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKViewSetViewClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewSetViewPopupMenuClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKViewValueChangedForPopupMenu() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreClearAppBoundSession() {
     NotImplemented_nid_no_patch(__func__);
 }

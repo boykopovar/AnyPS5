@@ -570,6 +570,9 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    const void* viewClient = nullptr;
+    const void* viewPopupMenuClient = nullptr;
+    std::int32_t lastPopupMenuValue = -1;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {

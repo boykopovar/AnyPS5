@@ -84,4 +84,19 @@ void APS5_VABI WKViewWillExitFullScreen(const void* viewRef) {
     NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
 }
 
+void APS5_VABI WKViewSetViewClient(const void* viewRef, const void* client) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    view->viewClient = client;
+}
+
+void APS5_VABI WKViewSetViewPopupMenuClient(const void* viewRef, const void* client) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    view->viewPopupMenuClient = client;
+}
+
+void APS5_VABI WKViewValueChangedForPopupMenu(const void* viewRef, std::int32_t newIndex) {
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    view->lastPopupMenuValue = newIndex;
+}
+
 }
