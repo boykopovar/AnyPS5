@@ -92,7 +92,7 @@ def gpu_evidence(path, report, test_names):
             xml = junit.read_bytes()
             observations = observed_devices(ET.fromstring(xml))
             tests, problems = gate.parse_report(BytesIO(xml), test_names)
-        except (OSError, ValueError, ET.ParseError, gate.GateError) as error:
+        except (OSError, ValueError, LookupError, ET.ParseError, gate.GateError) as error:
             sample["error"] = str(error)
             continue
         if problems != saved_problems or json.dumps(tests, sort_keys=True) != json.dumps(saved_tests, sort_keys=True):

@@ -132,6 +132,24 @@ class MatrixTests(unittest.TestCase):
                 sample = result["groups"][0]["runs"][0]["gpu_samples"][1]
                 self.assertIn("differ from the gate report", sample["error"])
 
+    def test_cli_keeps_valid_report_when_junit_encoding_is_unknown(self):
+        clean = self.fixture("valid-encoding")
+        bad = self.fixture("unknown-encoding")
+        junit = bad.parent / "candidate" / "iteration-1.xml"
+        junit.write_bytes(b'<?xml version="1.0" encoding="unavailable"?>\n' + junit.read_bytes())
+        result = subprocess.run([sys.executable, matrix.__file__, str(clean), str(bad)],
+                                capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["exit_code"], 2)
+        self.assertTrue(report["incomplete"])
+        self.assertFalse(report["gate_failed"])
+        group, = report["groups"]
+        valid, malformed = group["runs"]
+        self.assertEqual(valid["gpu_evidence"], "consistent")
+        self.assertEqual(malformed["gpu_evidence"], "incomplete")
+        self.assertIn("unknown encoding", malformed["gpu_samples"][1]["error"])
+
     def test_malformed_saved_iteration_is_incomplete(self):
         cases = (("returncode", None), ("returncode", False), ("problems", None),
                  ("tests", ["probe", "probe"]))
