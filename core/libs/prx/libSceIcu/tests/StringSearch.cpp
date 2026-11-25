@@ -389,6 +389,8 @@ void Run() {
     Require(opened != nullptr);
     Require(status <= 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
+    usearch_reset_nid_postfix(opened);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
 }
 
 } // namespace UsearchObject

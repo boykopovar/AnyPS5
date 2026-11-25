@@ -7,6 +7,7 @@ void* Open(const char16_t* pattern, std::int32_t patternLength, const char16_t* 
            const char* locale, void* breakIterator, std::int32_t& status);
 void Close(void* search);
 std::int32_t GetMatchedLength(const void* search);
+void Reset(void* search);
 
 }
 

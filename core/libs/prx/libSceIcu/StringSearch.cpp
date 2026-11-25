@@ -198,7 +198,9 @@ UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::
 
 void APS5_VABI usearch_reset_nid_postfix(UStringSearch* search) {
     if (search == nullptr) return;
-    NotImplemented_nid_no_patch(__func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    Icu::StringSearchHost::Reset(state->search);
 }
 
 void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int32_t attribute, std::int32_t value, std::int32_t* status) {
