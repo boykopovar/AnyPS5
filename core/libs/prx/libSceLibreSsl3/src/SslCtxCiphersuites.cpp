@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -47,11 +46,9 @@ void* CipherIdPointer(std::uint64_t id) {
 }
 
 std::string ReadGuestText(const char* text, const char* caller) {
-    const int savedErrno = errno;
     std::string copied;
     int error = CopyGuestString_nid_no_patch(text, 65536, copied);
     if (error == 63) error = CopyGuestString_nid_no_patch(text, 1u << 20, copied);
-    errno = savedErrno;
     if (error != 0) NotImplemented_nid_no_patch(caller);
     return copied;
 }
