@@ -11,7 +11,6 @@
 #include <cstring>
 #include <thread>
 #include <utility>
-#ifdef __APPLE__
 #include <unistd.h>
 
 namespace {
@@ -94,18 +93,12 @@ int Run() {
 }
 
 }
-#endif
 
 int main() {
-#ifdef __APPLE__
     try {
         return Run();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-#else
-    std::puts("skipped, read traps exist only on macOS");
-    return VulkanTestSkipped;
-#endif
 }
