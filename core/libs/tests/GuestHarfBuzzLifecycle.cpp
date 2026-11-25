@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libharfbuzz/include/Lifecycle.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb-ft.h>
 
@@ -417,12 +418,12 @@ static void CheckCachedFace(const Api& api, const FreeTypeApi& ft) {
     rejectsRuntime([&] { api.cachedFace(&badOwner); });
 }
 
-static auto OpenModule(const char* path) {
+static auto OpenModule(const std::filesystem::path& path) {
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(path).c_str());
+    auto module = LoadLibraryW(path.c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-    auto module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    auto module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr);
@@ -433,8 +434,8 @@ int main(int argc, char** argv) try {
     Require(argc == 4);
     const bool patched = std::strcmp(argv[3], "patched") == 0;
     Require(patched || std::strcmp(argv[3], "unpatched") == 0);
-    auto module = OpenModule(argv[1]);
-    auto freeType = OpenModule(argv[2]);
+    auto module = OpenModule(ArgumentPath(argv, 1));
+    auto freeType = OpenModule(ArgumentPath(argv, 2));
     Api api{
         Import<decltype(Api::blob)>(module, patched ? "hj1KIIN5D54" : "hb_blob_create_nid_postfix"),
         Import<decltype(Api::face)>(module, patched ? "l7GEYs5PMVU" : "hb_face_create_for_tables_nid_postfix"),

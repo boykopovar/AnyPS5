@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <stdexcept>
 
 namespace {
 
@@ -182,6 +183,22 @@ void TestVectors() {
     }
 }
 
+void TestNullList() {
+    const std::int32_t trails[] = {0x0000, 0x33ff, 0x3400, 0x10ffff};
+    for (const auto trail : trails) {
+        bool threw = false;
+        try {
+            (void)_ZN6icu_6815Normalizer2Impl7combineEPKti_nid_postfix(nullptr, trail);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        if (!threw) {
+            std::fprintf(stderr, "null list, trail %#x: expected std::invalid_argument\n", trail);
+            ++failures;
+        }
+    }
+}
+
 void TestCorpus() {
     const struct {
         std::uint64_t seed;
@@ -203,6 +220,7 @@ void TestCorpus() {
 
 int main() {
     TestVectors();
+    TestNullList();
     TestCorpus();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
