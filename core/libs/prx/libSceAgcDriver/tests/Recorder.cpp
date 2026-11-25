@@ -11064,15 +11064,17 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         std::size_t importWindow;
         bool uniformHead;
         bool lastWordDiffers;
+        bool queuedStore;
     };
     const Case cases[] = {
-        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window, false, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window, false, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, false, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, false},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, true},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, true},
+        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window, false, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window, false, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, false, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, false, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true, true, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but the last byte before its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true, true, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece, with a store queued over its first piece", piece, (4u << 20u) + 2 * piece, 1, window, true, false, true},
     };
     struct Window {
         ~Window() { SetHostImportWindow(0); }
@@ -11083,6 +11085,12 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
             const auto uniformEnd = test.offset + (4u << 20u) - piece;
             if (test.lastWordDiffers && i == uniformEnd - 1) return std::uint8_t{0xa5};
             return test.uniformHead && i >= test.offset && i < uniformEnd ? std::uint8_t{0x5a} : static_cast<std::uint8_t>(i * 131u + 7u);
+        };
+        constexpr std::size_t storeAt = 64;
+        constexpr std::array<std::byte, 4> stored{std::byte{0x11}, std::byte{0x22}, std::byte{0x33}, std::byte{0x44}};
+        const auto expected = [&](std::size_t i) {
+            if (test.queuedStore && i >= test.offset + storeAt && i < test.offset + storeAt + stored.size()) return static_cast<std::uint8_t>(stored[i - test.offset - storeAt]);
+            return pattern(i);
         };
         SetHostImportWindow(test.importWindow);
         GuestTextureResource resource{};
@@ -11126,6 +11134,13 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         }
         ClearHostImports(base.device);
         const auto address = reinterpret_cast<std::uint64_t>(memory) + test.offset;
+        bool queued = false;
+        if (test.queuedStore) {
+            const auto* import = HostImportFor(base, address + storeAt, stored.size());
+            Require(import != nullptr, std::string(test.name) + ": cannot import the queued store's word");
+            recorder.RecordStore(import->buffer, address + storeAt - import->base, stored, address + storeAt);
+            queued = recorder.HasQueuedStores();
+        }
         const auto before = HostImportCounters();
         TextureDetiler detiler(base);
         auto context = base;
@@ -11149,14 +11164,15 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
             recorder.Submit();
             device.WaitQueue();
             recorder.Sync();
-            for (std::size_t i = test.offset; i < test.offset + surfaceBytes; ++i) kept += memory[i] == pattern(i) ? 1 : 0;
+            for (std::size_t i = test.offset; i < test.offset + surfaceBytes; ++i) kept += memory[i] == expected(i) ? 1 : 0;
         }
         const auto after = HostImportCounters();
         const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
         std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
         if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
         if (test.lastWordDiffers && resident && !differingRead) failures += std::string(test.name) + ": the upload filled the piece whose last byte differs on the GPU instead of reading it\n";
-        if (test.uniformHead && !test.lastWordDiffers && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
+        if (queued && resident && !headRead) failures += std::string(test.name) + ": the upload filled the piece under a queued store on the GPU instead of reading it after the store\n";
+        if (test.uniformHead && !test.lastWordDiffers && !test.queuedStore && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
         if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
         if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
         {
