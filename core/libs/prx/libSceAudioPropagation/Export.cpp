@@ -1,6 +1,7 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
+#include "MaterialBands.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
@@ -66,6 +67,32 @@ struct PathState {
     float gain = 0.0f;
 };
 
+struct PcmRecord {
+    const void* data;
+    std::uint32_t sizeBytes;
+    std::uint32_t type;
+    std::uint32_t reserved[2];
+};
+
+static_assert(sizeof(PcmRecord) == 24);
+
+struct PathRender {
+    bool active = false;
+    const char* unsupported = nullptr;
+    bool filtered = false;
+    std::array<float, 6> absorption{};
+    float delay = 0.0f;
+    std::array<float, 4> target{};
+    std::array<float, 4> applied{};
+};
+
+struct SourceRender {
+    PcmRecord pcm{};
+    bool hasPcm = false;
+    std::vector<float> history;
+    std::uint64_t written = 0;
+};
+
 struct Registry {
     std::mutex mutex;
     std::unordered_set<AudioPropagationHandle> systems;
@@ -77,6 +104,9 @@ struct Registry {
     std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
     std::unordered_map<AudioPropagationHandle, SourceInfo> sourceInfos;
     std::unordered_map<AudioPropagationHandle, PathState> paths;
+    std::unordered_map<AudioPropagationHandle, std::array<float, 6>> materials;
+    std::unordered_map<AudioPropagationHandle, SourceRender> sourceRenders;
+    std::unordered_map<AudioPropagationHandle, PathRender> pathRenders;
     std::mutex reportMutex;
     std::condition_variable reportChanged;
     std::array<std::array<ReportRegistration, 8>, 2> reportHandlers{};
@@ -184,10 +214,12 @@ void destroyObject(AudioPropagationHandle system, AudioPropagationHandle handle,
     if (kind == Kind::Source) {
         for (const auto path : state.sourcePaths.at(handle)) {
             state.paths.erase(path);
+            state.pathRenders.erase(path);
             state.objects.erase(path);
         }
         state.sourcePaths.erase(handle);
         state.sourceInfos.erase(handle);
+        state.sourceRenders.erase(handle);
     }
     state.objects.erase(handle);
 }
@@ -274,6 +306,112 @@ PathState validatedPath(Registry& state, AudioPropagationHandle path, const Audi
         if (point.material != 0) require(requireObject(state, point.material, Kind::Material, function).system == system, function);
     }
     return PathState{replacement, gain};
+}
+
+float distanceGain(const SourceInfo& info, float d) {
+    const float maxDistance = info.attribute2Values[0];
+    const float factor = info.attribute2Values[1];
+    const float reference = info.attribute2Values[2];
+    const auto mode = info.attribute2Mode;
+    if (mode >= 3) d = std::clamp(d, reference, std::max(reference, maxDistance));
+    switch (mode % 3) {
+    case 0: {
+        const float denominator = reference + factor * (d - reference);
+        return denominator > 0.0f ? reference / denominator : 1.0f;
+    }
+    case 1: {
+        const float span = maxDistance - reference;
+        if (span <= 0.0f) return 1.0f;
+        return std::max(0.0f, 1.0f - factor * (d - reference) / span);
+    }
+    default:
+        if (reference <= 0.0f || d <= 0.0f) return 1.0f;
+        return std::pow(d / reference, -factor);
+    }
+}
+
+float coneGain(const SourceInfo& info, const float* toward) {
+    const float* direction = info.direction;
+    const float lengthA = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+    const float lengthB = std::sqrt(toward[0] * toward[0] + toward[1] * toward[1] + toward[2] * toward[2]);
+    if (lengthA <= 0.0f || lengthB <= 0.0f) return info.attribute3Values[0];
+    const float cosine = std::clamp((direction[0] * toward[0] + direction[1] * toward[1] + direction[2] * toward[2]) / (lengthA * lengthB), -1.0f, 1.0f);
+    const float angle = std::acos(cosine) * 180.0f / 3.14159265358979f;
+    const float inner = info.attribute3Values[1] * 0.5f;
+    const float outer = info.attribute3Values[3] * 0.5f;
+    if (angle <= inner) return info.attribute3Values[0];
+    if (angle >= outer || outer <= inner) return info.attribute3Values[2];
+    const float t = (angle - inner) / (outer - inner);
+    return info.attribute3Values[0] + t * (info.attribute3Values[2] - info.attribute3Values[0]);
+}
+
+void computePathRender(Registry& state, AudioPropagationHandle path, const PathState& updated) {
+    auto& render = state.pathRenders[path];
+    const auto& data = updated.data;
+    render.active = false;
+    render.unsupported = nullptr;
+    render.filtered = false;
+    if (updated.gain <= 0.0f || data.pointCount == 0 || (data.flags & PathInvalid) != 0) {
+        render.target = {};
+        return;
+    }
+    render.active = true;
+    if (data.pointCount != 3) {
+        render.unsupported = "a path without exactly three points";
+        return;
+    }
+    if (data.points[0].material != 0 || data.points[2].material != 0 || data.points[1].material == 0) {
+        render.unsupported = "a path whose middle point has no material or whose end points have one";
+        return;
+    }
+    AudioPropagationHandle owner = 0;
+    for (const auto& [source, handles] : state.sourcePaths) {
+        if (std::find(handles.begin(), handles.end(), path) != handles.end()) {
+            owner = source;
+            break;
+        }
+    }
+    require(owner != 0, __func__);
+    const auto& info = state.sourceInfos.at(owner);
+    if (info.attribute2Mode > 5) {
+        render.unsupported = "a rolloff model above 5";
+        return;
+    }
+    const auto& system = *reinterpret_cast<const SystemState*>(state.objects.at(path).system);
+    float length = 0.0f;
+    float gain = updated.gain;
+    for (std::uint32_t index = 0; index < data.pointCount; ++index) {
+        const auto& point = data.points[index];
+        gain *= point.gain;
+        if (index + 1 < data.pointCount) {
+            const auto& next = data.points[index + 1];
+            const float dx = next.position[0] - point.position[0];
+            const float dy = next.position[1] - point.position[1];
+            const float dz = next.position[2] - point.position[2];
+            length += std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+    const auto& absorption = state.materials.at(data.points[1].material);
+    render.absorption = absorption;
+    const bool uniform = std::all_of(absorption.begin(), absorption.end(), [&](float value) { return value == absorption[0]; });
+    if (uniform) {
+        gain *= 1.0f - absorption[0];
+    } else {
+        render.filtered = true;
+    }
+    const float sourceDistance = std::sqrt(info.position[0] * info.position[0] + info.position[1] * info.position[1] + info.position[2] * info.position[2]);
+    const float speed = system.propagationSpeed;
+    render.delay = std::max(0.0f, length - sourceDistance) * 48000.0f / speed + 256.0f + (sourceDistance > 0.0f ? static_cast<float>(system.frameSamples) : 0.0f);
+    const float toward[3] = {data.points[1].position[0] - info.position[0], data.points[1].position[1] - info.position[1], data.points[1].position[2] - info.position[2]};
+    gain *= distanceGain(info, length) * coneGain(info, toward);
+    const auto& arrival = data.points[1].position;
+    const auto& listener = data.points[2].position;
+    float v[3] = {arrival[0] - listener[0], arrival[1] - listener[1], arrival[2] - listener[2]};
+    const float norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (norm > 0.0f) {
+        for (auto& component : v) component /= norm;
+    }
+    render.target = {gain, -v[0] * gain, v[1] * gain, v[2] * gain};
 }
 
 }
@@ -403,7 +541,16 @@ std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHa
 
 std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system, const AudioPropagationStructDescriptor* material, AudioPropagationHandle* outMaterial) {
     requireDescriptor(material, MaterialId, MaterialSize, __func__);
-    return createObject(system, Kind::Material, outMaterial, __func__) != 0 ? 0 : ErrorNullPointer;
+    std::array<float, 16> record{};
+    require(GuestCopyIn_nid_no_patch(record.data(), material, sizeof(record)), __func__);
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto handle = createObjectLocked(state, system, Kind::Material, outMaterial, __func__);
+    if (handle == 0) return ErrorNullPointer;
+    std::array<float, 6> absorption{};
+    std::copy(record.begin() + 8, record.begin() + 14, absorption.begin());
+    state.materials[handle] = absorption;
+    return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemUnregisterMaterial(AudioPropagationHandle material) {
@@ -516,6 +663,14 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
     SourceInfo updated = state.sourceInfos.at(source);
     for (const auto& attribute : copied) require(StoreSourceAttribute(updated, attribute), __func__);
     state.sourceInfos.at(source) = updated;
+    for (const auto& attribute : copied) {
+        if (attribute.id != 4 || attribute.valueSize != sizeof(PcmRecord)) continue;
+        PcmRecord pcm{};
+        require(GuestCopyIn_nid_no_patch(&pcm, attribute.value, sizeof(pcm)), __func__);
+        auto& render = state.sourceRenders[source];
+        render.pcm = pcm;
+        render.hasPcm = true;
+    }
     return 0;
 }
 
@@ -607,7 +762,10 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
         require(std::none_of(updates.begin(), updates.end(), [&](const auto& update) { return update.first == entry.path; }), __func__);
         updates.emplace_back(entry.path, validatedPath(state, entry.path, entry.data, entry.gain, __func__));
     }
-    for (const auto& [path, update] : updates) state.paths.at(path) = update;
+    for (const auto& [path, update] : updates) {
+        state.paths.at(path) = update;
+        computePathRender(state, path, update);
+    }
     return 0;
 }
 
@@ -615,6 +773,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHan
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     state.paths.at(path) = validatedPath(state, path, data, gain, __func__);
+    computePathRender(state, path, state.paths.at(path));
     return 0;
 }
 
@@ -625,6 +784,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
     requireSystem(state, system, __func__);
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
     require(count <= configuration.maxSources, __func__);
+    std::vector<std::pair<RenderInfo, bool>> validated;
     for (std::uint32_t index = 0; index < count; ++index) {
         RenderInfo info{};
         if (!copyGuestIn(info, infos + index)) return ErrorNullPointer;
@@ -642,12 +802,88 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         }
         const auto requiredBytes = static_cast<std::size_t>(configuration.frameSamples) * channels * sizeof(float);
         require(info.outputSize >= requiredBytes && info.outputSize % (channels * sizeof(float)) == 0, __func__);
+        bool anyActive = false;
         for (const auto handle : state.sourcePaths.at(info.source)) {
-            const auto& path = state.paths.at(handle);
-            if (path.gain > 0.0f && path.data.pointCount != 0 && (path.data.flags & PathInvalid) == 0) {
-                throw std::runtime_error(std::string(__func__) + ": nonempty audio path rendering is not implemented");
+            const auto found = state.pathRenders.find(handle);
+            if (found == state.pathRenders.end()) continue;
+            const auto& path = found->second;
+            if (path.active && path.unsupported) throw std::runtime_error(std::string(__func__) + ": rendering " + path.unsupported + " is not measured");
+            if (path.active || path.applied != std::array<float, 4>{}) anyActive = true;
+        }
+        if (anyActive) {
+            if (info.format != 0) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " with audio paths is not measured");
+            if (configuration.frameSamples != 1024) throw std::runtime_error(std::string(__func__) + ": audio path rendering with " + std::to_string(configuration.frameSamples) + "-sample frames is not measured");
+            const auto found = state.sourceRenders.find(info.source);
+            if (found != state.sourceRenders.end() && found->second.hasPcm && found->second.pcm.type > 1) throw std::runtime_error(std::string(__func__) + ": PCM type " + std::to_string(found->second.pcm.type) + " is not measured");
+        }
+        validated.emplace_back(info, anyActive);
+    }
+    constexpr std::size_t HistorySize = 1u << 18;
+    const std::uint32_t frame = configuration.frameSamples;
+    for (const auto& [info, anyActive] : validated) {
+        auto& source = state.sourceRenders[info.source];
+        std::vector<float> input(frame, 0.0f);
+        if (source.hasPcm && source.pcm.data != nullptr) {
+            if (source.pcm.type == 1) {
+                std::vector<std::int16_t> raw(std::min<std::size_t>(frame, source.pcm.sizeBytes / 2));
+                if (!raw.empty() && GuestCopyIn_nid_no_patch(raw.data(), source.pcm.data, raw.size() * 2)) {
+                    for (std::size_t n = 0; n < raw.size(); ++n) input[n] = raw[n] / 32767.0f;
+                }
+            } else {
+                const std::size_t samples = std::min<std::size_t>(frame, source.pcm.sizeBytes / 4);
+                if (samples != 0) GuestCopyIn_nid_no_patch(input.data(), source.pcm.data, samples * 4);
             }
         }
+        if (source.history.empty()) source.history.assign(HistorySize, 0.0f);
+        const std::uint64_t start = source.written;
+        for (std::uint32_t n = 0; n < frame; ++n) source.history[(start + n) & (HistorySize - 1)] = input[n];
+        source.written += frame;
+        if (!anyActive) continue;
+        const auto read = [&](std::int64_t index) { return index < 0 ? 0.0f : source.history[static_cast<std::uint64_t>(index) & (HistorySize - 1)]; };
+        std::vector<float> mix(static_cast<std::size_t>(frame) * 4, 0.0f);
+        require(GuestCopyIn_nid_no_patch(mix.data(), info.output, mix.size() * sizeof(float)), __func__);
+        for (const auto handle : state.sourcePaths.at(info.source)) {
+            const auto found = state.pathRenders.find(handle);
+            if (found == state.pathRenders.end()) continue;
+            auto& path = found->second;
+            const auto from = path.applied;
+            const auto to = path.active ? path.target : std::array<float, 4>{};
+            if (from == std::array<float, 4>{} && to == std::array<float, 4>{}) continue;
+            constexpr int Half = static_cast<int>(MaterialBandTaps / 2);
+            std::array<float, MaterialBandTaps> taps{};
+            if (path.filtered) {
+                taps[Half] = 1.0f;
+                for (std::size_t band = 0; band < 6; ++band) {
+                    for (std::size_t tap = 0; tap < MaterialBandTaps; ++tap) taps[tap] -= path.absorption[band] * MaterialBandResponses[band][tap];
+                }
+            }
+            for (std::uint32_t n = 0; n < frame; ++n) {
+                const double at = static_cast<double>(start + n) - path.delay;
+                const auto whole = static_cast<std::int64_t>(std::floor(at));
+                const float fraction = static_cast<float>(at - static_cast<double>(whole));
+                float sample = 0.0f;
+                if (path.filtered) {
+                    for (int tap = -Half; tap <= Half; ++tap) {
+                        const float weight = taps[static_cast<std::size_t>(tap + Half)];
+                        if (weight == 0.0f) continue;
+                        const float a = read(whole - tap);
+                        const float b = read(whole - tap + 1);
+                        sample += weight * (a + (b - a) * fraction);
+                    }
+                } else {
+                    const float a = read(whole);
+                    const float b = read(whole + 1);
+                    sample = a + (b - a) * fraction;
+                }
+                const float t = static_cast<float>(n) / static_cast<float>(frame);
+                for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                    const float coefficient = from[channel] + (to[channel] - from[channel]) * t;
+                    mix[static_cast<std::size_t>(channel) * frame + n] += coefficient * sample;
+                }
+            }
+            path.applied = to;
+        }
+        require(GuestCopyOut_nid_no_patch(info.output, mix.data(), mix.size() * sizeof(float)), __func__);
     }
     for (std::uint32_t index = 0; index < count; ++index) {
         if (!copyGuestOut(&(infos + index)->channelCount, std::uint32_t{0})) return ErrorNullPointer;

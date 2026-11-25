@@ -1,8 +1,10 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include <cerrno>
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
+#include "prx/libSceAudioPropagation/MaterialBands.hpp"
 
 #include <array>
+#include <cmath>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -910,6 +912,129 @@ int main() {
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
         Require(Resolve(name) == nullptr, name);
+    }
+
+    {
+        const AudioPropagation::SystemOptions renderOptions{{AudioPropagation::SystemOptionsId, AudioPropagation::SystemOptionsSize}, 1, 1, 6, 1, 1024, 343.0f, 150.0f, 0, {}};
+        auto renderMemory = Memory();
+        Require(sceAudioPropagationSystemQueryMemory(&renderOptions, &renderMemory) == 0, "render query memory failed");
+        std::vector<std::uint64_t> renderArena((renderMemory.size_cpu_mem + 7) / 8);
+        renderMemory.p_cpu_mem = renderArena.data();
+        struct MeasuredRig {
+            AudioPropagationHandle system = 0, source = 0, material = 0, path = 0;
+            std::array<float, 1024> pcm{};
+            std::array<float, 1024 * 4> out{};
+            float position[4]{};
+            float rolloff[4]{};
+            bool useRolloff = false;
+        };
+        const auto make = [&](MeasuredRig& rig, const float* absorption) {
+            Require(sceAudioPropagationSystemCreate(&renderOptions, &renderMemory, &rig.system) == 0, "render system create");
+            std::uint8_t record[AudioPropagation::MaterialSize]{};
+            *reinterpret_cast<AudioPropagationStructDescriptor*>(record) = {AudioPropagation::MaterialId, AudioPropagation::MaterialSize};
+            std::memcpy(record + 32, absorption, 6 * sizeof(float));
+            Require(sceAudioPropagationSystemRegisterMaterial(rig.system, reinterpret_cast<const AudioPropagationStructDescriptor*>(record), &rig.material) == 0, "render material");
+            Require(sceAudioPropagationSourceCreate(rig.system, &rig.source) == 0, "render source");
+            Require(sceAudioPropagationSourceGetAudioPath(rig.source, 0, &rig.path) == 0, "render path handle");
+        };
+        const auto attributes = [&](MeasuredRig& rig) {
+            struct { const void* data; std::uint32_t size, type, reserved[2]; } pcm{rig.pcm.data(), sizeof(rig.pcm), 0, {}};
+            AudioPropagation::Attribute list[3]{};
+            list[0] = {0, 0, rig.position, 16, 0, 0};
+            list[1] = {4, 0, &pcm, 24, 0, 0};
+            list[2] = {2, 0, rig.rolloff, 16, 0, 0};
+            Require(sceAudioPropagationSourceSetAttributes(rig.source, list, rig.useRolloff ? 3 : 2) == 0, "render attributes");
+        };
+        const auto setPath = [&](MeasuredRig& rig, float sx, float rx, float ry, float gain) {
+            AudioPropagation::AudioPath path{};
+            path.desc = {AudioPropagation::PathId, sizeof(path)};
+            for (auto& point : path.points) {
+                point.desc = {AudioPropagation::PathPointId, sizeof(point)};
+                point.gain = 1.0f;
+            }
+            path.points[0].position[0] = sx;
+            path.points[1].material = rig.material;
+            path.points[1].position[0] = rx;
+            path.points[1].position[1] = ry;
+            path.pointCount = 3;
+            Require(sceAudioPropagationSourceSetAudioPath(rig.path, &path, gain) == 0, "render path");
+        };
+        const auto render = [&](MeasuredRig& rig) {
+            rig.out.fill(0.0f);
+            AudioPropagation::RenderInfo info{{AudioPropagation::RenderInfoId, AudioPropagation::RenderInfoSize}, rig.source, rig.out.data(), sizeof(rig.out), 0, 7};
+            Require(sceAudioPropagationSourceRender(rig.system, &info, 1) == 0 && info.channelCount == 0, "measured render");
+        };
+        const auto within = [](float actual, float expected, float tolerance) { return std::fabs(actual - expected) <= tolerance; };
+        const float none[6]{};
+
+        MeasuredRig bent;
+        make(bent, none);
+        setPath(bent, 10.0f, 5.0f, 5.0f, 1.0f);
+        std::array<float, 4096 * 4> bentOut{};
+        for (int frame = 0; frame < 4; ++frame) {
+            bent.pcm.fill(0.0f);
+            if (frame == 0) bent.pcm[0] = 1.0f;
+            attributes(bent);
+            render(bent);
+            for (int channel = 0; channel < 4; ++channel) std::copy_n(bent.out.data() + channel * 1024, 1024, bentOut.data() + channel * 4096 + frame * 1024);
+        }
+        const float bentSum = bentOut[2235] + bentOut[2236];
+        Require(within(bentSum, 0.0574524f, 2e-6f), "path delay and gain before the source position is set");
+        Require(bentOut[2234] == 0.0f && bentOut[2237] == 0.0f && bentOut[2235] > bentOut[2236], "fractional delay at 1979.07 + 256 samples");
+        Require(within(bentOut[4096 + 2235] + bentOut[4096 + 2236], -0.0406250f, 2e-6f) && within(bentOut[8192 + 2235] + bentOut[8192 + 2236], 0.0406250f, 2e-6f) && bentOut[12288 + 2235] == 0.0f, "first-order ambisonic Y and Z of a reflection at (5, 5, 0)");
+        Require(sceAudioPropagationSystemDestroy(bent.system) == 0, "render system destroy");
+
+        MeasuredRig exponent;
+        make(exponent, none);
+        exponent.position[0] = 40.0f;
+        exponent.useRolloff = true;
+        const std::uint32_t model = 2;
+        std::memcpy(&exponent.rolloff[0], &model, sizeof(model));
+        exponent.rolloff[1] = 150.0f;
+        exponent.rolloff[2] = 0.5f;
+        exponent.rolloff[3] = 20.0f;
+        attributes(exponent);
+        setPath(exponent, 40.0f, 20.0f, 0.0f, 1.0f);
+        exponent.pcm.fill(0.0f);
+        exponent.pcm[0] = 1.0f;
+        attributes(exponent);
+        render(exponent);
+        exponent.pcm.fill(0.0f);
+        attributes(exponent);
+        render(exponent);
+        Require(within(exponent.out[256], 0.574524f, 2e-6f) && within(exponent.out[1024 + 256], -0.574524f, 2e-6f), "exponent rolloff, cone and the delay relative to the source distance");
+        Require(sceAudioPropagationSystemDestroy(exponent.system) == 0, "render system destroy");
+
+        MeasuredRig filtered;
+        float band2[6]{0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+        make(filtered, band2);
+        filtered.position[0] = 34.3f;
+        attributes(filtered);
+        setPath(filtered, 34.3f, 17.15f, 0.0f, 1.0f);
+        filtered.pcm.fill(0.0f);
+        filtered.pcm[0] = 1.0f;
+        attributes(filtered);
+        render(filtered);
+        filtered.pcm.fill(0.0f);
+        attributes(filtered);
+        render(filtered);
+        const float scale = 1.0f / 34.3f * 0.8125f;
+        Require(within(filtered.out[256] / scale, 1.0f - AudioPropagation::MaterialBandResponses[2][255], 1e-5f) && within(filtered.out[356] / scale, -AudioPropagation::MaterialBandResponses[2][355], 1e-5f), "material band filter centred on the path delay");
+        Require(sceAudioPropagationSystemDestroy(filtered.system) == 0, "render system destroy");
+
+        MeasuredRig ramp;
+        make(ramp, none);
+        ramp.position[0] = 34.3f;
+        attributes(ramp);
+        setPath(ramp, 34.3f, 17.15f, 0.0f, 1.0f);
+        for (int frame = 0; frame < 9; ++frame) {
+            ramp.pcm.fill(1.0f);
+            if (frame == 8) setPath(ramp, 34.3f, 17.15f, 0.0f, 0.5f);
+            attributes(ramp);
+            render(ramp);
+        }
+        Require(within(ramp.out[0], 0.0236880f, 2e-6f) && within(ramp.out[512], 0.0177660f, 2e-6f), "one-frame linear ramp after a path gain change");
+        Require(sceAudioPropagationSystemDestroy(ramp.system) == 0, "render system destroy");
     }
 
     std::puts("AudioPropagation tests passed");
