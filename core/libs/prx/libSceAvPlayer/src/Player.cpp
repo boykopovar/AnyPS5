@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
-#include <cerrno>
 #include <cstring>
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/HostThread.hpp"
@@ -21,9 +20,7 @@ bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
 }
 
 bool IsPs4Process() {
-    const int savedErrno = errno;
     const bool ps4 = sceKernelIsPs4Process() != 0;
-    errno = savedErrno;
     return ps4;
 }
 
