@@ -10,7 +10,10 @@ let entries = [];
 let settings = [];
 let controllerRemaps = [];
 const configurationText = () => serialize(entries, settings, controllerRemaps);
-const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
+const settingValue = name => settings.find(setting => setting.name === name)?.value ?? '';
+const snapshot = () => JSON.stringify([
+    entries, settingDefinitions.map(({name}) => settingValue(name)), controllerRemaps
+]);
 let savedConfiguration = snapshot();
 let replacementRequest = 0;
 let captureTarget;
@@ -309,7 +312,7 @@ function renderInputSettings() {
         const label = element('span', name);
         label.dir = 'ltr';
         const control = element(choices ? 'select' : 'input');
-        const value = settings.find(setting => setting.name === name)?.value ?? '';
+        const value = settingValue(name);
         control.dir = 'ltr';
         control.setAttribute('aria-describedby', 'input-settings-help');
         control.setAttribute('aria-errormessage', 'validation');

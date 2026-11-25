@@ -497,6 +497,26 @@ test('settings preserve imported spellings and keep edits across locale changes'
     assert.equal(copied, expected);
 });
 
+test('reset ignores restored settings order but prompts for an invalid draft', async t => {
+    const app = await setup(t, 'restored-input-settings');
+    const original = 'LeftStickDeadzone = 12\nMouseSensitivity = 2\n';
+    await app.importFile('anyps5-input.ini', original);
+
+    editInputSetting(app, 'LeftStickDeadzone', '91');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').value, '91');
+
+    editInputSetting(app, 'LeftStickDeadzone', '');
+    editInputSetting(app, 'LeftStickDeadzone', '12');
+    assert.equal(app.get('preview').value, original);
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(app.get('preview').value, '');
+});
+
 test('invalid imports and canceled resets preserve edited settings', async t => {
     const app = await setup(t, 'input-settings-reset');
     editInputSetting(app, 'MouseDecayMs', '50');
