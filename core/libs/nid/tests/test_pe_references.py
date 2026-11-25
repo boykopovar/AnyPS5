@@ -147,6 +147,23 @@ class ForwardingExportTests(unittest.TestCase):
             result = subprocess.run([str(PATCHER), "libforwarder", str(path)], capture_output=True, text=True)
             return result, path.read_bytes()
 
+    def test_export_tables_cannot_cross_section_raw_data(self):
+        cases = ((28, 0x21fe, "<I", 0x2000, "rva range exceeds section file data"),
+                 (32, 0x21fe, "<I", 0x1032, "export name tables out of file bounds"),
+                 (36, 0x21ff, "<H", 0, "export name tables out of file bounds"))
+        for field, rva, fmt, value, message in cases:
+            with self.subTest(field=field):
+                image = reference()
+                struct.pack_into("<II", image, 0x58 + 32, 4096, 512)
+                image.extend(bytes(64))
+                struct.pack_into("<I", image, 512 + field, rva)
+                struct.pack_into(fmt, image, 768 + rva - 0x2000, value)
+                original = bytes(image)
+                result, after = self.patch(image)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(after, original)
+
     def test_forwarder_targets_and_ordinals_survive_name_repacking(self):
         names = ["a", "b", "retained_nid_no_patch"]
         for bits in (32, 64):
