@@ -510,40 +510,6 @@ bool writeGuest(void* destination, const void* source, std::size_t bytes) {
 
 extern "C" {
 
-int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
-    SaveDataBackup localBackup{};
-    if (backup == nullptr || !GuestCopyIn_nid_no_patch(&localBackup, backup, sizeof(localBackup))) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    if (localBackup.dir_name == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    SceSaveDataDirName localDirName{};
-    if (!GuestCopyIn_nid_no_patch(&localDirName, localBackup.dir_name, sizeof(localDirName))) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    if (std::memchr(localDirName.data, '\0', sizeof(localDirName.data)) == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    SaveDataEvent event{};
-    event.type = SAVE_DATA_EVENT_TYPE_BACKUP;
-    event.error_code = SAVE_DATA_OK;
-    event.user_id = localBackup.user_id;
-    if (localBackup.title_id != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&event.title_id, localBackup.title_id, sizeof(event.title_id))) {
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
-    }
-    event.dir_name = localDirName;
-    {
-        std::lock_guard lock(g_state_mutex);
-        g_events.push_back(event);
-    }
-    g_backupProgress = 1.0f;
-    DeliverEvent(event);
-    return SAVE_DATA_OK;
-}
-
 int APS5_VABI sceSaveDataCommit(const SaveDataCommitParam* param) {
     (void)param;
     return SAVE_DATA_OK;
@@ -2138,6 +2104,58 @@ int APS5_VABI sceSaveDataAbort() {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
+    return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
+    SaveDataBackup request{};
+    SaveDataEvent event{};
+    if (!readGuest(backup, request) || !readGuest(request.dir_name, event.dir_name)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::string dirName;
+    if (!parse_dir_name(&event.dir_name, &dirName)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (request.title_id != nullptr && !readGuest(request.title_id, event.title_id)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::lock_guard slots(g_slots_mutex);
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    const AppTitleId title = GetAppTitleId_nid_postfix();
+    if (request.title_id != nullptr) {
+        if (std::strncmp(event.title_id.data, title.value, sizeof(event.title_id.data)) != 0) {
+            return SAVE_DATA_ERROR_NOT_FOUND;
+        }
+    } else {
+        std::memcpy(event.title_id.data, title.value, strnlen(title.value, sizeof(event.title_id.data) - 1));
+    }
+    const std::string path = save_root() + "/" + dirName;
+    std::error_code error;
+    if (isMountedDirectory(path, error)) {
+        return SAVE_DATA_ERROR_BUSY;
+    }
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+
+    event.type = SAVE_DATA_EVENT_TYPE_BACKUP;
+    event.user_id = request.user_id;
+    event.error_code = SAVE_DATA_ERROR_INTERNAL;
+    g_backupProgress = 0.0f;
+    if (std::filesystem::is_directory(path, error)) {
+        try {
+            backupSave(dirName);
+            event.error_code = SAVE_DATA_OK;
+            g_backupProgress = 1.0f;
+        } catch (const std::exception&) {
+        }
+    }
+    {
+        std::lock_guard state(g_state_mutex);
+        g_events.push_back(event);
+    }
+    DeliverEvent(event);
     return SAVE_DATA_OK;
 }
 
