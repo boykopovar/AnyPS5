@@ -162,6 +162,11 @@ int main() {
         Require(createLink(directory / "absolute-link", (directory / "sub").string(), true));
         Require(Resolves(guest + "/absolute-link/inner.txt", guest + "/absolute-link/inner.txt"));
         Require(Resolves(guest + "/absolute-link/up-link", guest + "/absolute-link/up-link"));
+        Require(std::filesystem::create_directories(directory / "sub" / "nested"));
+        Require(Resolves(guest + "/absolute-link/nested/../up-link", guest + "/absolute-link/up-link"));
+        Require(Resolves(guest + "/absolute-link/../file-link", guest + "/file.txt"));
+        Require(Resolves(guest + "/absolute-link/../directory-link/inner.txt", guest + "/sub/inner.txt"));
+        Require(Fails((guest + "/absolute-link/../dangling-link").c_str(), 2, guest + "/missing"));
         Require(Fails((guest + "/dangling-link").c_str(), 2, guest + "/missing"));
         Require(Fails((guest + "/dangling-link/x").c_str(), 2, guest + "/missing"));
         Require(Fails((guest + "/loop-a").c_str(), 62));

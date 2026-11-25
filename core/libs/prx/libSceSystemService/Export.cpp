@@ -33,6 +33,7 @@
 #include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
@@ -610,6 +611,10 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
   case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: localValue = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
   case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: localValue = HostTimeZone().minutes; break;
   case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: localValue = HostTimeZone().summer ? 1 : 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN:
+   if (sceKernelIsPs4Process() != 1) return SYSTEM_SERVICE_ERROR_PARAMETER;
+   localValue = SYSTEM_SERVICE_PARAM_ENTER_BUTTON_ASSIGN_CROSS;
+   break;
   default: {
    const auto measured = std::ranges::find(RegistryParameters, paramId, &MeasuredParameter::id);
    if (measured == std::ranges::end(RegistryParameters)) return SYSTEM_SERVICE_ERROR_PARAMETER;

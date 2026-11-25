@@ -1,3 +1,4 @@
+#include "LibcxxRegexErrorMessage.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
@@ -632,6 +633,26 @@ const char* APS5_VABI _ZNKSt11regex_error4whatEv_nid_postfix(const LibcException
 void APS5_VABI _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
+
+static_assert(sizeof(LibcException::LibcxxRegexErrorObject) == 24);
+static_assert(offsetof(LibcException::LibcxxRegexErrorObject, code) == 16);
+
+LibcException::TypeRecord _ZTINSt3__111regex_errorE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__111regex_errorE", &_ZTISt13runtime_error_nid_postfix,
+};
+static const LibcException::ExceptionVtable LibcxxRegexErrorVtable {
+    0, &_ZTINSt3__111regex_errorE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch,
+    LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch,
+};
+
+void APS5_VABI _ZNSt3__111regex_errorC1ENS_15regex_constants10error_typeE_nid_postfix(LibcException::LibcxxRegexErrorObject* self, std::int32_t code) {
+    LibcException::Construct(&self->base, LibcxxRegexErrorVtable, LibcException::LibcxxRegexErrorMessage(code));
+    self->code = code;
+}
+
+void APS5_VABI _ZNSt3__111regex_errorD1Ev_nid_postfix(LibcException::LibcxxRegexErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
 
 LibcException::TypeRecord _ZTISt11range_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11range_error", &_ZTISt13runtime_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt11range_error_nid_postfix {0, &_ZTISt11range_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
