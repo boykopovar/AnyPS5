@@ -8,4 +8,4 @@
 
 ## add Functional
 
-- [sceAvPlayerStreamingRegisterVprinf, sceTsOpenFile and sceTsReleaseBuffer](../../../core/libs/prx/libSceAvPlayerStreaming/Export.cpp) (libSceAvPlayerStreaming) - logging callback registration, stub file open returning 0, and buffer clearing are implemented according to firmware 13.42 disassembly (`libSceAvPlayerStreaming.sprx` sha256 `38d13c20506f9b4ae323b4d5e71f726ed2a6340e933a81b850372e481d383196`).
+- [sceAvPlayerStreamingRegisterVprinf, sceTsOpenFile and sceTsReleaseBuffer](../../../core/libs/prx/libSceAvPlayerStreaming/Export.cpp) (libSceAvPlayerStreaming) - logging callback registration, stub file open returning 0, and buffer clearing are implemented according to firmware 13.42 disassembly (`libSceAvPlayerStreaming.sprx` sha256 `38d13c20506f9b4ae323b4d5e71f726ed2a6340e933a81b850372e481d383196`). The buffer clear writes the 8-byte and 4-byte fields in order; if the second guest write is denied, the first field remains zero and the export returns -1 while preserving errno. Console behavior for this partial-write failure is unmeasured.

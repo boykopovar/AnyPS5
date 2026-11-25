@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayerStreaming/libSceAvPlayerStreaming.hpp"
+#include "tests/GuardedBuffer.hpp"
 
 #include <array>
 #include <cerrno>
@@ -15,6 +16,15 @@ void Require(bool value) {
 
 void RequireUnchanged(const std::array<unsigned char, 0x300>& block) {
     for (const unsigned char byte : block) Require(byte == 0x5A);
+}
+
+void CheckReleaseBufferSecondWriteFailure() {
+    GuardedBuffer guarded;
+    std::uint8_t* const buffer = guarded.At<std::uint8_t>(sizeof(std::uint64_t));
+    errno = 71;
+    Require(sceTsReleaseBuffer(nullptr, buffer) == -1);
+    Require(errno == 71);
+    for (std::size_t index = 0; index < sizeof(std::uint64_t); ++index) Require(buffer[index] == 0);
 }
 
 void NullArgumentAnswers() {
@@ -96,6 +106,7 @@ int main() {
     errno = 71;
     Require(sceTsReleaseBuffer(nullptr, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10))) == -1);
     Require(errno == 71);
+    CheckReleaseBufferSecondWriteFailure();
 
     std::array<unsigned char, 0x10> dummy{};
     Require(sceTsGetRepresentationInfo(nullptr, 0, 0, dummy.data()) == -1);
