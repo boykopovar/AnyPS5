@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace NKWebKit {
@@ -90,6 +91,74 @@ template<typename T>
 inline Ref<T> adoptRef(T& object) {
     return Ref<T>(object, AdoptRef);
 }
+
+template<typename T>
+class RefPtr {
+public:
+    RefPtr() = default;
+
+    RefPtr(std::nullptr_t) {}
+
+    RefPtr(T* object) : m_ptr(object) {
+        if (m_ptr)
+            m_ptr->ref();
+    }
+
+    RefPtr(T& object, AdoptRefTag) : m_ptr(&object) {}
+
+    RefPtr(const RefPtr& other) : m_ptr(other.m_ptr) {
+        if (m_ptr)
+            m_ptr->ref();
+    }
+
+    template<typename U>
+    RefPtr(const RefPtr<U>& other) : m_ptr(other.get()) {
+        if (m_ptr)
+            m_ptr->ref();
+    }
+
+    RefPtr(RefPtr&& other) noexcept : m_ptr(other.leakRef()) {}
+
+    template<typename U>
+    RefPtr(RefPtr<U>&& other) noexcept : m_ptr(other.leakRef()) {}
+
+    ~RefPtr() {
+        if (m_ptr)
+            m_ptr->deref();
+    }
+
+    RefPtr& operator=(const RefPtr& other) {
+        if (other.m_ptr)
+            other.m_ptr->ref();
+        T* old = m_ptr;
+        m_ptr = other.m_ptr;
+        if (old)
+            old->deref();
+        return *this;
+    }
+
+    RefPtr& operator=(RefPtr&& other) noexcept {
+        T* old = m_ptr;
+        m_ptr = other.leakRef();
+        if (old)
+            old->deref();
+        return *this;
+    }
+
+    T* leakRef() noexcept {
+        T* ptr = m_ptr;
+        m_ptr = nullptr;
+        return ptr;
+    }
+
+    T* get() const { return m_ptr; }
+    T* operator->() const { return m_ptr; }
+    T& operator*() const { return *m_ptr; }
+    explicit operator bool() const { return m_ptr != nullptr; }
+
+private:
+    T* m_ptr{nullptr};
+};
 
 template<typename T, std::size_t inlineCapacity>
 class Vector {
@@ -299,6 +368,8 @@ struct Length {
     Length(LengthType t) : m_intValue(0), m_type(t) {}
     Length(int val, LengthType t, bool quirk = false)
         : m_intValue(val), m_type(t), m_hasQuirk(quirk), m_isFloat(false) {}
+    Length(float val, LengthType t)
+        : m_floatValue(val), m_type(t), m_isFloat(true) {}
 
     LengthType type() const { return m_type; }
     int value() const { return m_intValue; }
@@ -347,7 +418,7 @@ struct FilterOperation {
     void ref() const { ++m_refCount; }
     void deref() const {
         if (!--m_refCount)
-            std::free(const_cast<FilterOperation*>(this));
+            NKWebKit::Deallocate(const_cast<FilterOperation*>(this));
     }
     unsigned refCount() const { return m_refCount; }
 };
@@ -357,8 +428,6 @@ static_assert(sizeof(FilterOperation) == 16);
 struct DefaultFilterOperation : public FilterOperation {
     FilterOperationType m_representedType{FilterOperationType::Default};
     std::uint8_t m_subPad[7]{0, 0, 0, 0, 0, 0, 0};
-
-    FilterOperationType representedType() const { return m_representedType; }
 };
 
 static_assert(sizeof(DefaultFilterOperation) == 24);
@@ -406,6 +475,66 @@ struct BasicComponentTransferFilterOperation : public FilterOperation {
 
 static_assert(sizeof(BasicComponentTransferFilterOperation) == 24);
 
+struct TransformOperation {
+    enum class Type : std::uint8_t {
+        ScaleX,
+        ScaleY,
+        Scale,
+        TranslateX,
+        TranslateY,
+        Translate,
+        RotateX,
+        RotateY,
+        Rotate,
+        SkewX,
+        SkewY,
+        Skew,
+        Matrix,
+        ScaleZ,
+        Scale3D,
+        TranslateZ,
+        Translate3D,
+        RotateZ,
+        Rotate3D,
+        Matrix3D,
+        Perspective,
+        Identity,
+        None
+    };
+
+    using OperationType = Type;
+
+    const void* m_vptr{nullptr};
+    mutable std::uint32_t m_refCount{1};
+    Type m_type{Type::None};
+    std::uint8_t m_pad[3]{0, 0, 0};
+
+    Type type() const { return m_type; }
+    bool isSameType(const TransformOperation& other) const { return m_type == other.m_type; }
+    void ref() const { ++m_refCount; }
+    void deref() const;
+};
+
+struct TranslateTransformOperation : TransformOperation {
+    Length m_x;
+    Length m_y;
+    Length m_z;
+};
+
+struct TransformOperationRef {
+    TransformOperation* m_ptr{nullptr};
+
+    TransformOperationRef() = default;
+    TransformOperationRef(TransformOperation* ptr) : m_ptr(ptr) {}
+};
+
+static_assert(sizeof(TransformOperation) == 16);
+static_assert(offsetof(TransformOperation, m_refCount) == 8);
+static_assert(offsetof(TransformOperation, m_type) == 12);
+static_assert(sizeof(TranslateTransformOperation) == 40);
+static_assert(sizeof(TransformOperationRef) == 8);
+static_assert(std::is_trivially_copyable_v<TransformOperationRef>);
+
 class Region {
 public:
     struct Span {
@@ -419,6 +548,10 @@ public:
 
     class Shape {
     public:
+        void* operator new(std::size_t size) { return NKWebKit::Allocate(size); }
+        void* operator new(std::size_t, void* storage) noexcept { return storage; }
+        void operator delete(void* storage) { NKWebKit::Deallocate(storage); }
+
         Shape() = default;
         Shape(const IntRect& rect);
         Shape(WTF::Vector<int, 32>&& segments, WTF::Vector<Span, 16>&& spans);
@@ -516,5 +649,6 @@ bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Regio
 bool APS5_VABI _ZNK7WebCore6Region8containsERKS0_(const WebCore::Region* self, const WebCore::Region& other);
 std::uint64_t APS5_VABI _ZNK7WebCore6Region9totalAreaEv(const WebCore::Region* self);
 WebCore::Region APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(const WebCore::AffineTransform* self, const WebCore::Region& region);
+WebCore::Region APS5_VABI _ZN7WebCore19approximateAsRegionERKNS_11RoundedRectEj(const WebCore::RoundedRect& roundedRect, unsigned stepLength);
 
 }

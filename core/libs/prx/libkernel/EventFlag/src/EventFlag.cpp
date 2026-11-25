@@ -355,6 +355,11 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         return SCE_OK;
     }
     if (TraceSync()) std::fprintf(stderr, "[evf] wait %p '%s' want=0x%llx mode=0x%x have=0x%llx timeout=%d caller=%p outer=%p\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), wait_mode, static_cast<unsigned long long>(flag->_pattern), timeout ? static_cast<int>(*timeout) : -1, __builtin_return_address(0), static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
+    if (timeout && *timeout == 0) {
+        if (KernelTraceWaitEnabled()) KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), 0, true);
+        if (result_pat) *result_pat = flag->_pattern;
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     ++flag->_waiters;
     WaiterNode waiter;
     waiter.bitPattern = bit_pattern;
@@ -371,7 +376,8 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     } waiterGuard{flag, &waiter};
     const auto released = [&] { return waiter.outcome != WaiterNode::Outcome::Pending; };
     bool timedOut = false;
-    const auto waitStart = std::chrono::steady_clock::now();
+    const bool traceWaits = KernelTraceWaitEnabled();
+    const auto waitStart = traceWaits ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (timeout) {
         const std::uint64_t deadline = TimedWait::DeadlineNanos(*timeout);
         timedOut = !waiter.wake.WaitUntil(lock, deadline, released);
@@ -379,7 +385,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     } else {
         waiter.wake.Wait(lock, released);
     }
-    KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+    if (traceWaits) KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
     if (waiter.outcome == WaiterNode::Outcome::Satisfied) {
         if (result_pat) *result_pat = waiter.resultPattern;
         return SCE_OK;

@@ -17,6 +17,7 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr int DirectoryFlag = 0x00020000;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -24,6 +25,11 @@ constexpr std::uint64_t ReadableRequest = 0x4004667f;
 constexpr std::uint64_t MalformedRequest = 0;
 constexpr std::uint64_t UnknownRequest = 0x12345678;
 constexpr std::uint64_t TerminalGroupRequest = 0x20007401;
+constexpr std::uint64_t WriteQueueRequest = 0x40046677;
+constexpr std::uint64_t WriteSpaceRequest = 0x40046676;
+constexpr std::uint64_t DeviceTypeRequest = 0x4004667a;
+constexpr std::uint64_t ForeignGroupRequest = 0x80047801;
+constexpr std::uint64_t ForeignIntegerRequest = 0xa0047801;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -211,6 +217,24 @@ void AuditInvalidRequestCodes() {
     Require(pipeTerminalErr == ErrorNotTerminal || pipeTerminalErr == ErrorInvalid,
         "terminal request on pipe must yield ENOTTY (25) or EINVAL (22)");
 
+    for (const int end : pipeFds) {
+        for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+            for (const std::uint64_t request : {WriteQueueRequest, WriteSpaceRequest, DeviceTypeRequest, ForeignGroupRequest}) {
+                int argument = 0x5a5a5a5a;
+                Require(call(end, request, &argument) == -1 && *__error_nid_postfix() == ErrorNotTerminal && argument == 0x5a5a5a5a,
+                    "a request pipe_ioctl does not handle must fail with ENOTTY (25) and leave its argument alone");
+            }
+            Require(call(end, ForeignGroupRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == ErrorFault,
+                "an unreadable input argument must fail with EFAULT (14), as sys_ioctl copies it in before pipe_ioctl");
+            Require(call(end, WriteQueueRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                "an output request pipe_ioctl does not handle must fail with ENOTTY (25) without touching its argument");
+            for (void* integer : {static_cast<void*>(nullptr), reinterpret_cast<void*>(std::uintptr_t{0x10})}) {
+                Require(call(end, ForeignIntegerRequest, integer) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                    "an IOC_VOID request passes its argument by value, so nothing is copied in before ENOTTY (25), as in sys_ioctl");
+            }
+        }
+    }
+
     Require(close_nid_postfix(pipeFds[0]) == 0, "close pipe read-end failed");
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
@@ -319,6 +343,25 @@ void AuditEmptyPipeReadableQuery() {
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
 
+void AuditDirectoryReadableQuery() {
+    constexpr char Path[] = "anyps5-ioctl-fionread-directory";
+    rmdir_nid_postfix(Path);
+    Require(mkdir_nid_postfix(Path, 0755) == 0, "directory creation failed");
+
+    const int directory = open_nid_postfix(Path, DirectoryFlag, 0);
+    Require(directory >= 0, "directory open failed");
+
+    int readable = -1;
+    Require(ioctl_nid_postfix(directory, ReadableRequest, &readable) == 0 && readable == 65536,
+        "directory FIONREAD must return the console's 65536-byte value");
+    readable = -1;
+    Require(_ioctl_nid_postfix(directory, ReadableRequest, &readable) == 0 && readable == 65536,
+        "directory _ioctl FIONREAD must return the console's 65536-byte value");
+
+    Require(close_nid_postfix(directory) == 0, "directory close failed");
+    Require(rmdir_nid_postfix(Path) == 0, "directory cleanup failed");
+}
+
 void AuditNonblockingModeQueries() {
     int listener = -1;
     const auto address = CreateBoundListener(&listener);
@@ -383,6 +426,7 @@ int main() {
     AuditInvalidRequestCodes();
     AuditEmptySocketReadableQuery();
     AuditEmptyPipeReadableQuery();
+    AuditDirectoryReadableQuery();
     AuditNonblockingModeQueries();
     return 0;
 }

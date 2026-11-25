@@ -19,9 +19,7 @@ std::int64_t nextHandle = 1;
 
 int CheckStart(std::int32_t handle, const CameraStartParameter* param, CameraStartParameter& local) {
     if (handle < 1 || !param) return SCE_CAMERA_ERROR_PARAM;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
-    errno = savedErrno;
     if (!copied || local.sizeThis != sizeof(CameraStartParameter)) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     return 0;
@@ -102,9 +100,7 @@ int APS5_VABI sceCameraGetFrameData(std::int32_t handle, CameraFrameData* frameD
 int APS5_VABI sceCameraIsValidFrameData(std::int32_t handle, const CameraFrameData* frameData) {
     if (handle < 1 || !frameData) return SCE_CAMERA_ERROR_PARAM;
     CameraFrameData localData{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localData, frameData, sizeof(localData));
-    errno = savedErrno;
     if (!copied || localData.sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     return localData.status[0] == 1 && localData.status[1] == 1;

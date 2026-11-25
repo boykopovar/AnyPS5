@@ -13,10 +13,11 @@ using namespace HostPerformance;
 
 class PrintingBackend final : public IBackend {
 public:
-    explicit PrintingBackend(Outcome outcome) : outcome(outcome) {}
+    explicit PrintingBackend(Outcome outcome, int* beginCalls = nullptr) : outcome(outcome), beginCalls(beginCalls) {}
     const char* Name() const override { return "printing"; }
 
     BeginResult Begin() override {
+        if (beginCalls != nullptr) ++(*beginCalls);
         std::puts("begin called");
         return {outcome, "scripted"};
     }
@@ -28,6 +29,7 @@ public:
 
 private:
     Outcome outcome;
+    int* beginCalls;
 };
 
 int Fail(const char* message) {
@@ -47,7 +49,9 @@ int main(int argc, char** argv) {
         LibcExitWithoutHandlers_nid_no_patch(0);
     }
     if (name == "refused") {
-        if (StartProcessSession(Mode::Auto, std::make_unique<PrintingBackend>(Outcome::Refused)) == nullptr) return Fail("an auto session must exist");
+        int beginCalls = 0;
+        if (StartProcessSession(Mode::Auto, std::make_unique<PrintingBackend>(Outcome::Refused, &beginCalls)) == nullptr) return Fail("an auto session must exist");
+        if (beginCalls != 1) return Fail("a refused request must call Begin once");
         std::fflush(stdout);
         LibcExit_nid_no_patch(0);
     }
@@ -58,10 +62,21 @@ int main(int argc, char** argv) {
         LibcExit_nid_no_patch(0);
     }
     if (name == "twice") {
-        StartProcessSession(Mode::On, std::make_unique<PrintingBackend>(Outcome::Started));
+        if (StartProcessSession(Mode::Off, nullptr) != nullptr) return Fail("an off session with null backend must not exist");
+        bool threwInvalidArgument = false;
         try {
-            StartProcessSession(Mode::On, std::make_unique<PrintingBackend>(Outcome::Started));
+            StartProcessSession(Mode::On, nullptr);
+        } catch (const std::invalid_argument&) {
+            threwInvalidArgument = true;
+        }
+        if (!threwInvalidArgument) return Fail("a null backend must be rejected with invalid_argument");
+        int beginCalls = 0;
+        Session* session = StartProcessSession(Mode::On, std::make_unique<PrintingBackend>(Outcome::Started, &beginCalls));
+        if (session == nullptr || session->Current() != State::Active || beginCalls != 1) return Fail("a valid session must start after null backend rejection");
+        try {
+            StartProcessSession(Mode::On, std::make_unique<PrintingBackend>(Outcome::Started, &beginCalls));
         } catch (const std::logic_error&) {
+            if (beginCalls != 1) return Fail("a second session must not call Begin");
             std::puts("second session refused");
             std::fflush(stdout);
             LibcExit_nid_no_patch(0);

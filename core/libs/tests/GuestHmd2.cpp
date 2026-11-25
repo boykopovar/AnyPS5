@@ -76,6 +76,20 @@ void TestCallsWithoutReprojectionSession() {
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
     }
+    for (const std::uint64_t frameId : frameIds) {
+        Require(sceHmd2ReprojectionBeginFrame(frameId) == Hmd2::ReprojectionNotInitialized, "begin frame without a reprojection session");
+    }
+    Require(sceHmd2ReprojectionBeginFrame(0x7fffffffffffffffull) == Hmd2::ReprojectionNotInitialized, "begin frame with the largest signed frame id without a reprojection session");
+    Hmd2::MirroringOption option;
+    std::memset(&option, 0xaa, sizeof(option));
+    const Hmd2::MirroringOption optionBefore = option;
+    for (int call = 0; call < 2; ++call) {
+        Require(sceHmd2ReprojectionDisableMirroring() == Hmd2::ReprojectionNotInitialized, "disabling mirroring without a reprojection session");
+        Require(sceHmd2ReprojectionDisableVrMode() == Hmd2::ReprojectionNotInitialized, "disabling VR mode without a reprojection session");
+        Require(sceHmd2ReprojectionSetMirroringOption(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring option with a null option without a reprojection session");
+        Require(sceHmd2ReprojectionSetMirroringOption(&option) == Hmd2::ReprojectionNotInitialized, "mirroring option without a reprojection session");
+    }
+    Require(std::memcmp(&option, &optionBefore, sizeof(option)) == 0, "mirroring option was written without a reprojection session");
 }
 
 void InstallProcessParameters() {
@@ -379,6 +393,11 @@ void TestGatedCallsInsideReprojectionSession() {
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionGetPredictedDisplayTime(1, &time); }), "predicted display time inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1, 0, 0); }), "render config inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1ull << 32, 0, 0); }), "render config with the second accepted bit inside a reprojection session answered as without one");
+    const Hmd2::MirroringOption option{};
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionBeginFrame(1); }), "begin frame inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableMirroring(); }), "disabling mirroring inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([] { return sceHmd2ReprojectionDisableVrMode(); }), "disabling VR mode inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetMirroringOption(&option); }), "mirroring option inside a reprojection session answered as without one");
     for (const std::uint64_t frameId : {0ull, 1ull, 0x123456789ull}) {
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ParameterNull, "predicted display time into a null output inside a reprojection session");
     }
@@ -447,6 +466,8 @@ void TestReprojection() {
     std::array<std::uint8_t, 0x68> status{};
     status.fill(0xaa);
     Require(sceHmd2ReprojectionGetStatus(nullptr) == Hmd2::ParameterNull, "status into a null output inside a reprojection session");
+    errno = EBUSY;
+    Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(std::uintptr_t{0x10})) == Hmd2::ParameterNull && errno == EBUSY, "status into unwritable output inside a reprojection session");
     Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(status.data())) == 0, "status inside a reprojection session");
     std::array<std::uint64_t, 4> timestamps{};
     std::memcpy(timestamps.data(), status.data() + 0x28, sizeof(timestamps));

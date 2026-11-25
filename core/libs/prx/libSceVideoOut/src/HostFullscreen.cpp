@@ -9,8 +9,37 @@ HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized
     return HostFullscreenMode::Borderless;
 }
 
+bool WindowModeStartsBorderless(const char* value) {
+    return value != nullptr && std::strcmp(value, "borderless") == 0;
+}
+
 std::string HostFullscreenWarning(const char* value) {
-    return std::string("DisplayWindow: ANYPS5_FULLSCREEN='") + value + "' is not 0, 1, windowed or borderless; treating it as borderless";
+    std::string sanitized;
+    if (value != nullptr) {
+        for (const char* p = value; *p != '\0'; ++p) {
+            const unsigned char ch = static_cast<unsigned char>(*p);
+            if (ch == '\r') {
+                sanitized += "\\r";
+            } else if (ch == '\n') {
+                sanitized += "\\n";
+            } else if (ch == '\t') {
+                sanitized += "\\t";
+            } else if (ch < 0x20 || ch == 0x7f) {
+                static constexpr char hex[] = "0123456789abcdef";
+                sanitized += "\\x";
+                sanitized += hex[ch >> 4];
+                sanitized += hex[ch & 0x0f];
+            } else {
+                sanitized += *p;
+            }
+        }
+    }
+    return "DisplayWindow: ANYPS5_FULLSCREEN='" + sanitized + "' is not 0, 1, windowed or borderless; treating it as borderless";
+}
+
+std::optional<HostWindowRect> BorderlessCoverRect(HostWindowRect display) {
+    if (display.width <= 0 || display.height <= 0) return std::nullopt;
+    return display;
 }
 
 HostFullscreenState::HostFullscreenState(IHostFullscreenWindow& window) : window(window) {}
@@ -26,8 +55,9 @@ void HostFullscreenState::Toggle() {
         if (windowedSize.width > 0 && windowedSize.height > 0 && !(window.Size() == windowedSize)) window.SetSize(windowedSize);
         return;
     }
-    windowedSize = window.Size();
+    const HostWindowSize current = window.Size();
     window.SetFullscreen(true);
+    if (current.width > 0 && current.height > 0) windowedSize = current;
 }
 
 void HostFullscreenState::Refresh(bool titleReadsMouse) {

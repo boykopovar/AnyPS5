@@ -50,6 +50,12 @@ static void RequireError(const char* name, int flags, int error) {
     Require(*__error_nid_postfix() == error, "incorrect guest errno");
 }
 
+static void RequireUnlinkError(const char* name, int error) {
+    *__error_nid_postfix() = 0;
+    Require(shm_unlink_nid_postfix(name) == -1, "expected unlink failure");
+    Require(*__error_nid_postfix() == error, "incorrect guest errno");
+}
+
 static void Run() {
     constexpr int readWrite = 2, create = 0x200, exclusive = 0x800, truncate = 0x400;
     Object object("/nested");
@@ -98,6 +104,10 @@ static void Run() {
     RequireError(nullptr, readWrite, 14);
     RequireError("", readWrite, 22);
     RequireError("relative", readWrite, 22);
+    RequireUnlinkError(nullptr, 14);
+    RequireUnlinkError("", 22);
+    RequireUnlinkError("non_slash_shm", 22);
+    RequireUnlinkError("foo/bar", 22);
     RequireError(object.name.c_str(), 1, 22);
     RequireError(object.name.c_str(), readWrite | 8, 22);
     const std::string tooLong(1024, '/');
