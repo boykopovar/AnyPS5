@@ -9,6 +9,10 @@ namespace {
 constexpr int sceVsePluginErrorInvalidHandle = static_cast<int>(0x81b00001);
 constexpr int sceVsePluginConstantValue = 0x100000;
 
+bool HasRegisteredPluginHandle(const void*) {
+    return false;
+}
+
 }
 
 extern "C" {
@@ -105,7 +109,9 @@ int APS5_VABI sceVsePluginUnknown17(void*, void*) {
 }
 
 APS5_EXPORT("PGbZLXen8Ss", sceVsePluginUnknown18);
-int APS5_VABI sceVsePluginUnknown18(void*) {
+int APS5_VABI sceVsePluginUnknown18(void* handle) {
+    if (!HasRegisteredPluginHandle(handle)) return 0;
+    NotImplemented_nid_no_patch("PGbZLXen8Ss");
     return 0;
 }
 
@@ -140,17 +146,23 @@ int APS5_VABI sceVsePluginUnknown24(void*, void*) {
 }
 
 APS5_EXPORT("DnxtFacfAWI", sceVsePluginUnknown25);
-int APS5_VABI sceVsePluginUnknown25(void*) {
+int APS5_VABI sceVsePluginUnknown25(void* handle) {
+    if (!HasRegisteredPluginHandle(handle)) return 0;
+    NotImplemented_nid_no_patch("DnxtFacfAWI");
     return 0;
 }
 
 APS5_EXPORT("rptJ6gzveJM", sceVsePluginUnknown26);
-int APS5_VABI sceVsePluginUnknown26(void*, void*) {
+int APS5_VABI sceVsePluginUnknown26(void* handle, void*) {
+    if (!HasRegisteredPluginHandle(handle)) return 0;
+    NotImplemented_nid_no_patch("rptJ6gzveJM");
     return 0;
 }
 
 APS5_EXPORT("xat+wsiq6Zg", sceVsePluginUnknown27);
-int APS5_VABI sceVsePluginUnknown27(void*, void*) {
+int APS5_VABI sceVsePluginUnknown27(void* handle, void*) {
+    if (!HasRegisteredPluginHandle(handle)) return 0;
+    NotImplemented_nid_no_patch("xat+wsiq6Zg");
     return 0;
 }
 
