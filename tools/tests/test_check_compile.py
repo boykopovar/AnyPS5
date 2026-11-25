@@ -879,21 +879,26 @@ class CheckCompileOutputTests(CheckCompileFixture):
                     self.assertEqual(path.read_bytes(), content, str(path))
                 self.assertEqual(set(self.build.iterdir()), set(preserved))
 
-    def test_unmodeled_saved_temporary_modes_are_rejected_before_the_compiler_runs(self):
+    def test_all_saved_temporary_modes_are_dropped_before_the_compiler_runs(self):
         source = self.source("unit.c")
         invoked = self.root / "invoked"
-        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        recorded = self.root / "recorded.json"
+        script = self.compiler("import json, sys\nfrom pathlib import Path\n"
+                               f"Path({str(invoked)!r}).touch()\n"
+                               f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n")
         for option in ("-save-temps=invalid", "-save-temps=diag", "--save-temps=diag",
                        "-save-temps=CWD", "-save-temps="):
             with self.subTest(option=option):
+                invoked.unlink(missing_ok=True)
+                recorded.unlink(missing_ok=True)
                 self.manifest([{"directory": str(self.build), "file": str(source),
-                                "arguments": [sys.executable, str(script), str(invoked), option,
+                                "arguments": [sys.executable, str(script), option,
                                               "-c", str(source), "-o", str(self.build / "unit.o")]}])
                 result = self.tool("unit.c")
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(f"unsupported saved-temporary mode in {option}", result.stderr)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("1 translation units compile", result.stdout)
+                self.assertTrue(invoked.exists(), result.stdout + result.stderr)
+                self.assertNotIn(option, json.loads(recorded.read_text(encoding="utf-8")))
                 self.assertFalse((self.build / "unit.o").exists(), result.stdout + result.stderr)
 
 
@@ -1466,6 +1471,25 @@ class CheckCompileLauncherPrefixTests(unittest.TestCase):
     def test_malformed_launchers_are_refused(self):
         for arguments in (["cmake", "-E", "env", "--bogus", "cc"], ["cmake", "-E", "env", "--modify"],
                           ["cmake", "-E", "env", "A=1"], ["cmake", "-E", "env"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
+    def test_compiler_wrapper_prefixes_end_at_the_compiler(self):
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "-s", "clang", "-c", "a.c"]),
+                         ["ccache", "-s"])
+        self.assertEqual(check_compile.launcher_prefix(["sccache", "--show-stats", "clang"]),
+                         ["sccache", "--show-stats"])
+        self.assertEqual(check_compile.launcher_prefix(["distcc", "-j", "8", "clang"]),
+                         ["distcc", "-j", "8"])
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "--max-size=1G", "clang"]),
+                         ["ccache", "--max-size=1G"])
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "--", "clang"]),
+                         ["ccache", "--"])
+
+    def test_malformed_compiler_wrappers_are_refused(self):
+        for arguments in (["ccache", "--unknown", "clang"], ["ccache", "-s"], ["sccache"],
+                          ["distcc", "-j"]):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(ValueError):
                     check_compile.launcher_prefix(arguments)
