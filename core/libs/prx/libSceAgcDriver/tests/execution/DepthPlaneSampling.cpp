@@ -81,10 +81,16 @@ constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
-constexpr std::size_t ParallelAtlasOffset = 0x780000;
-constexpr std::size_t ParallelStencilOffset = 0x7a0000;
-constexpr std::size_t ParallelStencilPlaneOffset = 0x7c0000;
-constexpr std::size_t ParallelD16Offset = 0x7d0000;
+constexpr std::size_t StencilArrayDepthOffset = 0x720000;
+constexpr std::size_t StencilArrayOffset = 0x780000;
+constexpr std::size_t StencilUnormDepthOffset = 0x7c0000;
+constexpr std::size_t StencilUnormOffset = 0x7e0000;
+constexpr std::size_t StencilCubeDepthOffset = 0x800000;
+constexpr std::size_t StencilCubeOffset = 0x820000;
+constexpr std::size_t ParallelAtlasOffset = 0x840000;
+constexpr std::size_t ParallelStencilOffset = 0x860000;
+constexpr std::size_t ParallelStencilPlaneOffset = 0x880000;
+constexpr std::size_t ParallelD16Offset = 0x8a0000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -187,7 +193,7 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, bool depthOnly = false, bool waitIdle = true, std::uint64_t stencilAddress = 0) {
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, std::uint64_t stencilAddress = 0, std::optional<std::uint8_t> stencilValue = std::nullopt, bool depthOnly = false, bool waitIdle = true) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -614,19 +620,19 @@ void ParallelAtlasCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::
     const auto recorded = AgcDriver::Graphics::RecordingPool::RecordedBuffers();
     const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
     auto* atlas = block.At(ParallelAtlasOffset);
-    for (int draw = 0; draw < 3; ++draw) DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, true, false);
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, true, true);
+    for (int draw = 0; draw < 3; ++draw) DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, 0, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(atlas), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, 0, 0, std::nullopt, true, true);
     Load(device, atlas, shape, 0, output);
     Expect(output, Bits(DrawnDepth), "parallel atlas depth");
     auto* stenciled = block.At(ParallelStencilOffset);
     const auto stencil = reinterpret_cast<std::uintptr_t>(block.At(ParallelStencilPlaneOffset));
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, true, false, stencil);
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, true, true, stencil);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, stencil, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(stenciled), {128, 128}, VK_FORMAT_D32_SFLOAT_S8_UINT, DrawnDepth, 0, stencil, std::nullopt, true, true);
     Load(device, stenciled, shape, 0, output);
     Expect(output, Bits(DrawnDepth), "parallel atlas D32S8 depth");
     auto* d16 = block.At(ParallelD16Offset);
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, true, false);
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, true, true);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, 0, std::nullopt, true, false);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(d16), {256, 128}, VK_FORMAT_D16_UNORM, DrawnD16Depth, 0, 0, std::nullopt, true, true);
     Load(device, d16, {Format16Uint, 256, 128, Type2D, 0, Swizzle64KbS}, 0, output);
     Expect(output, DrawnD16Bits, "parallel atlas D16 depth");
     const auto pooled = AgcDriver::Graphics::RecordingPool::RecordedBuffers() - recorded;
