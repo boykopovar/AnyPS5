@@ -145,6 +145,11 @@ const char* APS5_VABI FT_Get_Postscript_NameForward_nid_no_patch(FreeType::Guest
 }
 APS5_EXPORT("GVnNjpJWCXM", FT_Get_Postscript_NameForward_nid_no_patch);
 
+int APS5_VABI FT_Get_PS_Font_PrivateForward_nid_no_patch(FreeType::GuestFaceRec* face, FreeType::GuestPSPrivate* privateDictionary) {
+    return FT_Get_PS_Font_Private_nid_postfix(face, privateDictionary);
+}
+APS5_EXPORT("+yNEa4OFH1M", FT_Get_PS_Font_PrivateForward_nid_no_patch);
+
 void* APS5_VABI FT_Get_RendererForward_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t format) {
     return FT_Get_Renderer_nid_postfix(library, format);
 }
