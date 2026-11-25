@@ -53,12 +53,10 @@ void ProbeGuestRange(void* base, std::size_t totalBytes) {
     constexpr std::uintptr_t pageSize = 4096;
     const auto start = reinterpret_cast<std::uintptr_t>(base);
     const auto last = start + (totalBytes - 1);
-    const int savedErrno = *__error_nid_postfix();
-    auto probeAddress = [&](std::uintptr_t address) {
+    auto probeAddress = [](std::uintptr_t address) {
         unsigned char byte = 0;
         auto* const ptr = reinterpret_cast<void*>(address);
         if (!GuestCopyIn_nid_no_patch(&byte, ptr, 1) || !GuestCopyOut_nid_no_patch(ptr, &byte, 1)) {
-            *__error_nid_postfix() = savedErrno;
             throw std::invalid_argument("heapsort: inaccessible guest buffer");
         }
     };
@@ -68,10 +66,6 @@ void ProbeGuestRange(void* base, std::size_t totalBytes) {
     for (std::uintptr_t page = firstPage + 1; page <= lastPage; ++page) {
         probeAddress(page * pageSize);
     }
-    if (last != start && last % pageSize != 0) {
-        probeAddress(last);
-    }
-    *__error_nid_postfix() = savedErrno;
 }
 
 class HeapSorter {

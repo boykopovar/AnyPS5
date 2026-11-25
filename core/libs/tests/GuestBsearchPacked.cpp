@@ -12,6 +12,11 @@
 #include <source_location>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static std::size_t g_heapsortCompareCalls = 0;
 
@@ -120,4 +125,51 @@ int main() {
     std::array<std::uint32_t, 7> sortValues{42, 7, 99, 7, 0, 123456, 15};
     Require(heapsort_nid_postfix(sortValues.data(), sortValues.size(), sizeof(std::uint32_t), CompareUint32) == 0);
     Require((sortValues == std::array<std::uint32_t, 7>{0, 7, 7, 15, 42, 99, 123456}));
+
+    constexpr std::size_t pageSize = 4096;
+#ifdef _WIN32
+    auto* guarded = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(guarded != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(guarded + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    void* mappedGuarded = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mappedGuarded != MAP_FAILED);
+    auto* guarded = static_cast<unsigned char*>(mappedGuarded);
+    Require(mprotect(guarded + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    *__error_nid_postfix() = 1234;
+    g_heapsortCompareCalls = 0;
+    bool rejectedCrossPage = false;
+    try {
+        heapsort_nid_postfix(guarded + pageSize - 4, 2, 4, CountingNonDereferencingCompare);
+    } catch (const std::invalid_argument&) {
+        rejectedCrossPage = true;
+    }
+    Require(rejectedCrossPage);
+    Require(g_heapsortCompareCalls == 0);
+    Require(*__error_nid_postfix() == 1234);
+
+#ifdef _WIN32
+    Require(VirtualProtect(guarded, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(guarded, pageSize, PROT_READ) == 0);
+#endif
+    *__error_nid_postfix() = 1234;
+    g_heapsortCompareCalls = 0;
+    bool rejectedReadOnly = false;
+    try {
+        heapsort_nid_postfix(guarded, 2, 4, CountingNonDereferencingCompare);
+    } catch (const std::invalid_argument&) {
+        rejectedReadOnly = true;
+    }
+    Require(rejectedReadOnly);
+    Require(g_heapsortCompareCalls == 0);
+    Require(*__error_nid_postfix() == 1234);
+
+#ifdef _WIN32
+    Require(VirtualFree(guarded, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(guarded, pageSize * 2) == 0);
+#endif
 }
