@@ -135,6 +135,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     GuestSockets::SocketOptionState options;
     bool receiveShut = false;
     bool sendShut = false;
+    std::atomic<bool> endClosed = false;
     bool localAddressCleared = false;
     bool connectStarted = false;
 #ifdef _WIN32
@@ -918,6 +919,9 @@ int GuestSockets::DuplicateTo(int descriptor, int target) {
         std::lock_guard lock(socketsMutex);
         closeOnExecDescriptors.erase(target);
     }
+#if defined(_WIN32) || defined(__APPLE__)
+    ReleaseSequencedEnd(std::move(replaced));
+#endif
     return target;
 }
 
@@ -1007,12 +1011,14 @@ bool SequencedPair(const Socket& socket) {
     return socket.family == GuestUnix && socket.type == 5 && !socket.externalPeer;
 }
 bool SequencedPeerGone(const Socket& socket) {
-    return SequencedPair(socket) && socket.peer.expired();
+    if (!SequencedPair(socket)) return false;
+    const auto peer = socket.peer.lock();
+    return !peer || peer->endClosed.load();
 }
 bool SequencedPeerSendEnded(const Socket& socket) {
     if (!SequencedPair(socket)) return false;
     const auto peer = socket.peer.lock();
-    if (!peer) return true;
+    if (!peer || peer->endClosed.load()) return true;
     std::lock_guard lock(peer->modeMutex);
     return peer->sendShut;
 }
@@ -1024,10 +1030,11 @@ void WakeSequencedReaders(const std::shared_ptr<Socket>& socket) {
 }
 void ReleaseSequencedEnd(std::shared_ptr<Socket> released) {
     if (!released || !SequencedPair(*released)) return;
+    if (!DescriptorsOf(released).empty()) return;
+    released->endClosed.store(true);
     const auto peer = released->peer.lock();
-    const std::weak_ptr<Socket> end = released;
     released.reset();
-    if (peer && end.expired()) WakeSequencedReaders(peer);
+    if (peer) WakeSequencedReaders(peer);
 }
 int SequencedRoom(Socket& socket, std::uint64_t length, int flags) {
     if (!SequencedPair(socket)) return 0;
@@ -1048,7 +1055,7 @@ int SequencedRoom(Socket& socket, std::uint64_t length, int flags) {
             if (socket.sendShut) return 32;
             capacity = static_cast<std::uint64_t>(GuestSockets::SendBufferSize(socket.options, socket.family, socket.type));
         }
-        if (!peer) return 32;
+        if (!peer || peer->endClosed.load()) return 32;
 #ifdef _WIN32
         if (length > LongestLoopbackRecord) throw std::runtime_error("send: a SOCK_SEQPACKET socketpair record over 65507 bytes is not supported on Windows");
         unsigned long queued = 0;

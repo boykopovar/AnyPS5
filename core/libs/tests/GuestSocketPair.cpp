@@ -437,6 +437,59 @@ static void CheckSequencedPacketEnds() {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
+#if defined(_WIN32) || defined(__APPLE__)
+static bool WaitFor(const std::atomic<int>& count, int expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (count < expected && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return count >= expected;
+}
+
+static void CheckHeldSequencedEndClose(bool replace) {
+    constexpr std::uint32_t RecordSize = 1000;
+    constexpr int Again = 35;
+    constexpr int BrokenPipe = 32;
+    static char record[RecordSize];
+    std::memset(record, 'h', sizeof(record));
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, SequencedPacket | NonBlocking, 0, pair) == 0);
+    for (const int end : pair) {
+        while (send_nid_postfix(end, record, RecordSize, NoSignal) == RecordSize) {}
+        Require(*__error_nid_postfix() == Again && fcntl_nid_postfix(end, 4, 0) == 0);
+    }
+    std::atomic<int> started{0};
+    std::atomic<int> finished{0};
+    std::atomic<int> holderFinished{0};
+    std::array<std::int64_t, 3> results{-2, -2, -2};
+    std::array<int, 3> errors{0, 0, 0};
+    std::array<std::thread, 3> senders;
+    for (std::size_t index = 0; index < senders.size(); ++index) {
+        senders[index] = std::thread([&, index] {
+            const int end = index == 2 ? pair[1] : pair[0];
+            ++started;
+            results[index] = send_nid_postfix(end, record, RecordSize, NoSignal);
+            errors[index] = *__error_nid_postfix();
+            ++(index == 2 ? holderFinished : finished);
+        });
+    }
+    Require(WaitFor(started, 3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(finished == 0 && holderFinished == 0);
+    if (replace) Require(dup2_nid_postfix(pair[0], pair[1]) == pair[1]);
+    else Require(close_nid_postfix(pair[1]) == 0);
+    Require(WaitFor(finished, 2));
+    for (std::size_t index = 0; index < 2; ++index) {
+        senders[index].join();
+        Require(results[index] == -1 && errors[index] == BrokenPipe);
+    }
+    Require(holderFinished == 0);
+    if (replace) Require(close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(WaitFor(holderFinished, 1));
+    senders[2].join();
+    Require(results[2] == -1 && errors[2] == BrokenPipe);
+}
+#endif
+
 static void CheckSequencedPacketFlow() {
     constexpr std::uint32_t RecordSize = 1000;
     constexpr std::array<std::uint32_t, 6> Sizes{5, 700, 2000, 37, 5000, 9};
@@ -497,6 +550,11 @@ static void CheckSequencedPacketFlow() {
     Require(blocked && blockedResult == RecordSize);
     Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == RecordSize && received[0] == 'z' && received[RecordSize - 1] == 'z');
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+
+#if defined(_WIN32) || defined(__APPLE__)
+    CheckHeldSequencedEndClose(false);
+    CheckHeldSequencedEndClose(true);
+#endif
 }
 
 int main(int argc, char** argv) {
