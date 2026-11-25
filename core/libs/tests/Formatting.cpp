@@ -844,7 +844,6 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
             Require(std::all_of(bytes, bytes + sizeof(bytes), [](char value) { return value == '!'; }));
         }
     }
-#ifdef _WIN32
     int scanned = -1;
     int position = -1;
     {
@@ -860,6 +859,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
             {"ab", "%hhs", 1, "ab"}, {"ab", "%ll[a-z]", 1, "ab"}, {"ab", "%y", 0, ""}, {"", "%y", 0, ""},
             {"ab", "%5y", 0, ""}, {"ab", "%k", 0, ""}, {"ab", "%hls", 0, ""}, {"ab", "%llls", 0, ""},
             {"ab", "%l", 0, ""}, {"", "%l", 0, ""}, {"ab", "%ll", 0, ""}, {"ab", "%h", 0, ""}, {"ab", "%hl", 0, ""},
+            {"]^-a", "%[]^-]", 1, "]^-"}, {"]^-a", "%[^a-z]", 1, "]^-"}, {"\x80\xff" "a", "%[\x80-\xff]", 1, "\x80\xff"},
+            {"a\xc3", "%[^\x80-\xff]", 1, "a"}, {"d-", "%[^a-c-e]", 1, "d"},
         };
         for (const auto& item : sets) {
             char bytes[8] = {'!', '!', '!', '!', '!', '!', '!', '!'};
@@ -869,6 +870,10 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
             Require(ScanListS(item.input, item.format, bytes, std::size_t{8}) == item.result);
             Require(item.result == 0 ? bytes[0] == '!' : std::strcmp(bytes, item.stored) == 0);
         }
+        char capped[4] = {'!', '!', '!', '!'};
+        Require(ScanListS("ab-", "%[a-c-e]", capped, std::size_t{3}) == 0 && std::memcmp(capped, "ab-!", 4) == 0);
+        std::fill(capped, capped + 4, '!');
+        Require(ScanListS("abd", "%[a-c-e]", capped, std::size_t{3}) == 1 && std::memcmp(capped, "ab\0!", 4) == 0);
         char pair[4] = {'!', '!', '!', '!'};
         Require(sscanf_nid_postfix("abc", "%2llc", pair) == 1 && pair[0] == 'a' && pair[1] == 'b' && pair[2] == '!');
         Require(sscanf_nid_postfix("ab", "%s%y", pair) == 1 && std::strcmp(pair, "ab") == 0);
@@ -889,7 +894,6 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(sscanf_nid_postfix("", "%*d", &scanned) == EOF);
     Require(sscanf_nid_postfix("  ", "%*d%d", &scanned) == EOF);
     Require(sscanf_nid_postfix("", "%d", &scanned) == EOF);
-#endif
     {
         char16_t first[8] = {};
         char16_t letter = u'!';

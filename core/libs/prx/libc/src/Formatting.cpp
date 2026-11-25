@@ -393,11 +393,16 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             while (*cursor != '\0' && *cursor != ']') ++cursor;
             if (*cursor != ']') return finish(assigned);
 #ifdef _WIN32
-            const bool negated = setStart[1] == '^';
-            specifier = LibcDetail::TitleScanset(setStart + 1 + negated, cursor, negated);
+            constexpr bool titleRules = true;
 #else
-            specifier.assign(setStart, cursor + 1);
+            constexpr bool titleRules = TSource::Contiguous;
 #endif
+            if constexpr (titleRules) {
+                const bool negated = setStart[1] == '^';
+                specifier = LibcDetail::TitleScanset(setStart + 1 + negated, cursor, negated);
+            } else {
+                specifier.assign(setStart, cursor + 1);
+            }
         }
         ++cursor;
         if (conversion == 'n') {

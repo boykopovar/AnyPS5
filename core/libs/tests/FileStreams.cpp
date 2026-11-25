@@ -930,6 +930,49 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckStreamScansetReadsNul() {
+#ifndef _WIN32
+    const std::string input("a\0b\n", 4);
+    const auto open = [&] {
+        auto* native = TemporaryFile::Open();
+        Require(native != nullptr && std::fwrite(input.data(), 1, input.size(), native) == input.size());
+        std::rewind(native);
+        return native;
+    };
+    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
+    for (const Scanner scan : {fscanf_s_nid_postfix, ScanSafeList}) {
+        auto* native = open();
+        FileStream stream(native);
+        std::array<char, 8> output;
+        output.fill('Z');
+        int consumed = -1;
+        Require(scan(&stream, "%[^\n]%n", output.data(), 8u, &consumed) == 1 && consumed == 3, "Secure stream scanset stopped at a NUL byte");
+        Require(std::memcmp(output.data(), "a\0b\0Z", 5) == 0);
+        Require(std::fclose(native) == 0);
+    }
+    {
+        auto* native = open();
+        FileStream stream(native);
+        std::array<char, 8> output;
+        output.fill('Z');
+        int consumed = -1;
+        char last = 'Z';
+        Require(fscanf_nid_postfix(&stream, "%[^\n]%n%c", output.data(), &consumed, &last) == 2 && consumed == 3 && last == '\n', "Stream scanset before a narrow %c stopped at a NUL byte");
+        Require(std::memcmp(output.data(), "a\0b\0Z", 5) == 0);
+        Require(std::fclose(native) == 0);
+    }
+    {
+        auto* native = open();
+        FileStream stream(native);
+        char16_t units[8] = {u'Z', u'Z', u'Z', u'Z', u'Z', u'Z', u'Z', u'Z'};
+        int consumed = -1;
+        Require(fscanf_nid_postfix(&stream, "%l[^\n]%n", units, &consumed) == 1 && consumed == 3, "16-bit stream scanset stopped at a NUL byte");
+        Require(units[0] == u'a' && units[1] == 0 && units[2] == u'b' && units[3] == 0 && units[4] == u'Z');
+        Require(std::fclose(native) == 0);
+    }
+#endif
+}
+
 template<typename TRead>
 static void CheckReadAfterWrite(const std::string& path, const char* mode, const char* expected, TRead read) {
     auto* stream = fopen_nid_postfix(path.c_str(), "wb");
@@ -1096,6 +1139,7 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
 
 static void CheckStreamWritesAfterReads(const std::string& base) {
     CheckCharacterScanLengths();
+    CheckStreamScansetReadsNul();
     const std::string path = base + ".written";
     constexpr char appended[] = "0123456789XY";
 #if defined(__GLIBC__)
