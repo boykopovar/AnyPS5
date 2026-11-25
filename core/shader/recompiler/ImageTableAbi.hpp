@@ -130,8 +130,9 @@ constexpr std::optional<std::uint32_t> ScalarBufferDword(std::uint32_t offset, s
 }
 
 constexpr std::optional<std::uint64_t> ScalarAddressDword(std::uint64_t base, std::uint32_t offset, std::uint32_t immediate) {
-    const std::uint64_t first = base + (offset & ~3u);
-    if (first < base) return std::nullopt;
+    const std::uint64_t aligned = base & ~std::uint64_t{3};
+    const std::uint64_t first = aligned + (offset & ~3u);
+    if (first < aligned) return std::nullopt;
     const std::int64_t delta = static_cast<std::int32_t>(immediate & ~3u);
     const std::uint64_t magnitude = delta < 0 ? static_cast<std::uint64_t>(-delta) : static_cast<std::uint64_t>(delta);
     if (delta < 0) return magnitude > first ? std::nullopt : std::optional<std::uint64_t>(first - magnitude);

@@ -2307,6 +2307,41 @@ void verifyNestedResolutionReuse(const IrResourcePlan& plan, const ResourceSnaps
     require(pointer->map == freshPointer.map && pointer->map != first->map, "nested table resolution: changing only a pointer reused the old map");
 }
 
+std::size_t resolutionMemoReadRangeChecks = 0;
+
+void verifyResolutionMemoReadRanges(const IrResourcePlan& plan, const ResourceSnapshot& snapshot) {
+    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") != nullptr) return;
+    auto info = plan.info;
+    ResourceMaterializer::PrepareImageModes(info);
+    constexpr std::uint64_t PlainKey = 0x72616e676573u;
+    constexpr std::size_t BudgetRanges = std::size_t{1} << 21u;
+    struct Resolved {
+        bool same = false;
+        std::uint64_t resolutions = 0;
+        std::uint64_t shared = 0;
+    };
+    const auto resolveTwice = [&](const ResourceSnapshot& resolving, std::uint64_t memoKey) {
+        const auto before = ResourceMaterializer::TableReuse();
+        const auto first = ResourceMaterializer::ResolveImageTablesShared(info, resolving, memoKey);
+        const auto second = ResourceMaterializer::ResolveImageTablesShared(info, resolving, memoKey);
+        const auto after = ResourceMaterializer::TableReuse();
+        require(first->map == second->map, "resolution memo read ranges: two resolutions of one snapshot differ");
+        return Resolved{first == second, after.resolutions - before.resolutions, after.resolutionsShared - before.resolutionsShared};
+    };
+    const auto plain = resolveTwice(snapshot, PlainKey);
+    require(plain.same && plain.resolutions == 1u && plain.shared == 1u, "resolution memo read ranges: the snapshot without read ranges was not memoized");
+    for (const bool nested : {false, true}) {
+        auto ranged = snapshot;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(BudgetRanges);
+        for (std::size_t index = 0; index < ranges.size(); index++) ranges[index] = {0x100000000ull + index * 0x40u, 0x20u};
+        auto& column = nested ? ranged.tables.nested.at(0) : ranged.tables.tables.at(0);
+        column.readRanges = SharedValues<std::pair<std::uint64_t, std::uint64_t>>(std::move(ranges));
+        const auto counted = resolveTwice(ranged, PlainKey + (nested ? 2u : 1u));
+        require(!counted.same && counted.resolutions == 2u && counted.shared == 0u, nested ? "resolution memo read ranges: a nested table's read ranges past the memo budget were not counted" : "resolution memo read ranges: a table's read ranges past the memo budget were not counted");
+    }
+    ++resolutionMemoReadRangeChecks;
+}
+
 std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResourcePlan& decoded, const PlanFixture& fixture, std::uint32_t seed, const std::string& what) {
     std::mt19937 random(seed);
     std::size_t succeeded = 0;
@@ -2325,7 +2360,10 @@ std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResource
         const auto original = materializePlan(plan, runtime);
         const auto loaded = materializePlan(decoded, runtime);
         require(sameMaterialization(original, loaded), what + ": runtime " + std::to_string(run) + " materialized differently from the decoded plan (" + original.error + " / " + loaded.error + ")");
-        if (run == 0u && original.ok && !original.snapshot.tables.nested.empty()) verifyNestedResolutionReuse(plan, original.snapshot);
+        if (run == 0u && original.ok && !original.snapshot.tables.nested.empty()) {
+            verifyNestedResolutionReuse(plan, original.snapshot);
+            verifyResolutionMemoReadRanges(plan, original.snapshot);
+        }
         if (original.ok) ++succeeded;
     }
     return succeeded;
@@ -2543,6 +2581,7 @@ void verifyPlanRoundTrip() {
         std::cout << "plan round trip: " << fixture.name << ", " << plan->valueStorage.Size() << " values, " << ShaderDiskCache::EncodePlanEntry(key, *plan).size() << " bytes per entry, " << succeeded << " of 1000 runtimes materialized\n";
         ++index;
     }
+    require(resolutionMemoReadRangeChecks != 0u || std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") != nullptr, "resolution memo read ranges: no plan fixture has nested tables");
     auto releaseFixture = fixtures.front();
     releaseFixture.waveSize = 32u;
     auto registeredRequest = releaseFixture.Request(true);
