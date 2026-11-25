@@ -2861,6 +2861,11 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
     Require(!DepthRenderControlDrains({target.address, 1u, 1u}), "a single-sample depth clear at the native target's address drains");
     Require(!DepthRenderControlDrains({target.address, 1u, 0x60u}), "a single-sample expand drains");
     Require(!DepthRenderControlDrains({target.address + 65536u, target.samples, 1u}), "a depth clear at another address drains");
+    Require(!DepthRenderControlDrains({target.address, target.samples, 0x20u}), "a stencil-only expand without a clear over the native target drains");
+    Require(DepthRenderControlDrains({target.address, target.samples, 0x21u}), "a depth clear with a stencil-only expand over the native target does not drain");
+    Require(DepthRenderControlDrains({target.address + 65536u, target.samples, 0x40u}), "a depth expand without a registered surface does not drain");
+    refused();
+    NoteRenderControl(target, 0x20u);
     refused();
     if (stencilPlane) {
         NoteRenderControl(target, 0x40u);

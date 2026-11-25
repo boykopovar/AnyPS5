@@ -2293,7 +2293,6 @@ double APS5_VABI erfc_nid_postfix(double x) {
     }
     if (ix >= 0x403c0000) {
         if (hx > 0) return 0.0;
-        std::feraiseexcept(FE_INEXACT);
         return 2.0;
     }
     if (hx < 0 && ix >= 0x40180000) {

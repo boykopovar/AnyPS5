@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
@@ -929,6 +930,11 @@ std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& su
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
 std::uint64_t nextPlaneSerial();
 
+float quantizeDepth(VkFormat format, VkFormat hostFormat, float depth) {
+    if (format != VK_FORMAT_D16_UNORM_S8_UINT || hostFormat == format) return depth;
+    return std::rint(std::clamp(depth, 0.0f, 1.0f) * 65535.0f) * (1.0f / 65535.0f);
+}
+
 class DepthSurface {
 public:
     DepthSurface(const Context& context, const DepthTarget& target, DepthSamplingState sampling = {}) : context(context), target(target), hostFormat(HostDepthFormat(context, target.format)), sampling(std::move(sampling)) {
@@ -1007,7 +1013,7 @@ public:
             toGeneral.subresourceRange = viewInfo.subresourceRange;
             const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
             barrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            const VkClearDepthStencilValue clear{this->sampling.initialDepth.value_or(target.clearDepth), this->sampling.initialStencil.value_or(this->sampling.aliasStencil.value_or(target.clearStencil))};
+            const VkClearDepthStencilValue clear{quantizeDepth(target.format, hostFormat, this->sampling.initialDepth.value_or(target.clearDepth)), this->sampling.initialStencil.value_or(this->sampling.aliasStencil.value_or(target.clearStencil))};
             context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &toGeneral.subresourceRange);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
             std::vector<std::shared_ptr<void>> imported;
@@ -1204,7 +1210,7 @@ public:
         else {
             const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
-            const VkClearDepthStencilValue clear{depth, stencil};
+            const VkClearDepthStencilValue clear{quantizeDepth(target.format, hostFormat, depth), stencil};
             context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, access);
         }
@@ -3178,6 +3184,31 @@ DepthSurface* drawnDepth = nullptr;
 
 std::atomic<std::uint64_t> surfacesSerial{0};
 std::atomic<std::uint64_t> surfacesReleased{0};
+std::atomic<std::uint64_t> storageScans{0};
+
+struct UnclaimedAddressesTag {};
+
+struct UnclaimedAddresses {
+    struct Entry {
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t address = 0;
+        std::uint64_t serial = 0;
+    };
+    std::array<Entry, 32> entries{};
+
+    Entry& Slot(std::uint64_t address) {
+        return entries[static_cast<std::size_t>((address >> 8u) * 0x9E3779B97F4A7C15ull >> 59u)];
+    }
+
+    bool Holds(VkDevice device, std::uint64_t address, std::uint64_t serial) {
+        const auto& entry = Slot(address);
+        return entry.device == device && entry.address == address && entry.serial == serial;
+    }
+
+    void Remember(VkDevice device, std::uint64_t address, std::uint64_t serial) {
+        Slot(address) = {device, address, serial};
+    }
+};
 
 void retire(DepthSurface& surface);
 
@@ -3829,6 +3860,10 @@ std::uint64_t DepthSurfacesSerial() {
     return surfacesSerial.load(std::memory_order_acquire);
 }
 
+std::uint64_t DepthSurfaceStorageScans() {
+    return storageScans.load(std::memory_order_relaxed);
+}
+
 std::uint64_t DepthSurfacesReleased() {
     return surfacesReleased.load(std::memory_order_acquire);
 }
@@ -4058,10 +4093,17 @@ bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std
 
 VkFormat HostDepthFormat(const Context& context, VkFormat format) {
     if (format != VK_FORMAT_D16_UNORM_S8_UINT) return format;
+    thread_local VkPhysicalDevice lastPhysical = VK_NULL_HANDLE;
+    thread_local VkFormat lastFormat = VK_FORMAT_UNDEFINED;
+    if (context.physical == lastPhysical && lastFormat != VK_FORMAT_UNDEFINED) return lastFormat;
     static AgcDriver::Mutex mutex;
     static std::map<VkPhysicalDevice, VkFormat> chosen;
     std::lock_guard lock(mutex);
-    if (const auto found = chosen.find(context.physical); found != chosen.end()) return found->second;
+    if (const auto found = chosen.find(context.physical); found != chosen.end()) {
+        lastPhysical = context.physical;
+        lastFormat = found->second;
+        return found->second;
+    }
     constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     auto host = format;
     for (const auto candidate : {VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
@@ -4072,6 +4114,8 @@ VkFormat HostDepthFormat(const Context& context, VkFormat format) {
         break;
     }
     chosen.emplace(context.physical, host);
+    lastPhysical = context.physical;
+    lastFormat = host;
     return host;
 }
 
@@ -5101,7 +5145,8 @@ void NoteDepthRenderControl(const DepthRenderControl& draw) {
 
 bool DepthRenderControlDrains(const DepthRenderControl& draw) {
     if (draw.samples == 1u) return false;
-    if ((draw.control & 0x60u) != 0u) return true;
+    if ((draw.control & 0x40u) != 0u) return true;
+    if ((draw.control & 3u) == 0u) return false;
     std::lock_guard lock(surfacesMutex());
     return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->target.samples == draw.samples && surface->target.address == draw.address; });
 }
@@ -5153,12 +5198,19 @@ std::shared_ptr<StorageTexture> layeredDepthStorage(const Context& context, Dept
 
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip) {
     if (mip != 0 || resource.baseLevel != 0) return nullptr;
+    auto& unclaimed = ThreadScratch<UnclaimedAddresses, UnclaimedAddressesTag>();
+    if (unclaimed.Holds(context.device, resource.baseAddress, surfacesSerial.load(std::memory_order_acquire))) return nullptr;
+    storageScans.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(surfacesMutex());
+    const auto serial = surfacesSerial.load(std::memory_order_acquire);
     const auto& list = surfaces();
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
         return surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && !surface->retired && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
     });
-    if (found == list.rend()) return nullptr;
+    if (found == list.rend()) {
+        unclaimed.Remember(context.device, resource.baseAddress, serial);
+        return nullptr;
+    }
     auto& surface = **found;
     const bool stencil = surface.target.stencilAddress != 0 && surface.target.stencilAddress == resource.baseAddress;
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
