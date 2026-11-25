@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
@@ -23,6 +24,20 @@ PUBLIC_HEADER_TESTS = re.compile(r"^public_headers(_compile_\d+)?$")
 NID_TESTS = re.compile(r"^nid_")
 PUBLIC_HEADER_INPUTS = {"core/libs/tests/test_public_headers.py", "tools/nid_names.py"}
 HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inl")
+
+
+def phase_report(label, started, detail=""):
+    elapsed = time.perf_counter() - started
+    suffix = f" ({detail})" if detail else ""
+    print(f"[ci-timing] {label}: {elapsed:.1f} s{suffix}", flush=True)
+    return elapsed
+
+
+def report_compiler_cache():
+    try:
+        subprocess.run(["ccache", "--show-stats"], check=False)
+    except OSError:
+        pass
 
 
 def reaches_libs(changed):
@@ -149,8 +164,12 @@ def target_artifact_names(target):
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
     if "--" in command:
-        owner_index = command.index("--") + 1
-        candidates += command[owner_index:owner_index + 1]
+        separator = command.index("--")
+        if command[1:3] == ["-E", "env"] and Path(command[0]).stem.casefold() == "cmake":
+            program = next((part for part in command[3:separator] if not part.startswith("-") and "=" not in part), None)
+            if program:
+                candidates.append(program)
+        candidates += command[separator + 1:separator + 2]
     else:
         candidates += [part for part in command[1:] if not part.startswith("-")
                        and (Path(part).suffix.casefold() == ".exe" or "/" in part or "\\" in part)]
@@ -201,27 +220,58 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
 
 
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
-    subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
-    indices = set(script_test_indices(build_dir, script_tests)) if script_tests else set()
+    total = time.perf_counter()
+    started = time.perf_counter()
+    try:
+        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+    finally:
+        phase_report("build libs", started)
+    indices = set()
+    if script_tests:
+        started = time.perf_counter()
+        indices = set(script_test_indices(build_dir, script_tests))
+        phase_report("script test discovery", started, f"{len(indices)} tests")
     selected_names = set(selected)
     if selected:
-        for batch in chunks(selected):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        batches = list(chunks(selected))
+        started = time.perf_counter()
+        try:
+            for batch in batches:
+                subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        finally:
+            phase_report("build selected test targets", started, f"{len(selected)} targets in {len(batches)} batches")
+        started = time.perf_counter()
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
+        phase_report("ctest discovery", started, f"{len(resolutions)} tests")
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         indices.update(index for _, index in resolutions.values())
     if not indices:
         print("No core/libs test sources changed; the libs build still ran")
+        phase_report("total", total, "0 tests")
         return
     with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
+        started = time.perf_counter()
         additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
-        for batch in chunks(sorted(additional, key=str.casefold)):
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                        "--parallel", "4", "--no-tests=error", "-I", selection,
-                        *(["--output-log", str(output_log)] if output_log else [])], check=True)
+        phase_report("scheduled test owner discovery", started, f"{len(additional)} targets")
+        if additional:
+            batches = list(chunks(sorted(additional, key=str.casefold)))
+            started = time.perf_counter()
+            try:
+                for batch in batches:
+                    subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+            finally:
+                phase_report("build additional test owners", started, f"{len(additional)} targets in {len(batches)} batches")
+        report_compiler_cache()
+        started = time.perf_counter()
+        try:
+            subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
+                            "--parallel", "4", "--no-tests=error", "-I", selection,
+                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
+        finally:
+            phase_report("ctest", started, f"{len(indices)} tests")
+    phase_report("total", total, f"{len(selected)} targets, {len(indices)} tests")
 
 
 def main(argv=None):
@@ -231,7 +281,7 @@ def main(argv=None):
     parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
-        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        changed_paths = host_only.read_changed_paths(args.changed_paths) if args.changed_paths else None
         if changed_paths is not None:
             listed = {Path(path).as_posix() for path in changed_paths if path}
             if not reaches_libs(listed) and not script_test_patterns(listed):

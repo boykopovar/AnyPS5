@@ -106,7 +106,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_ime_open_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeOpen.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
     target_include_directories(guest_ime_open_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-    target_link_libraries(guest_ime_open_tests PRIVATE libSceIme libc)
+    target_link_libraries(guest_ime_open_tests PRIVATE libSceIme libc SDL2-static)
     configure_windows_unwind(guest_ime_open_tests)
     add_test(NAME guest_ime_open COMMAND guest_ime_open_tests)
     if(WIN32)

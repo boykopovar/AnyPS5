@@ -71,8 +71,24 @@ bool RequiresGuestFormatting(const char* format) {
     return false;
 }
 
-std::size_t HostFormatSize(std::size_t size) {
-    return std::min(size, static_cast<std::size_t>(INT_MAX) + 1);
+int FormatBounded(char* buffer, std::size_t size, const char* format, std::va_list arguments) {
+    if (RequiresGuestFormatting(format)) return LibcDetail::FormatWindows(buffer, size, format, arguments);
+
+    const int savedErrno = errno;
+    std::va_list copy;
+    va_copy(copy, arguments);
+    const auto capacity = std::min(size, static_cast<std::size_t>(INT_MAX) + 1);
+    const int result = std::vsnprintf(buffer, capacity, format, copy);
+    va_end(copy);
+    if (result >= 0 || errno != EOVERFLOW) return result;
+
+    errno = savedErrno;
+    try {
+        return LibcDetail::FormatWindows(buffer, size, format, arguments);
+    } catch (const std::overflow_error&) {
+        errno = EOVERFLOW;
+        return -1;
+    }
 }
 #endif
 
@@ -629,7 +645,11 @@ extern "C" {
 
 int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaList* args) {
     if (!destination) { errno = 22; return -1; }
-    *destination = nullptr;
+    char* nullOutput = nullptr;
+    const int savedErrno = errno;
+    const bool probed = GuestCopyOut_nid_no_patch(destination, &nullOutput, sizeof(nullOutput));
+    errno = savedErrno;
+    if (!probed) { errno = 22; return -1; }
     if (!format || !args) { errno = 22; return -1; }
     try {
 #ifdef _WIN32
@@ -654,7 +674,11 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
             return -1;
         }
         std::memcpy(output, source, static_cast<size_t>(count) + 1);
-        *destination = output;
+        if (!GuestCopyOut_nid_no_patch(destination, &output, sizeof(output))) {
+            ApplicationHeapFree_nid_no_patch(output);
+            errno = 22;
+            return -1;
+        }
         return count;
     } catch (const std::bad_alloc&) {
         errno = 12;
@@ -803,7 +827,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
 int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, HostFormatSize(size), format, args);
+    const int result = FormatBounded(buffer, size, format, args);
     va_end(args);
     return result;
 }
@@ -903,12 +927,7 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
 #ifdef _WIN32
     return LibcDetail::FormatWindows(str, size, format, c);
 #else
-    if (RequiresGuestFormatting(format)) return LibcDetail::FormatWindows(str, size, format, c);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(c));
-    const int result = std::vsnprintf(str, HostFormatSize(size), format, copy);
-    va_end(copy);
-    return result;
+    return FormatBounded(str, size, format, *reinterpret_cast<std::va_list*>(c));
 #endif
 }
 

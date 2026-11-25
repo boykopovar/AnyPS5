@@ -1,0 +1,5 @@
+# shader
+
+## change [v_fract_f32, v_floor_f32, v_ceil_f32 and v_frexp_mant_f32 in denormal modes 1 and 2]
+
+- [v_fract_f32, v_floor_f32, v_ceil_f32, v_frexp_mant_f32, v_sin_f32 and v_cos_f32 in denormal modes 1 and 2](../../../core/shader/recompiler/Translation/src/VectorInstructions.cpp) throw in mode 1, bar `v_frexp_mant_f32`, when the module cannot declare `DenormPreserve 32`, and the PS5's gfx1013 is not measured. Mode 2 flushes a denormal input to a zero of its sign as mode 0 does. Mode 1 keeps it as mode 3 does (`v_floor_f32` of -2^-149 is -1) and flushes a denormal result to a zero of its sign, which only `v_fract_f32` of a positive denormal and `v_sin_f32` of a denormal below 0x00145f31 in magnitude give. Measured on RDNA2 (gfx1036, and gfx1031 for `v_sin_f32` and `v_cos_f32`, through HIP) over zeros, denormals, minimum normals, values near 0.5, 1 and 2^23, the largest finite value, infinities and NaNs of both signs and random denormals, at IEEE 0 and 1 in every f32 denormal and round mode: modes 2 and 0 give identical results, and modes 1 and 3 differ only in those flushed results.

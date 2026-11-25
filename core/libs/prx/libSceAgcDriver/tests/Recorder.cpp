@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ReadTrapsOverHostPointerImports.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
@@ -369,6 +370,22 @@ void gpuTimingKeyTests() {
     Require(Recorder::TimingKeyLabel(Recorder::DrawTimingKey(0x123456789abcdefull)) == "draw 0x123456789abcdef", "a wide variant id was cut in the label");
 }
 
+void gpuDrawStageTimingKeyTests() {
+    Require(Recorder::DrawStageTimingEnabled(), "draw-stage timing mode was not enabled");
+    const std::array<std::pair<std::uint32_t, std::uint64_t>, 2> first{{{1, 11}, {5, 37}}};
+    const std::array<std::pair<std::uint32_t, std::uint64_t>, 2> reordered{{{5, 37}, {1, 11}}};
+    const std::array<std::pair<std::uint32_t, std::uint64_t>, 2> otherVertex{{{1, 12}, {5, 37}}};
+    const auto key = Recorder::DrawStageTimingKey(first);
+    Require(key == Recorder::DrawStageTimingKey(reordered), "recorder changed a draw-stage key on stage reorder");
+    Require(key != Recorder::DrawStageTimingKey(otherVertex), "recorder collapsed distinct vertex programs sharing a fragment program");
+    Require((key & Recorder::DrawTimingFlag) != 0 && (key & Recorder::DrawStageTimingFlag) != 0,
+            "recorder omitted the draw-stage timing flags");
+    char label[64];
+    std::snprintf(label, sizeof(label), "drawset 0x%llx", static_cast<unsigned long long>(key & ~(Recorder::DrawTimingFlag | Recorder::DrawStageTimingFlag)));
+    Require(Recorder::TimingKeyLabel(key) == label, "recorder label does not match the logged draw-stage id");
+    gpuTimingKeyTests();
+}
+
 void deviceSelectionTests() {
     const auto properties = [](const char* name, VkPhysicalDeviceType type) {
         VkPhysicalDeviceProperties result{};
@@ -529,6 +546,7 @@ public:
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
                 context.dmaBufImport = true;
             }
+            context.readTrapsOverHostPointerImports = AgcDriver::ReadTrapsOverHostPointerImportsUsable(driverProperties.driverID);
             VkPhysicalDeviceImageViewMinLodFeaturesEXT minLod{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
             if (hasExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLod};
@@ -4789,6 +4807,19 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
             const auto unaligned = movedTo(element + 256 + 4);
             const CompiledShader unalignedShader{ShaderRecompiler::ShaderStage::Compute, &unaligned, 0};
             Require(snapshotContext.limits.minStorageBufferOffsetAlignment <= 4 || !resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&unalignedShader, 1), snapshotRecorder, nullptr).has_value(), "a moved element whose offset the shader cannot be told was bound in place");
+            if (inPlace) {
+                snapshotRecorder.Sync();
+                ShaderResources::MoveProof proof;
+                const auto unlabelled = resources.MovedDispatchBuffers(alignedShader, &snapshotRecorder, 0, proof);
+                Require(unlabelled.has_value() && unlabelled->size() == 1 && proof.inPlace == 1, "a moved read-only dispatch element was not read in place");
+                const std::array<std::byte, 4> label{std::byte{7}, std::byte{0}, std::byte{0}, std::byte{0}};
+                Recorder::NoteQueuedLabel(element + 256, label, 1, AgcDriver::GuestMemory::GpuLockThreadTag());
+                const auto labelled = resources.MovedDispatchBuffers(alignedShader, &snapshotRecorder, 0, proof);
+                Recorder::ForgetQueuedLabels();
+                Require(labelled.has_value() && labelled->size() == 1 && proof.inPlace == 0 && labelled->front().inPlace == VK_NULL_HANDLE, "a moved dispatch element under a label the queue has not recorded yet was read in place");
+                const auto* dispatchImport = HostImportFor(snapshotContext, element + 256, movedBytes);
+                Require(dispatchImport != nullptr && unlabelled->front().inPlace == dispatchImport->buffer && unlabelled->front().inPlaceOffset == HostImportOffset(*dispatchImport, element + 256), "a moved dispatch element read in place is not bound at its place in the host import");
+            }
         }
         snapshotRecorder.Sync();
     }
@@ -7415,9 +7446,9 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
         bool configured;
         ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, configured); }
     } restore{configured};
-    const auto attempt = [&](const Context& with, std::uint64_t at, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, std::uint32_t firstVertex) {
+    const auto attempt = [&](const Context& with, std::uint64_t at, std::uint32_t indexSize, bool meshStage, std::uint32_t firstVertex) {
         IndexBehindWriter outcome = IndexBehindWriter::Count;
-        const auto* import = InPlaceIndexBehindWriter(with, at, 256, indexSize, vertexAttributes, meshStage, false, firstVertex, &outcome);
+        const auto* import = InPlaceIndexBehindWriter(with, at, 256, indexSize, meshStage, false, firstVertex, &outcome);
         return std::pair<const HostImport*, IndexBehindWriter>(import, outcome);
     };
     const auto indices = address + 4096;
@@ -7425,49 +7456,47 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     Require(recorder.PendingWriteOverlaps(indices, 256), "the pending GPU write over the index range was not noted");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, false);
     const auto switchedOff = IndexBehindWriterCounts();
-    const auto off = attempt(context, indices, 4, false, false, 0);
+    const auto off = attempt(context, indices, 4, false, 0);
     Require(IndexBehindWriterCounts() == switchedOff, "an attempt without APS5_INDEX_IN_PLACE_BEHIND_WRITER was counted");
     Require(off.first == nullptr && off.second == IndexBehindWriter::Off, "an index range behind a pending GPU writer was bound in place without APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(!recorder.PendingReadOverlaps(indices, 256), "an index range left on the copy path was noted as an in-place read");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, true);
     const auto countsBefore = IndexBehindWriterCounts();
-    const auto taken = attempt(context, indices, 4, false, false, 0);
+    const auto taken = attempt(context, indices, 4, false, 0);
     Require(taken.first != nullptr && taken.second == IndexBehindWriter::Taken && taken.first->base <= indices && indices + 256 <= taken.first->base + taken.first->bytes, "an index range behind a pending GPU writer was not bound in place with APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(recorder.PendingWriteOverlaps(indices, 256), "binding an index range behind a pending GPU writer waited for the writer");
     const auto read = recorder.DescribePendingRead(indices, 256);
     Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput && read->open, "the read of an index range bound behind a pending GPU writer was not noted on the open batch");
-    Require(attempt(context, address + 16384, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range without a pending GPU writer left the copy path");
-    Require(attempt(context, indices, 4, true, false, 0).second == IndexBehindWriter::VertexAttributes, "an index range of a draw with vertex attributes, which needs its highest index on the CPU, was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 4, false, true, 0).second == IndexBehindWriter::MeshStage, "an index range of a mesh draw was bound behind a pending GPU writer");
+    Require(attempt(context, address + 16384, 4, false, 0).second == IndexBehindWriter::NoWriter, "an index range without a pending GPU writer left the copy path");
+    Require(attempt(context, indices, 4, true, 0).second == IndexBehindWriter::MeshStage, "an index range of a mesh draw was bound behind a pending GPU writer");
     IndexBehindWriter restartOutcome = IndexBehindWriter::Count;
-    Require(InPlaceIndexBehindWriter(context, indices, 256, 4, false, false, true, 0, &restartOutcome) == nullptr && restartOutcome == IndexBehindWriter::PrimitiveRestart, "an index range of a draw with primitive restart, which is skipped when it holds restart indices only, was bound behind a pending GPU writer");
+    Require(InPlaceIndexBehindWriter(context, indices, 256, 4, false, true, 0, &restartOutcome) == nullptr && restartOutcome == IndexBehindWriter::PrimitiveRestart, "an index range of a draw with primitive restart, which is skipped when it holds restart indices only, was bound behind a pending GPU writer");
     IndexBehindWriter shortOutcome = IndexBehindWriter::Count;
-    Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 4, false, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
-    Require(attempt(context, indices + 2, 4, false, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
+    Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 4, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices + 2, 4, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
     auto limited = context;
     limited.limits.maxDrawIndexedIndexValue = 0xffffffu;
-    Require(attempt(limited, indices, 4, false, false, 0).second == IndexBehindWriter::IndexLimit, "an index range was bound behind a pending GPU writer on a device whose index limit needs the highest index");
+    Require(attempt(limited, indices, 4, false, 0).second == IndexBehindWriter::IndexLimit, "an index range was bound behind a pending GPU writer on a device whose index limit needs the highest index");
     auto unrecorded = context;
     unrecorded.recorder = nullptr;
-    Require(attempt(unrecorded, indices, 4, false, false, 0).second == IndexBehindWriter::Off, "an index range was bound behind a pending GPU writer without a recorder");
+    Require(attempt(unrecorded, indices, 4, false, 0).second == IndexBehindWriter::Off, "an index range was bound behind a pending GPU writer without a recorder");
     const std::array<std::byte, 4> label{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     recorder.NotePendingWrite(address + 12288, 16);
     recorder.RecordStore(whole->buffer, address + 12288 - whole->base, label, address + 12288);
     Require(recorder.QueuedStoreOverlaps(address + 12288, 4), "the label store was not queued");
-    Require(attempt(context, address + 12288, 4, false, false, 0).second == IndexBehindWriter::LabelOrStore, "an index range under a queued label store was bound behind a pending GPU writer");
+    Require(attempt(context, address + 12288, 4, false, 0).second == IndexBehindWriter::LabelOrStore, "an index range under a queued label store was bound behind a pending GPU writer");
     recorder.Sync();
     Require(!recorder.PendingReadOverlaps(indices, 256), "the read of an index range bound behind a pending GPU writer outlived its batch");
-    Require(attempt(context, indices, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
+    Require(attempt(context, indices, 4, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
     const auto countsAfter = IndexBehindWriterCounts();
     std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> expectedCounts{};
     const auto expect = [&](IndexBehindWriter outcome, std::uint64_t count) { expectedCounts[static_cast<std::size_t>(outcome)] = count; };
     expect(IndexBehindWriter::Taken, 2);
     expect(IndexBehindWriter::Off, 2);
     expect(IndexBehindWriter::NoWriter, 2);
-    expect(IndexBehindWriter::VertexAttributes, 1);
     expect(IndexBehindWriter::IndexLimit, 1);
     expect(IndexBehindWriter::MeshStage, 1);
     expect(IndexBehindWriter::PrimitiveRestart, 1);
@@ -8416,14 +8445,30 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
 }
 
 #ifdef __APPLE__
-vm_prot_t HostPageProtection(const void* page) {
+bool PageInaccessible(const void* page) {
     mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(page);
     mach_vm_size_t size = 0;
     vm_region_basic_info_data_64_t info{};
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object = MACH_PORT_NULL;
     Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= reinterpret_cast<mach_vm_address_t>(page), "cannot read the protection of a page");
-    return info.protection & (VM_PROT_READ | VM_PROT_WRITE);
+    return (info.protection & (VM_PROT_READ | VM_PROT_WRITE)) == VM_PROT_NONE;
+}
+#elif defined(__linux__)
+bool PageInaccessible(const void* page) {
+    const auto address = reinterpret_cast<std::uintptr_t>(page);
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        char* parsed = nullptr;
+        const auto first = static_cast<std::uintptr_t>(std::strtoull(line.c_str(), &parsed, 16));
+        if (parsed == nullptr || *parsed != '-') continue;
+        const auto last = static_cast<std::uintptr_t>(std::strtoull(parsed + 1, &parsed, 16));
+        if (address < first || address >= last || parsed == nullptr || std::strlen(parsed) < 3) continue;
+        return parsed[1] != 'r' && parsed[2] != 'w';
+    }
+    Require(false, "cannot read the protection of a page");
+    return false;
 }
 #endif
 
@@ -8550,7 +8595,7 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     settle();
     const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
     Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr) {
         const auto rewriteImage = [&](const std::shared_ptr<StorageTexture>& target, std::uint32_t extent, std::uint8_t value) {
             auto source = std::make_shared<Buffer>(context, extent * extent * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -8580,23 +8625,23 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         rewrite(0x4b);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a label stored a pending small tiled image instead of trapping its reads");
-        Require(StorageTexture::StoreSmallPending("flip") == 0 && HostPageProtection(memory + offset) == VM_PROT_NONE, "a flip stored a small image whose reads are trapped");
+        Require(PageInaccessible(memory + offset), "a label stored a pending small tiled image instead of trapping its reads");
+        Require(StorageTexture::StoreSmallPending("flip") == 0 && PageInaccessible(memory + offset), "a flip stored a small image whose reads are trapped");
         Require(readUnlocked([&] { return holds(0x4b); }), "a read of a trapped image did not see its pending results");
-        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "a resolved trap did not give back the image's pages");
+        Require(!PageInaccessible(memory + offset), "a resolved trap did not give back the image's pages");
         rewrite(0x2d);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a second label did not trap the small tiled image's reads");
+        Require(PageInaccessible(memory + offset), "a second label did not trap the small tiled image's reads");
         Require(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None), "storing a trapped image stored nothing");
         settle();
-        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "storing a trapped image did not release its trap");
+        Require(!PageInaccessible(memory + offset), "storing a trapped image did not release its trap");
         Require(holds(0x2d), "storing a trapped image did not publish it");
 
         rewrite(0x5e);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         std::thread flusher([&] { static_cast<void>(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None)); });
         while (StorageTexture::AnyPending()) std::this_thread::yield();
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a trapped image taken for a store gave back its pages before the store");
+        Require(PageInaccessible(memory + offset), "a trapped image taken for a store gave back its pages before the store");
         bool fresh = false;
         std::thread waiting([&] { fresh = holds(0x5e); });
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -8626,21 +8671,21 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         const auto holdsIn = [&](const GuestTextureResource& surface, std::size_t bytes, std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + (surface.baseAddress - address), memory + (surface.baseAddress - address) + bytes, value)) >= 8u * 8u * 4u; };
         rewriteImage(imageA, 8u, 0x61);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image");
+        Require(PageInaccessible(pageBytes), "a label did not trap a lone pending linear image");
         rewriteImage(imageB, 8u, 0x62);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         settle();
-        Require(HostPageProtection(pageBytes) != VM_PROT_NONE, "a label left a trap on a page it stored another image on");
+        Require(!PageInaccessible(pageBytes), "a label left a trap on a page it stored another image on");
         Require(holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x61) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x62), "a label did not store both images on a shared page");
         rewriteImage(imageA, 8u, 0x63);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image again");
+        Require(PageInaccessible(pageBytes), "a label did not trap a lone pending linear image again");
         rewriteImage(imageB, 8u, 0x64);
         Require(StorageTexture::FlushPending(linearB.baseAddress, static_cast<std::size_t>(layoutB.guestBytes), nullptr, "idle", PublishScope::None), "a CPU store next to a trapped image stored nothing");
         settle();
-        Require(HostPageProtection(pageBytes) != VM_PROT_NONE && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
+        Require(!PageInaccessible(pageBytes) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap the image a neighbouring CPU store left pending");
+        Require(PageInaccessible(pageBytes), "a label did not trap the image a neighbouring CPU store left pending");
         Require(readUnlocked([&] { return holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x63); }), "a read of the re-trapped image did not see its pending results");
 
         auto outer = resource;
@@ -8664,30 +8709,33 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
             Require(StorageTexture::FlushPending(address + 0x28000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's block stored nothing");
             settle();
         };
+        rewriteImage(outerImage, 256u, 0x70);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        settle();
         rewriteImage(outerImage, 256u, 0x71);
         rewriteImage(innerImage, 8u, 0x72);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label stored a small image inside a pending large tiled one instead of trapping its reads");
+        Require(PageInaccessible(innerBytes), "a label stored a small image inside a pending large tiled one instead of trapping its reads");
         storeOuterBlock();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE, "a store of a large image's block left a trapped image inside it trapped");
+        Require(!PageInaccessible(innerBytes), "a store of a large image's block left a trapped image inside it trapped");
         Require(innerHolds(0x72), "a store of a large image's block over a trapped image did not leave the bytes a label store leaves");
         rewriteImage(outerImage, 256u, 0x73);
         rewriteImage(innerImage, 8u, 0x75);
         rewriteImage(outerImage, 256u, 0x74);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image again");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image again");
         storeOuterBlock();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
+        Require(!PageInaccessible(innerBytes) && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
         rewriteImage(outerImage, 256u, 0x76);
         rewriteImage(innerImage, 8u, 0x77);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image a third time");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image a third time");
         outerImage->Flush();
         settle();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+        Require(!PageInaccessible(innerBytes) && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
         rewriteImage(innerImage, 8u, 0x78);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image after the large one was evicted");
         Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
     }
 #endif
@@ -15213,6 +15261,95 @@ void msaaClearPassTests(const Device& device, Recorder& recorder, ColorMetadataP
     std::cout << name << " MSAA clear and resolve tests passed\n";
 }
 
+void metadataPassOverMultisampleMemoryTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || base.hostImportAlignment == 0) {
+        std::cout << "4x color targets or host imports unavailable: a CB metadata pass over multisampled memory not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 128;
+    constexpr std::size_t targetBytes = 65536u;
+    constexpr std::size_t cmaskBytes = 4096u;
+    constexpr std::size_t bytes = 5u * 65536u + 2u * cmaskBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, (bytes + 65535u) & ~std::size_t{65535u});
+#endif
+    Require(block != nullptr, "cannot allocate the metadata pass reuse block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto cmaskAddress = address + 5u * 65536u;
+    const auto reuseCmaskAddress = cmaskAddress + cmaskBytes;
+    std::memset(reinterpret_cast<void*>(reuseCmaskAddress), 0xff, cmaskBytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    ColorTarget multisampled{};
+    multisampled.address = address;
+    multisampled.surfaceAddress = address;
+    multisampled.extent = {side, side};
+    multisampled.surfaceExtent = multisampled.extent;
+    multisampled.format = VK_FORMAT_R8G8B8A8_UNORM;
+    multisampled.elementBytes = 4;
+    multisampled.bytes = targetBytes;
+    multisampled.samples = 4;
+    multisampled.cmaskAddress = cmaskAddress;
+    multisampled.cmaskBytes = cmaskBytes;
+    multisampled.cmaskFastClear = true;
+    multisampled.clearWords = {0x11223344u, 0};
+    {
+        std::lock_guard gpu(GpuMutex());
+        RunColorMetadataPass(context, {ColorMetadataPass::Mode::FmaskDecompress, {multisampled}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    Require(MultisampleColorTargetOverlaps(address, targetBytes), "the FMASK decompress left no multisampled color target to reuse");
+    ColorTarget reuse{};
+    reuse.address = address;
+    reuse.surfaceAddress = address;
+    reuse.extent = {side, side};
+    reuse.surfaceExtent = reuse.extent;
+    reuse.format = VK_FORMAT_R8G8B8A8_UNORM;
+    reuse.elementBytes = 4;
+    reuse.bytes = targetBytes;
+    reuse.samples = 1;
+    reuse.tileMode = ColorTileMode::RenderTarget;
+    reuse.cmaskAddress = reuseCmaskAddress;
+    reuse.cmaskBytes = cmaskBytes;
+    {
+        std::lock_guard gpu(GpuMutex());
+        RunColorMetadataPass(context, {ColorMetadataPass::Mode::EliminateFastClear, {reuse}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    Require(!MultisampleColorTargetOverlaps(address, targetBytes), "a CB metadata pass over a single-sample target in a multisampled target's memory left the multisampled target guarded");
+    std::cout << "CB metadata pass over a multisampled target's memory tests passed\n";
+}
+
 void tiledResolveTests(const Device& device, Recorder& recorder) {
     namespace GuestMemory = AgcDriver::GuestMemory;
     auto context = device.GetContext();
@@ -18572,6 +18709,10 @@ int main(int argc, char** argv) {
             std::cout << "partial private write-watch restoration tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-draw-stage-timing-key-only") {
+            gpuDrawStageTimingKeyTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--gpu-timing-key-only") {
             gpuTimingKeyTests();
             std::cout << "gpu timing key tests passed\n";
@@ -19168,6 +19309,7 @@ int main(int argc, char** argv) {
             oneFragmentFmaskGuardTests(device);
             msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
             msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
+            metadataPassOverMultisampleMemoryTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
@@ -19252,6 +19394,7 @@ int main(int argc, char** argv) {
         tiledResolveTests(device, recorder);
         msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
         msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
+        metadataPassOverMultisampleMemoryTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         pendingUploadGpuCopyTests(device, recorder);

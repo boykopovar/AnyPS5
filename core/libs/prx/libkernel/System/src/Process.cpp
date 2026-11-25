@@ -32,6 +32,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -52,6 +53,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -82,9 +84,12 @@ constexpr int errnoNoExec = 8;
 constexpr int errnoNoEnt = 2;
 constexpr int errnoAccess = 13;
 constexpr int errnoBadFile = 9;
+constexpr int errnoNotDir = 20;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
+std::mutex processPropertiesMutex;
+std::map<std::array<char, 32>, std::array<std::int64_t, 4>> processProperties;
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 constexpr std::size_t ExecArgumentBytesLimit = 262144;
 constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
@@ -324,11 +329,31 @@ bool ExecProgramFound(std::string_view name, bool search, int& error, std::strin
         std::filesystem::path native;
         std::error_code probe;
         const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native);
-        if (resolved != 0 || !std::filesystem::exists(native, probe)) {
-            error = resolved == 0 ? NotFoundError_nid_no_patch(native) : resolved;
+        if (resolved != 0) {
+            error = resolved;
             return false;
         }
-        if (!std::filesystem::is_regular_file(native, probe) || !ExecutePermission_nid_no_patch(native)) {
+        const bool trailingSlash = !native.has_filename() && native.has_relative_path();
+        while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(native, probe);
+        if (probe) {
+            error = FilesystemError(probe);
+            return false;
+        }
+        const auto status = std::filesystem::status(verbatim, probe);
+        if (status.type() == std::filesystem::file_type::not_found) {
+            error = NotFoundError_nid_no_patch(verbatim);
+            return false;
+        }
+        if (probe) {
+            error = FilesystemError(probe);
+            return false;
+        }
+        if (trailingSlash && !std::filesystem::is_directory(status)) {
+            error = errnoNotDir;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(status) || !ExecutePermission_nid_no_patch(verbatim)) {
             error = errnoAccess;
             return false;
         }
@@ -349,9 +374,13 @@ bool ExecProgramFound(std::string_view name, bool search, int& error, std::strin
         found = candidate;
         std::filesystem::path native;
         std::error_code probe;
-        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0 && std::filesystem::exists(native, probe)) {
-            if (std::filesystem::is_regular_file(native, probe) && ExecutePermission_nid_no_patch(native)) return true;
-            inaccessible = true;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0) {
+            while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+            const auto verbatim = NativeVerbatimPath_nid_no_patch(native, probe);
+            if (!probe && std::filesystem::exists(verbatim, probe)) {
+                if (std::filesystem::is_regular_file(verbatim, probe) && ExecutePermission_nid_no_patch(verbatim)) return true;
+                inaccessible = true;
+            }
         }
         if (separator == std::string_view::npos) {
             error = inaccessible ? errnoAccess : errnoNoEnt;
@@ -983,6 +1012,16 @@ int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
 
 void* APS5_VABI sceKernelGetProcParam(void) {
     return const_cast<void*>(ApplicationProcessParameters_nid_no_patch());
+}
+
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4) {
+    if (name == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<char, 32> key;
+    if (!GuestCopyIn_nid_no_patch(key.data(), name, key.size())) return SCE_KERNEL_ERROR_EFAULT;
+    const std::array<std::int64_t, 4> values{value1, value2, value3, value4};
+    std::lock_guard guard(processPropertiesMutex);
+    processProperties[key] = values;
+    return 0;
 }
 
 int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {

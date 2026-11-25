@@ -975,7 +975,7 @@ constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
+    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment && request.shader.stage != Stage::Mesh) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
     const auto tail = ShaderRecompiler::FindUserDataTail(program, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()));
     if (!tail) return {};

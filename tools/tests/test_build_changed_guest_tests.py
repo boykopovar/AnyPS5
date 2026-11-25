@@ -147,6 +147,35 @@ class GuestTestTargets(unittest.TestCase):
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
 
 
+class PhaseReport(unittest.TestCase):
+    def report(self, label, seconds, detail=""):
+        with mock.patch.object(build_changed_guest_tests.time, "perf_counter", return_value=10.0 + seconds):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                elapsed = build_changed_guest_tests.phase_report(label, 10.0, detail)
+        return output.getvalue(), elapsed
+
+    def test_prints_the_elapsed_seconds_with_one_decimal(self):
+        self.assertEqual(self.report("build libs", 2.5), ("[ci-timing] build libs: 2.5 s\n", 2.5))
+
+    def test_appends_the_detail_in_parentheses(self):
+        self.assertEqual(
+            self.report("build selected test targets", 123.4, "12 targets in 2 batches"),
+            ("[ci-timing] build selected test targets: 123.4 s (12 targets in 2 batches)\n", 123.4),
+        )
+
+
+class CompilerCacheReport(unittest.TestCase):
+    def test_runs_ccache_show_stats(self):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run") as run:
+            build_changed_guest_tests.report_compiler_cache()
+        run.assert_called_once_with(["ccache", "--show-stats"], check=False)
+
+    def test_a_missing_ccache_is_ignored(self):
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=FileNotFoundError):
+            build_changed_guest_tests.report_compiler_cache()
+
+
 class OwnerResolution(unittest.TestCase):
     def test_cmake_owner_marker_precedes_tool_options_and_client_arguments(self):
         owner = build_changed_guest_tests.test_owner(
@@ -297,6 +326,16 @@ class Main(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
+
+    def test_selects_guest_sources_in_git_nul_delimited_paths(self):
+        source = "core/libs/tests/Café.cpp"
+        build = self.fixture([self.target("guest_tests", source=source, fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(("docs/file.md\0" + source + "\0").encode("utf-8"))
+        with mock.patch.object(build_changed_guest_tests, "run") as run:
+            self.assertEqual(build_changed_guest_tests.main([str(build), str(changed)]), 0)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[1], ["guest_tests"])
 
     def test_a_changed_list_with_a_bom_keeps_the_first_path(self):
         build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
@@ -646,6 +685,24 @@ int main(int argc, char **argv) {
         self.assertEqual(len(commands), 1)
         self.assertEqual(selections, ["0,0,0,1\n"])
 
+    def test_reports_every_phase_even_when_ctest_fails(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]}]})
+        output = io.StringIO()
+        def execute(cmd, **_):
+            if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd:
+                raise subprocess.CalledProcessError(8, cmd)
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), \
+                contextlib.redirect_stdout(output):
+            code = self.main(build, ["core/libs/tests/Guest.cpp"])
+        self.assertEqual(code, 1)
+        reported = output.getvalue()
+        self.assertIn("[ci-timing] build libs:", reported)
+        self.assertIn("[ci-timing] build selected test targets: ", reported)
+        self.assertIn("[ci-timing] ctest discovery: ", reported)
+        self.assertIn("[ci-timing] ctest: ", reported)
+
     def test_an_unrelated_change_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         calls = []
@@ -797,6 +854,16 @@ class CtestResolutionsTests(unittest.TestCase):
 
     def test_every_test_with_a_known_owner_is_resolved_with_its_position(self):
         self.assertEqual(self.resolve(self.ctest_entries()), {"a1": ("alpha", 1), "b1": ("beta", 2), "c1": ("alpha", 4)})
+
+    def test_cmake_env_preserves_the_owner_before_an_application_separator(self):
+        tests = [
+            {"name": "env_application_separator", "command": [
+                "C:/Tools/cmake.exe", "-E", "env", "--modify", "MODE=set:bin/beta.exe",
+                "bin/alpha.exe", "--", "bin/beta.exe"]},
+            {"name": "env_wrapper_separator", "command": [
+                "C:/Tools/cmake.exe", "-E", "env", "--unset=MODE", "--", "bin/beta.exe", "--", "sample"]},
+        ]
+        self.assertEqual(self.resolve(tests), {"env_application_separator": ("alpha", 1), "env_wrapper_separator": ("beta", 2)})
 
     def test_selection_matches_the_owner_or_a_referenced_target(self):
         self.assertEqual(self.resolve(self.ctest_entries(), selected={"beta"}), {"b1": ("beta", 2), "c1": ("alpha", 4)})

@@ -142,10 +142,8 @@ int main(int argc, char** argv) {
             std::uint32_t categoryType = 0;
             Require(sceKernelGetAppCategoryType(getpid_nid_postfix(), &categoryType) == 0, "current-process category lookup failed");
             Require(categoryType == ApplicationCategoryType, "current-process category type was not read from param.json");
-            bool unsupportedPid = false;
-            try { static_cast<void>(sceKernelGetAppCategoryType(getpid_nid_postfix() + 1, &categoryType)); }
-            catch (const std::runtime_error&) { unsupportedPid = true; }
-            Require(unsupportedPid, "a different process id was accepted");
+            Require(sceKernelGetAppCategoryType(getpid_nid_postfix() + 1, &categoryType) == static_cast<int>(0x80020003), "a different process id is not ESRCH");
+            Require(categoryType == ApplicationCategoryType, "an unused pid wrote the output");
             return 0;
         }
         if (mode == "--category-unavailable") {

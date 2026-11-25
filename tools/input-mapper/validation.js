@@ -18,6 +18,8 @@ export const settings = [
     {name: 'ToggleActions', kind: 'padButtons'}
 ];
 
+export const mouseStickTargets = ['Left', 'Right'];
+
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
 export const sdlControllerButtons = [
     'a', 'b', 'x', 'y', 'back', 'guide', 'start', 'leftstick', 'rightstick', 'leftshoulder', 'rightshoulder',
@@ -48,7 +50,7 @@ export function settingValue(setting, value) {
         return '';
     }
     if (setting.kind === 'stickTarget') {
-        if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
+        if (canonicalValue(text, mouseStickTargets) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
     if (setting.kind === 'padButtons') {
