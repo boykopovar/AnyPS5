@@ -4,13 +4,16 @@
 
 #include FT_OUTLINE_H
 
+#include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 using namespace FreeType;
 
@@ -62,15 +65,17 @@ int main() {
     Require(FT_Outline_Done_nid_postfix(&library, unmapped) == FT_Err_Invalid_Outline);
     Require(errno == 71);
 
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
     auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{1});
-    for (const bool done : {false, true}) {
+    for (const auto [handle, done] : {std::pair{unreadableLibrary, false}, std::pair{unreadableLibrary, true}, std::pair{misaligned, false}, std::pair{misaligned, true}}) {
         GuestOutline kept{1, 2, nullptr, nullptr, nullptr, 3};
         const char* const name = done ? "FT_Outline_Done_nid_postfix" : "FT_Outline_New_nid_postfix";
         errno = 71;
         bool refused = false;
         try {
-            if (done) FT_Outline_Done_nid_postfix(unreadableLibrary, &kept);
-            else FT_Outline_New_nid_postfix(unreadableLibrary, 3, 1, &kept);
+            if (done) FT_Outline_Done_nid_postfix(handle, &kept);
+            else FT_Outline_New_nid_postfix(handle, 3, 1, &kept);
         } catch (const std::runtime_error& error) {
             refused = std::string(error.what()) == std::string(name) + " not implemented";
         }

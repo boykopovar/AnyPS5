@@ -4,6 +4,7 @@ import importlib.util
 import io
 import itertools
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -63,6 +64,11 @@ def run_main(runner, root, extra=(), performance_result=None, smoke_result=None,
 
 class PerformanceFixture:
     def setUp(self):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ("ANYPS5_NO_SHADER_CACHE", "MESA_SHADER_CACHE_DISABLE", "__GL_SHADER_DISK_CACHE"):
+            os.environ.pop(name, None)
         temporary = tempfile.TemporaryDirectory(prefix="anyps5-performance-integration-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
@@ -180,15 +186,75 @@ class PerformancePhaseTests(PerformanceFixture, unittest.TestCase):
         session.exit_code.return_value = 0
         session.alive.side_effect = [True, True, False, False]
         clock = itertools.count(0, 0.25)
-        with mock.patch.object(self.runner, "Session", return_value=session) as constructor, \
+        recording = self.work / "pad-record.txt"
+
+        def launch(*args, **kwargs):
+            recording.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+            return session
+
+        with mock.patch.object(self.runner, "Session", side_effect=launch) as constructor, \
                 mock.patch.object(self.runner.time, "monotonic", side_effect=clock.__next__), \
                 mock.patch.object(performance_capture, "inspect_capture", return_value={"state": "complete", "process_id": 1}), \
                 mock.patch.object(self.runner.pad_timeline, "queue_timeline") as queued:
-            result = self.runner.performance_phase(self.executable, self.work, {}, self.console, 5, pad, self.capture)
+            result = self.runner.performance_phase(self.executable, self.work, {"APS5_PAD_RECORD": str(recording)}, self.console, 5, pad, self.capture)
         self.assertEqual(constructor.call_args.args[2]["APS5_PAD_INPUT_FILE"], str(self.work / "pad-input.txt"))
         self.assertFalse((self.work / "pad-input.txt").exists())
         queued.assert_called_once()
         self.assertIsNotNone(result["pad_queued_s"])
+
+
+class PadPhaseReadinessTests(PerformanceFixture, unittest.TestCase):
+    def run_phase(self, ready_after, recording=None):
+        self.console.stderr = io.BytesIO()
+        clock = [0.0]
+        state = {"closed": False, "recorded": False}
+        self.phase_index = getattr(self, "phase_index", 0) + 1
+        trace_dir = self.root / f"phase{self.phase_index}"
+        trace_dir.mkdir()
+        env = {"APS5_TRACE_DIR": str(trace_dir)}
+        if recording is not None:
+            env["APS5_PAD_RECORD"] = str(recording)
+        path = recording or trace_dir / "pad-record.txt"
+        session = mock.Mock()
+        session.process.pid = 1
+        session.images = {}
+        session.exit_code.return_value = 0
+
+        def alive():
+            if ready_after is not None and not state["recorded"] and clock[0] >= ready_after:
+                path.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+                state["recorded"] = True
+            return not state["closed"]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        session.alive.side_effect = alive
+        session.close.side_effect = lambda: state.update(closed=True)
+        pad = {"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}
+        with mock.patch.object(self.runner, "Session", return_value=session) as constructor, \
+                mock.patch.object(self.runner.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(self.runner.time, "sleep", side_effect=sleep):
+            result = self.runner.performance_phase(self.executable, self.work, env, self.console, 1, pad)
+        return result, constructor.call_args.args[2]
+
+    def test_phase_waits_for_the_first_controller_read(self):
+        result, env = self.run_phase(0.5)
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_file())
+        self.assertNotIn(b"timeline not queued", self.console.stderr.getvalue())
+
+    def test_phase_without_a_controller_read_queues_nothing(self):
+        result, _ = self.run_phase(None)
+        self.assertIsNone(result["pad_queued_s"])
+        self.assertIn(b"no fresh controller sample observed", self.console.stderr.getvalue())
+
+    def test_restart_does_not_reuse_the_warmup_recording(self):
+        recording = self.work / "shared-record.txt"
+        warmup, _ = self.run_phase(0, recording)
+        capture, _ = self.run_phase(None, recording)
+        self.assertIsNotNone(warmup["pad_queued_s"])
+        self.assertIsNone(capture["pad_queued_s"])
 
 
 class PerformanceRunTests(PerformanceFixture, unittest.TestCase):
@@ -382,6 +448,19 @@ class PerformanceMainTests(PerformanceFixture, unittest.TestCase):
             self.runner.main(["--games", str(self.root), "--profile", "performance", "--trace-frames", "2:0", "--scene", "scene"])
         self.assertEqual(stopped.exception.code, 2)
         prepare.assert_not_called()
+
+    def test_smoke_comparison_rejects_a_performance_summary_before_discovery(self):
+        capture = run_main(self.runner, self.root, ["--profile", "performance", "--trace-frames", "2:5", "--scene", "scene"])
+        baseline = capture["report_directory"] / "summary.json"
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                stderr = io.StringIO()
+                with mock.patch.object(self.runner, "discover", return_value={}) as discover, \
+                        contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as stopped:
+                    self.runner.main(["--games", str(self.root / "games"), "--compare", str(baseline), *options, "PPSA00001"])
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn("--compare requires a smoke-run summary, got a performance capture summary", stderr.getvalue())
+                discover.assert_not_called()
 
     def test_invalid_runtime_capture_is_retained_as_invalid(self):
         for index, (capture_error, console_error) in enumerate(((ValueError("bad native capture"), None),

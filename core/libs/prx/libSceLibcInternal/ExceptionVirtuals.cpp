@@ -48,6 +48,11 @@ APS5_EXPORT("pS-t9AJblSM", sceLibcInternalBadAllocDoraise_nid_no_patch);
 }
 APS5_EXPORT("WMw8eIs0kjM", sceLibcInternalBadTypeidDoraise_nid_no_patch);
 
+[[noreturn]] void APS5_VABI _ZNKSt13bad_exception8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
+    if (!self) throw std::invalid_argument("exception object is null");
+    LibcThrowBadException_nid_no_patch();
+}
+
 const char* APS5_VABI sceLibcInternalBadVariantAccessWhat_nid_no_patch(const LibcException::ExceptionObject* self) {
     return Slot<PlainWhat>(_ZTVSt18bad_variant_access_nid_postfix, WhatSlot)(self);
 }

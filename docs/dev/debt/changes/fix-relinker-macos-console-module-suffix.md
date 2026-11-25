@@ -1,0 +1,5 @@
+# relinker
+
+## change [Unscoped imports on Windows]
+
+- [Unscoped imports on Windows](../../../core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp) - an import without a module that no searched library exports under its name is searched again under the NID of that name, because homebrew built with the [ps5-payload-dev SDK](https://github.com/ps5-payload-dev/sdk) imports by symbol name (Quake, from the websrv homebrew launcher; Mari0, #6239) while the libraries in `libs/` export NIDs. A dependency named with `.sprx`, `.suprx` or `.debug_prx` loads the `.prx` library of the same stem from `libs/`, and a kernel-family import searches the other members and `libc.prx`, undeclared variants optional, as `libSceLibcInternal` already loads `libc.prx`: AnyPS5's `libkernel_web.prx` exports only throwing stubs, where the console's `libkernel_web.sprx` is a libkernel variant. A name that matches a library's export as written still binds to that export first. macOS resolves them by name through the host loader and maps the suffix too.

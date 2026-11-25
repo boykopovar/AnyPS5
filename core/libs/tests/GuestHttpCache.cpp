@@ -35,6 +35,7 @@ namespace {
 constexpr int NotFound = static_cast<int>(0x817a0011);
 constexpr int InvalidValue = static_cast<int>(0x817a0012);
 constexpr int InvalidUser = static_cast<int>(0x817a0013);
+constexpr int CacheInfoDisabled = static_cast<int>(0x817a0014);
 constexpr int TooManyCaches = static_cast<int>(0x817a0002);
 constexpr int UserServiceAlreadyInitialized = static_cast<int>(0x80960003);
 constexpr std::int32_t InitialUser = 0x10000000;
@@ -55,6 +56,10 @@ void TestWithoutCache() {
     Require(sceHttpCacheSystemShutdown() == 0);
     Require(sceHttpCacheDebugSetUrl() == 0);
     Require(sceHttpCacheRegisterCacheInfoUrl(nullptr) == InvalidValue);
+    Require(sceHttpCacheUnregisterCacheInfoUrl(nullptr) == InvalidValue);
+    Require(sceHttpCacheUnregisterCacheInfoUrl("http://a/") == CacheInfoDisabled);
+    Require(sceHttpCacheClearCacheInfo(InitialUser) == CacheInfoDisabled);
+    Require(sceHttpCacheClearCacheInfo(5) == CacheInfoDisabled);
 }
 
 void TestRequests() {
@@ -437,6 +442,45 @@ void TestRevalidation() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestRevalidationPrefixExclusions() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    Cached(exchange,
+           "http://prefix/a",
+           {{"Cache-Control", "max-age=60"},
+            {"ETag", "e1"},
+            {"Content-Type", "text/plain"},
+            {"Content-Length", "8"},
+            {"X-Content-Type-Options", "nosniff"},
+            {"X-WebKit-CSP", "default-src 'self'"},
+            {"Content", "old"}},
+           "old body");
+    Advance(120);
+    Require(exchange.Retrieve("http://prefix/a") == 0 && exchange.result == 2);
+    Require(exchange.Revalidate(304,
+                                {{"Cache-Control", "max-age=600"},
+                                 {"Content-Type", "application/json"},
+                                 {"content-length", "999"},
+                                 {"X-Content-Type-Options", "changed"},
+                                 {"X-WebKit-CSP", "changed"},
+                                 {"Content", "new"}}) == 0 &&
+            exchange.result == 1);
+    Require(Value(exchange.response, "Cache-Control") == "max-age=600");
+    Require(Value(exchange.response, "Content-Type") == "text/plain");
+    Require(Value(exchange.response, "Content-Length") == "8");
+    Require(Value(exchange.response, "X-Content-Type-Options") == "nosniff");
+    Require(Value(exchange.response, "X-WebKit-CSP") == "default-src 'self'");
+    Require(Value(exchange.response, "Content") == "new");
+    exchange.Done();
+    Require(exchange.Retrieve("http://prefix/a") == 0 && exchange.result == 1);
+    Require(Value(exchange.response, "Content-Type") == "text/plain");
+    Require(Value(exchange.response, "Content-Length") == "8");
+    Require(Value(exchange.response, "X-Content-Type-Options") == "nosniff");
+    Require(Value(exchange.response, "X-WebKit-CSP") == "default-src 'self'");
+    Require(Value(exchange.response, "Content") == "new");
+    exchange.Done();
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
 void TestSystemLifecycle() {
     Require(sceHttpCacheSystemInit("/data/cache") == 0);
     Require(sceHttpCacheSystemInit("/data/other") == 0);
@@ -514,6 +558,12 @@ void TestTags() {
     Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, "01234567890123456789012345678901") == InvalidValue);
     Require(sceHttpCacheCreateRequestWithTag(9, InitialUser, "alpha") == NotFound);
     Require(sceHttpCacheCreateRequestWithTag(exchange.cache, 5, "alpha") == InvalidUser);
+    const std::array<std::uint8_t, 16> target{};
+    Require(sceHttpCacheRemoveTag(9, InitialUser, "alpha", target.data()) == NotFound);
+    Require(sceHttpCacheRemoveTag(exchange.cache, InitialUser, nullptr, target.data()) == NotFound);
+    Require(sceHttpCacheRemoveTag(exchange.cache, InitialUser, "alpha", nullptr) == NotFound);
+    Require(exchange.Retrieve("http://tags/a") == 0 && exchange.result == 1);
+    exchange.Done();
     Require(sceHttpCacheClear(exchange.cache, InitialUser, "alpha") == 0);
     RequireMiss(exchange, "http://tags/a");
     Require(exchange.Retrieve("http://tags/b") == 0 && exchange.result == 1);
@@ -582,6 +632,12 @@ void TestMemoryPool() {
     Require(sceHttpCacheSetResponseHeader(request, &stored) == 0);
     Require(sceHttpCacheSetData(request, "a", 1) == 0 && sceHttpCacheCompleteRequest(request) == 0);
     Require(sceHttpCacheDeleteRequest(request) == 0);
+    const int hit = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(hit > 0);
+    result = -1;
+    Require(sceHttpCacheRetrieveWithMemoryPool(hit, &query, nullptr, nullptr, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 1);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && ReadAll(hit) == "a");
+    Require(sceHttpCacheDeleteRequest(hit) == 0);
     Require(exchange.Retrieve("http://pool/a") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "a");
     exchange.Done();
     Cached(exchange, "http://pool/b", {{"Cache-Control", "max-age=60"}, {"ETag", "b1"}}, "old");
@@ -594,6 +650,21 @@ void TestMemoryPool() {
     Require(pool[0] == 0xa5 && pool[15] == 0xa5);
     Require(sceHttpCacheSetData(exchange.request, "new", 3) == 0 && sceHttpCacheCompleteRequest(exchange.request) == 0);
     exchange.Done();
+    Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
+    exchange.Done();
+    Advance(700);
+    const int stale = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(stale > 0);
+    const Request queryB{0, 0, "http://pool/b", 0, nullptr};
+    result = -1;
+    Require(sceHttpCacheRetrieveWithMemoryPool(stale, &queryB, nullptr, &next, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 2);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && next.url == nullptr);
+    const Header longer[]{{"Cache-Control", "max-age=3600"}};
+    const ResponseHeader notModified{304, 0, 1, longer};
+    result = -1;
+    Require(sceHttpCacheRevalidateWithMemoryPool(stale, &notModified, nullptr, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 1);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && ReadAll(stale) == "new");
+    Require(sceHttpCacheDeleteRequest(stale) == 0);
     Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
     exchange.Done();
     Require(sceHttpCacheTerm(exchange.cache) == 0);
@@ -609,6 +680,7 @@ int main() {
     TestStoreAndHit();
     TestLifetimeOrder();
     TestRevalidation();
+    TestRevalidationPrefixExclusions();
     TestSystemLifecycle();
     TestSystemPathMemory();
     TestPublicResponses();

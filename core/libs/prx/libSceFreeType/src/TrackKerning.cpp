@@ -23,9 +23,16 @@ int APS5_VABI FT_Get_Track_Kerning_nid_postfix(GuestFaceRec* face, std::int64_t 
     if (pointSize < std::numeric_limits<FT_Fixed>::min() || pointSize > std::numeric_limits<FT_Fixed>::max()) {
         throw std::runtime_error("FT_Get_Track_Kerning: a point size outside the host FT_Fixed range is not implemented");
     }
+    const auto query = [&](FT_Fixed& result) {
+        return FT_Get_Track_Kerning(owner->host, static_cast<FT_Fixed>(pointSize), degree, &result);
+    };
     FT_Fixed result = 0;
-    const FT_Error error = FT_Get_Track_Kerning(owner->host, static_cast<FT_Fixed>(pointSize), degree, &result);
-    if (error != 0) return error;
+    if (const FT_Error error = query(result)) return error;
+    if (result == 0) {
+        FT_Fixed probe = 1;
+        if (const FT_Error error = query(probe)) return error;
+        if (probe == 1) return 0;
+    }
     const std::int64_t value = result;
     if (!GuestCopyOut_nid_no_patch(kerning, &value, sizeof(value))) return FT_Err_Invalid_Argument;
     return 0;

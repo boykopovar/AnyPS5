@@ -362,6 +362,46 @@ void CheckContextTimeout() {
     Require(SSL_CTX_set_timeout_nid_postfix(nullptr, 300) == 0, "null context");
 }
 
+void CheckContextQuicMethod() {
+    const LibreSsl3SslMethod tls{0, 0, 0x0303, 0x0301, 0x0304};
+    const LibreSsl3SslMethod dtls{1, 0, 0xfefd, 0x0302, 0x0303};
+    const int firstMethod = 1;
+    const int secondMethod = 2;
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.method = &tls;
+    guarded.object.quicMethod = nullptr;
+    auto expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod) == 1, "TLS context accepts a QUIC method");
+    Require(guarded.object.quicMethod == &firstMethod, "QUIC method stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 1, "QUIC method replaced");
+    Require(guarded.object.quicMethod == &secondMethod, "replacement stored");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 1, "QUIC method cleared");
+    Require(Same(guarded, expected), "QUIC method changed another field");
+    guarded.object.method = &dtls;
+    guarded.object.quicMethod = &firstMethod;
+    expected = Bytes(guarded);
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &secondMethod) == 0, "DTLS context refuses a QUIC method");
+    Require(SSL_CTX_set_quic_method_nid_postfix(&guarded.object, nullptr) == 0, "DTLS context refuses a clear");
+    Require(Same(guarded, expected), "DTLS refusal changed the context");
+    guarded.object.method = nullptr;
+    expected = Bytes(guarded);
+    bool thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(&guarded.object, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown && Same(guarded, expected), "context without a method throws without changes");
+    thrown = false;
+    try {
+        SSL_CTX_set_quic_method_nid_postfix(nullptr, &firstMethod);
+    } catch (const std::invalid_argument&) {
+        thrown = true;
+    }
+    Require(thrown, "null context throws");
+}
+
 void CheckClientRandom() {
     LibreSsl3Ssl3State state;
     std::array<unsigned char, sizeof(state)> stateBytes;
@@ -493,10 +533,32 @@ void CheckKeylogCallback() {
 
 } // namespace
 
+extern "C" void* APS5_VABI libreSsl3NewContext_nid_no_patch(const void* method);
+
+void CheckContextConstruction() {
+    bool refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_method");
+    refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_server_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_server_method");
+    auto* context = static_cast<LibreSslCtx*>(libreSsl3NewContext_nid_no_patch(TLS_client_method_nid_postfix()));
+    Require(context != nullptr, "SSL_CTX_new still builds a context from a libSceLibreSsl method");
+    SSL_CTX_free_nid_postfix(context);
+}
+
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
-    CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
+    CheckRetain<LibreSslSsl>(SSL_up_ref_nid_postfix, 168);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionName();
     CheckInfoCallback();
@@ -504,6 +566,8 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
+    CheckContextQuicMethod();
+    CheckContextConstruction();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckTlsMethod();
     CheckX509Version();

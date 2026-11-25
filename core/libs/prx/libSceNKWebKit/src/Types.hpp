@@ -87,6 +87,9 @@ public:
     std::vector<std::uint8_t> data;
 };
 
+class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -178,6 +181,31 @@ public:
     }
 };
 
+struct OpaqueJSContext;
+
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+    ~Bundle() override;
+
+    OpaqueJSContext* context = nullptr;
+    std::size_t javaScriptObjectsCount = 0;
+    std::uint32_t memoryReleaseCount = 0;
+    bool historyClearedForTesting = false;
+    bool resourceLoadStatisticsCleared = false;
+    std::uint32_t resourceLoadStatisticsNotifyCount = 0;
+
+    struct OriginAccessEntry {
+        std::string sourceOrigin;
+        std::string destinationProtocol;
+        std::string destinationHost;
+        bool allowDestinationSubdomains = false;
+
+        bool operator==(const OriginAccessEntry&) const = default;
+    };
+
+    std::vector<OriginAccessEntry> originAccessAllowList;
+};
+
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
     RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
@@ -186,6 +214,23 @@ public:
     SizeValue scrollOffset{0.0, 0.0};
     bool hasHorizontalScrollbar = false;
     bool hasVerticalScrollbar = false;
+    int numberOfPages = 1;
+    std::vector<bool> pageBoxVisibility;
+    bool containsAnyFormElements = false;
+    bool containsAnyFormControls = false;
+    bool isFocused = false;
+    bool hasOpener = false;
+    bool allowsFollowingLink = true;
+    bool shouldCloseOnWebView = true;
+    std::optional<std::u16string> accessibleName;
+    std::optional<std::u16string> textDirection;
+    Retained<String> counterValue;
+    Retained<String> innerText;
+    Retained<String> layerTreeAsText;
+    Retained<String> mimeTypeForResource;
+    Retained<String> suggestedFilenameForResource;
+    bool hasDocumentBackgroundColor = false;
+    double documentBackgroundColor[4] = {0.0, 0.0, 0.0, 0.0};
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -198,8 +243,33 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+    Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFillAvailable = false;
+    bool htmlInputElementAutoFilled = false;
+    bool htmlInputElementAutoFilledAndViewable = false;
+    bool htmlInputElementSpellcheckEnabled = true;
+    bool htmlInputElementLastChangeWasUserEdit = false;
+    bool htmlTextAreaElementLastChangeWasUserEdit = false;
+};
+
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width = 0, int height = 0) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
+    Retained<BundleFrame> targetFrame;
+    Retained<Image> image;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -207,18 +277,14 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
     bool mediaIsInFullscreen = false;
     std::uint32_t mediaType = 0;
-};
-
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
-public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
@@ -231,6 +297,16 @@ public:
 class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
 public:
     mutable Retained<BundleInspector> inspector;
+    double backingScaleFactor = 1.0;
+    bool isControlledByAutomation = false;
+    bool isSuspended = false;
+    bool usesEphemeralSession = false;
+    std::uint64_t renderTreeSize = 0;
+    bool isFullScreen = false;
+    bool hasComposition = false;
+    Retained<Object> topOverhangImage;
+    Retained<Object> bottomOverhangImage;
+    std::uint64_t paintedObjectsCounterThreshold = 0;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -240,7 +316,7 @@ public:
     std::uint64_t id = 0;
     Retained<Data> resumeData;
     Retained<Array> redirectChain;
-    bool wasUserInitiated = false;
+    bool wasUserInitiated = true;
     bool isCancelled = false;
 };
 
@@ -250,6 +326,8 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+    std::uint32_t role = 0;
+    std::uint32_t buttonState = 0;
 };
 
 class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
@@ -347,6 +425,28 @@ public:
     bool clientConfigured = false;
 };
 
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
+};
+
+class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
+public:
+    std::map<std::string, std::string> pageURLToIconURL;
+    std::map<std::string, std::vector<std::uint8_t>> iconURLToData;
+    std::map<std::string, std::uint32_t> iconRetainCounts;
+    bool checkIntegrityBeforeOpening = false;
+    bool closed = false;
+    bool cleanupEnabled = false;
+    const void* client = nullptr;
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -363,6 +463,10 @@ public:
     }
 };
 
+enum class NotificationDirection : std::uint8_t { Auto, Ltr, Rtl };
+
+std::uint64_t GenerateNotificationIdentifier();
+
 class Notification final : public ObjectOf<ObjectType::Notification> {
 public:
     std::u16string title;
@@ -370,8 +474,8 @@ public:
     std::u16string iconURL;
     std::u16string tag;
     std::u16string lang;
-    std::u16string dir;
-    std::uint64_t notificationID = 0;
+    NotificationDirection dir = NotificationDirection::Auto;
+    std::uint64_t notificationID = GenerateNotificationIdentifier();
 };
 
 class Frame final : public ObjectOf<ObjectType::Frame> {
@@ -379,6 +483,7 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    bool isFrameSet = false;
     std::uint64_t frameID = 0;
     std::uint32_t loadState = 2;
     Retained<URL> url;
@@ -386,14 +491,6 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
-};
-
-class Image final : public ObjectOf<ObjectType::Image> {
-public:
-    explicit Image(int width, int height) : width(width), height(height) {}
-
-    int width = 0;
-    int height = 0;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
@@ -423,11 +520,11 @@ public:
 
 class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
 public:
-    std::string requestURL;
-    Retained<AuthenticationDecisionListener> decisionListener;
+    std::optional<std::string> requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener = Make<AuthenticationDecisionListener>();
     int previousFailureCount = 0;
-    Retained<Object> proposedCredential;
-    Retained<Object> protectionSpace;
+    mutable Retained<Object> proposedCredential;
+    mutable Retained<Object> protectionSpace;
     bool isForMainResource = false;
     bool isInMainFrame = false;
 };
@@ -463,10 +560,30 @@ public:
     }
 };
 
+class View final : public ObjectOf<ObjectType::View> {
+public:
+    double pageScaleFactor = 1.0;
+    double viewScaleFactor = 1.0;
+    bool drawsBackground = true;
+    bool isFullScreen = false;
+    bool isActive = false;
+    bool isFocused = false;
+    bool isVisible = false;
+    SizeValue size{ 0.0, 0.0 };
+};
+
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
 public:
     std::u16string path;
     std::map<std::u16string, Retained<Object>> filters;
+};
+
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Decision { None, Use, UseInNewProcess, Download, Ignore };
+
+    Decision decision = Decision::None;
+    Retained<Object> policies;
 };
 
 }  // namespace NKWebKit

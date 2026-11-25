@@ -22,6 +22,7 @@ extern "C" {
 extern const void* const _ZTVSt12future_error_nid_postfix[6];
 extern const void* const _ZTVSt18bad_variant_access_nid_postfix[5];
 extern const void* const _ZTVSt9bad_alloc_nid_postfix[5];
+extern const void* const _ZTVSt9exception_nid_postfix[5];
 extern const void* const _ZTVSt10bad_typeid_nid_postfix[5];
 extern const void* const _ZTVSt12system_error_nid_postfix[5];
 }
@@ -93,6 +94,30 @@ void CheckBadTypeidDoraise() {
     try { sceLibcInternalBadTypeidDoraise_nid_no_patch(&source); }
     catch (const std::bad_typeid&) { caught = true; }
     REQUIRE(caught);
+}
+
+void CheckBadExceptionDoraise() {
+    LibcException::ExceptionObject source {&_ZTVSt9exception_nid_postfix[2], nullptr};
+    bool caught = false;
+    try { _ZNKSt13bad_exception8_DoraiseEv_nid_postfix(&source); }
+    catch (const std::bad_exception& error) {
+        caught = true;
+        REQUIRE(&error != reinterpret_cast<const std::bad_exception*>(&source));
+        REQUIRE(std::strcmp(TypeName(&error), "St13bad_exception") == 0);
+        REQUIRE(std::strcmp(What(&error), "bad exception") == 0);
+    }
+    REQUIRE(caught);
+
+    caught = false;
+    try { _ZNKSt13bad_exception8_DoraiseEv_nid_postfix(&source); }
+    catch (const std::invalid_argument&) {}
+    catch (const std::exception& error) { caught = std::strcmp(TypeName(&error), "St13bad_exception") == 0; }
+    REQUIRE(caught);
+
+    bool rejected = false;
+    try { _ZNKSt13bad_exception8_DoraiseEv_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
 }
 
 void CheckBadVariantAccessWhat() {
@@ -274,6 +299,7 @@ int main() {
 
     CheckBadAllocDoraise();
     CheckBadTypeidDoraise();
+    CheckBadExceptionDoraise();
     CheckBadVariantAccessWhat();
     CheckFutureErrorWhat();
     CheckFutureErrorDoraise();

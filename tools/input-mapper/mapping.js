@@ -26,8 +26,13 @@ export const defaults = {
 };
 
 export function actionsForInput(search, bindings) {
-    const query = search.trim().toLowerCase();
+    let query = search.trim().toLowerCase();
     if (!query) return new Set();
+    if (query.startsWith('pad:')) {
+        const chord = canonicalChord(query.slice(4));
+        if (chord === undefined) return new Set();
+        query = `pad:${chord.toLowerCase()}`;
+    }
     const keyboardQuery = `key:${query}`;
     return new Set(actions.filter(action => {
         const custom = bindings.filter(binding => binding.action === action);
@@ -41,15 +46,37 @@ export function actionsForInput(search, bindings) {
     }));
 }
 
+export function inputFilename(titleId) {
+    if (titleId === '') return 'anyps5-input.ini';
+    if (typeof titleId !== 'string' || titleId.length > 32 || /[^A-Za-z0-9_-]/u.test(titleId)) return undefined;
+    return `anyps5-input.${titleId}.ini`;
+}
+
+export function inputTitleId(filename) {
+    const match = /^anyps5-input(?:\.([^.]+))?\.ini$/u.exec(filename);
+    if (!match) return undefined;
+    const titleId = match[1] ?? '';
+    return inputFilename(titleId) === filename ? titleId : undefined;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
     if (emulatorActions.includes(action)) return ['KEY', 'PAD'];
     return padButtons.has(action) ? ['KEY', 'MOUSE', 'WHEEL'] : ['KEY', 'MOUSE'];
 }
 
+export function asciiTrim(value) {
+    return value.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/gu, '');
+}
+
+export function asciiUpper(value) {
+    return value.replace(/[a-z]+/gu, letters => letters.toUpperCase());
+}
+
 export function canonicalValue(value, choices) {
     if (typeof value !== 'string') return undefined;
-    return choices.find(choice => choice.toUpperCase() === value.trim().toUpperCase());
+    const wanted = asciiUpper(asciiTrim(value));
+    return choices.find(choice => asciiUpper(choice) === wanted);
 }
 
 export function canonicalChord(value) {

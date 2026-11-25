@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [f32 denormals kept on a host without `DenormPreserve 32`](../../../core/shader/recompiler/Translation/src/TranslationContext/OperandAccess.cpp) (shader recompiler) take the driver's default behaviour. NVIDIA's Windows driver (RTX 5080, 610.74) reports `shaderDenormPreserveFloat32` false, so in a shader whose `FLOAT_MODE` keeps f32 denormals (3) it differs from RDNA2 (gfx1036 with the [hardware oracle](../HW_ORACLE.md)), measured over 32 rows of denormal, normal and zero operands. `v_add_f32`, `v_sub_f32`, `v_mul_f32`, `v_fma_f32`, `v_fract_f32`, `v_cvt_f64_f32` and `ds_add_f32` flush denormal inputs or results that RDNA2 keeps (0x00000001 + 0x00000001 gives 0, not 0x00000002). `v_min_f32`, `v_max_f32` and `v_med3_f32` compare two denormals as equal zeros and can return the other operand (min(0x00000001, 0x007fffff) gives 0x007fffff). `v_floor_f32`, `v_ldexp_f32`, `v_frexp_mant_f32`, `v_sqrt_f32`, `v_rcp_f32` and `v_cmp_lt_f32` match. AMD's Windows driver, which offers the mode, matches RDNA2 on all of them. With f32 denormals flushed (mode 0, which most titles use), `ds_add_f32` matches RDNA2 on all three.
