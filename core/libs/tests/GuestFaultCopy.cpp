@@ -14,6 +14,10 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#ifdef __APPLE__
+#include <mach/vm_page_size.h>
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -285,8 +289,44 @@ static void RequireShortFaultPrefixes() {
     Require(munmap(pages, page * 2) == 0);
 }
 
-static void RequireShortBusFaults() {
+static void RequireLongFaultPrefixes() {
     const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 512);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    std::memset(pages, 0x5a, page);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+    for (const std::size_t bytes : {std::size_t{48}, std::size_t{64}, std::size_t{65}, std::size_t{127}, std::size_t{128}, std::size_t{200}, std::size_t{257}}) {
+        unsigned char buffer[512];
+        std::memset(buffer, 0xcc, sizeof(buffer));
+        Require(GuestCopyIn_nid_no_patch(buffer, pages + page - bytes, bytes));
+        for (std::size_t index = 0; index < sizeof(buffer); ++index) Require(buffer[index] == (index < bytes ? 0x5a : 0xcc));
+        for (std::size_t index = 0; index < bytes; ++index) buffer[index] = static_cast<unsigned char>(index * 13 + 1);
+        Require(GuestCopyOut_nid_no_patch(pages + page - bytes, buffer, bytes));
+        Require(std::memcmp(pages + page - bytes, buffer, bytes) == 0);
+        std::memset(pages + page - bytes, 0x5a, bytes);
+        for (const std::size_t prefix : {std::size_t{0}, std::size_t{1}, std::size_t{15}, std::size_t{16}, std::size_t{17}, std::size_t{47}, bytes - 17, bytes - 16, bytes - 1}) {
+            std::memset(buffer, 0xcc, sizeof(buffer));
+            errno = 71;
+            Require(!GuestCopyIn_nid_no_patch(buffer, pages + page - prefix, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < sizeof(buffer); ++index) Require(buffer[index] == (index < prefix ? 0x5a : 0xcc));
+            for (std::size_t index = 0; index < bytes; ++index) buffer[index] = static_cast<unsigned char>(index * 13 + 1);
+            Require(!GuestCopyOut_nid_no_patch(pages + page - prefix, buffer, bytes));
+            Require(errno == 71);
+            for (std::size_t index = 0; index < prefix; ++index) Require(pages[page - prefix + index] == buffer[index]);
+            std::memset(pages + page - prefix, 0x5a, prefix);
+        }
+    }
+    Require(munmap(pages, page * 2) == 0);
+}
+
+static void RequireShortBusFaults() {
+#ifdef __APPLE__
+    const long page = static_cast<long>(vm_kernel_page_size);
+#else
+    const long page = sysconf(_SC_PAGESIZE);
+#endif
     Require(page > 0);
     FILE* file = std::tmpfile();
     Require(file != nullptr);
@@ -305,6 +345,34 @@ static void RequireShortBusFaults() {
     Require(std::fclose(file) == 0);
 }
 
+#ifdef __APPLE__
+static std::atomic<int> g_trapResolves{0};
+
+static void CountTrapResolve(std::uintptr_t, std::uintptr_t) {
+    ++g_trapResolves;
+}
+
+static void RequireTrappedPagesFailCopies() {
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        alarm(10);
+        const long page = sysconf(_SC_PAGESIZE);
+        auto* pages = static_cast<unsigned char*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (pages == MAP_FAILED) _exit(2);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, page);
+        if (!GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&CountTrapResolve)) _exit(3);
+        if (!GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), page)) _exit(4);
+        int value = 0;
+        if (GuestCopyIn_nid_no_patch(&value, pages, sizeof(value))) _exit(5);
+        if (GuestCopyInUnsynced_nid_no_patch(&value, pages, sizeof(value))) _exit(6);
+        if (g_trapResolves.load() != 0) _exit(7);
+        _exit(0);
+    }
+    RequireExit(child, 0);
+}
+#endif
+
 int main() {
     RequireEarlierHandlerKeepsOtherFaults();
     RequireSigIgnWithSigInfoChains();
@@ -312,11 +380,15 @@ int main() {
     RequireCopies();
     RequireFaults();
     RequireShortFaultPrefixes();
+    RequireLongFaultPrefixes();
     RequireShortBusFaults();
     RequireThreads();
     RequireLaterHandlerChains();
     RequireGuestRegistrationKeepsCopyFaults();
     RequireBusChainAfterGuestRegistration();
+#ifdef __APPLE__
+    RequireTrappedPagesFailCopies();
+#endif
     std::puts("guest fault copy tests passed");
     return 0;
 }

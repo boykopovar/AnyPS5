@@ -41,6 +41,9 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#if defined(__x86_64__)
+#include "prx/libc/include/specifics/macos/GuestFaultCopy.hpp"
+#endif
 #endif
 #include <unistd.h>
 #ifdef __linux__
@@ -112,6 +115,9 @@ bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bo
     errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     mach_vm_size_t copied = 0;
     return mach_vm_read_overwrite(mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
                reinterpret_cast<mach_vm_address_t>(destination), &copied) == KERN_SUCCESS && copied == bytes;
@@ -989,6 +995,9 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     }
     return static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
+#if defined(__x86_64__)
+    if (GuestFaultCopy::Ready()) return GuestFaultCopy::Copy(destination, source, bytes);
+#endif
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
         reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;
 #else
@@ -1058,7 +1067,7 @@ extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t des
 }
 
 extern "C" void GuestFaultCopyReinstall_nid_no_patch() {
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
     GuestFaultCopy::Reinstall();
 #endif
 }

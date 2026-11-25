@@ -1,0 +1,6 @@
+# libc
+
+## add Functional
+
+- [Checked guest copies on an Intel Mac](../../../core/libs/prx/libc/src/specifics/macos/GuestFaultCopy.cpp) (libc) are untested: the fault-recovering copy has run only through Rosetta 2 on Apple silicon, where a fault inside it reports the faulting instruction exactly. Closes when: `guest_fault_copy` passes on an Intel Mac.
+- [Checked guest copy faults on macOS](../../../core/libs/prx/libc/src/specifics/macos/GuestFaultCopy.cpp) (libc) are recognised by the instruction address alone, because macOS does not tell a raised SIGSEGV or SIGBUS from a fault (under Rosetta 2 a raised signal repeats the `si_code` and `si_addr` of the thread's last fault): one of these signals sent from another thread while a thread is inside the copy goes no further, and in the byte loop it fails that copy. A failed copy takes one signal delivery below 16 bytes and two from 16 bytes, about 19 µs each under Rosetta 2 on an M5 against 0.5 µs for a failed Mach call, and leaves the bytes before the fault in the destination, where with `APS5_GUEST_COPY_SYSCALL` a failed `mach_vm_read_overwrite` copies none and a failed `mach_vm_write` only part of them. When the disposition installed before the handler is `SIG_DFL`, a fault outside the copy ends the process through `raise`, not by running the faulting instruction again.
