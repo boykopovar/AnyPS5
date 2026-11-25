@@ -4,6 +4,7 @@
 #include <hb.h>
 
 #include <memory>
+#include <stdexcept>
 #include <type_traits>
 
 static_assert(std::is_same_v<hb_bool_t, int>);
@@ -42,7 +43,7 @@ void* UnwrapFontData(void* opaque) {
 
 template <typename TCallback, typename TNative, typename TSetter>
 void SetCallback(hb_font_funcs_t* functions, TCallback callback, void* data, HarfBuzz::Destroy destroy, TNative adapter, TSetter setter) {
-    if (!functions) NotImplemented_nid_no_patch(__func__);
+    if (!functions) throw std::runtime_error(__func__);
     auto owner = std::make_unique<CallbackData<TCallback>>(callback, data, destroy);
     auto* payload = owner.release();
     setter(functions, callback ? adapter : nullptr, payload, DestroyCallbackData<TCallback>);
@@ -90,7 +91,7 @@ hb_font_funcs_t* APS5_VABI hb_font_funcs_create_nid_postfix() {
 }
 
 void APS5_VABI hb_font_funcs_make_immutable_nid_postfix(hb_font_funcs_t* functions) {
-    if (!functions) NotImplemented_nid_no_patch(__func__);
+    if (!functions) throw std::runtime_error(__func__);
     hb_font_funcs_make_immutable(functions);
 }
 
@@ -99,7 +100,7 @@ void APS5_VABI hb_font_funcs_set_glyph_extents_func_nid_postfix(hb_font_funcs_t*
 }
 
 void APS5_VABI hb_font_funcs_set_glyph_func_nid_postfix(hb_font_funcs_t* functions, HarfBuzz::VariationGlyph callback, void* data, HarfBuzz::Destroy destroy) {
-    if (!callback) NotImplemented_nid_no_patch(__func__);
+    if (!callback) throw std::runtime_error(__func__);
     SetCallback(functions, callback, data, destroy, VariationGlyph, hb_font_funcs_set_glyph_func);
 }
 
@@ -120,23 +121,23 @@ void APS5_VABI hb_font_funcs_set_variation_glyph_func_nid_postfix(hb_font_funcs_
 }
 
 void APS5_VABI hb_font_make_immutable_nid_postfix(hb_font_t* font) {
-    if (!font) NotImplemented_nid_no_patch(__func__);
+    if (!font) throw std::runtime_error(__func__);
     hb_font_make_immutable(font);
 }
 
 void APS5_VABI hb_font_set_funcs_nid_postfix(hb_font_t* font, hb_font_funcs_t* functions, void* data, HarfBuzz::Destroy destroy) {
-    if (!font) NotImplemented_nid_no_patch(__func__);
+    if (!font) throw std::runtime_error(__func__);
     auto owner = std::make_unique<FontData>(data, destroy);
     hb_font_set_funcs(font, functions, owner.release(), DestroyFontData);
 }
 
 void APS5_VABI hb_font_set_ppem_nid_postfix(hb_font_t* font, std::uint32_t x, std::uint32_t y) {
-    if (!font) NotImplemented_nid_no_patch(__func__);
+    if (!font) throw std::runtime_error(__func__);
     hb_font_set_ppem(font, x, y);
 }
 
 void APS5_VABI hb_font_set_scale_nid_postfix(hb_font_t* font, std::int32_t x, std::int32_t y) {
-    if (!font) NotImplemented_nid_no_patch(__func__);
+    if (!font) throw std::runtime_error(__func__);
     hb_font_set_scale(font, x, y);
 }
 

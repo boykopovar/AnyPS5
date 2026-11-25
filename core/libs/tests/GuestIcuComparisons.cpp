@@ -168,6 +168,7 @@ public:
     GuardedPages(const GuardedPages&) = delete;
     GuardedPages& operator=(const GuardedPages&) = delete;
 
+    char16_t* Head() const { return reinterpret_cast<char16_t*>(base_); }
     char16_t* Tail(std::size_t units) const { return reinterpret_cast<char16_t*>(base_ + size_) - units; }
 
 private:
@@ -200,6 +201,62 @@ void Chunking() {
     try { u_strlen_nid_postfix(terminated); } catch (const std::invalid_argument&) { Require(errno == 71, "strlen into a guarded page keeps errno"); ++rejected; }
     try { u_strcmp_nid_postfix(terminated, std::u16string(units, u'a').c_str()); } catch (const std::invalid_argument&) { Require(errno == 71, "strcmp into a guarded page keeps errno"); ++rejected; }
     Require(rejected == 2, "unterminated strings fault into the guarded page");
+
+    constexpr std::size_t lateUnits = 100;
+    char16_t* late = pages.Tail(lateUnits);
+    std::fill_n(late, lateUnits - 1, u'a');
+    late[lateUnits - 1] = 0;
+    const std::u16string lateCopy(lateUnits - 1, u'a');
+    Require(u_strlen_nid_postfix(late) == static_cast<std::int32_t>(lateUnits - 1), "string growing past a chunk ends at the last readable unit");
+    Require(u_strcmp_nid_postfix(late, lateCopy.c_str()) == 0, "strcmp across grown chunks stops before the guarded page");
+    Require(u_memcmpCodePointOrder_nid_postfix(late, lateCopy.c_str(), -1) == 0, "code-point order across grown chunks stops before the guarded page");
+}
+
+void ChunkBoundaries() {
+    GuardedPages leftPage;
+    GuardedPages rightPage;
+    char16_t* const left = leftPage.Head();
+    char16_t* const right = rightPage.Head();
+    constexpr std::size_t length = 120;
+    const auto reset = [&] {
+        std::fill_n(left, length, u'a');
+        std::fill_n(right, length, u'a');
+        left[length] = 0;
+        right[length] = 0;
+    };
+    for (const std::size_t boundary : {std::size_t{16}, std::size_t{48}, std::size_t{112}}) {
+        const auto count = static_cast<std::int32_t>(boundary);
+        reset();
+        Require(u_strlen_nid_postfix(left) == static_cast<std::int32_t>(length), "strlen of equal strings crossing a chunk boundary");
+        Require(u_strcmp_nid_postfix(left, right) == 0, "strcmp of equal strings crossing a chunk boundary");
+        Require(u_strncmp_nid_postfix(left, right, count + 1) == 0, "strncmp of equal strings crossing a chunk boundary");
+        Require(u_memcmp_nid_postfix(left, right, count + 1) == 0, "memcmp of equal strings crossing a chunk boundary");
+        Require(u_memcmpCodePointOrder_nid_postfix(left, right, count + 1) == 0, "code-point order of equal strings crossing a chunk boundary");
+        Require(u_memcmpCodePointOrder_nid_postfix(left, right, -1) == 0, "terminated code-point order of equal strings crossing a chunk boundary");
+
+        for (const std::size_t at : {boundary - 1, boundary}) {
+            reset();
+            right[at] = u'b';
+            const auto through = static_cast<std::int32_t>(at + 1);
+            const auto before = static_cast<std::int32_t>(at);
+            Require(u_strcmp_nid_postfix(left, right) == u'a' - u'b', "strcmp finds a difference beside a chunk boundary");
+            Require(u_strncmp_nid_postfix(left, right, before) == 0, "strncmp stops before a difference beside a chunk boundary");
+            Require(u_strncmp_nid_postfix(left, right, through) == u'a' - u'b', "strncmp finds a difference beside a chunk boundary");
+            Require(u_memcmp_nid_postfix(left, right, before) == 0, "memcmp stops before a difference beside a chunk boundary");
+            Require(u_memcmp_nid_postfix(left, right, through) == u'a' - u'b', "memcmp finds a difference beside a chunk boundary");
+            Require(u_memcmpCodePointOrder_nid_postfix(left, right, through) < 0, "code-point order finds a difference beside a chunk boundary");
+            Require(u_memcmpCodePointOrder_nid_postfix(left, right, -1) < 0, "terminated code-point order finds a difference beside a chunk boundary");
+        }
+
+        reset();
+        left[boundary] = 0;
+        Require(u_strlen_nid_postfix(left) == count, "strlen stops at a NUL on a chunk boundary");
+        Require(u_strcmp_nid_postfix(left, right) == -static_cast<std::int32_t>(u'a'), "strcmp stops at a NUL on a chunk boundary");
+        Require(u_strncmp_nid_postfix(left, right, count) == 0, "strncmp up to a NUL on a chunk boundary");
+        Require(u_strncmp_nid_postfix(left, right, count + 1) == -static_cast<std::int32_t>(u'a'), "strncmp through a NUL on a chunk boundary");
+        Require(u_memcmp_nid_postfix(left, right, count + 1) == -static_cast<std::int32_t>(u'a'), "memcmp reads past a NUL on a chunk boundary");
+        Require(u_memcmpCodePointOrder_nid_postfix(left, right, -1) < 0, "terminated code-point order stops at a NUL on a chunk boundary");
+    }
 }
 
 } // namespace
@@ -208,4 +265,5 @@ int main() {
     Exhaustive();
     Boundaries();
     Chunking();
+    ChunkBoundaries();
 }

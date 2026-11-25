@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
+#include "prx/libSceSystemService/HostUrl.hpp"
 #include <SDL.h>
 #include <cstdlib>
 
@@ -15,19 +16,38 @@ bool IsSet(const char* name) {
 }
 #endif
 
+std::string SanitizeConfirmationUrl(const std::string& url) {
+    static constexpr char HEX[] = "0123456789ABCDEF";
+    std::string sanitized;
+    sanitized.reserve(url.size());
+    for (const char ch : url) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte < 0x20 || byte == 0x7F) {
+            sanitized += '%';
+            sanitized += HEX[byte >> 4];
+            sanitized += HEX[byte & 0x0F];
+        } else {
+            sanitized += ch;
+        }
+    }
+    return sanitized;
+}
+
 }
 
 std::string HostConfirmationText(const std::string& url) {
+    const std::string sanitized = SanitizeConfirmationUrl(url);
     std::string text = "A game asks to open this address in your default web browser:\n\n";
-    for (std::size_t offset = 0; offset < url.size(); offset += WRAP_WIDTH) {
+    for (std::size_t offset = 0; offset < sanitized.size(); offset += WRAP_WIDTH) {
         if (offset != 0) text += '\n';
-        text.append(url, offset, WRAP_WIDTH);
+        text.append(sanitized, offset, WRAP_WIDTH);
     }
     text += "\n\nOpen it only if you trust it.";
     return text;
 }
 
 bool HostMessageBoxConfirmation::Confirm(const std::string& url) {
+    if (ValidateHostUrl(url) != HostUrlVerdict::Ok) return false;
 #ifdef __linux__
     if (!IsSet("DISPLAY") && !IsSet("WAYLAND_DISPLAY")) return false;
 #endif

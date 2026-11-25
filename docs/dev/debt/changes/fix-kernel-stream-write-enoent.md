@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelStreamWriteCreate, sceKernelStreamWriteActivate, sceKernelStreamWriteDeactivate, sceKernelStreamWriteDelete, sceKernelStreamWriteRead, sceKernelStreamWriteStat and sceKernelStreamWriteWrite]
+
+- [sceKernelStreamWriteCreate, sceKernelStreamWriteActivate, sceKernelStreamWriteDeactivate, sceKernelStreamWriteDelete, sceKernelStreamWriteRead, sceKernelStreamWriteStat and sceKernelStreamWriteWrite](../../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - stream writes are not supported: all seven return `SCE_KERNEL_ERROR_ENOENT` (`0x80020002`) and set `errno` to `ENOENT` whatever their arguments, as no stream can exist. A PS5 (FW 11.60, payload process) returned that value with `errno` 2 for `sceKernelStreamWriteCreate` with five zero arguments and for the other six with a first argument of 0 and -1; other arguments are not measured, nor is why the console returns `ENOENT` or whether a title process does too. WWE 2K26 (PPSA34299) imports them from libkernel and skips its write cache when they fail.

@@ -26,7 +26,10 @@
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/src/WtfLanguageAbi.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <mutex>
 #include <new>
@@ -121,6 +124,19 @@ void Swap(StringVector& a, StringVector& b) {
     std::swap(a.size, b.size);
 }
 
+bool EqualLettersIgnoringAsciiCase(const String& string, const char* literal) {
+    const unsigned length = Length(string);
+    unsigned literalLength = 0;
+    while (literal[literalLength]) ++literalLength;
+    if (length != literalLength) return false;
+    for (unsigned i = 0; i < length; ++i) {
+        char16_t value = Character(string, i);
+        if (value >= 'A' && value <= 'Z') value += 32;
+        if (value != static_cast<unsigned char>(literal[i])) return false;
+    }
+    return true;
+}
+
 }
 
 NKWebKit::WtfAbi::StringVector::~StringVector() {
@@ -151,7 +167,21 @@ extern "C" void APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(void* con
 
 extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const String* localeName) {
     if (!localeName) throw std::invalid_argument("null WTF string");
-    return *localeName;
+    const int savedErrno = errno;
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    bool copied = GuestCopyIn_nid_no_patch(&impl, &localeName->impl, sizeof(impl));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::displayNameForLanguageLocale: unreadable string");
+    if (!impl) return String();
+    unsigned refCount = 0;
+    copied = GuestCopyIn_nid_no_patch(&refCount, &impl->refCount, sizeof(refCount));
+    if (copied) {
+        refCount += 2;
+        copied = GuestCopyOut_nid_no_patch(&impl->refCount, &refCount, sizeof(refCount));
+    }
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("WTF::displayNameForLanguageLocale: unusable string implementation");
+    return String(impl);
 }
 
 extern "C" void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context) {
@@ -221,3 +251,27 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
 
     return languageList->size;
 }
+
+namespace NKWebKit {
+
+bool UserPrefersSimplifiedChinese_nid_no_patch() {
+    std::lock_guard<std::mutex> locker(languagesLock);
+    const StringVector& languages = PreferredLanguagesOverride();
+    if (languages.size) {
+        for (unsigned i = 0; i < languages.size; ++i) {
+            if (EqualLettersIgnoringAsciiCase(languages.buffer[i], "zh-tw")) return false;
+            if (EqualLettersIgnoringAsciiCase(languages.buffer[i], "zh-cn")) return true;
+        }
+        return true;
+    }
+    char buffer[16];
+    if (GetenvNp_nid_no_patch("SYSTEM_LANGUAGE", buffer, sizeof(buffer))) return true;
+    alignas(String) unsigned char storage[sizeof(String)];
+    auto* language = reinterpret_cast<String*>(storage);
+    _ZN3WTF6StringC1EPKc(language, buffer);
+    const bool prefers = !EqualLettersIgnoringAsciiCase(*language, "zh-tw");
+    language->~String();
+    return prefers;
+}
+
+}  // namespace NKWebKit

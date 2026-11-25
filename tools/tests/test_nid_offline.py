@@ -32,7 +32,7 @@ class FeatureTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(Path(__file__).resolve().parents[1] / "nid_names.py"), *arguments],
                     capture_output=True, encoding="utf-8", timeout=15,
-                    env={key: value for key, value in os.environ.items() if key.upper() == "SYSTEMROOT"})
+                    env={key: value for key, value in os.environ.items() if key.upper() in ("SYSTEMROOT", "SYSTEMDRIVE")})
                 results.append(result)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
@@ -98,7 +98,7 @@ class FeatureTests(unittest.TestCase):
                     [sys.executable, str(Path(__file__).resolve().parents[1] / "nid_names.py"),
                      "--offline", "--db", str(db), "--json", *arguments],
                     capture_output=True, encoding="utf-8", timeout=15,
-                    env={key: value for key, value in os.environ.items() if key.upper() == "SYSTEMROOT"})
+                    env={key: value for key, value in os.environ.items() if key.upper() in ("SYSTEMROOT", "SYSTEMDRIVE")})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), expected)
                 self.assertEqual(result.stderr, "")

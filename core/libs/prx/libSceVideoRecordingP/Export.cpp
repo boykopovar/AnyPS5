@@ -1,4 +1,5 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -115,12 +116,6 @@ int ReadDuration2(const VideoRecordingParam2* param, std::uint32_t* duration) {
         GuestCopyIn_nid_no_patch(duration, &param->duration, sizeof(*duration));
     errno = savedErrno;
     return readable ? 0 : ErrorInvalidArgument;
-}
-
-std::uint32_t CompiledSdkVersion() {
-    std::int32_t version = 0;
-    if (sceKernelGetCompiledSdkVersion(&version) != 0) return 0xffffffffu;
-    return static_cast<std::uint32_t>(version);
 }
 
 int Authority() {
@@ -294,7 +289,7 @@ int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) 
     std::uint32_t duration = 0;
     if (const int status = ReadDuration2(param, &duration); status < 0) return status;
     if (duration > MaximumDuration) return ErrorInvalidArgument;
-    const std::uint32_t sdk = CompiledSdkVersion();
+    const std::uint32_t sdk = ApplicationCompiledSdkVersion();
     const bool large = LargeRecorder();
     const std::uint32_t extra = sdk < SdkLargeHeap ? 0x40000 : large ? 0xc0000 : 0x80000;
     if (sdk < SdkLateBase) return static_cast<int>(duration * 0x278 + 0x22680 + extra);
@@ -303,10 +298,8 @@ int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) 
     return static_cast<int>(duration * 0x278 + extra + (lateOffsets ? 0x45220 : 0x35220));
 }
 
-int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status) {
- (void)status;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void) {
+ return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param) {

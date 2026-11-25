@@ -5,9 +5,9 @@ hardware computed. Use it to settle instruction semantics that the ISA documenta
 measured rows as expected values in `core/libs/prx/libSceAgcDriver/tests/execution/`.
 
 The PS5 GPU is gfx1013. Other RDNA2 GPUs (gfx103x) share the VALU, SALU, DS, MUBUF and MIMG encodings, apart from ops that
-exist only on gfx10.1 (`v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard`, ...). RDNA3 also runs
-the tool, but differs from gfx1013 in more places ([RDNA3 differences](#rdna3-gfx11-differences)). Say which GPU you
-measured on in the PR.
+exist only on gfx10.1 (`v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard`, ...). RDNA3 and RDNA4
+also run the tool, but differ from gfx1013 in more places ([RDNA3 differences](#rdna3-gfx11-differences),
+[RDNA4 differences](#rdna4-gfx12-differences)). Say which GPU you measured on in the PR.
 
 ## Requirements
 
@@ -54,8 +54,8 @@ use hyphens; Python keywords use underscores. Record these settings alongside th
 
 | Python keyword | Values |
 | --- | --- |
-| `ieee` | 0 or 1: IEEE mode disabled or enabled |
-| `dx10_clamp` | 0 or 1: DX10 clamp disabled or enabled |
+| `ieee` | 0 or 1: IEEE mode disabled or enabled; `None` (`--ieee none`) on gfx12, whose kernel descriptor has no such field |
+| `dx10_clamp` | 0 or 1: DX10 clamp disabled or enabled; `None` (`--dx10-clamp none`) on gfx12, whose kernel descriptor has no such field |
 | `denorm32`, `denorm16` | 0: flush input/output; 1: preserve input, flush output; 2: flush input, preserve output; 3: preserve both |
 | `round32`, `round16` | 0: nearest even; 1: toward +infinity; 2: toward -infinity; 3: toward zero |
 | `fp16_overflow` | 0: overflow to infinity; 1: clamp computed overflow to the largest finite value (an infinite source operand still produces infinity, as does `v_div_fixup_f16` for a zero denominator or an infinite numerator, but not for an infinite quotient; `v_rcp_f16`, `v_rsq_f16` and `v_log_f16` of zero are clamped) |
@@ -98,6 +98,10 @@ instruction probes. The catalog starts with f32 and f16 arithmetic edge cases, i
 ties, denormals and overflow modes. It does not generate instruction semantics from the ISA form list and it stores no
 expected outputs. A measurement is only the result returned by the configured hardware oracle.
 
+A probe body may contain explicit setup, waits and readback around exactly one instruction under test. Probes for an ISA
+target that most supported GPUs cannot assemble are excluded from the default generate, run and coverage sets; select
+them by ID with `--probe` on a compatible device.
+
 List the curated cases, then generate portable input bundles without a GPU:
 
 ```sh
@@ -109,6 +113,12 @@ python3 tools/hw-oracle/probe_catalog.py generate --output-dir /tmp/anyps5-probe
 Each generated case directory contains `body.s`, `rows.txt` and `probe.json`. These files can also be passed to
 `hw_oracle.py` directly, with the required floating-point options from `probe.json`.
 
+A probe can store additional input words in the optional `extra_words` array. Each word is an unsigned 32-bit integer
+or a decimal or hexadecimal string, as in the input rows. The generated bundle packs a nonempty array into
+`extra.bin` in little-endian order. Pass that file as `--extra extra.bin` when running the bundle directly. Every dispatch receives
+the same payload at the [input buffer offset described above](#kernel). Use the lane ID in the body to select words
+for individual lanes.
+
 To run the catalog, provide a user-chosen label for the machine and GPU, then ask for the report summary:
 
 ```sh
@@ -116,13 +126,30 @@ python3 tools/hw-oracle/probe_catalog.py run --results-dir measurements --device
 python3 tools/hw-oracle/probe_catalog.py coverage --results-dir measurements --device-label rx-6750-xt
 ```
 
-`run` measures every catalog entry by default; repeat `--probe ID` to select a subset. It does not overwrite an existing
-measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, all input
-and output words, and the user-supplied device label. The label is not checked against the physical GPU, and the
-assembly target alone does not identify a GPU model or driver. `coverage` checks the individual probe definition
-digest, inputs and settings. Adding another probe leaves existing measurements valid; editing a probe marks only that
+`run` measures every default catalog entry; repeat `--probe ID` to select explicit entries. It does not overwrite an existing
+measurement file. Reports include the hardware-oracle runtime and assembly target, the exact catalog digest, the
+input rows and output words, the payload size and SHA-256, and the user-supplied device label. The ordinary `run`
+command does not check the label against the physical GPU. The assembly target alone does not identify a GPU model or
+driver. `coverage` checks each probe definition digest, inputs and settings. Adding another probe leaves existing
+measurements valid; editing a probe marks only that
 probe's old report stale. It reports missing, stale or invalid files separately and exits 1 when the selected probe set
 is incomplete. Use `--json` for machine-readable coverage data.
+
+### PS5 Linux measurements
+
+A PS5 booted into Linux can run the same raw gfx1013 kernels through a patched `amdgpu` and ROCm HSA stack. The
+[`ps5-rocm`](https://github.com/LEE-CHENYU/ps5-rocm) setup documents the required driver and runtime changes. Do not
+substitute `HSA_OVERRIDE_GFX_VERSION`; the oracle must assemble and execute real gfx1013 code.
+
+`run-ps5-linux` reads the selected HSA agent before dispatch. It requires Linux, the HSA runtime, target `gfx1013`, AMD
+chip ID `0x13fc` and a complete agent identity. It rejects the BC-250 chip ID `0x13fe`. Each report records the product,
+ASIC revision, compute-unit count, operating system and kernel release beside the measured words.
+
+```sh
+python3 tools/hw-oracle/probe_catalog.py run-ps5-linux \
+  --results-dir measurements --device-label ps5-linux \
+  --probe v-add-f32-edge-values
+```
 
 ## Recompiler comparison
 
@@ -139,13 +166,18 @@ cmake --build build --target agc_oracle_runner
 | `HW_ORACLE_VULKAN_RUNNER` | path of the built `agc_oracle_runner` executable |
 | `ANYPS5_GPU` | case-insensitive substring of the Vulkan device name, as for every AnyPS5 tool |
 
-On Windows the runner needs `build/core/libs/libs/unpatched` in `PATH` ([BUILD](BUILD.md)). Run the hardware with the default
-runtime and the recompiler with `vulkan`, with the same body, rows and settings, each with `--json`, then compare:
+On Windows add `build/core/libs/libs/unpatched` to `PATH` ([BUILD](BUILD.md)). The example uses the `.exe` runner when it
+is present. Run the hardware with the default runtime and the recompiler with `vulkan`, with the same body, rows and
+settings, each with `--json`, then compare:
 
 ```sh
 SETTINGS="--ieee 0 --dx10-clamp 1 --denorm32 0 --denorm16 3 --round32 0 --round16 0 --fp16-overflow 0"
+RUNNER=build/core/libs/prx/libSceAgcDriver/agc_oracle_runner
+if [ -f "$RUNNER.exe" ]; then
+  RUNNER="$RUNNER.exe"
+fi
 python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > hardware.json
-HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER=<path to agc_oracle_runner> \
+HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER="$RUNNER" \
   python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > recompiler.json
 python3 tools/hw-oracle/compare_results.py hardware.json recompiler.json
 ```
@@ -175,6 +207,23 @@ here; a result that depends on these differences needs a run on RDNA2.
 
 `v_mul_legacy_f32`, `ds_wrxchg2_rtn_*` and `ds_wrxchg2st64_rtn_*` still assemble under these names and give the same
 results as their gfx11 names `v_mul_dx9_zero_f32`, `ds_storexchg_2addr_rtn_*` and `ds_storexchg_2addr_stride64_rtn_*`.
+
+## RDNA4 (gfx12) differences
+
+Measured on gfx1201 (Radeon AI PRO R9700, AMD Windows driver 32.0.31044.16, HIP runtime). The PS5's gfx1013 is not
+measured here; a result that depends on these differences needs a run on RDNA2.
+
+- The gfx12 kernel descriptor has no IEEE mode or DX10 clamp field, so `template.s` leaves out `.amdhsa_ieee_mode` and
+  `.amdhsa_dx10_clamp`. Pass `ieee=None` and `dx10_clamp=None` (`--ieee none --dx10-clamp none`). An integer for either
+  is rejected on gfx12, and `None` is rejected on older targets. JSON reports record `null`. `compare_results.py`
+  rejects a report whose two modes do not match its `assembly_target` the same way, and treats `null` and an integer as
+  different settings.
+- `template.s` waits with `s_wait_kmcnt 0` and `s_wait_loadcnt 0`. comgr still assembles `s_waitcnt` for gfx12, but as
+  SOPP opcode 9 (`s_waitcnt lgkmcnt(0)` is `bf89fc07`), not as one of the gfx12 counter waits (`s_wait_kmcnt 0` is
+  `bfc70000`). A body that waits for its own memory operations uses `s_wait_loadcnt`, `s_wait_storecnt`, `s_wait_dscnt` or
+  `s_wait_kmcnt`.
+- `probe_catalog.py` passes 0 or 1 for both modes, so its probes don't run on gfx12.
+- `ds_cmpst_b32` is not accepted, as on gfx11.
 
 ## Limits
 
