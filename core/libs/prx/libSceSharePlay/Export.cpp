@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSharePlay/include/InventoryExports.hpp"
 #include "prx/libSceSharePlay/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -39,9 +38,7 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfoA(SharePlayConnectionInfoA* in
     SharePlayConnectionInfoA out{};
     out.hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
     out.visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &out, sizeof(out));
-    errno = savedErrno;
     if (!copied) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
@@ -67,9 +64,7 @@ int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info
     SharePlayConnectionInfo out{};
     out.hostUserId = SCE_USER_SERVICE_USER_ID_INVALID;
     out.visitorUserId = SCE_USER_SERVICE_USER_ID_INVALID;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &out, sizeof(out));
-    errno = savedErrno;
     if (!copied) return SCE_SHARE_PLAY_ERROR_INVALID_ARGS;
     return 0;
 }
