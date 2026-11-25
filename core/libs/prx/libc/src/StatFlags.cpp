@@ -126,8 +126,12 @@ extern "C" int APS5_VABI strtofflags_nid_postfix(char** stringp, std::uint64_t* 
     char* string = nullptr;
     if (!GuestCopyIn_nid_no_patch(&string, stringp, sizeof(string))) throw std::invalid_argument("strtofflags: unreadable string");
     const auto flush = [&] {
-        Store(setp, set);
-        Store(clrp, clear);
+        if (setp == clrp) {
+            Store(setp, set | clear);
+        } else {
+            Store(setp, set);
+            Store(clrp, clear);
+        }
     };
     for (char* token = strsep_nid_postfix(&string, "\t ,"); token != nullptr; token = strsep_nid_postfix(&string, "\t ,")) {
         if (!GuestCopyOut_nid_no_patch(stringp, &token, sizeof(token))) throw std::invalid_argument("strtofflags: unwritable string");

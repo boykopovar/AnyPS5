@@ -59,6 +59,16 @@ int main() {
     Require(set == 0 && clear == UfImmutable);
     Require(std::strcmp(text, "bogus") == 0);
 
+    char shared[] = "uchg,nohidden";
+    text = shared;
+    Require(strtofflags_nid_postfix(&text, &set, &set) == 0);
+    Require(set == (UfImmutable | UfHidden));
+
+    char sharedUnknown[] = "hidden,bogus";
+    text = sharedUnknown;
+    Require(strtofflags_nid_postfix(&text, &set, &set) == 1);
+    Require(set == UfHidden && std::strcmp(text, "bogus") == 0);
+
     char empty[] = "";
     text = empty;
     Require(strtofflags_nid_postfix(&text, nullptr, nullptr) == 0);
