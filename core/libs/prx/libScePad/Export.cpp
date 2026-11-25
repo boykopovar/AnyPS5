@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstddef>
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
@@ -176,9 +175,7 @@ int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClass
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  PadDeviceClassExtendedInformation localInfo{};
  localInfo.deviceClass = SpecialHandle(handle) ? -1 : PAD_DEVICE_CLASS_STANDARD;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -190,15 +187,11 @@ int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDev
  if (!SpecialHandle(handle)) {
   local.deviceClass = PAD_DEVICE_CLASS_STANDARD;
   bool connected = false;
-  const int savedErrno = errno;
   const bool copiedIn = GuestCopyIn_nid_no_patch(&connected, &data->connected, sizeof(connected));
-  errno = savedErrno;
   if (!copiedIn) return PAD_ERROR_INVALID_ARG;
   local.dataValid = connected;
  }
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(class_data, &local, sizeof(local));
- errno = savedErrno;
  return copied ? PAD_OK : PAD_ERROR_INVALID_ARG;
 }
 
@@ -211,9 +204,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  }
  PadControllerInformation localInfo{};
  if (SpecialHandle(handle)) {
-  const int savedErrno = errno;
   const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-  errno = savedErrno;
   if (!copied) return PAD_ERROR_INVALID_ARG;
   return PAD_OK;
  }
@@ -227,9 +218,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  localInfo.connectedCount = connected ? 1 : 0;
  localInfo.connected = connected;
  localInfo.deviceClass = PAD_DEVICE_CLASS_STANDARD;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -264,9 +253,7 @@ int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
  }
  local.connectedCount[0] = count;
  local.connectedCount[1] = 0;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
- errno = savedErrno;
  return copied ? PAD_OK : PAD_ERROR_INVALID_ARG;
 }
 
@@ -278,9 +265,7 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
  if (!SpecialHandle(handle)) {
   PadGetTriggerEffectState_nid_postfix(PortOf(handle), localInfo.state);
  }
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -290,9 +275,7 @@ int APS5_VABI scePadGetExtControllerInformation(int handle, void* info) {
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
  if (!SpecialHandle(handle)) return PAD_ERROR_NOT_PERMITTED;
  constexpr std::array<std::uint8_t, 0x2c> zeroed{};
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, zeroed.data(), zeroed.size());
- errno = savedErrno;
  return copied ? PAD_OK : PAD_ERROR_INVALID_ARG;
 }
 
@@ -317,9 +300,7 @@ int APS5_VABI scePadGetControllerBusType(int handle, int* busType) {
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
  const int type = PAD_CONNECT_TYPE_BLUETOOTH;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(busType, &type, sizeof(type));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -330,9 +311,7 @@ int APS5_VABI scePadGetJackState(int handle, int* state) {
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
  const int jackState = 0;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(state, &jackState, sizeof(jackState));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -350,9 +329,7 @@ int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformat
  PadContainerIdInformation localInfo{};
  localInfo.size = 0;
  localInfo.id[0] = '\0';
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, offsetof(PadContainerIdInformation, id) + 1);
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
@@ -418,9 +395,7 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
  else if (SpecialHandle(handle)) localData[0] = SpecialData();
  else count = Pad::Read(localData.data(), num, PortOf(handle));
  if (count <= 0) return count;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(data, localData.data(), static_cast<std::size_t>(count) * sizeof(PadData));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return count;
 }
@@ -429,22 +404,16 @@ int APS5_VABI scePadReadState(int handle, PadData* data) {
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
  PadData localData;
  WriteDefaultData(&localData);
- const int savedErrno = errno;
  if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
-  errno = savedErrno;
   return PAD_ERROR_INVALID_ARG;
  }
- errno = savedErrno;
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
  localData = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
- const int savedErrno2 = errno;
  if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
-  errno = savedErrno2;
   return PAD_ERROR_INVALID_ARG;
  }
- errno = savedErrno2;
 
  return 0;
 }
@@ -481,9 +450,7 @@ int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  PadLightBarParam local{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  Pad::SetLightBar(PortOf(handle), true, local.r, local.g, local.b);
  return PAD_OK;
@@ -508,9 +475,7 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  std::array<std::uint8_t, 120> local{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(local.data(), param, local.size());
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  const std::uint8_t* bytes = local.data();
  const std::uint8_t mask = bytes[0];
@@ -534,9 +499,7 @@ int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  PadVibrationParam local{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  Pad::SetVibration(PortOf(handle), local.large_motor, local.small_motor);
  return PAD_OK;
@@ -574,9 +537,7 @@ int APS5_VABI scePadSetVolumeGain(int handle, const PadVolumeGain* gain) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (SpecialHandle(handle)) return PAD_OK;
  PadVolumeGain local{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&local, gain, sizeof(local));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  Pad::SetVolumeGain(PortOf(handle), local.speakerVolume, local.headsetVolume, local.micGain);
  return PAD_OK;
@@ -623,9 +584,7 @@ int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (remote == nullptr) return PAD_ERROR_INVALID_ARG;
  const bool isRemote = false;
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(remote, &isRemote, sizeof(isRemote));
- errno = savedErrno;
  if (!copied) return PAD_ERROR_INVALID_ARG;
  return 0;
 }
@@ -651,9 +610,7 @@ int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* s
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     const std::uint32_t controllerState = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(state, &controllerState, sizeof(controllerState));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
@@ -823,9 +780,7 @@ int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationPar
     const int port = PortOf(handle);
     if (port < 0) NotImplemented_nid_no_patch("scePadSetVibrationForce: a handle with no pad port");
     PadVibrationParam local{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     Pad::SetVibration(port, local.large_motor, local.small_motor);
     return PAD_OK;
@@ -843,9 +798,7 @@ int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
     if (type == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     const std::int32_t controllerType = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(type, &controllerType, sizeof(controllerType));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
@@ -1037,12 +990,9 @@ int APS5_VABI scePadParseUniqueDataLeonardo(std::int32_t handle, const PadLeonar
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (data == nullptr || uniqueData == nullptr) return PAD_ERROR_INVALID_ARG;
     const std::uint8_t zeroData[PAD_LEONARDO_UNIQUE_DATA_SIZE]{};
-    const int savedErrno = errno;
     const bool copiedOut = GuestCopyOut_nid_no_patch(uniqueData, zeroData, sizeof(zeroData));
-    errno = savedErrno;
     std::uint8_t probe = 0;
     const bool copiedIn = GuestCopyIn_nid_no_patch(&probe, data, 1);
-    errno = savedErrno;
     if (!copiedOut || !copiedIn) return PAD_ERROR_INVALID_ARG;
     return PAD_ERROR_INVALID_HANDLE;
 }
@@ -1146,9 +1096,7 @@ int APS5_VABI scePadGetActiveTime(std::int32_t handle, std::int32_t type, std::u
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (activeTime == nullptr) return PAD_ERROR_INVALID_ARG;
     const std::uint64_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(activeTime, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     static_cast<void>(type);
@@ -1159,9 +1107,7 @@ int APS5_VABI scePadGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (deviceId == nullptr) return PAD_ERROR_INVALID_ARG;
     const std::int32_t value = -1;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(deviceId, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
@@ -1210,12 +1156,9 @@ int APS5_VABI scePadGetMotionTimerUnit(std::int32_t handle, float* unit) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (unit == nullptr) return PAD_ERROR_INVALID_ARG;
     const float localUnit = 0.0f;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(unit, &localUnit, sizeof(localUnit))) {
-        errno = savedErrno;
         return PAD_ERROR_INVALID_ARG;
     }
-    errno = savedErrno;
     if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
@@ -1474,9 +1417,7 @@ int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateDat
     if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
     if (data == nullptr) return PAD_ERROR_INVALID_ARG;
     std::size_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, data, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != 0x8000) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadBondUpdateSendData: the bond-update ioctl");
     return 0;
@@ -1512,9 +1453,7 @@ int APS5_VABI scePadControllerUpdateIsUpdateNeeded2(std::int32_t deviceId, const
     (void)deviceId;
     if (status == nullptr) return PAD_ERROR_INVALID_ARG;
     const std::uint16_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return PAD_ERROR_INVALID_ARG;
     if (version == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadControllerUpdateIsUpdateNeeded2: the driver answer behind the controller-update ioctl");
@@ -1550,9 +1489,7 @@ int APS5_VABI scePadControllerUpdateSendData(std::int32_t deviceId, const PadUpd
     if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
     if (data == nullptr) return PAD_ERROR_INVALID_ARG;
     std::size_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, data, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != 0x8000) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadControllerUpdateSendData: the controller-update ioctl");
     return 0;
