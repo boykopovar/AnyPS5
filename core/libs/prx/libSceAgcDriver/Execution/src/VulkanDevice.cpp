@@ -3186,6 +3186,10 @@ void VulkanDevice::SubmitRecorded(bool reapFirst) {
     state->recorder->Submit();
 }
 
+bool VulkanDevice::SubmittedWorkRunning() const {
+    return state->recorder && state->recorder->SubmittedWorkRunning();
+}
+
 bool VulkanDevice::CanWaitUnlocked() const {
     return state->recorder && state->recorder->HasTimeline();
 }
