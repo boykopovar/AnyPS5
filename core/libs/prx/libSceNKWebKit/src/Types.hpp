@@ -238,6 +238,7 @@ public:
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
     Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFillAvailable = false;
     bool htmlInputElementAutoFilled = false;
     bool htmlInputElementAutoFilledAndViewable = false;
     bool htmlInputElementSpellcheckEnabled = true;

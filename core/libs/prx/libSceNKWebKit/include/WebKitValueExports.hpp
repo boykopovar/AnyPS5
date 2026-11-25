@@ -132,6 +132,7 @@ std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
 const void* APS5_VABI WKBundleNodeHandleCopyDocument(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(const void* nodeHandleRef, bool autoFillAvailable);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFilled(const void* nodeHandleRef, bool autoFilled);
 bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFilled(const void* nodeHandleRef);
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutofilled(const void* nodeHandleRef, bool autofilled);
