@@ -28,20 +28,6 @@ bool IsInitialized() {
     return initialized.load(std::memory_order_acquire);
 }
 
-bool IsKnownDecoderType(std::uint32_t type) {
-    switch (type) {
-        case 2:
-        case 4:
-        case 0x2715:
-        case 0x2718:
-        case 0x271A:
-        case 0x271C:
-            return true;
-        default:
-            return false;
-    }
-}
-
 bool IsValidType2ProfileAndLevel(std::uint16_t profile, std::uint16_t level) {
     if (profile != 4 && profile != 5) return false;
     return level == 4 || level == 6 || level == 8 || level == 10;
@@ -92,6 +78,7 @@ T ReadGuest(const void* address, const char* what) {
 extern "C" {
 
 int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, void** instance) {
+    (void)param;
     const std::uint64_t none = 0;
     if (instance == nullptr) {
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
@@ -103,8 +90,6 @@ int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, vo
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
     }
     if (!IsInitialized()) return ErrorNotInitialized;
-    const auto type = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param));
-    if (!IsKnownDecoderType(type)) return ErrorUnknownType;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -132,7 +117,10 @@ int APS5_VABI sceVideoNativeExtEssential_Initialize(const void* param) {
     }
     if (IsInitialized()) return ErrorAlreadyInitialized;
     const auto* allocatorBytes = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(allocatorAddress));
-    (void)ReadGuest<AllocatorCallbacks>(allocatorBytes + 0x40, "sceVideoNativeExtEssential_Initialize: unreadable allocator");
+    const auto callbacks = ReadGuest<AllocatorCallbacks>(allocatorBytes + 0x40, "sceVideoNativeExtEssential_Initialize: unreadable allocator");
+    if (callbacks.allocFn == 0 || callbacks.freeFn == 0 || callbacks.reallocFn == 0) {
+        return ErrorInvalidArgument;
+    }
     bool expected = false;
     if (!initialized.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return ErrorAlreadyInitialized;

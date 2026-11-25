@@ -74,6 +74,25 @@ int main() {
     std::memcpy(param.data(), &allocatorPtr, sizeof(allocatorPtr));
     std::memcpy(param.data() + 8, &validKind, sizeof(validKind));
     errno = 71;
+    Require(sceVideoNativeExtEssential_Initialize(param.data()) == invalidArgument);
+    Require(errno == 71 && sceVideoNativeExtEssential_IsInit() == 0);
+    for (const std::size_t missingOffset : std::array<std::size_t, 3>{0x40, 0x48, 0x50}) {
+        allocator.fill(0);
+        const std::array<std::uint64_t, 3> fns{0x1000, 0x2000, 0x3000};
+        for (std::size_t i = 0; i < fns.size(); ++i) {
+            const std::size_t offset = 0x40 + i * sizeof(std::uint64_t);
+            const std::uint64_t val = (offset == missingOffset) ? 0 : fns[i];
+            std::memcpy(allocator.data() + offset, &val, sizeof(val));
+        }
+        errno = 71;
+        Require(sceVideoNativeExtEssential_Initialize(param.data()) == invalidArgument);
+        Require(errno == 71 && sceVideoNativeExtEssential_IsInit() == 0);
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::uint64_t val = 0x1000 * (i + 1);
+        std::memcpy(allocator.data() + 0x40 + i * sizeof(std::uint64_t), &val, sizeof(val));
+    }
+    errno = 71;
     Require(sceVideoNativeExtEssential_Initialize(param.data()) == 0);
     Require(errno == 71);
     Require(sceVideoNativeExtEssential_IsInit() == 1);
@@ -83,13 +102,13 @@ int main() {
 
     instance = reinterpret_cast<void*>(0x1234);
     errno = 71;
-    Require(sceVideoNativeExtEssential_CreateDecInstance(nullptr, &instance) == unknownType);
-    Require(instance == nullptr && errno == 71);
-    instance = reinterpret_cast<void*>(0x1234);
-    errno = 71;
-    Require(sceVideoNativeExtEssential_CreateDecInstance(
-                reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0xFFFFFFFFu)), &instance) == unknownType);
-    Require(instance == nullptr && errno == 71);
+    bool createThrew = false;
+    try {
+        sceVideoNativeExtEssential_CreateDecInstance(nullptr, &instance);
+    } catch (const std::runtime_error&) {
+        createThrew = true;
+    }
+    Require(createThrew && instance == nullptr && errno == 71);
 
     void* nullHandle = nullptr;
     errno = 71;
