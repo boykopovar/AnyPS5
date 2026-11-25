@@ -206,13 +206,27 @@ void AgcSurfaceInit() {
     Require(std::memcmp(surface.data() + 1, expected.data(), sizeof(expected)) == 0);
     Require(surface.front() == 0xb5 && surface.back() == 0xb5);
 
-    struct FormatCase { unsigned format, numberType, swap, tile; int result; };
+    struct FormatCase {
+        unsigned format, numberType, swap, tile;
+        int result;
+        std::uint8_t surfaceFormat = 0;
+        std::uint32_t colorInfo = 0;
+    };
     constexpr int unsupported = static_cast<int>(0x8046005c);
     constexpr FormatCase cases[] = {
-        {4, 0, 0x800, 0, 0}, {12, 0x600, 0x1000, 0x6c000, 0}, {32, 0x100, 0x1800, 0x4000, 0},
-        {36, 0x400, 0, 0x44000, 0}, {40, 0x600, 0, 0x60000, 0}, {48, 0x700, 0, 0x8000, 0},
-        {56, 0x500, 0, 0x14000, 0}, {124, 0x700, 0, 0x24000, 0}, {124, 0x700, 0x800, 0, InvalidParameter},
-        {56, 0x700, 0, 0x60000, unsupported}, {8, 0, 0, 0, unsupported}, {12, 0x100, 0, 0, unsupported},
+        {0x4, 0, 0x800, 0, 0, 0x10, 0x8804},
+        {0xc, 0x600, 0x1000, 0x6c000, 0, 0x20, 0x980c},
+        {0x20, 0x100, 0x1800, 0x4000, 0, 0x4a, 0x9920},
+        {0x24, 0x400, 0, 0x44000, 0, 0x4a, 0x50424},
+        {0x28, 0x600, 0, 0x60000, 0, 0x40, 0x8628},
+        {0x30, 0x700, 0, 0x8000, 0, 0x4e, 0x40730},
+        {0x38, 0x500, 0, 0x14000, 0, 0x4f, 0x50538},
+        {0x7c, 0x700, 0, 0x24000, 0, 0x4a, 0x4077c},
+        {0x7c, 0x700, 0x2000, 0x24000, 0, 0x4a, 0x4077c},
+        {0x28, 0, 0x801, 0, 0, 0x40, 0x8028},
+        {0x28, 1, 0, 0, InvalidParameter},
+        {0x7c, 0x700, 0x800, 0, InvalidParameter}, {0x38, 0x700, 0, 0x60000, unsupported},
+        {8, 0, 0, 0, unsupported}, {12, 0x100, 0, 0, unsupported},
         {4, 0x700, 0, 0, InvalidParameter}, {40, 0, 0, 1, unsupported}
     };
     for (const auto& c : cases) {
@@ -222,7 +236,11 @@ void AgcSurfaceInit() {
         set(0x20, c.tile);
         surface.fill(0xb5);
         Require(initialize() == c.result);
-        if (c.result != 0) {
+        if (c.result == 0) {
+            std::uint32_t colorInfo;
+            std::memcpy(&colorInfo, surface.data() + 1 + 0x54, sizeof(colorInfo));
+            Require(surface[1 + 0x0d] == c.surfaceFormat && colorInfo == c.colorInfo);
+        } else {
             for (std::size_t i = 1; i <= 256; ++i) Require(surface[i] == 0);
         }
         Require(surface.front() == 0xb5 && surface.back() == 0xb5);
