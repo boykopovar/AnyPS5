@@ -35,15 +35,19 @@ constexpr int AudiodecErrorAlreadyRegistered = static_cast<int>(0x80930009u);
 constexpr int AudiodecErrorNotRegistered = static_cast<int>(0x8093000Au);
 constexpr int AjmRetry = static_cast<int>(0x80931007u);
 constexpr int AjmInvalidParameter = static_cast<int>(0x80930008u);
-
-constexpr int AjmRetry = static_cast<int>(0x80931007u);
 constexpr int AjmInvalidInstance = static_cast<int>(0x80930003u);
 using ContextIds = std::array<std::uint32_t, 2>;
 
+constexpr int MaxRetries = 1000;
+
 template <typename Operation>
 int RetryService(Operation operation) {
-    int status;
-    while ((status = operation()) == AjmRetry) sceKernelUsleep_nid_postfix(1000);
+    int status = 0;
+    for (int retry = 0; retry < MaxRetries; ++retry) {
+        status = operation();
+        if (status != AjmRetry) return status;
+        sceKernelUsleep_nid_postfix(1000);
+    }
     return status;
 }
 
@@ -90,19 +94,6 @@ ModuleContext& Module() {
     return module;
 }
 
-constexpr int MaxRetries = 1000;
-
-template <typename Operation>
-int RetryService(Operation operation) {
-    int status = 0;
-    for (int retry = 0; retry < MaxRetries; ++retry) {
-        status = operation();
-        if (status != AjmRetry) return status;
-        sceKernelUsleep_nid_postfix(1000);
-    }
-    return status;
-}
-
 template <typename T>
 bool ReadGuest(T& value, const T* source) {
     const int savedErrno = errno;
@@ -117,6 +108,13 @@ bool WriteGuest(T* destination, const T& value) {
     const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
     errno = savedErrno;
     return copied;
+}
+
+bool WritableGuest(void* destination, std::size_t size) {
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(destination, size);
+    errno = savedErrno;
+    return writable;
 }
 
 int DecodeInternal(const void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
@@ -149,6 +147,57 @@ int DecodeOnModule(std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priori
     auto& module = Module();
     if (module.status < 0) return module.status;
     return DecodeInternal(module.data(), handle, ctrl, priority, decode2);
+}
+
+int UpdateSharedCodecRegistration(const void* context, std::uint32_t codecType, bool registering) {
+    const auto address = reinterpret_cast<std::uintptr_t>(context);
+    if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
+    auto* const lock = reinterpret_cast<PthreadRwlock*>((address + 0xFu) & ~static_cast<std::uintptr_t>(7u));
+    auto* const selfAddress = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 8u : 0xCu));
+    const auto* const otherAddress = reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 0xCu : 8u));
+    PthreadRwlock lockVal = nullptr;
+    std::uint32_t selfFlag = 0;
+    std::uint32_t otherFlag = 0;
+    std::uint32_t ajmContext = 0;
+    if (!ReadGuest(lockVal, lock) || !ReadGuest(selfFlag, selfAddress) || !ReadGuest(otherFlag, otherAddress) ||
+        !ReadGuest(ajmContext, reinterpret_cast<const std::uint32_t*>(address + 4u))) {
+        return AudiodecErrorArgument;
+    }
+    if (registering && selfFlag != 0) return AudiodecErrorAlreadyRegistered;
+    if (!registering && selfFlag == 0) return AudiodecErrorNotRegistered;
+    if (!WritableGuest(lock, sizeof(*lock)) || !WritableGuest(selfAddress, sizeof(*selfAddress))) {
+        return AudiodecErrorArgument;
+    }
+    if (scePthreadRwlockWrlock(lock) != 0) return AudiodecErrorArgument;
+    if (!ReadGuest(selfFlag, selfAddress) || !ReadGuest(otherFlag, otherAddress)) {
+        scePthreadRwlockUnlock(lock);
+        return AudiodecErrorArgument;
+    }
+    if (registering && selfFlag != 0) {
+        scePthreadRwlockUnlock(lock);
+        return AudiodecErrorAlreadyRegistered;
+    }
+    if (!registering && selfFlag == 0) {
+        scePthreadRwlockUnlock(lock);
+        return AudiodecErrorNotRegistered;
+    }
+    const std::uint32_t targetFlag = registering ? 1u : 0u;
+    if (otherFlag != 0) {
+        const bool written = WriteGuest(selfAddress, targetFlag);
+        scePthreadRwlockUnlock(lock);
+        return written ? 0 : AudiodecErrorArgument;
+    }
+    const int status = RetryService([&] {
+        return registering ? sceAjmModuleRegister(ajmContext, 24, 0) : sceAjmModuleUnregister(ajmContext, 24);
+    });
+    const int result = status == AjmInvalidParameter ? AudiodecErrorInvalidType : status;
+    if (result == 0) {
+        const bool written = WriteGuest(selfAddress, targetFlag);
+        scePthreadRwlockUnlock(lock);
+        return written ? 0 : AudiodecErrorArgument;
+    }
+    scePthreadRwlockUnlock(lock);
+    return result;
 }
 
 }
@@ -275,43 +324,7 @@ int APS5_VABI sceAudiodecRegisterCodec(void* context, std::uint32_t codecType) {
     }
     const auto address = reinterpret_cast<std::uintptr_t>(context);
     if (codecType >= 11) {
-        if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
-        auto* const lock = reinterpret_cast<PthreadRwlock*>((address + 0xFu) & ~static_cast<std::uintptr_t>(7u));
-        auto* const selfAddress = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 8u : 0xCu));
-        auto* const otherAddress = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 0xCu : 8u));
-        PthreadRwlock lockVal = nullptr;
-        std::uint32_t selfFlag = 0;
-        std::uint32_t otherFlag = 0;
-        if (!ReadGuest(lockVal, lock) || !ReadGuest(selfFlag, selfAddress) || !ReadGuest(otherFlag, otherAddress)) {
-            return AudiodecErrorArgument;
-        }
-        if (selfFlag != 0) {
-            return AudiodecErrorAlreadyRegistered;
-        }
-        if (otherFlag != 0) {
-            if (!WriteGuest(selfAddress, selfFlag)) return AudiodecErrorArgument;
-            scePthreadRwlockWrlock(lock);
-            const bool written = WriteGuest(selfAddress, 1u);
-            scePthreadRwlockUnlock(lock);
-            return written ? 0 : AudiodecErrorArgument;
-        }
-        std::uint32_t ajmContext = 0;
-        if (!ReadGuest(ajmContext, reinterpret_cast<const std::uint32_t*>(address + 4u))) {
-            return AudiodecErrorArgument;
-        }
-        if (!WriteGuest(selfAddress, selfFlag)) return AudiodecErrorArgument;
-        scePthreadRwlockWrlock(lock);
-        const int status = RetryService([&] {
-            return sceAjmModuleRegister(ajmContext, 24, 0);
-        });
-        const int result = status == AjmInvalidParameter ? AudiodecErrorInvalidType : status;
-        if (result == 0) {
-            const bool written = WriteGuest(selfAddress, 1u);
-            scePthreadRwlockUnlock(lock);
-            return written ? 0 : AudiodecErrorArgument;
-        }
-        scePthreadRwlockUnlock(lock);
-        return result;
+        return UpdateSharedCodecRegistration(context, codecType, true);
     }
     if (codecType == 1 || codecType == 2 || codecType == 3) {
         if (address > UINTPTR_MAX - 4u) return AudiodecErrorArgument;
@@ -353,43 +366,7 @@ int APS5_VABI sceAudiodecUnregisterCodec(const void* context, std::uint32_t code
     }
     const auto address = reinterpret_cast<std::uintptr_t>(context);
     if (codecType >= 11) {
-        if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
-        auto* const lock = reinterpret_cast<PthreadRwlock*>((address + 0xFu) & ~static_cast<std::uintptr_t>(7u));
-        auto* const selfAddress = reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 8u : 0xCu));
-        const auto* const otherAddress = reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(lock) + (codecType == 11 ? 0xCu : 8u));
-        PthreadRwlock lockVal = nullptr;
-        std::uint32_t selfFlag = 0;
-        std::uint32_t otherFlag = 0;
-        if (!ReadGuest(lockVal, lock) || !ReadGuest(selfFlag, selfAddress) || !ReadGuest(otherFlag, otherAddress)) {
-            return AudiodecErrorArgument;
-        }
-        if (selfFlag == 0) {
-            return AudiodecErrorNotRegistered;
-        }
-        if (otherFlag != 0) {
-            if (!WriteGuest(selfAddress, selfFlag)) return AudiodecErrorArgument;
-            scePthreadRwlockWrlock(lock);
-            const bool written = WriteGuest(selfAddress, 0u);
-            scePthreadRwlockUnlock(lock);
-            return written ? 0 : AudiodecErrorArgument;
-        }
-        std::uint32_t ajmContext = 0;
-        if (!ReadGuest(ajmContext, reinterpret_cast<const std::uint32_t*>(address + 4u))) {
-            return AudiodecErrorArgument;
-        }
-        if (!WriteGuest(selfAddress, selfFlag)) return AudiodecErrorArgument;
-        scePthreadRwlockWrlock(lock);
-        const int status = RetryService([&] {
-            return sceAjmModuleUnregister(ajmContext, 24);
-        });
-        const int result = status == AjmInvalidParameter ? AudiodecErrorInvalidType : status;
-        if (result == 0) {
-            const bool written = WriteGuest(selfAddress, 0u);
-            scePthreadRwlockUnlock(lock);
-            return written ? 0 : AudiodecErrorArgument;
-        }
-        scePthreadRwlockUnlock(lock);
-        return result;
+        return UpdateSharedCodecRegistration(context, codecType, false);
     }
     if (codecType == 1 || codecType == 2 || codecType == 3) {
         if (address > UINTPTR_MAX - 4u) return AudiodecErrorArgument;
