@@ -11,6 +11,8 @@
 namespace {
 
 #if defined(GNM_NORMAL_PROVIDER)
+constexpr auto ComputeWaitOnAddress = sceGnmComputeWaitOnAddress_nid_disambig1;
+constexpr auto ComputeWaitSemaphore = sceGnmComputeWaitSemaphore_nid_disambig1;
 constexpr auto DispatchDirect = sceGnmDispatchDirect_nid_disambig1;
 constexpr auto DispatchIndirect = sceGnmDispatchIndirect_nid_disambig1;
 constexpr auto DispatchIndirectOnMec = sceGnmDispatchIndirectOnMec_nid_disambig1;
@@ -22,6 +24,8 @@ constexpr auto UpdatePsShader = sceGnmUpdatePsShader_nid_disambig1;
 constexpr auto UpdatePsShader350 = sceGnmUpdatePsShader350_nid_disambig1;
 constexpr auto UpdateVsShader = sceGnmUpdateVsShader_nid_disambig1;
 #else
+constexpr auto ComputeWaitOnAddress = sceGnmComputeWaitOnAddress;
+constexpr auto ComputeWaitSemaphore = sceGnmComputeWaitSemaphore;
 constexpr auto DispatchDirect = sceGnmDispatchDirect;
 constexpr auto DispatchIndirect = sceGnmDispatchIndirect;
 constexpr auto DispatchIndirectOnMec = sceGnmDispatchIndirectOnMec;
@@ -176,7 +180,29 @@ void CheckDispatches() {
 }
 
 
+void CheckComputeWaits() {
+    Require(ComputeWaitOnAddress(Fresh(), 14, 0x500001003ull, 0xff, 0xb, 7) == 0);
+    RequireWords({0xc0021000u, 0, U, U, 0xc0053c00u, 0x13, 0x1000, 5, 7, 0xff, 10, 0xc0011000u, 0, U});
+    Require(ComputeWaitOnAddress(Fresh(), 14, 0x123456789abcdef7ull, 0xf0, 0xd, 0x55) == 0);
+    RequireWords({0xc0021000u, 0, U, U, 0xc0053c00u, 0x15, 0x9abcdef4u, 0x5678, 0x55, 0xf0, 10, 0xc0011000u, 0, U});
+    Require(ComputeWaitOnAddress(Fresh(), 14, 0x10000, 2, 4, 6) == 0);
+    RequireWords({0xc0021000u, 0, U, U, 0xc0053c00u, 0x14, 0x10000, 0, 6, 2, 10, 0xc0011000u, 0, U});
+    Require(ComputeWaitOnAddress(Fresh(), 14, 0xffff, 2, 4, 6) == 0);
+    RequireWords({0xc0021000u, 0, U, U, 0xc0053c00u, 4, 0xffff, 0, 6, 2, 10, 0xc0011000u, 0, U});
+    RequireRefused(ComputeWaitOnAddress(Fresh(), 13, 0x1234, 1, 3, 0));
+    RequireRefused(ComputeWaitOnAddress(Fresh(), 15, 0x1234, 1, 3, 0));
+
+    for (std::uint32_t flags = 0; flags < 8; ++flags) {
+        Require(ComputeWaitSemaphore(Fresh(), 10, 0x7654321012345678ull, flags) == 0);
+        RequireWords({0xc0021000u, 0, U, U, 0xc0013900u, 0x12345678u, 0xe0003210u | ((flags & 1) << 20), 0xc0011000u, 0, U});
+    }
+    RequireRefused(ComputeWaitSemaphore(Fresh(), 9, 0, 0));
+    RequireRefused(ComputeWaitSemaphore(Fresh(), 11, 0, 0));
+}
+
 void CheckNullBuffers() {
+    Require(ComputeWaitOnAddress(nullptr, 14, 0x1234, 1, 3, 0) == -1);
+    Require(ComputeWaitSemaphore(nullptr, 10, 0, 0) == -1);
     Require(DispatchDirect(nullptr, 9, 1, 1, 1, 0) == -1);
     Require(DispatchIndirect(nullptr, 7, 0, 0) == -1);
     Require(DispatchIndirectOnMec(nullptr, 8, 4, 0) == -1);
@@ -227,6 +253,7 @@ int main() {
     CheckGsHsCs();
     CheckHsInheritedPacketExtent();
     CheckDispatches();
+    CheckComputeWaits();
     CheckNullBuffers();
     CheckCopyFailures();
     CheckDispatchFlags();

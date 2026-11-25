@@ -1,0 +1,6 @@
+# libSceGnmDriver
+
+## add Unknown function info
+
+- [Compute wait writers](../../../core/libs/prx/libSceGnmDriver/include/CommandWriters.hpp) (normal and Neo providers) - implemented from firmware 13.52 `libSceGnmDriver.sprx` disassembly (`sceGnmComputeWaitOnAddress` 0x49e0, `sceGnmComputeWaitSemaphore` 0x4a60). That firmware's `libSceGnmDriverForNeoMode.sprx` holds both byte for byte (0x4bc0, 0x4c40), so the two providers share one writer. Both writers keep only the low 16 bits of the address's high word, and `sceGnmComputeWaitSemaphore` sets bit 20 of the packet's last word from bit 0 of its flags, as both modules do; what that bit selects is not read. Not measured on a console.
+- [sceGnmGetGpuCoreClockFrequency, sceGnmGetPhysicalCounterFromVirtualized, sceGnmLogicalTcaUnitToPhysical](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - implemented from firmware 13.52 `libSceGnmDriver.sprx` disassembly. The clock (0x38b0) is 800000000 there; a title in Neo mode gets 911000000 here, as the Neo provider answers, though that firmware's Neo module returns 800000000 when a global that was not read is nonzero. The counter call (0x4040) returns `0x8EEE00FF` in both modules. The TCA map (0x6f0) is `0x10`, as the module answers when its GC ioctl `0xc004811f` fails or reports bit 0 clear; AnyPS5 has no GC device. Not measured on a console.

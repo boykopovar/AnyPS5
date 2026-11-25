@@ -38,6 +38,31 @@ std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* reg
     return EmitPacket(at, OpNop, {0xc01e008fu, regs[11]});
 }
 
+inline int ComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference) {
+    if (!cmdbuf || size != 14) return CommandFailed;
+    auto* at = Nop(cmdbuf, 3);
+    const bool memory = address > 0xffff;
+    at[0] = Header(0x3c, 6);
+    at[1] = (memory ? 1u << 4 : 0u) | (compare & 7);
+    at[2] = static_cast<std::uint32_t>(address & (memory ? 0xfffffffcu : 0xffffu));
+    at[3] = static_cast<std::uint32_t>(address >> 32) & 0xffffu;
+    at[4] = reference;
+    at[5] = mask;
+    at[6] = 10;
+    Nop(at + 7, 2);
+    return 0;
+}
+
+inline int ComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags) {
+    if (!cmdbuf || size != 10) return CommandFailed;
+    auto* at = Nop(cmdbuf, 3);
+    at[0] = Header(0x39, 2);
+    at[1] = static_cast<std::uint32_t>(semaphoreAddress);
+    at[2] = ((flags & 1) != 0 ? 0x100000u : 0u) - 0x20000000u + (static_cast<std::uint32_t>(semaphoreAddress >> 32) & 0xffffu);
+    Nop(at + 3, 2);
+    return 0;
+}
+
 inline int DispatchDirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
     if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return CommandFailed;
     cmdbuf[0] = Header(0x15, 4, true, flags & 1);
