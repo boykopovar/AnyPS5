@@ -1,5 +1,4 @@
 #include "prx/libkernel/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -642,13 +641,10 @@ std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** addr
         throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program has no segments");
     void* localAddress = reinterpret_cast<void*>(static_cast<std::uintptr_t>(info.segments[0].address));
     std::size_t localSize = info.segments[0].size;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(address, &localAddress, sizeof(localAddress)) ||
         !GuestCopyOut_nid_no_patch(size, &localSize, sizeof(localSize))) {
-        errno = savedErrno;
         throw std::invalid_argument("sceKernelGetLibkernelTextLocation: unmapped argument");
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -659,12 +655,9 @@ std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(I
     const auto status = sceKernelGetLibkernelTextLocation_nid_postfix(&address, &size);
     if (status != 0) return status;
     const InternalSegmentInfo localResult{reinterpret_cast<std::uintptr_t>(address), size};
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult))) {
-        errno = savedErrno;
         throw std::invalid_argument("sceKernelInternalMemoryGetModuleSegmentInfo: unmapped result");
     }
-    errno = savedErrno;
     return 0;
 }
 
