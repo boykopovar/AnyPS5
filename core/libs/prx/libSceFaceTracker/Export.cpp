@@ -1,7 +1,6 @@
 #include "prx/libSceFaceTracker/include/Api.hpp"
 #include "prx/libSceFace/include/Api.hpp"
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -102,16 +101,12 @@ int32_t recordI32(uint8_t *record, std::size_t off) {
 }
 
 bool CopyIn(void *destination, const void *source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return ok;
 }
 
 bool CopyOut(void *destination, const void *source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return ok;
 }
 
@@ -290,12 +285,10 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
     if (userId <= 0 || !feature || !featureSize) {
         return kErrInvalid;
     }
-    const int savedErrno = errno;
     void *probeFeature = nullptr;
     int probeSize = 0;
     const bool probedFeature = GuestCopyIn_nid_no_patch(&probeFeature, feature, sizeof(probeFeature));
     const bool probedSize = GuestCopyIn_nid_no_patch(&probeSize, featureSize, sizeof(probeSize));
-    errno = savedErrno;
     if (!probedFeature || !probedSize) {
         return kErrInvalid;
     }
@@ -311,10 +304,8 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
         }
         uint8_t *block = userDbFeatures(context) + static_cast<std::size_t>(i) * kFeatureStride;
         const int32_t size = kMaxFeatureSize;
-        const int savedErrno = errno;
         const bool copiedFeature = GuestCopyOut_nid_no_patch(feature, &block, sizeof(block));
         const bool copiedSize = GuestCopyOut_nid_no_patch(featureSize, &size, sizeof(size));
-        errno = savedErrno;
         if (!copiedFeature || !copiedSize) {
             return kErrInvalid;
         }
