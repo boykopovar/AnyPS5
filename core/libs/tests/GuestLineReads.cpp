@@ -201,6 +201,29 @@ int main(int argc, char** argv) {
     free_nid_postfix(kept);
 
 
+    {
+        const auto cellPage = PageSize();
+        auto* pointerStorage = static_cast<std::byte*>(PageAlloc(cellPage));
+        auto* capacityStorage = static_cast<std::byte*>(PageAlloc(cellPage));
+        Require(pointerStorage != nullptr && capacityStorage != nullptr);
+        auto** emptyLinePointer = reinterpret_cast<char**>(pointerStorage);
+        auto* emptyCapacity = reinterpret_cast<std::size_t*>(capacityStorage);
+        *emptyLinePointer = nullptr;
+        *emptyCapacity = 0;
+        const std::string emptyPath = base + ".eofcell";
+        auto* eofStream = fopen_nid_postfix(emptyPath.c_str(), "w+b");
+        Require(eofStream != nullptr);
+        Require(PageProtect(pointerStorage, cellPage, false));
+        errno = 0;
+        Require(getdelim_nid_postfix(emptyLinePointer, emptyCapacity, '\n', eofStream) == -1 && errno == EFAULT);
+        Require(*emptyLinePointer == nullptr && *emptyCapacity == 0);
+        Require(PageProtect(pointerStorage, cellPage, true));
+        Require(fclose_nid_postfix(eofStream) == 0);
+        Require(std::filesystem::remove(emptyPath));
+        PageFree(pointerStorage);
+        PageFree(capacityStorage);
+    }
+
     free_nid_postfix(line);
     Require(std::filesystem::remove(path));
     Require(std::filesystem::remove(nulPath));

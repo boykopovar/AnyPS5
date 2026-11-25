@@ -277,7 +277,13 @@ std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int 
             auto* created = static_cast<char*>(realloc_nid_postfix(nullptr, 1));
             if (created == nullptr) { errno = 12; return -1; }
             const std::size_t one = 1;
-            if (!GuestCopyOut_nid_no_patch(n, &one, sizeof(one)) || !GuestCopyOut_nid_no_patch(lineptr, &created, sizeof(created))) {
+            if (!GuestCopyOut_nid_no_patch(n, &one, sizeof(one))) {
+                free_nid_postfix(created);
+                errno = 14;
+                return -1;
+            }
+            if (!GuestCopyOut_nid_no_patch(lineptr, &created, sizeof(created))) {
+                GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity));
                 free_nid_postfix(created);
                 errno = 14;
                 return -1;
