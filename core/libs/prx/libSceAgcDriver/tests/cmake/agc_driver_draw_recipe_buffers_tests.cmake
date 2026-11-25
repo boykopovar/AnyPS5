@@ -1,12 +1,14 @@
 set(agcDrawRecipeBuffersSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/DrawRecipeBuffers.frag)
 set(agcDrawRecipeHeaders)
-foreach(agcDrawRecipeVariant IN ITEMS Buffers Data)
+foreach(agcDrawRecipeVariant IN ITEMS Buffers Data BorderColor)
     set(agcDrawRecipeSpv ${agcTestShaderGeneratedRoot}/DrawRecipe${agcDrawRecipeVariant}.spv)
     set(agcDrawRecipeHeader ${agcTestShaderGeneratedRoot}/DrawRecipe${agcDrawRecipeVariant}_spv.h)
     string(TOUPPER "${agcDrawRecipeVariant}" agcDrawRecipeSymbol)
     set(agcDrawRecipeDefines)
     if(agcDrawRecipeVariant STREQUAL "Data")
         set(agcDrawRecipeDefines -DDATA_WORDS=1)
+    elseif(agcDrawRecipeVariant STREQUAL "BorderColor")
+        set(agcDrawRecipeDefines -DBORDER_COLOR_SAMPLER=1)
     endif()
     add_custom_command(
         OUTPUT "${agcDrawRecipeHeader}"
