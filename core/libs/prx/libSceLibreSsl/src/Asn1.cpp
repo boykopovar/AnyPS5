@@ -33,18 +33,14 @@ constexpr std::uintptr_t GuestChunkBytes = 4096;
 template <typename T>
 T CopyGuestInPreservingErrno(const T* source, const char* function) {
     T destination{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return destination;
 }
 
 std::vector<unsigned char> CopyGuestBytesInPreservingErrno(const unsigned char* source, int length, const char* function) {
     std::vector<unsigned char> bytes(length > 0 ? static_cast<std::size_t>(length) : 0);
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(bytes.data(), source, bytes.size());
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return bytes;
 }
@@ -55,9 +51,7 @@ std::vector<unsigned char> CopyGuestTerminatedInPreservingErrno(const unsigned c
     auto address = reinterpret_cast<std::uintptr_t>(source);
     for (;;) {
         const std::size_t count = GuestChunkBytes - address % GuestChunkBytes;
-        const int savedErrno = errno;
         const bool ok = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count);
-        errno = savedErrno;
         if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
         const auto* end = static_cast<const unsigned char*>(std::memchr(chunk, 0, count));
         bytes.insert(bytes.end(), static_cast<const unsigned char*>(chunk), end ? end : chunk + count);

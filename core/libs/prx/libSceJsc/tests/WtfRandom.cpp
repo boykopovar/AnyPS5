@@ -1,15 +1,16 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
-#include "prx/libc/include/Api.hpp"
-#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <typeinfo>
 #include <vector>
 
 static void Check(bool value, const char* what, int line) {
@@ -69,13 +70,64 @@ static void TestRandomNumbers() {
     Check(orBits == ~0u && andBits == 0, "cryptographicallyRandomNumber uses all 32 bits", __LINE__);
 }
 
+struct UuidAllocationHeader {
+    void* raw;
+    std::size_t size;
+};
+
+static std::set<void*> uuidLiveAllocations;
+static unsigned uuidAllocateCalls = 0;
+static unsigned uuidDeallocateCalls = 0;
+static std::size_t uuidLastAllocationSize = 0;
+static bool uuidFailNextAllocation = false;
+
+static void* UuidAllocate(std::size_t size) {
+    ++uuidAllocateCalls;
+    uuidLastAllocationSize = size;
+    if (uuidFailNextAllocation) {
+        uuidFailNextAllocation = false;
+        return nullptr;
+    }
+    auto* header = static_cast<UuidAllocationHeader*>(std::malloc(sizeof(UuidAllocationHeader) + size));
+    if (!header) std::abort();
+    header->raw = header;
+    header->size = size;
+    void* payload = header + 1;
+    uuidLiveAllocations.insert(payload);
+    return payload;
+}
+
+static void UuidDeallocate(void* payload) {
+    ++uuidDeallocateCalls;
+    Check(uuidLiveAllocations.erase(payload) == 1, "UUID storage released once by the allocator that made it", __LINE__);
+    auto* header = static_cast<UuidAllocationHeader*>(payload) - 1;
+    Check(header->raw == header, "UUID allocation header intact", __LINE__);
+    std::free(header->raw);
+}
+
+template<typename TException>
+static bool UuidThrows(Jsc::WtfAbi::StringImpl** output) {
+    try {
+        _ZN3WTF25createCanonicalUUIDStringEv(output);
+    } catch (const TException& error) {
+        return typeid(error) == typeid(TException);
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
 static void TestCanonicalUuids() {
-    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    Jsc::WtfAbi::StringImpl* untouched = nullptr;
+    const Jsc::WtfAbi::PersistenceAllocator allocator{&UuidAllocate, &UuidDeallocate};
+    RegisterPersistenceAllocator_nid_no_patch(&allocator);
     std::set<std::string> values;
     for (unsigned sample = 0; sample < 256; ++sample) {
         Jsc::WtfAbi::StringImpl* result = nullptr;
         Check(_ZN3WTF25createCanonicalUUIDStringEv(&result) == &result, "UUID return storage", __LINE__);
         Check(result != nullptr, "UUID string allocation", __LINE__);
+        Check(uuidAllocateCalls == sample + 1 && uuidLastAllocationSize == 56, "UUID storage requested from the registered allocator", __LINE__);
+        Check(uuidLiveAllocations.count(result) == 1, "UUID string is the registered allocator's block", __LINE__);
         Check(result->length == 36, "UUID string length", __LINE__);
         Check(result->refCount == 2, "UUID string initial reference count", __LINE__);
         Check(result->hashAndFlags == Jsc::WtfAbi::StringImplFlag8Bit, "UUID owned Latin-1 string", __LINE__);
@@ -92,17 +144,28 @@ static void TestCanonicalUuids() {
         Check(text[14] == '4', "UUID version 4", __LINE__);
         Check(text[19] == '8' || text[19] == '9' || text[19] == 'a' || text[19] == 'b', "UUID variant", __LINE__);
         Check(values.insert(text).second, "UUID values vary", __LINE__);
-        free_nid_postfix(result);
+        UuidDeallocate(result);
     }
-    for (auto* output : {static_cast<Jsc::WtfAbi::StringImpl**>(nullptr), reinterpret_cast<Jsc::WtfAbi::StringImpl**>(1)}) {
-        bool rejected = false;
-        try {
-            _ZN3WTF25createCanonicalUUIDStringEv(output);
-        } catch (const std::invalid_argument&) {
-            rejected = true;
-        }
-        Check(rejected, "invalid UUID return storage rejected", __LINE__);
-    }
+    Check(uuidDeallocateCalls == 256 && uuidLiveAllocations.empty(), "UUID strings released through the registered allocator", __LINE__);
+
+    Check(UuidThrows<std::invalid_argument>(nullptr), "null UUID return storage rejected", __LINE__);
+    Check(uuidAllocateCalls == 256, "null UUID return storage rejected before allocating", __LINE__);
+    Check(UuidThrows<std::invalid_argument>(reinterpret_cast<Jsc::WtfAbi::StringImpl**>(1)), "unwritable UUID return storage rejected", __LINE__);
+    Check(uuidAllocateCalls == 257 && uuidDeallocateCalls == 257 && uuidLiveAllocations.empty(), "UUID storage given back when the return storage is unwritable", __LINE__);
+
+    uuidFailNextAllocation = true;
+    Check(UuidThrows<std::bad_alloc>(&untouched) && untouched == nullptr, "UUID allocation failure reported", __LINE__);
+    Check(uuidAllocateCalls == 258 && uuidDeallocateCalls == 257, "failed UUID allocation is not released", __LINE__);
+
+    const Jsc::WtfAbi::PersistenceAllocator withoutDeallocate{&UuidAllocate, nullptr};
+    RegisterPersistenceAllocator_nid_no_patch(&withoutDeallocate);
+    Check(UuidThrows<std::runtime_error>(&untouched) && untouched == nullptr, "UUID with an allocator that cannot release rejected", __LINE__);
+    const Jsc::WtfAbi::PersistenceAllocator withoutAllocate{nullptr, &UuidDeallocate};
+    RegisterPersistenceAllocator_nid_no_patch(&withoutAllocate);
+    Check(UuidThrows<std::runtime_error>(&untouched) && untouched == nullptr, "UUID with an allocator that cannot allocate rejected", __LINE__);
+    RegisterPersistenceAllocator_nid_no_patch(nullptr);
+    Check(UuidThrows<std::runtime_error>(&untouched) && untouched == nullptr, "UUID without a registered allocator rejected", __LINE__);
+    Check(uuidAllocateCalls == 258 && uuidDeallocateCalls == 257 && uuidLiveAllocations.empty(), "rejected UUID calls allocate nothing", __LINE__);
 }
 
 int main() {

@@ -6,10 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -50,6 +53,7 @@ constexpr int NGS2_ERROR_INVALID_OUT_ADDRESS = static_cast<int>(0x804a8010u);
 constexpr int NGS2_ERROR_INVALID_OUT_SIZE = static_cast<int>(0x804a8011u);
 constexpr int NGS2_ERROR_INVALID_OPTION_SIZE = static_cast<int>(0x804a8013u);
 constexpr int NGS2_ERROR_INVALID_BUFFER_INFO = static_cast<int>(0x804a8020u);
+constexpr int NGS2_ERROR_INVALID_BUFFER_SIZE = static_cast<int>(0x804a8021u);
 constexpr int NGS2_ERROR_INVALID_BUFFER_ALLOCATOR = static_cast<int>(0x804a8023u);
 constexpr int NGS2_ERROR_INVALID_STREAM_COMMANDS = static_cast<int>(0x804a8030u);
 constexpr int NGS2_ERROR_INVALID_STREAM_QUERY_ID = static_cast<int>(0x804a8031u);
@@ -322,7 +326,8 @@ int APS5_VABI sceNgs2RackQueryInfo(uintptr_t rack_handle, std::uint32_t info_id,
         if (info == nullptr) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         const std::uint32_t moduleIdx = info_id >> 24;
         if (moduleIdx >= rack->customModules.size()) return NGS2_ERROR_INVALID_RACK_MODULE_INDEX;
-        NotImplemented_nid_no_patch(__func__);
+        const Ngs2CustomModuleInfo record = rack->customModules[moduleIdx];
+        if (!WriteGuest(static_cast<Ngs2CustomModuleInfo*>(info), record)) return NGS2_ERROR_INVALID_OUT_ADDRESS;
         return 0;
     }
     case 0xf14070: {
@@ -374,6 +379,7 @@ int APS5_VABI sceNgs2StreamCreate(uintptr_t system_handle, const void* option, c
     Ngs2StreamOption checked{};
     const int optError = CheckStreamOption(option, checked);
     if (optError != 0) return optError;
+    if (localBufferInfo.host_buffer_size < ComputeStreamBufferSize(checked)) return NGS2_ERROR_INVALID_BUFFER_SIZE;
     const Ngs2Lock lock;
     auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return NGS2_ERROR_INVALID_SYSTEM_HANDLE;
@@ -493,10 +499,68 @@ int APS5_VABI sceNgs2ModuleArrayEnumItems(const void* array, void* out, std::uin
 
 int APS5_VABI sceNgs2ModuleQueueEnumItems(const void* queue, void* out, std::uint32_t max) {
     if (queue == nullptr) return 0;
-    static_cast<void>(out);
-    static_cast<void>(max);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    constexpr std::size_t QueueSize = 0x58;
+    constexpr std::size_t LockOffset = 0x48;
+    std::array<std::uint8_t, QueueSize> queueHeader{};
+    if (!ReadGuestBytes(queueHeader.data(), queue, queueHeader.size())) return 0;
+
+    const auto queueAddress = reinterpret_cast<std::uintptr_t>(queue);
+    if (queueAddress > UINTPTR_MAX - LockOffset) return 0;
+    auto* lockAddress = reinterpret_cast<std::uint32_t*>(queueAddress + LockOffset);
+    std::atomic_ref<std::uint32_t> queueLock(*lockAddress);
+    std::uint32_t retries = 0;
+    for (;;) {
+        std::uint32_t expected = 0;
+        if (queueLock.compare_exchange_weak(expected, 1, std::memory_order_acquire, std::memory_order_relaxed)) break;
+        ++retries;
+        if (retries >= 17) {
+            constexpr std::array<std::uint32_t, 4> Backoff{100, 200, 500, 1000};
+            const std::size_t index = std::min<std::size_t>(retries - 17, Backoff.size() - 1);
+            std::this_thread::sleep_for(std::chrono::microseconds(Backoff[index]));
+        }
+    }
+    struct QueueUnlock {
+        std::atomic_ref<std::uint32_t>& lock;
+        ~QueueUnlock() { lock.store(0, std::memory_order_release); }
+    } unlock{queueLock};
+
+    if (!ReadGuestBytes(queueHeader.data(), queue, queueHeader.size())) return 0;
+    const std::uint8_t ring = queueHeader[0x4c];
+    if (ring > 1) return 0;
+    const std::size_t recordOffset = 8 + 32 * ring;
+    const std::uint8_t* const record = queueHeader.data() + recordOffset;
+    const void* items = nullptr;
+    std::uint64_t count = 0;
+    std::uint64_t first = 0;
+    std::uint32_t itemSize = 0;
+    std::uint32_t ringLength = 0;
+    std::memcpy(&items, record, sizeof(items));
+    std::memcpy(&count, record + 0x10, sizeof(count));
+    std::memcpy(&first, record + 0x18, sizeof(first));
+    std::memcpy(&itemSize, queueHeader.data() + 0x50, sizeof(itemSize));
+    std::memcpy(&ringLength, queueHeader.data() + 0x54, sizeof(ringLength));
+    if (count == 0 || max == 0) return static_cast<std::int32_t>(static_cast<std::uint32_t>(count));
+    const std::uint32_t copiedCount = static_cast<std::uint32_t>(std::min<std::uint64_t>(count, max));
+    if (items == nullptr || itemSize == 0 || ringLength == 0 || copiedCount > std::vector<std::uint8_t>().max_size() / itemSize) {
+        return static_cast<std::int32_t>(static_cast<std::uint32_t>(count));
+    }
+    std::vector<std::uint8_t> copied(static_cast<std::size_t>(copiedCount) * itemSize);
+    const auto itemsAddress = reinterpret_cast<std::uintptr_t>(items);
+    bool copiedAll = true;
+    for (std::uint32_t index = 0; index < copiedCount; ++index) {
+        const std::uint64_t slot = (first % ringLength + index) % ringLength;
+        if (slot > (UINTPTR_MAX - itemsAddress) / itemSize) {
+            copiedAll = false;
+            break;
+        }
+        const void* source = reinterpret_cast<const void*>(itemsAddress + static_cast<std::uintptr_t>(slot * itemSize));
+        if (!ReadGuestBytes(copied.data() + static_cast<std::size_t>(index) * itemSize, source, itemSize)) {
+            copiedAll = false;
+            break;
+        }
+    }
+    if (copiedAll) WriteGuestBytes(out, copied.data(), copied.size());
+    return static_cast<std::int32_t>(static_cast<std::uint32_t>(count));
 }
 
 }

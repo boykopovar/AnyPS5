@@ -46,6 +46,8 @@ public:
 
 constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }
 
+constexpr std::size_t MaxZeroPaddingAfterTransfer = 64;
+
 bool UsedAsCodeAddress(const std::uint8_t* code, const std::size_t available, const std::size_t begin, const unsigned computed) {
     constexpr std::uint16_t arguments = RegisterBit(7) | RegisterBit(6) | RegisterBit(2) | RegisterBit(1) | RegisterBit(8) | RegisterBit(9);
     constexpr std::uint16_t preserved = RegisterBit(3) | RegisterBit(5) | RegisterBit(12) | RegisterBit(13) | RegisterBit(14) | RegisterBit(15);
@@ -401,12 +403,20 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         const auto nchain = Io::ReadU32(bytes, header + 4);
         if (nbucket == 0 || nchain == 0)
             throw Domain::RelinkerException("Code analysis: invalid SysV hash header", address);
+        if (static_cast<std::uint64_t>(nbucket) > (std::numeric_limits<std::uint32_t>::max() - 8) / 4 ||
+            static_cast<std::uint64_t>(nchain) > (std::numeric_limits<std::uint32_t>::max() - 8 - static_cast<std::uint64_t>(nbucket) * 4) / 4)
+            throw Domain::RelinkerException("Code analysis: invalid SysV hash geometry", address);
         const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
         const auto start = fileOffset(address, hashSize);
         for (std::uint64_t index = 0; index < nbucket; ++index) {
             const auto bucket = Io::ReadU32(bytes, start + 8 + index * 4);
             if (bucket >= nchain)
                 throw Domain::RelinkerException("Code analysis: invalid SysV hash bucket index", address);
+        }
+        for (std::uint64_t index = 0; index < nchain; ++index) {
+            const auto chain = Io::ReadU32(bytes, start + 8 + static_cast<std::uint64_t>(nbucket) * 4 + index * 4);
+            if (chain >= nchain)
+                throw Domain::RelinkerException("Code analysis: invalid SysV hash chain index", address);
         }
         symbolCount = nchain;
     } else if (tags.contains(0x6ffffef5)) {
@@ -440,7 +450,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 const auto chain = Io::ReadU32(bytes, fileOffset(address + offset, 4));
                 ++symbolCount;
-                if (symbolCount > std::numeric_limits<std::uint32_t>::max())
+                if (symbolCount > std::numeric_limits<std::uint32_t>::max() || symbolCount > bytes.size() / 24)
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
@@ -575,8 +585,13 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                 const auto tailBytes = end - address;
                 bool tailHasFsPrefix = false;
                 for (auto probe = address; probe < end; ++probe) {
-                    if (bytes[offset + probe - begin] == 0x64) {
+                    const auto b = bytes[offset + probe - begin];
+                    if (b == 0x64) {
                         tailHasFsPrefix = true;
+                        break;
+                    }
+                    if (b != 0x66 && b != 0x67 && b != 0xf0 && b != 0xf2 && b != 0xf3 &&
+                        b != 0x2e && b != 0x36 && b != 0x3e && b != 0x26 && (b < 0x40 || b > 0x4f)) {
                         break;
                     }
                 }
@@ -620,11 +635,16 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         bool afterTransfer = false;
         for (std::size_t position = nextPaddedStart(0); position < size;) {
             if (progress && position % 65536 < 16) report(3500 + 2500 * (scannedBytes + position) / scanBytes);
-            const auto aligned = (position + 15) & ~std::size_t{15};
-            const bool zeroPadding = afterTransfer && aligned != position && aligned <= size && std::all_of(text + position, text + aligned, [](const std::uint8_t value) { return value == 0; });
+            std::size_t paddingEnd = position;
+            if (afterTransfer) {
+                const auto limit = std::min(size, position + MaxZeroPaddingAfterTransfer);
+                while (paddingEnd < limit && text[paddingEnd] == 0) ++paddingEnd;
+                if (paddingEnd % 16 != 0 && paddingEnd < limit) paddingEnd = position;
+                while (paddingEnd > position && paddingEnd % 16 != 0) --paddingEnd;
+            }
             afterTransfer = false;
-            if (zeroPadding) {
-                position = aligned;
+            if (paddingEnd != position) {
+                position = paddingEnd;
                 continue;
             }
             if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {
@@ -760,12 +780,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             bool spanHasFsPrefix = false;
             if (const auto* header = findCodeHeader(address)) {
                 const auto base = header->Offset + address - header->MappedAddress;
-                for (auto probe = base; probe < base + (spanEnd - address) && probe < bytes.size(); ++probe) {
-                    if (bytes[probe] == 0x64) {
-                        spanHasFsPrefix = true;
-                        break;
-                    }
-                }
+                try {
+                    const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                    if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                } catch (const Codegen::CodegenException&) {}
             }
             if (!spanHasFsPrefix) {
                 const auto previous = std::lower_bound(instructions.begin(), instructions.end(), address);
@@ -773,7 +791,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     const auto previousStart = *std::prev(previous);
                     if (const auto* header = findCodeHeader(previousStart)) {
                         const auto base = header->Offset + previousStart - header->MappedAddress;
-                        if (decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base).SegmentPrefix == 0x64) spanHasFsPrefix = true;
+                        try {
+                            const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                            if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                        } catch (const Codegen::CodegenException&) {}
                     }
                 }
             }
