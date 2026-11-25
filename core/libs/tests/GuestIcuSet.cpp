@@ -116,6 +116,31 @@ void DataFilePropertySets() {
             "NFKC casefold property set");
 }
 
+void EmojiStringItems() {
+    constexpr std::int32_t keycaps = 66;
+    std::int32_t error = Success;
+    const auto* set = u_getBinaryPropertySet_nid_postfix(keycaps, &error);
+    Require(set && error == Success && uset_getItemCount_nid_postfix(set) == 12, "twelve emoji keycap sequences");
+    Require(!uset_contains_nid_postfix(set, '#'), "a keycap component is not a member on its own");
+    auto* copy = uset_openEmpty_nid_postfix();
+    uset_addAll_nid_postfix(copy, set);
+    uset_add_nid_postfix(copy, 'a');
+    uset_addAll_nid_postfix(copy, set);
+    Require(uset_getItemCount_nid_postfix(copy) == 13 && uset_getItemCount_nid_postfix(set) == 12, "union keeps distinct strings and ranges");
+    std::int32_t start = 7, end = 8;
+    std::array<char16_t, 4> output{u'?', u'?', u'?', u'?'};
+    Require(uset_getItem_nid_postfix(copy, 1, &start, &end, output.data(), 2, &error) == 3 && error == BufferOverflow,
+            "short buffer reports the entire sequence length");
+    Require(output[0] == u'?' && start == 7 && end == 8, "a short string read leaves the outputs intact");
+    error = Success;
+    Require(uset_getItem_nid_postfix(copy, 1, nullptr, nullptr, output.data(), 3, &error) == 3 && error == -124,
+            "exact capacity gives the not-terminated warning");
+    Require(output == std::array<char16_t, 4>{u'#', 0xfe0f, 0x20e3, u'?'}, "string item follows ranges and preserves UTF-16 units");
+    Require(uset_getItem_nid_postfix(copy, 1, nullptr, nullptr, output.data(), 4, &error) == 3 && error == Success && output[3] == 0,
+            "space for a terminator clears the warning");
+    uset_close_nid_postfix(copy);
+}
+
 template<class F>
 void RequiresRuntimeErrorKeepingErrno(F call, const char* message) {
     errno = 71;
@@ -316,6 +341,7 @@ int main() {
     Empty();
     BinaryPropertySet();
     DataFilePropertySets();
+    EmojiStringItems();
     BinaryPropertySetGuestPointers();
     SingleCodePoints();
     CodePointRanges();

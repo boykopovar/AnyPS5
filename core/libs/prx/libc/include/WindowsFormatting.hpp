@@ -102,6 +102,36 @@ private:
 
 };
 
+constexpr unsigned long long hostSpecLimit = 4096;
+constexpr unsigned long long clampedPrecision = 30;
+
+struct LargeSpec {
+    std::string flags;
+    std::string tail;
+    unsigned long long width = 0;
+    unsigned long long precision = 0;
+    bool hasPrecision = false;
+};
+
+inline bool SplitLargeSpec(const std::string& format, LargeSpec& result) {
+    constexpr unsigned long long saturated = 1000000000000000ULL;
+    std::size_t index = 1;
+    for (; index < format.size() && std::strchr("-+ #0", format[index]); ++index) result.flags += format[index];
+    for (; index < format.size() && format[index] >= '0' && format[index] <= '9'; ++index)
+        if (result.width < saturated) result.width = result.width * 10 + static_cast<unsigned>(format[index] - '0');
+    if (index < format.size() && format[index] == '.') {
+        result.hasPrecision = true;
+        for (++index; index < format.size() && format[index] >= '0' && format[index] <= '9'; ++index)
+            if (result.precision < saturated) result.precision = result.precision * 10 + static_cast<unsigned>(format[index] - '0');
+    }
+    result.tail = format.substr(index);
+    return !result.tail.empty() && (result.width > hostSpecLimit || result.precision > hostSpecLimit);
+}
+
+template<class T> unsigned long long LargePrecision(unsigned long long precision, T) {
+    return precision < clampedPrecision ? precision : clampedPrecision;
+}
+
 class FormatOutput {
     char* destination;
     size_t capacity;
@@ -127,7 +157,70 @@ public:
         count += size;
     }
 
+    template<class T> void LargeValue(const LargeSpec& large, T value) {
+        if (large.width > static_cast<unsigned long long>(INT_MAX) || large.precision > static_cast<unsigned long long>(INT_MAX))
+            throw std::overflow_error("Formatted output exceeds INT_MAX");
+        const char conversion = large.tail.back();
+        const bool integer = std::strchr("diouxX", conversion) != nullptr;
+        const bool leftAligned = large.flags.find('-') != std::string::npos;
+        const bool zeroPadded = large.flags.find('0') != std::string::npos && integer && !large.hasPrecision;
+        std::string core = "%";
+        for (const char flag : large.flags)
+            if (flag != '-' && flag != '0') core += flag;
+        unsigned long long extraZeros = 0;
+        std::string body;
+        if constexpr (std::is_convertible_v<T, const char*>) {
+            const char* text = value ? value : "(null)";
+            size_t length = 0;
+            while ((!large.hasPrecision || length < large.precision) && text[length]) ++length;
+            body.assign(text, length);
+        } else {
+            if (large.hasPrecision) {
+                const unsigned long long inner = LargePrecision(large.precision, value);
+                if (integer && large.precision > inner) extraZeros = large.precision - inner;
+                core += "." + std::to_string(inner);
+            }
+            core += large.tail;
+            const int size = std::snprintf(nullptr, 0, core.c_str(), value);
+            if (size < 0) throw std::runtime_error("Formatting conversion failed");
+            std::vector<char> text(static_cast<size_t>(size) + 1);
+            if (std::snprintf(text.data(), text.size(), core.c_str(), value) != size)
+                throw std::runtime_error("Inconsistent formatting conversion");
+            body.assign(text.data(), static_cast<size_t>(size));
+        }
+        size_t digits = 0;
+        if (integer) {
+            if (digits < body.size() && std::strchr("+- ", body[digits])) ++digits;
+            if ((conversion == 'x' || conversion == 'X') && digits + 1 < body.size() && body[digits] == '0' &&
+                (body[digits + 1] == 'x' || body[digits + 1] == 'X'))
+                digits += 2;
+        }
+        const unsigned long long natural = static_cast<unsigned long long>(body.size()) + extraZeros;
+        const unsigned long long padding = large.width > natural ? large.width - natural : 0;
+        const unsigned long long total = natural + padding;
+        if (total > static_cast<unsigned long long>(INT_MAX) - count)
+            throw std::overflow_error("Formatted output exceeds INT_MAX");
+        const auto repeat = [&](char fill, unsigned long long amount) {
+            const std::string chunk(static_cast<size_t>(amount < hostSpecLimit ? amount : hostSpecLimit), fill);
+            while (amount) {
+                const size_t piece = static_cast<size_t>(amount < chunk.size() ? amount : chunk.size());
+                Append(chunk.data(), piece);
+                amount -= piece;
+            }
+        };
+        if (!leftAligned && !zeroPadded) repeat(' ', padding);
+        Append(body.data(), digits);
+        repeat('0', extraZeros + (zeroPadded && !leftAligned ? padding : 0));
+        Append(body.data() + digits, body.size() - digits);
+        if (leftAligned) repeat(' ', padding);
+    }
+
     template<class T> void Value(const std::string& format, T value) {
+        LargeSpec large;
+        if (SplitLargeSpec(format, large)) {
+            LargeValue(large, value);
+            return;
+        }
         const int size = std::snprintf(nullptr, 0, format.c_str(), value);
         if (size < 0) throw std::runtime_error("Formatting conversion failed");
         if (static_cast<size_t>(size) > static_cast<size_t>(INT_MAX) - count)

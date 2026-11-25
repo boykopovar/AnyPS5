@@ -273,5 +273,21 @@ class RemovedDocLinkGitTests(unittest.TestCase):
         self.assertNotIn("[doc-link]", result.stdout)
 
 
+class LinkSyntaxTests(unittest.TestCase):
+    def test_link_syntax_keeps_ordinary_links_and_blanks_code_spans(self):
+        text = "see [a](b.md) and `[x](y)`"
+        blanked = check_conventions.link_syntax(text)
+        self.assertIn("[a](b.md)", blanked)
+        self.assertNotIn("[x](y)", blanked)
+        self.assertEqual(len(blanked), len(text))
+
+    def test_link_syntax_blanks_a_fenced_block_and_keeps_line_count(self):
+        text = "```\n[x](y)\n```\n[a](b.md)\n"
+        blanked = check_conventions.link_syntax(text)
+        self.assertNotIn("[x](y)", blanked)
+        self.assertIn("[a](b.md)", blanked)
+        self.assertEqual(blanked.count("\n"), text.count("\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

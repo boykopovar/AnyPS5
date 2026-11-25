@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <optional>
 #include <string>
-#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -52,12 +51,15 @@ int APS5_VABI sceWkFontConfigGetAttr(const void* font, void* attr) {
         return 0;
     }
     if (size != WkFontConfigAttrSize) return SCE_WK_FONT_CONFIG_ERROR_INVALID_ARGUMENT;
-    unsigned char record[WkFontConfigAttrSize];
-    if (font == nullptr || !GuestCopyIn_nid_no_patch(record, static_cast<const unsigned char*>(font) + WkFontConfigFontAttrOffset, sizeof(record)) ||
-        !GuestCopyOut_nid_no_patch(attr, record, sizeof(record))) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
-    }
+    if (font == nullptr) NotImplemented_nid_no_patch(__func__);
+    const auto* source = static_cast<const unsigned char*>(font) + WkFontConfigFontAttrOffset;
+    auto* destination = static_cast<unsigned char*>(attr);
+    std::uint32_t lastField;
+    unsigned char prefix[WkFontConfigAttrSize - sizeof(lastField)];
+    if (!GuestCopyIn_nid_no_patch(&lastField, source + sizeof(prefix), sizeof(lastField)) ||
+        !GuestCopyOut_nid_no_patch(destination + sizeof(prefix), &lastField, sizeof(lastField)) ||
+        !GuestCopyIn_nid_no_patch(prefix, source, sizeof(prefix)) ||
+        !GuestCopyOut_nid_no_patch(destination, prefix, sizeof(prefix))) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -103,11 +105,13 @@ int APS5_VABI sceWkFontConfigGetFontName(const void* font, char* fontName, std::
         return 0;
     }
     if (static_cast<std::uint32_t>(name->size()) + 1u > size) return SCE_WK_FONT_CONFIG_ERROR_BUFFER_TOO_SMALL;
-    std::vector<char> copied(size, '\0');
-    std::copy(name->begin(), name->end(), copied.begin());
-    if (!GuestCopyOut_nid_no_patch(fontName, copied.data(), copied.size())) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+    std::size_t copied = std::min<std::size_t>(size, name->size());
+    if (!GuestCopyOut_nid_no_patch(fontName, name->data(), copied)) NotImplemented_nid_no_patch(__func__);
+    static constexpr char padding[4096]{};
+    while (copied < size) {
+        const std::size_t bytes = std::min<std::size_t>(size - copied, sizeof(padding));
+        if (!GuestCopyOut_nid_no_patch(fontName + copied, padding, bytes)) NotImplemented_nid_no_patch(__func__);
+        copied += bytes;
     }
     return 0;
 }
