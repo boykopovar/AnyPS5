@@ -87,6 +87,16 @@ void Require(bool condition, const char* message) {
     std::exit(1);
 }
 
+void ValidatorRun(decltype(&ft_validator_run_nid_postfix) run) {
+    std::array<std::uint8_t, 120> validator;
+    validator.fill(0xA5);
+    const auto original = validator;
+    Require(run(validator.data()) == -1, "validator run returns failure");
+    Require(validator == original, "validator run leaves its argument unchanged");
+    Require(run(nullptr) == -1, "validator run ignores a null argument");
+    Require(run(reinterpret_cast<void*>(1)) == -1, "validator run ignores an inaccessible argument");
+}
+
 struct ForwardedExports {
     decltype(&FT_Init_FreeType_nid_postfix) init;
     decltype(&FT_Done_FreeType_nid_postfix) finish;
@@ -730,6 +740,9 @@ int main(int argc, char** argv) {
     Trigonometry();
     Outlines();
     if (forwards) Strokers();
+    decltype(&ft_validator_run_nid_postfix) runValidator = nullptr;
+    Resolve(runValidator, library, patched, "5DQUuOYK190", "ft_validator_run_nid_postfix");
+    ValidatorRun(runValidator);
     std::puts("libSceFreeTypeOt: trigonometry, outline helpers and forwarded exports match FreeType");
     return 0;
 }

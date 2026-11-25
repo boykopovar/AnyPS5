@@ -17,6 +17,7 @@
 extern "C" {
 int APS5_VABI FT_Glyph_Stroke_nid_postfix();
 int APS5_VABI FT_Set_Debug_Hook_nid_postfix();
+int APS5_VABI ft_validator_run_nid_postfix(void* validator);
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
 const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
 [[noreturn]] void APS5_VABI ft_validator_error_nid_postfix(void* validator, std::int32_t error);

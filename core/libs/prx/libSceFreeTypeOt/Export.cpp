@@ -358,6 +358,10 @@ void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMe
     metrics->vertAdvance = advance;
 }
 
+int APS5_VABI ft_validator_run_nid_postfix(void*) {
+    return -1;
+}
+
 void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
     if (descriptors && service_id) {
         for (; descriptors->serv_id; ++descriptors) {
