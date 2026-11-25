@@ -143,6 +143,7 @@ void CheckExpiredListing() {
     using namespace std::chrono;
     const auto expires = floor<milliseconds>(system_clock::now()) + seconds(1);
     Cookie stale = MakeCookie("stale", "x", "list.expired.test", "/");
+    stale.session = false;
     stale.expires = {static_cast<double>(expires.time_since_epoch().count()), true};
     SetCookies({stale, MakeCookie("fresh", "y", "list.expired.test", "/")}, target);
     const std::vector<std::string> before{"list.expired.test|/|fresh=y", "list.expired.test|/|stale=x"};
