@@ -200,6 +200,43 @@ int main() {
     EVP_PKEY_free_nid_postfix(soleEcPkey);
     Require(liveAllocations == 0, "freeing sole EC pkey releases all allocations");
 
+    EcKey* const amethEc = EC_KEY_new_by_curve_name_nid_postfix(415);
+    Require(amethEc != nullptr, "allocates curve key for unknown ameth check");
+    void* const amethEcPkey = EVP_PKEY_new_nid_postfix();
+    Require(amethEcPkey != nullptr, "allocates EC pkey for unknown ameth check");
+    auto* const amethTestPkey = static_cast<TestPkey*>(amethEcPkey);
+    int dummyAmeth = 0;
+    amethTestPkey->type = 408;
+    amethTestPkey->saveType = 408;
+    amethTestPkey->ameth = &dummyAmeth;
+    amethTestPkey->key = amethEc;
+    bool unknownAmethThrew = false;
+    try {
+        EVP_PKEY_free_nid_postfix(amethEcPkey);
+    } catch (const std::exception&) {
+        unknownAmethThrew = true;
+    }
+    Require(unknownAmethThrew, "EC key with unknown ameth throws on EVP_PKEY_free");
+    Require(amethTestPkey->references == 1 && EcReferences(amethEc) == 1, "throwing EVP_PKEY_free preserves EC key references");
+    amethTestPkey->ameth = nullptr;
+    EVP_PKEY_free_nid_postfix(amethEcPkey);
+    Require(liveAllocations == 0, "clearing unknown ameth releases EC pkey allocations");
+
+    LibreSslRsa* const nullAmethRsa = RSA_new_nid_postfix();
+    Require(nullAmethRsa != nullptr && nullAmethRsa->references == 1, "allocates RSA key for null ameth check");
+    void* const nullAmethRsaPkey = EVP_PKEY_new_nid_postfix();
+    Require(nullAmethRsaPkey != nullptr, "allocates RSA pkey for null ameth check");
+    auto* const nullAmethRsaTestPkey = static_cast<TestPkey*>(nullAmethRsaPkey);
+    nullAmethRsaTestPkey->type = 6;
+    nullAmethRsaTestPkey->saveType = 6;
+    nullAmethRsaTestPkey->key = nullAmethRsa;
+    Require(EVP_PKEY_get1_RSA_nid_postfix(nullAmethRsaPkey) == nullAmethRsa, "retrieves null-ameth RSA key");
+    Require(nullAmethRsa->references == 2, "EVP_PKEY_get1_RSA increments RSA reference count");
+    EVP_PKEY_free_nid_postfix(nullAmethRsaPkey);
+    Require(nullAmethRsa->references == 1, "EVP_PKEY_free drops RSA reference when ameth is null");
+    RSA_free_nid_postfix(nullAmethRsa);
+    Require(liveAllocations == 0, "freeing null-ameth RSA pkey releases all allocations");
+
     EcKey* const replacedEc = EC_KEY_new_by_curve_name_nid_postfix(415);
     Require(replacedEc != nullptr, "allocates replaced curve key");
     void* const replacedEcPkey = EVP_PKEY_new_nid_postfix();
