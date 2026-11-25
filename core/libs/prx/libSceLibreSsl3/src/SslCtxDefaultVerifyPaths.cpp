@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
-#include <cerrno>
 #include <stdexcept>
 #include <string>
 
@@ -25,31 +24,25 @@ constexpr const char* CertificateFileVariable = "SSL_CERT_FILE";
 constexpr const char* CertificateDirectoryVariable = "SSL_CERT_DIR";
 
 bool Exists(const char* path) {
-    const int savedErrno = errno;
     const bool present = access_nid_postfix(path, 0) == 0;
-    errno = savedErrno;
     return present;
 }
 
 bool ReadOverride(const char* name, std::string& value, const char* caller) {
     char* const text = getenv_nid_postfix(name);
     if (!text) return false;
-    const int savedErrno = errno;
     const int error = CopyGuestString_nid_no_patch(text, 65536, value);
-    errno = savedErrno;
     if (error != 0) NotImplemented_nid_no_patch(caller);
     return true;
 }
 
 bool Load(LibreSslX509Store* store, const char* file, const char* directory) {
-    const int savedErrno = errno;
     bool loaded = false;
     try {
         loaded = X509_STORE_load_locations_nid_postfix(store, file, directory) == 1;
     } catch (const std::exception&) {
         loaded = false;
     }
-    errno = savedErrno;
     return loaded;
 }
 
