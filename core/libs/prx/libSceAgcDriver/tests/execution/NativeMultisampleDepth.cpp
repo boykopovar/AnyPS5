@@ -3073,15 +3073,15 @@ void CheckEligibility(Context context) {
     std::puts("Native depth eligibility, guest writes, queued writes, metadata transitions and held views checked");
 }
 
-void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, bool queued) {
+void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, bool queued, bool pipeAligned) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
     TargetMemory memory(bytes), metadata(65536u);
-    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent, pipeAligned));
     std::memset(metadata.Data(), 0, metadataBytes);
     DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, fragments};
     target.depthSwizzle = 24u;
-    target.iterate256 = target.htilePipeAligned = true;
+    target.iterate256 = target.htilePipeAligned = pipeAligned;
     target.htileDepthOnly = true;
     Recorder recorder(context);
     recorder.Activate();
@@ -3101,7 +3101,7 @@ void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, b
     QueueTargetByteWrite(context, recorder, target.address + 4u, std::byte{0x40});
     recorder.Sync();
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "writes over native multisample depth are not implemented");
-    std::printf("Native depth samples=%u: a %s write to the depth plane before a full HTILE clear is superseded by it, and one after it still refuses\n", fragments, queued ? "queued" : "landed");
+    std::printf("Native depth samples=%u pipeAligned=%u: a %s write to the depth plane before a full HTILE clear is superseded by it, and one after it still refuses\n", fragments, pipeAligned, queued ? "queued" : "landed");
 }
 
 void CheckInitialOwner(Context context, VkFormat format, std::uint32_t samples, bool one, bool depthOnly) {
@@ -5526,7 +5526,9 @@ int main(int argc, char** argv) {
             std::uint32_t checked = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) continue;
-                for (const bool queued : {true, false}) CheckClearSupersedesPlaneWrites(context, samples, queued);
+                for (const bool queued : {true, false}) {
+                    for (const bool pipeAligned : {true, false}) CheckClearSupersedesPlaneWrites(context, samples, queued, pipeAligned);
+                }
                 ++checked;
             }
             Require(checked != 0u, "no sampled multisampled D32 depth for the superseded plane write check");
