@@ -502,19 +502,27 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
     const std::size_t sign = SignPrefix(digits, count);
     const std::size_t prefix = sign != 0 ? sign : HexPrefix(digits, 0, count) ? 2 : 0;
     const bool hex = (stream->flags & IosHexFloat) == IosHexFloat;
-    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
-    const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
-    const std::size_t pointOffset = std::strcspn(digits, point);
+    const char lowerExp = hex ? 'p' : 'e';
+    const char upperExp = hex ? 'P' : 'E';
+    std::size_t exponent = 0;
+    while (exponent < count && digits[exponent] != lowerExp && digits[exponent] != upperExp) ++exponent;
+    char widenedPoint = localeconv_nid_postfix()->decimal_point[0];
+    if (count != 0) {
+        if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) {
+            widenedPoint = reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widen(ctype, widenedPoint);
+        }
+    }
     std::string text = Widen(stream, digits, count);
+    const std::size_t pointOffset = text.find(widenedPoint);
     const GuestLocale::Facet* punct = StreamNumpunct(stream);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     const char separator = Punctuation(punct).thousandsSep(AsNumpunct(punct));
     std::size_t offset = exponent;
-    if (pointOffset != count) {
+    if (pointOffset != std::string::npos) {
         offset = pointOffset;
         text[pointOffset] = Punctuation(punct).decimalPoint(AsNumpunct(punct));
     }
-    const char lead = digits[prefix];
+    const char lead = prefix < count ? digits[prefix] : '\0';
     if (lead != 'I' && lead != 'N' && lead != 'i' && lead != 'n') InsertSeparators(text, grouping, separator, offset, prefix);
     return PutField(out, stream, fill, text, prefix);
 }
@@ -964,6 +972,10 @@ extern "C" GuestLocale::OutputIterator LibcRepeatWideElement_nid_no_patch(GuestL
 
 extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
     return PutInteger(out, stream, fill, digits, count);
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutFloat_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    return PutFloating(out, stream, fill, digits, count);
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
