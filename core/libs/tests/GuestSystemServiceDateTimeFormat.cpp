@@ -120,6 +120,8 @@ void RequireStrftimeExtensions() {
     Require(DateFormatOfStrftime("%+") == std::nullopt, "dangling plus flag in date pattern is rejected");
     Require(TimeFormatOfStrftime("%+2H:%M %p") == std::nullopt, "ambiguous 12/24-hour pattern with plus flag is rejected");
     Require(TimeFormatOfStrftime("%+") == std::nullopt, "dangling plus flag in time pattern is rejected");
+    Require(DateFormatOfStrftime("%4+Y-%m-%d") == std::nullopt, "plus flag after width digits in date pattern is rejected");
+    Require(TimeFormatOfStrftime("%2+H:%M:%S") == std::nullopt, "plus flag after width digits in time pattern is rejected");
 }
 
 #ifdef __linux__
