@@ -347,6 +347,39 @@ void TestComputeEvents() {
     Require(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
 }
 
+void TestComputeEventsOfEveryPipe() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "GnmDriver pipe events") == 0, "event queue creation failed");
+    std::array<int, 7> tags{};
+    for (std::uint32_t pipe = 0; pipe < tags.size(); ++pipe)
+        Require(sceGnmAddEqEvent(eq, pipe, &tags[pipe]) == 0, "the release event of compute pipe " + std::to_string(pipe) + " was not registered");
+    Require(ExpectFailure([&] { sceGnmAddEqEvent(eq, 7, nullptr); }).find("seven compute pipes") != std::string::npos, "event id 7 did not throw");
+    auto owner = EqueuePin_nid_postfix(eq);
+    std::array<KernelEvent, 7> events{};
+    std::uint32_t value = 20;
+    for (std::uint32_t pipe = 0; pipe < tags.size(); ++pipe) {
+        for (const std::uint32_t queue : {0u, 7u}) {
+            const auto where = "queue " + std::to_string(queue) + " of pipe " + std::to_string(pipe);
+            const int ring = sceGnmMapComputeQueue(pipe, queue, memory.ringA, RingWords, &memory.readA);
+            Require(ring > 0, where + " was not mapped");
+            const auto offset = Put(memory.ringA, 0, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), ++value, 0u});
+            Require(sceGnmDingDong(ring, offset) == 0, "sceGnmDingDong on " + where + " failed");
+            AgcDriverWaitIdle_nid_postfix();
+            Require(memory.released == value, "the interrupting release on " + where + " did not store its value");
+            Require(owner->GetTriggeredEvents(events.data(), static_cast<int>(events.size())) == 1 && events[0].ident == pipe && events[0].filter == -14
+                    && events[0].udata == &tags[pipe] && events[0].data == pipe,
+                "an interrupting release on " + where + " did not raise the event of that pipe alone");
+            Require(sceGnmUnmapComputeQueue(ring) == 0, where + " was not unmapped");
+        }
+    }
+    for (std::uint32_t pipe = 0; pipe < tags.size(); ++pipe)
+        Require(sceGnmDeleteEqEvent(eq, pipe) == 0, "the release event of compute pipe " + std::to_string(pipe) + " was not deleted");
+    owner.reset();
+    Require(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
+}
+
 }
 
 int main() {
@@ -358,6 +391,7 @@ int main() {
         TestCalledBuffers();
         TestWorkloadDingDong();
         TestComputeEvents();
+        TestComputeEventsOfEveryPipe();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {
