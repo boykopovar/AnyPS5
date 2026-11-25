@@ -75,6 +75,11 @@ std::uint32_t* APS5_VABI FT_Face_GetVariantsOfCharForward_nid_no_patch(FreeType:
 }
 APS5_EXPORT("mGMeRKWGTL4", FT_Face_GetVariantsOfCharForward_nid_no_patch);
 
+std::uint32_t APS5_VABI FT_Face_GetCharVariantIndexForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    return FT_Face_GetCharVariantIndex_nid_postfix(face, charcode, variantSelector);
+}
+APS5_EXPORT("dPcZ76eZb64", FT_Face_GetCharVariantIndexForward_nid_no_patch);
+
 int APS5_VABI FT_Get_CID_From_Glyph_IndexForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid) {
     return FT_Get_CID_From_Glyph_Index_nid_postfix(face, glyphIndex, cid);
 }
