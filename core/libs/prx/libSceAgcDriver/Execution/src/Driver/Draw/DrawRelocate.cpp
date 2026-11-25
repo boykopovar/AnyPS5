@@ -202,6 +202,12 @@ std::size_t dropEveryOther(TMap& map) {
 void Driver::learnPendingRelocation() {
     const auto pending = drawRelocationPending;
     drawRelocationPending = {};
+    learnRelocation(pending);
+}
+
+// Under drawCacheMutex. The entry of `pending.key` is read as cached: on the worker at the next draw's lookup, or on
+// the draw finisher right after the job that cached it.
+void Driver::learnRelocation(const DrawRelocationPending& pending) {
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
     if (inserted == drawCache.end() || inserted->second->decode == nullptr) return;

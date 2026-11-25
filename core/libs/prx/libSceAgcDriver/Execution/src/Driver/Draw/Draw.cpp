@@ -133,6 +133,8 @@ struct DrawTail {
     Pm4::DrawParameters drawParameters{};
     Pm4::DrawParameters resolvedParameters{};
     std::vector<DrawUserPatch> userPatches;
+    // The relocation this draw's cache miss leaves to be learned once its entry is cached (see Driver::learnRelocation).
+    DrawRelocationPending relocationPending;
     bool pipelined = false;
     bool traceIndirect = false;
     std::uint64_t dumpTarget = 0;
@@ -470,7 +472,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), nullptr, nullptr, relocation.get(), &drawAlias);
                 cacheLock.lock();
             }
-            if (drawIdentity != 0) drawRelocationPending = {drawKey, drawAlias, drawIdentity};
+            if (drawIdentity != 0) drawRelocationPending = tail.relocationPending = {drawKey, drawAlias, drawIdentity};
             if (drawAlias != 0) relocateDrawEntry(queue, drawAlias, entry, decode, userPatches);
             if (relocation != nullptr) {
                 auto& trial = drawRelocationTrials[drawIdentity];
@@ -772,6 +774,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         tail.submissionSerial = submission.serial;
         tail.packetOffset = static_cast<std::size_t>(packet.data() - submission.commands.data());
         noteFinisherHandOff(true);
+        if (tail.relocationPending.key != 0) {
+            // The finisher learns it after its job caches the entry, so the next draw does not drain the finisher for it.
+            std::lock_guard cacheLock(drawCacheMutex);
+            drawRelocationPending = {};
+        }
         if (DrawTableSnapshotEnabled()) KeepUserDataTables(*shaderMemory, programs);
         DrawFinisher::Pending held;
         if (DrawFinisher::Overlap()) held = heldWrites(tail);
@@ -791,6 +798,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             } catch (const std::exception& error) {
                 CaptureTrace::Log("draw-error submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset, error.what());
                 throw std::runtime_error("draw at submission " + std::to_string(job.submissionSerial) + " offset " + std::to_string(job.packetOffset) + " (finished on the draw finisher): " + error.what());
+            }
+            if (job.relocationPending.key != 0) {
+                std::lock_guard cacheLock(drawCacheMutex);
+                learnRelocation(job.relocationPending);
             }
         }, std::move(held));
         timing.Mark("draw_handed_off");
@@ -1061,7 +1072,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         return lastData[shapeKey % lastData.size()].exchange(data, std::memory_order_relaxed) == data;
     };
     const bool shapeNeedsEntry = shapeRefresh && registerKey && shapeKey != 0 && drawDataHits() && !drawParameters.indirect && dataEntry != nullptr && dataStagesCompiled != 0 && refreshSeenTwice();
-    cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, stageData, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, shapeNeedsEntry);
+    cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, stageData, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, tail.relocationPending, shapeNeedsEntry);
     timing.Mark("shader_compile_and_link");
 
     for (const auto& reads : decodeReads) {
