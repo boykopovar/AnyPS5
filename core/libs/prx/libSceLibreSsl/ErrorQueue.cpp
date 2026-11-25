@@ -1,7 +1,6 @@
 #include "ErrorQueue.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -39,9 +38,7 @@ void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer,
             next = colon + 1;
         }
     }
-    const int savedErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(buffer, local, std::strlen(local) + 1);
-    errno = savedErrno;
     if (!writable) throw std::invalid_argument("ERR_error_string_n: unwritable buffer");
 }
 
