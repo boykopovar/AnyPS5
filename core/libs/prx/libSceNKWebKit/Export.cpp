@@ -8315,10 +8315,6 @@ int APS5_VABI WKBundlePageClearMainFrameName() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageConfirmComposition() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8580,10 +8576,6 @@ int APS5_VABI WKBundlePageStartMonitoringScrollOperations() {
 }
 
 int APS5_VABI WKBundlePageStopExtendingIncrementalRenderingSuppression() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
 
