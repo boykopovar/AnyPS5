@@ -257,7 +257,7 @@ On the Configuration page, enter the game's exact title ID to download a [per-ga
 
 On the Configuration page, open **Controller buttons** to assign an SDL button to a PlayStation button. Choose `None` to disable it or **No override** to omit its `SDLButton:` line and keep the inherited mapping. These assignments apply to all connected controllers.
 
-Add settings such as `MouseSensitivity` or `ToggleActions` by hand. The configurator validates settings and controller assignments on import and preserves them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
+Use Native settings to edit values such as `MouseSensitivity` or `ToggleActions`. Leave a setting blank to inherit its value. The configurator validates settings and controller assignments and includes them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
