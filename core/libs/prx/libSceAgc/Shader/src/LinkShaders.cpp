@@ -26,7 +26,7 @@ extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister* context, ShaderRegist
     std::array<ShaderRegister, 34> contextValues{};
     std::array<ShaderRegister, 3> primitiveValues{};
     sceAgcCreatePrimState(contextValues.data(), primitiveValues.data(), nullptr, vertex, primitiveType);
-    sceAgcCreateInterpolantMapping_0100(contextValues.data() + 2, vertex, pixel);
+    sceAgcCreateInterpolantMapping_nid_postfix(contextValues.data() + 2, vertex, pixel);
     if (pixel != nullptr) {
         const std::array<const Shader*, 2> stages{vertex, pixel};
         AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, contextValues, primitiveValues);

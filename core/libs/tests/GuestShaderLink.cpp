@@ -103,7 +103,7 @@ int main() {
     pixel.input_semantics = &input;
     pixel.num_input_semantics = 1;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
-    Require(context[2].offset == SPI_PS_INPUT_CNTL_0 && context[2].value == (5 | 0x400));
+    Require(context[2].offset == SPI_PS_INPUT_CNTL_0 && context[2].value == (5 | 0x420));
     input.semantic = 10;
     input.default_value = 2;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
