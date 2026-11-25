@@ -269,11 +269,12 @@ void TestInitializeAndTerminate() {
 }
 
 void TestRegisterCallbacks() {
+    constexpr auto notInitialized = static_cast<std::int32_t>(0x80f40009u);
     Require(ThrowsWith([] { sceUsbStorageRegisterCallback(1, Callback(), nullptr); },
                        "sceUsbStorageRegisterCallback: registering before sceUsbStorageInit is not implemented"),
             "register a callback before initialize did not throw");
-    Require(ThrowsWith([] { sceUsbStorageUnregisterCallback(1, Callback()); }, "sceUsbStorageUnregisterCallback not implemented"),
-            "unregister a callback before initialize did not throw its marker");
+    Require(sceUsbStorageUnregisterCallback(1, Callback()) == notInitialized,
+            "unregister a callback before initialize did not return not initialized");
     Require(sceUsbStorageRegisterCallback(1, nullptr, nullptr) == UsbStorage::InvalidArgument, "register a null callback");
     Require(sceUsbStorageRegisterCallback(0, Callback(), nullptr) == UsbStorage::InvalidArgument, "register callback of event type 0");
     Require(sceUsbStorageRegisterCallback(3, Callback(), nullptr) == UsbStorage::InvalidArgument, "register callback of event type 3");
@@ -290,11 +291,11 @@ void TestRegisterCallbacks() {
     Require(sceUsbStorageUnregisterCallback(-1, Callback()) == UsbStorage::InvalidArgument, "unregister callback of a negative event type");
     Require(sceUsbStorageUnregisterCallback(1, Callback()) == 0, "unregister the mount callback");
     Require(sceUsbStorageUnregisterCallback(2, Callback()) == 0, "unregister the unmount callback");
-    Require(ThrowsWith([] { sceUsbStorageUnregisterCallback(1, Callback()); }, "sceUsbStorageUnregisterCallback not implemented"),
-            "unregister an unregistered callback did not throw its marker");
+    Require(sceUsbStorageUnregisterCallback(1, Callback()) == UsbStorage::InvalidArgument,
+            "unregister an unregistered callback did not return invalid argument");
     Require(sceUsbStorageRegisterCallback(2, Callback(), nullptr) == 0, "register a callback before terminate");
     Require(sceUsbStorageTerm() == 0, "terminate with a registered callback");
-    Require(ThrowsWith([] { sceUsbStorageUnregisterCallback(2, Callback()); }, "sceUsbStorageUnregisterCallback not implemented"),
+    Require(sceUsbStorageUnregisterCallback(2, Callback()) == notInitialized,
             "terminate kept the registered callback");
 }
 
@@ -354,13 +355,15 @@ void TestMapRequests() {
     Require(sceUsbStorageRequestMapWSB(0, nullptr, 0, 0, nullptr, nullptr) == UsbStorage::DeviceNotFound, "request a WSB map without a subpath");
     Require(mountPoint[0] == static_cast<char>(0x5a) && status == 0x5a5a5a5a, "the WSB map request wrote its outputs");
     Require(sceUsbStorageRequestUnmap(0, nullptr) == UsbStorage::InvalidArgument, "unmap a null directory");
-    Require(ThrowsWith([] { sceUsbStorageRequestUnmap(0, "/mnt/usb0"); }, "sceUsbStorageRequestUnmap not implemented"),
-            "unmap a directory did not throw its marker");
-    Require(ThrowsWith([] { sceUsbStorageRequestUnmap(7, "/mnt/usb7"); }, "sceUsbStorageRequestUnmap not implemented"),
-            "unmap a directory of another device did not throw its marker");
+    constexpr auto notInitialized = static_cast<std::int32_t>(0x80f40009u);
+    Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0") == notInitialized,
+            "unmap a directory before initialize did not return not initialized");
+    Require(sceUsbStorageRequestUnmap(7, "/mnt/usb7") == notInitialized,
+            "unmap a directory of another device before initialize did not return not initialized");
 }
 
 void TestGetdents() {
+    constexpr auto notInitialized = static_cast<std::int32_t>(0x80f40009u);
     std::int32_t fd = -1;
     std::uint64_t bufferSize = 0x5a5a5a5a5a5a5a5aull;
     Require(sceUsbStorageGetdentsOpen(0, &fd, &bufferSize) == UsbStorage::DeviceNotFound, "open a getdents scan of device 0");
@@ -380,19 +383,36 @@ void TestGetdents() {
     Require(sceUsbStorageGetdentsRead(1, buffer, sizeof(buffer), nullptr) == UsbStorage::InvalidArgument, "read a getdents scan without a byte count");
     Require(sceUsbStorageGetdentsRead(1, nullptr, sizeof(buffer), nullptr) == UsbStorage::InvalidArgument, "read getdents scan without buffer and byte count");
 
-    Require(ThrowsWith([] { sceUsbStorageGetdentsClose(1); }, "sceUsbStorageGetdentsClose not implemented"),
-            "close a getdents scan that was never opened did not throw its marker");
-    Require(ThrowsWith([] { sceUsbStorageGetdentsClose(0); }, "sceUsbStorageGetdentsClose not implemented"),
-            "close descriptor 0 did not throw its marker");
+    Require(sceUsbStorageGetdentsClose(1) == notInitialized,
+            "close a getdents scan before initialize did not return not initialized");
+    Require(sceUsbStorageGetdentsClose(0) == notInitialized,
+            "close descriptor 0 before initialize did not return not initialized");
 }
 
 void TestThrowingExports() {
+    constexpr auto notInitialized = static_cast<std::int32_t>(0x80f40009u);
+    Require(sceUsbStorageClearFakeWriteProtection() == notInitialized,
+            "clear fake write protection before initialize did not return not initialized");
+    Require(sceUsbStorageSetFakeMapLockForDebug() == notInitialized,
+            "set fake map lock for debug before initialize did not return not initialized");
+    Require(sceUsbStorageClearFakeMapLockForDebug() == notInitialized,
+            "clear fake map lock for debug before initialize did not return not initialized");
+    Require(sceUsbStorageSetFakeWriteProtection() == notInitialized,
+            "set fake write protection before initialize did not return not initialized");
+    Require(sceUsbStorageCheckSystemDefaultMountPoint() == notInitialized,
+            "check system default mount point before initialize did not return not initialized");
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for throwing exports");
     Require(ThrowsWith([] { sceUsbStorageClearFakeWriteProtection(); }, "sceUsbStorageClearFakeWriteProtection not implemented"),
             "clear fake write protection did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeMapLockForDebug(); }, "sceUsbStorageSetFakeMapLockForDebug not implemented"),
             "set fake map lock for debug did not throw its marker");
+    Require(ThrowsWith([] { sceUsbStorageClearFakeMapLockForDebug(); }, "sceUsbStorageClearFakeMapLockForDebug not implemented"),
+            "clear fake map lock for debug did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeWriteProtection(); }, "sceUsbStorageSetFakeWriteProtection not implemented"),
             "set fake write protection did not throw its marker");
+    Require(ThrowsWith([] { sceUsbStorageCheckSystemDefaultMountPoint(); }, "sceUsbStorageCheckSystemDefaultMountPoint not implemented"),
+            "check system default mount point did not throw its marker");
+    Require(sceUsbStorageTerm() == 0, "terminate after throwing exports");
 }
 
 void TestDeviceInfo(const FakeHost& host) {
@@ -529,9 +549,10 @@ void TestMapAvailability(const FakeHost& host) {
     Require(sceUsbStorageRequestUnmap(0, mountPoint) == 0, "unmap the directory for the callbacks");
     recorded = NextEvent(seen + 1);
     Require(recorded.event.event == 2 && recorded.event.device == 0 && recorded.userData == &g_unmountTag, "an unmap raises the map-unavailable callback");
-    Require(ThrowsWith([&] { sceUsbStorageUnregisterCallbackForMapAvailable(0, "Missing", &Record); },
-                       "sceUsbStorageUnregisterCallbackForMapAvailable not implemented"),
-            "unregister an unregistered map-available callback did not throw its marker");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Missing", &Record) == UsbStorage::InvalidArgument,
+            "unregister an unregistered map-available callback did not return invalid argument");
+    Require(sceUsbStorageUnregisterCallbackForMapUnavailable(0, "Missing", &Record) == UsbStorage::InvalidArgument,
+            "unregister an unregistered map-unavailable callback did not return invalid argument");
     Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &Record) == 0, "unregister the map-available callback");
     Require(sceUsbStorageUnregisterCallbackForMapUnavailable(0, "/mnt/usb0/Music", &Record) == 0, "unregister the map-unavailable callback");
     Require(sceUsbStorageTerm() == 0, "terminate after the map callbacks");

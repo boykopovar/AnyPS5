@@ -50,6 +50,7 @@ constexpr std::size_t NameLimit = 255;
 constexpr std::uint8_t DirectoryType = 4;
 constexpr std::uint8_t RegularType = 8;
 constexpr auto RescanInterval = std::chrono::seconds(1);
+constexpr std::int32_t NotInitialized = static_cast<std::int32_t>(0x80f40009u);
 
 struct Map {
     std::string directory;
@@ -325,8 +326,7 @@ std::int32_t UnregisterMapCallback(std::vector<MapRegistration>& registrations, 
         registrations.erase(found);
         return 0;
     }
-    NotImplemented_nid_no_patch(function);
-    return 0;
+    return UsbStorage::InvalidArgument;
 }
 
 bool WriteMountPoint(char* mountPoint, const std::string& path) {
@@ -339,15 +339,23 @@ std::uint64_t CopyString(char (&destination)[256], const std::string& text, cons
     return text.size();
 }
 
+bool IsInitialized() {
+    auto& service = State();
+    std::lock_guard lock(service.mutex);
+    return service.initialized;
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI sceUsbStorageClearFakeMapLockForDebug() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUsbStorageCheckSystemDefaultMountPoint() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -443,8 +451,10 @@ std::int32_t APS5_VABI sceUsbStorageUnregisterCallback(std::int32_t eventType, U
         service.registrations.erase(found);
         return 0;
     }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!service.initialized) {
+        return NotInitialized;
+    }
+    return UsbStorage::InvalidArgument;
 }
 
 std::int32_t APS5_VABI sceUsbStorageRegisterCallbackForMapAvailable(std::uint32_t device, const char* directory, UsbStorageCallback callback, void* arg) {
@@ -581,6 +591,9 @@ std::int32_t APS5_VABI sceUsbStorageRequestUnmap(std::uint32_t device, const cha
     std::uint64_t volumeFlags = 0;
     {
         std::lock_guard lock(service.mutex);
+        if (!service.initialized) {
+            return NotInitialized;
+        }
         if (auto* found = Find(service, device)) {
             const auto map = std::find_if(found->maps.begin(), found->maps.end(), [&](const auto& entry) { return entry.path == directory; });
             if (map != found->maps.end()) {
@@ -676,6 +689,9 @@ std::int32_t APS5_VABI sceUsbStorageGetdentsRead(std::int32_t fd, void* buffer, 
 std::int32_t APS5_VABI sceUsbStorageGetdentsClose(std::int32_t fd) {
     auto& service = State();
     std::lock_guard lock(service.mutex);
+    if (!service.initialized) {
+        return NotInitialized;
+    }
     if (service.scans.erase(fd) == 1) {
         return 0;
     }
@@ -684,6 +700,7 @@ std::int32_t APS5_VABI sceUsbStorageGetdentsClose(std::int32_t fd) {
 }
 
 int APS5_VABI sceUsbStorageClearFakeWriteProtection() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -714,11 +731,13 @@ std::int32_t APS5_VABI sceUsbStorageRequestMapWSB(std::uint32_t device, const ch
 }
 
 int APS5_VABI sceUsbStorageSetFakeMapLockForDebug() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceUsbStorageSetFakeWriteProtection() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -743,6 +762,7 @@ int APS5_VABI libSceUsbStorageUnknown_AIyv_minus_u_minus_8w0s_nid_no_patch() {
 APS5_EXPORT("AIyv-u-8w0s", libSceUsbStorageUnknown_AIyv_minus_u_minus_8w0s_nid_no_patch);
 
 int APS5_VABI libSceUsbStorageUnknown_FhdRv3K4EMQ_nid_no_patch() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("FhdRv3K4EMQ", libSceUsbStorageUnknown_FhdRv3K4EMQ_nid_no_patch);
@@ -768,6 +788,7 @@ int APS5_VABI libSceUsbStorageUnknown_OhsV6P0FD5A_nid_no_patch() {
 APS5_EXPORT("OhsV6P0FD5A", libSceUsbStorageUnknown_OhsV6P0FD5A_nid_no_patch);
 
 int APS5_VABI libSceUsbStorageUnknown_PsB2k0hnCRo_nid_no_patch() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("PsB2k0hnCRo", libSceUsbStorageUnknown_PsB2k0hnCRo_nid_no_patch);
@@ -793,6 +814,7 @@ int APS5_VABI libSceUsbStorageUnknown_XMDFDnkOilA_nid_no_patch() {
 APS5_EXPORT("XMDFDnkOilA", libSceUsbStorageUnknown_XMDFDnkOilA_nid_no_patch);
 
 int APS5_VABI libSceUsbStorageUnknown_d5QHvMfsCx0_nid_no_patch() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("d5QHvMfsCx0", libSceUsbStorageUnknown_d5QHvMfsCx0_nid_no_patch);
@@ -803,6 +825,7 @@ int APS5_VABI libSceUsbStorageUnknown_dVQFgpSzA2I_nid_no_patch() {
 APS5_EXPORT("dVQFgpSzA2I", libSceUsbStorageUnknown_dVQFgpSzA2I_nid_no_patch);
 
 int APS5_VABI libSceUsbStorageUnknown_jjKZ79juYfE_nid_no_patch() {
+    if (!IsInitialized()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("jjKZ79juYfE", libSceUsbStorageUnknown_jjKZ79juYfE_nid_no_patch);
