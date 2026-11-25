@@ -258,14 +258,14 @@ def generate(probes, catalog_digest, output_dir):
             payload = extra_payload(probe)
             if payload:
                 (case / "extra.bin").write_bytes(payload)
-        promoted = []
         try:
             for probe, destination in zip(probes, destinations):
                 replace_retrying_lock(stage / probe["id"], destination)
-                promoted.append(destination)
-        except OSError as promotion_error:
+        except BaseException as promotion_error:
             rollback_errors = []
-            for destination in reversed(promoted):
+            for probe, destination in reversed(list(zip(probes, destinations))):
+                if (stage / probe["id"]).exists():
+                    continue
                 try:
                     shutil.rmtree(destination)
                 except OSError as error:

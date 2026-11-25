@@ -296,6 +296,35 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(generated, destinations)
             self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
 
+    def test_interrupted_generation_removes_only_published_cases_and_allows_retry(self):
+        probes = self.catalog["probes"][:2]
+        original_replace = os.replace
+        for failure_at in (1, 2):
+            for after in (False, True):
+                with self.subTest(failure_at=failure_at, after=after), tempfile.TemporaryDirectory() as temporary:
+                    output = Path(temporary) / "generated"
+                    output.mkdir()
+                    sentinel = output / "unrelated.txt"
+                    sentinel.write_bytes(b"keep this file")
+                    calls = 0
+
+                    def interrupt(source, destination):
+                        nonlocal calls
+                        calls += 1
+                        if calls == failure_at:
+                            if after:
+                                original_replace(source, destination)
+                            raise KeyboardInterrupt("controlled interruption")
+                        return original_replace(source, destination)
+
+                    with patch.object(probe_catalog.os, "replace", interrupt), \
+                            self.assertRaisesRegex(KeyboardInterrupt, "controlled interruption"):
+                        probe_catalog.generate(probes, self.digest, output)
+                    self.assertEqual(list(output.iterdir()), [sentinel])
+                    self.assertEqual(sentinel.read_bytes(), b"keep this file")
+                    generated = probe_catalog.generate(probes, self.digest, output)
+                    self.assertTrue(all((path / "probe.json").is_file() for path in generated))
+
     def locked_replace(self, failures):
         original_replace = os.replace
         calls = []
