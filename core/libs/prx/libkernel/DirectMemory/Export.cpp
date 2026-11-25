@@ -332,10 +332,16 @@ int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, 
  if (offset < 0) return SCE_KERNEL_ERROR_EACCES;
  if (!info) return SCE_KERNEL_ERROR_EFAULT;
  struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
- if (flags == 2 || flags == 4 || info_size == 0) return SCE_KERNEL_ERROR_EINVAL;
- if ((flags & ~SCE_KERNEL_DMQ_FIND_NEXT) != 0) throw std::runtime_error("sceKernelDirectMemoryQuery: flags other than 0, 1, 2 and 4 are not measured");
+ constexpr unsigned RefusedFlag = 0x40000000u;
+ constexpr unsigned OtherRecordFlag = 0x80000000u;
+ if ((static_cast<unsigned>(flags) & RefusedFlag) != 0) return SCE_KERNEL_ERROR_EINVAL;
+ if ((static_cast<unsigned>(flags) & OtherRecordFlag) != 0) throw std::runtime_error("sceKernelDirectMemoryQuery: flag bit 31 writes another record, which is not measured");
  DirectMemoryQueryInfo q{};
- if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) return SCE_KERNEL_ERROR_EACCES;
+ if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) {
+  if (info_size == 0) throw std::runtime_error("sceKernelDirectMemoryQuery: a size of 0 where no block is found is not measured");
+  return SCE_KERNEL_ERROR_EACCES;
+ }
+ if (info_size == 0) return 0;
  if (!GuestCopyOut_nid_no_patch(info, &q, std::min(info_size, sizeof(q)))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
