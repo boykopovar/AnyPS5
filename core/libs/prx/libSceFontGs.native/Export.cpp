@@ -1,6 +1,5 @@
 #include "prx/libSceFontGs.native/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -21,17 +20,13 @@ constexpr std::size_t FontAgcRecordStateOffset = 0x10;
 
 template<class T>
 bool ReadGuest(T* destination, const T* source) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, sizeof(T));
-    errno = savedErrno;
     return copied;
 }
 
 template<class T>
 bool WriteGuest(T* destination, const T& value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
