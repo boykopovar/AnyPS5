@@ -96,6 +96,7 @@ public:
                     mapped->second.armed = 0;
                     invalidate(mapped->first, mapped->second);
                 }
+                if (protection == PAGE_NOACCESS) markResidentNoAccess(cursor, stop);
                 DWORD previous;
                 if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) fail("protect guest memory");
                 cursor = stop;
@@ -168,6 +169,7 @@ public:
                 }
                 const auto run = residentRuns.emplace(base, Run{base + runBytes, {}, static_cast<std::uint32_t>(runBytes >> 12), key, offset + done}).first;
                 run->second.watched = watchResident;
+                run->second.hasNoAccess = protection == PAGE_NOACCESS;
                 residentIndex.emplace(std::make_pair(key, offset + done), run);
                 for (std::size_t at = 0; at < runBytes; at += pageBytes) {
                     bool compared = false;
@@ -245,6 +247,7 @@ public:
             it->second.armed = 0;
             invalidate(it->first, it->second);
         }
+        if (protection == PAGE_NOACCESS) markResidentNoAccess(address, address + bytes);
     }
 
     void Pin(std::uintptr_t address, std::size_t bytes) {
@@ -666,22 +669,36 @@ private:
         *count = 0;
         const auto end = address + bytes;
         if (clear) disown(address, end);
+        auto resIt = residentRuns.upper_bound(address);
+        if (resIt != residentRuns.begin() && std::prev(resIt)->second.end > address) --resIt;
         if (collection == Collection::Fresh) {
             const auto fresh = freshRanges.upper_bound(address);
             if ((fresh == freshRanges.begin() || std::prev(fresh)->second <= address) && (fresh == freshRanges.end() || fresh->first >= end)) return true;
-            for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
-                if (it->second.resident) {
+            auto checkRun = resIt;
+            for (auto checkAt = address & ~(pageBytes - 1); checkAt < end;) {
+                while (checkRun != residentRuns.end() && checkRun->second.end <= checkAt) ++checkRun;
+                if (checkRun != residentRuns.end() && checkRun->first <= checkAt) {
                     if (!watchResident) return false;
+                    checkAt = checkRun->second.end;
                     continue;
                 }
-                if (it->second.page->comparedWhenShared) return false;
-                if (it->second.protection != PAGE_NOACCESS) continue;
-                for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
-                    if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
+                const auto stopAt = checkRun == residentRuns.end() ? end : std::min(end, checkRun->first);
+                for (auto it = views.lower_bound(checkAt); it != views.end() && it->first < stopAt; ++it) {
+                    if (it->second.resident) {
+                        if (!watchResident) return false;
+                        continue;
+                    }
+                    if (it->second.page->comparedWhenShared) return false;
+                    if (it->second.protection != PAGE_NOACCESS) continue;
+                    for (auto at = std::max(address, it->first); at < std::min(end, it->first + pageBytes); at += 4096) {
+                        if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
+                    }
                 }
+                checkAt = stopAt;
             }
         } else if (clear && !collectable(address, end)) return false;
-        auto position = views.lower_bound(address & ~(pageBytes - 1));
+        bool viewsReady = false;
+        Views::iterator position = views.end();
         std::uintptr_t cleanStart = 0;
         std::uintptr_t cleanEnd = 0;
         const auto flushClean = [&] {
@@ -689,29 +706,39 @@ private:
             cleanStart = cleanEnd = 0;
         };
         for (auto cursor = address; cursor < end;) {
-            const auto nextClean = cleanRanges.upper_bound(cursor);
-            if (nextClean != cleanRanges.begin()) {
-                const auto clean = std::prev(nextClean);
-                if (cursor < clean->second) {
-                    cursor = std::min(end, clean->second);
-                    continue;
+            auto cleanLimit = end;
+            if (!cleanRanges.empty()) {
+                const auto nextClean = cleanRanges.upper_bound(cursor);
+                if (nextClean != cleanRanges.begin()) {
+                    const auto clean = std::prev(nextClean);
+                    if (cursor < clean->second) {
+                        cursor = std::min(end, clean->second);
+                        continue;
+                    }
                 }
+                if (nextClean != cleanRanges.end() && nextClean->first < cleanLimit) cleanLimit = nextClean->first;
             }
-            const auto base = cursor & ~(pageBytes - 1);
-            const auto found = viewAt(base, position);
-            if (found != views.end() && found->second.resident) {
+            while (resIt != residentRuns.end() && resIt->second.end <= cursor) ++resIt;
+            if (resIt != residentRuns.end() && resIt->first <= cursor) {
                 flushClean();
                 if (!watchResident) return false;
                 const auto available = capacity - *count;
                 if (available == 0) return true;
-                const auto run = std::prev(residentRuns.upper_bound(cursor));
-                const auto stop = std::min({end, run->second.end, (cursor & ~std::uintptr_t{4095}) + available * 4096, nextClean == cleanRanges.end() ? end : nextClean->first});
-                collectResident(run->first, run->second, cursor, stop, pages, count, clear, collection);
+                const auto stop = std::min({cleanLimit, resIt->second.end, (cursor & ~std::uintptr_t{4095}) + available * 4096});
+                collectResident(resIt->first, resIt->second, cursor, stop, pages, count, clear, collection);
                 if (*count == capacity) return true;
                 cursor = stop;
-            } else if (found != views.end()) {
+                continue;
+            }
+            const auto base = cursor & ~(pageBytes - 1);
+            if (!viewsReady) {
+                position = views.lower_bound(base);
+                viewsReady = true;
+            }
+            const auto found = viewAt(base, position);
+            if (found != views.end()) {
                 auto& view = found->second;
-                auto stop = std::min(std::min(end, base + pageBytes), nextClean == cleanRanges.end() ? end : nextClean->first);
+                auto stop = std::min(cleanLimit, base + pageBytes);
                 if (collection != Collection::All) {
                     const auto selected = [&](std::uintptr_t at) {
                         const bool collected = (view.collected & (1u << ((at - base) / 4096))) != 0;
@@ -873,7 +900,7 @@ private:
     }
 
     void disown(std::uintptr_t first, std::uintptr_t end) {
-        if (end <= first) return;
+        if (ownedWords.empty() || end <= first) return;
         ownedWords.erase(ownedWords.lower_bound(first & ~(ownedBlockBytes - 1)), ownedWords.lower_bound(end));
     }
 
@@ -1061,12 +1088,31 @@ private:
         return result;
     }
 
+    void markResidentNoAccess(std::uintptr_t start, std::uintptr_t end) {
+        auto run = residentRuns.upper_bound(start);
+        if (run != residentRuns.begin() && std::prev(run)->second.end > start) --run;
+        for (; run != residentRuns.end() && run->first < end; ++run) run->second.hasNoAccess = true;
+    }
+
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
         const auto proven = collectableRanges.upper_bound(address);
         if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
-        auto position = views.lower_bound(address & ~(pageBytes - 1));
+        auto resIt = residentRuns.upper_bound(address);
+        if (resIt != residentRuns.begin() && std::prev(resIt)->second.end > address) --resIt;
+        bool viewsReady = false;
+        Views::iterator position = views.end();
         for (auto cursor = address; cursor < end;) {
+            while (resIt != residentRuns.end() && resIt->second.end <= cursor) ++resIt;
+            if (resIt != residentRuns.end() && resIt->first <= cursor && !resIt->second.hasNoAccess) {
+                if (!watchResident) return false;
+                cursor = std::min(end, resIt->second.end);
+                continue;
+            }
             const auto base = cursor & ~(pageBytes - 1);
+            if (!viewsReady) {
+                position = views.lower_bound(base);
+                viewsReady = true;
+            }
             if (const auto found = viewAt(base, position); found != views.end()) {
                 if (found->second.protection == PAGE_NOACCESS || (found->second.resident ? !watchResident : found->second.page->comparedWhenShared)) return false;
                 cursor = std::min(end, base + pageBytes);
@@ -1184,6 +1230,7 @@ private:
         bool watched = false;
         bool reset = false;
         bool imported = false;
+        bool hasNoAccess = false;
     };
     struct Window {
         void* view = nullptr;
@@ -1198,11 +1245,14 @@ private:
     void collectResident(std::uintptr_t start, Run& run, std::uintptr_t from, std::uintptr_t stop, void** pages, std::size_t* count, bool clear, Collection collection) {
         if (clear) run.reset = true;
         const auto first = from & ~std::uintptr_t{4095};
-        if (run.fresh == 0 && collection != Collection::Fresh) {
+        if (run.fresh == 0) {
+            if (collection == Collection::Fresh) return;
             ULONG_PTR reported = (stop - first + 4095) / 4096;
             DWORD granularity = 0;
             if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(first), stop - first, pages + *count, &reported, &granularity) != 0) fail("collect resident guest writes");
-            for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
+            if (from != first) {
+                for (ULONG_PTR index = 0; index < reported; ++index) pages[*count + index] = reinterpret_cast<void*>(std::max(from, reinterpret_cast<std::uintptr_t>(pages[*count + index])));
+            }
             *count += reported;
             return;
         }
