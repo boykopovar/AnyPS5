@@ -13,6 +13,9 @@
 
 namespace NKWebKit {
 
+class BundleBackForwardList;
+class BundleBackForwardListItem;
+
 std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
 std::optional<std::u16string> DecodeUtf8(const char* text);
 std::string EncodeUtf8(std::u16string_view text);

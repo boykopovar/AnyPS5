@@ -15,18 +15,6 @@ static void Check(bool value, int line) {
 
 int main() {
     Require(WKAccessibilityCanUseSecondaryAXThread() == 0);
-    Require(WKBundleBackForwardListCopyItemAtIndex() == 0);
-    Require(WKBundleBackForwardListGetBackListCount() == 0);
-    Require(WKBundleBackForwardListGetForwardListCount() == 0);
-    Require(WKBundleBackForwardListItemCopyChildren() == 0);
-    Require(WKBundleBackForwardListItemCopyOriginalURL() == 0);
-    Require(WKBundleBackForwardListItemCopyTarget() == 0);
-    Require(WKBundleBackForwardListItemCopyTitle() == 0);
-    Require(WKBundleBackForwardListItemCopyURL() == 0);
-    Require(WKBundleBackForwardListItemHasCachedPageExpired() == 0);
-    Require(WKBundleBackForwardListItemIsInBackForwardCache() == 0);
-    Require(WKBundleBackForwardListItemIsSame() == 0);
-    Require(WKBundleBackForwardListItemIsTargetItem() == 0);
     Require(WKBundleFileHandleCreateWithPath() == 0);
     Require(WKBundleFrameCopyWebArchive() == 0);
     Require(WKBundleFrameCopyWebArchiveFilteringSubframes() == 0);
