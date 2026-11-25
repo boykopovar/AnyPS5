@@ -1,8 +1,11 @@
 import argparse
+from io import BytesIO
 import json
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
+
+import vulkan_validation_gate as gate
 
 
 SIDES = ("baseline", "candidate")
@@ -40,8 +43,7 @@ def number(value):
     return int(value, 16 if value.startswith("0x") else 10)
 
 
-def observed_devices(path):
-    root = ET.parse(path).getroot()
+def observed_devices(root):
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError("expected JUnit testsuite or testsuites")
     observations = {}
@@ -70,21 +72,31 @@ def gpu_evidence(path, report, test_names):
     repeat = report.get("options", {}).get("repeat")
     if type(repeat) is not int or repeat < 1:
         issues.append("missing or invalid configured repetition count")
-    for item in report.get("iterations", []):
+    iterations = report.get("iterations", [])
+    if not isinstance(iterations, list):
+        raise ValueError("expected a list of saved gate iterations")
+    for item in iterations:
         side, iteration = item["side"], item["iteration"]
         if side not in SIDES or type(iteration) is not int or iteration < 1 or (side, iteration) in seen:
             raise ValueError("invalid or duplicate iteration identity")
         seen.add((side, iteration))
         sample = {"side": side, "iteration": iteration}
         samples.append(sample)
+        saved_tests, saved_problems = item.get("tests"), item.get("problems")
+        if (type(item.get("returncode")) is not int or not isinstance(saved_tests, dict)
+                or not isinstance(saved_problems, list)):
+            sample["error"] = "invalid saved gate iteration fields"
+            continue
         try:
             junit = path.parent / side / f"iteration-{iteration}.xml"
-            observations = observed_devices(junit)
-        except (OSError, ValueError, ET.ParseError) as error:
+            xml = junit.read_bytes()
+            observations = observed_devices(ET.fromstring(xml))
+            tests, problems = gate.parse_report(BytesIO(xml), test_names)
+        except (OSError, ValueError, ET.ParseError, gate.GateError) as error:
             sample["error"] = str(error)
             continue
-        if set(observations) != set(item["tests"]):
-            sample["error"] = "JUnit test names differ from the gate report"
+        if problems != saved_problems or json.dumps(tests, sort_keys=True) != json.dumps(saved_tests, sort_keys=True):
+            sample["error"] = "retained JUnit results differ from the gate report"
             continue
         sample["missing_tests"] = sorted(test for test in test_names if not observations.get(test))
         sample["unexpected_tests"] = sorted(set(observations) - set(test_names))
@@ -97,6 +109,10 @@ def gpu_evidence(path, report, test_names):
             indices = [index for recorded_side, index in seen if recorded_side == side]
             if len(indices) != repeat or max(indices, default=0) > repeat:
                 issues.append(f"{side}: expected {repeat} retained iterations, found {len(indices)}")
+    if report.get("status") == "complete" and not any("error" in sample for sample in samples):
+        summary = gate.compare(iterations)
+        if any(report.get(key) != summary[key] for key in ("exit_code", "new_diagnostics", "problems")):
+            issues.append("saved gate summary differs from retained iterations")
     if not isinstance(selector, str) or not selector:
         issues.append("missing requested GPU selector")
     elif any(selector.lower() not in device[0].lower() for device in devices):

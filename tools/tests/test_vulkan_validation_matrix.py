@@ -112,6 +112,59 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("an observed GPU name does not match the requested selector", failure["gpu_issues"])
         self.assertEqual(retry["gate_exit_code"], 0)
 
+    def test_retained_junit_drift_is_incomplete(self):
+        for change in ("layer", "failure", "skipped", "diagnostic"):
+            with self.subTest(change=change):
+                path = self.fixture(change)
+                junit = path.parent / "candidate" / "iteration-1.xml"
+                tree = ET.parse(junit)
+                case = tree.getroot().find("testcase")
+                if change == "layer":
+                    case.remove(case.find("system-err"))
+                elif change == "diagnostic":
+                    case.find("system-out").text += "\n" + VUID
+                else:
+                    ET.SubElement(case, change)
+                tree.write(junit, encoding="utf-8")
+                result = matrix.aggregate([path], [])
+                self.assertEqual(result["exit_code"], 2)
+                self.assertFalse(result["gate_failed"])
+                sample = result["groups"][0]["runs"][0]["gpu_samples"][1]
+                self.assertIn("differ from the gate report", sample["error"])
+
+    def test_malformed_saved_iteration_is_incomplete(self):
+        cases = (("returncode", None), ("returncode", False), ("problems", None),
+                 ("tests", ["probe", "probe"]))
+        for index, (field, value) in enumerate(cases):
+            with self.subTest(field=field, value=value):
+                path = self.fixture(f"malformed-{index}")
+                report = json.loads(path.read_text(encoding="utf-8"))
+                candidate = report["iterations"][1]
+                if value is None:
+                    del candidate[field]
+                else:
+                    candidate[field] = value
+                gate.save(path.parent, report)
+                self.assertEqual(matrix.aggregate([path], [])["exit_code"], 2)
+
+    def test_iteration_returncode_must_support_the_saved_summary(self):
+        path = self.fixture("stale-returncode")
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["iterations"][1]["returncode"] = 1
+        gate.save(path.parent, report)
+        result = matrix.aggregate([path], [])
+        self.assertEqual(result["exit_code"], 2)
+        run = result["groups"][0]["runs"][0]
+        self.assertIn("saved gate summary differs from retained iterations", run["gpu_issues"])
+
+    def test_recorded_gate_regression_takes_priority_over_missing_junit(self):
+        path = self.fixture("missing-regression-evidence", candidate=AMD + "\n" + VUID)
+        (path.parent / "candidate" / "iteration-1.xml").unlink()
+        result = matrix.aggregate([path], [])
+        self.assertEqual(result["exit_code"], 1)
+        self.assertTrue(result["gate_failed"])
+        self.assertTrue(result["incomplete"])
+
     def test_interrupted_unreadable_and_truncated_inputs_remain_visible(self):
         path = self.fixture("truncated")
         report = json.loads(path.read_text(encoding="utf-8"))

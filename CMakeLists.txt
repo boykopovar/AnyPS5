@@ -734,6 +734,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py WaitTests)
         add_test(NAME vulkan_validation_gate_parse_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ParseReportTests)
+        add_test(NAME vulkan_validation_matrix COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_matrix.py)
+        set_tests_properties(vulkan_validation_matrix PROPERTIES TIMEOUT 30)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
