@@ -180,7 +180,45 @@ inline unsigned EncodingSize(Byte encoding) {
     }
 }
 
-struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; Word segment {}; const Byte* fdeEnd {}; };
+inline unsigned TryEncodingSize(Byte encoding) {
+    switch (encoding & 15) {
+    case 0: case 4: case 12: return 8;
+    case 2: case 10: return 2;
+    case 3: case 11: return 4;
+    default: return 0;
+    }
+}
+
+struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; Word segment {}; const Byte* fdeEnd {}; const Byte* fdeBegin {}; };
+
+inline bool SearchEhFrameHeader(const Byte* header, const Byte* headerEnd, Lookup& query) {
+    if (!header || !headerEnd || headerEnd < header || static_cast<std::size_t>(headerEnd - header) < 4) return false;
+    if (header[0] != 1 || header[3] == 255) return false;
+    const Byte* p = header + 4;
+    Word ehFramePtr {};
+    if (!TryEncoded(p, headerEnd, header[1], ehFramePtr, Word(header))) return false;
+    Word count {};
+    if (!TryEncoded(p, headerEnd, header[2], count)) return false;
+    const unsigned width = TryEncodingSize(header[3]);
+    if (!width) return false;
+    const std::size_t entrySize = static_cast<std::size_t>(width) * 2;
+    if (count > static_cast<std::size_t>(headerEnd - p) / entrySize) return false;
+    const Byte* table = p;
+    Word lo = 0, hi = count;
+    while (lo < hi) {
+        const Word mid = lo + (hi - lo) / 2;
+        p = table + mid * entrySize;
+        Word begin {};
+        if (!TryEncoded(p, headerEnd, header[3], begin, Word(header))) return false;
+        if (begin <= query.pc) lo = mid + 1; else hi = mid;
+    }
+    if (!lo) return false;
+    p = table + (lo - 1) * entrySize + width;
+    Word fdeAddr {};
+    if (!TryEncoded(p, headerEnd, header[3], fdeAddr, Word(header))) return false;
+    query.fde = reinterpret_cast<const Byte*>(fdeAddr);
+    return true;
+}
 
 struct Frame {
     const Byte* cieBegin {};
@@ -207,6 +245,7 @@ struct Frame {
 inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const char*& augmentation, Byte& lsdaEncoding) {
     if (!query.fde) return false;
     p = query.fde;
+    if (query.fdeBegin && p < query.fdeBegin) return false;
     std::uint32_t length {};
     if (query.fdeEnd) {
         if (query.fdeEnd < p || !TryRead(p, query.fdeEnd, length)) return false;
@@ -222,6 +261,7 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     if (!TryRead(p, frame.end, cieOffset)) return false;
     if (!cieOffset || Word(ciePointer) < Word(cieOffset)) return false;
     const Byte* cie = ciePointer - cieOffset;
+    if (query.fdeBegin && cie < query.fdeBegin) return false;
     const Byte* c = cie;
     std::uint32_t cieLength {};
     if (query.fdeEnd) {
@@ -290,6 +330,17 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     frame.cieBegin = c;
     if (!TryEncoded(p, frame.end, pointerEncoding, frame.start, query.data, 0, query.text)) return false;
     if (!TryEncoded(p, frame.end, pointerEncoding & 15, frame.length)) return false;
+    return true;
+}
+
+inline bool DecodeFdeAugmentation(Frame& frame, const Lookup& query, const Byte*& p, const char* augmentation, Byte lsdaEncoding) {
+    if (!augmentation || *augmentation != 'z') return true;
+    Word size {};
+    if (!TryUleb(p, frame.end, size)) return false;
+    if (size > static_cast<Word>(frame.end - p)) return false;
+    const Byte* end = p + size;
+    if (lsdaEncoding != 255 && !TryEncoded(p, end, lsdaEncoding, frame.lsda, query.data, frame.start, query.text)) return false;
+    p = end;
     return true;
 }
 

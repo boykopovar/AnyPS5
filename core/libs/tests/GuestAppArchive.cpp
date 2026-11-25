@@ -4,6 +4,8 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -333,6 +335,90 @@ void UnwindBounds() {
         Require(state.cfaRegister == 7 && state.cfaOffset == 16, "valid FDE instructions computed unexpected CFA");
         Require(state.registers[6].kind == 1 && state.registers[6].value == -16, "valid FDE instructions computed unexpected r6 rule");
         Require(state.registers[16].kind == 1 && state.registers[16].value == -8, "valid FDE instructions computed unexpected r16 rule");
+    }
+
+    {
+        std::array<LibcUnwind::Byte, 68> ehBuf = {
+            0x14, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 'L',
+            0x00, 0x01, 0x78, 0x10,
+            0x02, 0x1b, 0x03, 0x0c,
+            0x07, 0x08, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00,
+            0x04, 0x44, 0x33, 0x22,
+            0x11, 0x44, 0x0e, 0x10,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 0xff, 0x03, 0x3b,
+            0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        };
+        const LibcUnwind::Byte* const ehHdr = &ehBuf[52];
+        const LibcUnwind::Byte* const ehHdrEnd = ehBuf.data() + ehBuf.size();
+        const LibcUnwind::Word targetPc = reinterpret_cast<LibcUnwind::Word>(ehBuf.data()) + 0x100;
+        const std::int32_t fdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&ehBuf[32]));
+        const std::int32_t hdrPcRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(ehHdr));
+        const std::int32_t hdrFdeRel = static_cast<std::int32_t>(&ehBuf[24] - ehHdr);
+        std::memcpy(&ehBuf[32], &fdeStartRel, sizeof(fdeStartRel));
+        std::memcpy(&ehBuf[60], &hdrPcRel, sizeof(hdrPcRel));
+        std::memcpy(&ehBuf[64], &hdrFdeRel, sizeof(hdrFdeRel));
+
+        LibcUnwind::Lookup truncHdrQuery{targetPc + 4};
+        Require(!LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd - 1, truncHdrQuery), "SearchEhFrameHeader accepted a truncated .eh_frame_hdr table");
+
+        LibcUnwind::Lookup query{targetPc + 4};
+        Require(LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd, query), "SearchEhFrameHeader failed on valid .eh_frame_hdr");
+        Require(query.fde == &ehBuf[24], "SearchEhFrameHeader returned unexpected FDE");
+        query.fdeBegin = ehBuf.data();
+        query.fdeEnd = ehHdr;
+
+        LibcUnwind::Frame frame{};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange failed on looked-up FDE");
+        Require(frame.start == targetPc && frame.length == 0x40, "looked-up FDE decoded unexpected range");
+        Require(LibcUnwind::DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation failed on valid LSDA");
+        Require(frame.lsda == 0x11223344, "DecodeFdeAugmentation decoded unexpected LSDA");
+
+        LibcUnwind::Lookup truncFdeQuery = query;
+        truncFdeQuery.fdeEnd = &ehBuf[48];
+        LibcUnwind::Frame badFrame{};
+        Require(!LibcUnwind::DecodeRange(badFrame, truncFdeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted truncated looked-up FDE");
+
+        LibcUnwind::Lookup badCieBeginQuery = query;
+        badCieBeginQuery.fdeBegin = &ehBuf[1];
+        Require(!LibcUnwind::DecodeRange(badFrame, badCieBeginQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE starting before fdeBegin");
+
+        auto truncCieBuf = ehBuf;
+        truncCieBuf[0] = 0x40;
+        LibcUnwind::Lookup truncCieQuery{targetPc + 4};
+        const LibcUnwind::Byte* const truncHdr = &truncCieBuf[52];
+        const LibcUnwind::Byte* const truncHdrEnd = truncCieBuf.data() + truncCieBuf.size();
+        const std::int32_t truncFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&truncCieBuf[32]));
+        const std::int32_t truncHdrPcRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(truncHdr));
+        std::memcpy(&truncCieBuf[32], &truncFdeStartRel, sizeof(truncFdeStartRel));
+        std::memcpy(&truncCieBuf[60], &truncHdrPcRel, sizeof(truncHdrPcRel));
+        Require(LibcUnwind::SearchEhFrameHeader(truncHdr, truncHdrEnd, truncCieQuery), "SearchEhFrameHeader failed on truncCieBuf");
+        truncCieQuery.fdeBegin = truncCieBuf.data();
+        truncCieQuery.fdeEnd = truncHdr;
+        Require(!LibcUnwind::DecodeRange(badFrame, truncCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE extending past fdeEnd");
+
+        auto badFdeAugBuf = ehBuf;
+        badFdeAugBuf[40] = 0x20;
+        LibcUnwind::Lookup badAugQuery{targetPc + 4, &badFdeAugBuf[24], 0, 0, 0, &badFdeAugBuf[52], badFdeAugBuf.data()};
+        Require(LibcUnwind::DecodeRange(badFrame, badAugQuery, p, augmentation, lsdaEncoding), "DecodeRange failed before FDE augmentation check");
+        Require(!LibcUnwind::DecodeFdeAugmentation(badFrame, badAugQuery, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation accepted augmentation size exceeding frame.end");
+
+        auto shortLsdaBuf = ehBuf;
+        shortLsdaBuf[40] = 0x02;
+        LibcUnwind::Lookup shortLsdaQuery{targetPc + 4, &shortLsdaBuf[24], 0, 0, 0, &shortLsdaBuf[52], shortLsdaBuf.data()};
+        Require(LibcUnwind::DecodeRange(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeRange failed before LSDA bounds check");
+        Require(!LibcUnwind::DecodeFdeAugmentation(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation accepted truncated LSDA inside FDE augmentation");
     }
 }
 

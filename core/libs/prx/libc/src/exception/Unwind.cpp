@@ -141,11 +141,10 @@ _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _U
     return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
 }
 #if defined(__linux__) || defined(__APPLE__)
-void SearchHeader(const Byte* header, Lookup& query);
-
 int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
     auto& query = *static_cast<Lookup*>(argument);
     const Byte* header = nullptr;
+    Word headerSize = 0;
     bool contains = false;
     for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
         const auto& ph = info->dlpi_phdr[i];
@@ -154,33 +153,35 @@ int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
             contains = true;
             query.segment = start;
         }
-        if (ph.p_type == PT_GNU_EH_FRAME) header = reinterpret_cast<const Byte*>(start);
+        if (ph.p_type == PT_GNU_EH_FRAME) {
+            header = reinterpret_cast<const Byte*>(start);
+            headerSize = ph.p_memsz;
+        }
         if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X)) query.text = start;
         if (ph.p_type == PT_LOAD && (ph.p_flags & PF_W)) query.data = start;
     }
-    if (!contains || !header || header[0] != 1) return 0;
-    SearchHeader(header, query);
+    if (!contains || !header || headerSize < 4 || Word(header) > ~Word(0) - headerSize || header[0] != 1) return 0;
+    if (!SearchEhFrameHeader(header, header + headerSize, query)) {
+        query.fde = nullptr;
+        query.fdeBegin = nullptr;
+        query.fdeEnd = nullptr;
+        return 1;
+    }
+    const Word fdeAddr = Word(query.fde);
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        const auto& ph = info->dlpi_phdr[i];
+        if (ph.p_type != PT_LOAD) continue;
+        const Word start = info->dlpi_addr + ph.p_vaddr;
+        if (fdeAddr >= start && fdeAddr - start < ph.p_memsz) {
+            query.fdeBegin = reinterpret_cast<const Byte*>(start);
+            query.fdeEnd = reinterpret_cast<const Byte*>(start + ph.p_memsz);
+            return 1;
+        }
+    }
+    query.fde = nullptr;
+    query.fdeBegin = nullptr;
+    query.fdeEnd = nullptr;
     return 1;
-}
-
-void SearchHeader(const Byte* header, Lookup& query) {
-    const Byte* p = header + 4;
-    Encoded(p, header[1], Word(header));
-    Word count = Encoded(p, header[2]);
-    if (header[3] == 255) return;
-    unsigned width = EncodingSize(header[3]);
-    const Byte* table = p;
-    Word lo = 0, hi = count;
-    while (lo < hi) {
-        Word mid = lo + (hi - lo) / 2;
-        p = table + mid * width * 2;
-        Word begin = Encoded(p, header[3], Word(header));
-        if (begin <= query.pc) lo = mid + 1; else hi = mid;
-    }
-    if (lo) {
-        p = table + (lo - 1) * width * 2 + width;
-        query.fde = reinterpret_cast<const Byte*>(Encoded(p, header[3], Word(header)));
-    }
 }
 
 #ifdef LIBC_UNWIND_FIND_OBJECT
@@ -221,6 +222,34 @@ void SetBases(Lookup& query, const ObjectBases& bases) {
         if (query.pc >= load.start && query.pc - load.start < load.size) query.segment = load.start;
 }
 
+void LookupInObject(const Byte* header, const ObjectBases& bases, Lookup& query) {
+    const Byte* headerEnd = nullptr;
+    const Word headerAddr = Word(header);
+    for (const auto& load : bases.loads) {
+        if (headerAddr >= load.start && headerAddr - load.start < load.size) {
+            headerEnd = reinterpret_cast<const Byte*>(load.start + load.size);
+            break;
+        }
+    }
+    if (!headerEnd || !SearchEhFrameHeader(header, headerEnd, query)) {
+        query.fde = nullptr;
+        query.fdeBegin = nullptr;
+        query.fdeEnd = nullptr;
+        return;
+    }
+    const Word fdeAddr = Word(query.fde);
+    for (const auto& load : bases.loads) {
+        if (fdeAddr >= load.start && fdeAddr - load.start < load.size) {
+            query.fdeBegin = reinterpret_cast<const Byte*>(load.start);
+            query.fdeEnd = reinterpret_cast<const Byte*>(load.start + load.size);
+            return;
+        }
+    }
+    query.fde = nullptr;
+    query.fdeBegin = nullptr;
+    query.fdeEnd = nullptr;
+}
+
 bool FindFrameFast(Lookup& query) {
     dl_find_object object {};
     if (_dl_find_object(reinterpret_cast<void*>(query.pc), &object) != 0 || object.dlfo_eh_frame == nullptr) return false;
@@ -234,7 +263,7 @@ bool FindFrameFast(Lookup& query) {
         auto found = bases.find(key);
         if (found != bases.end()) {
             SetBases(query, found->second);
-            SearchHeader(header, query);
+            LookupInObject(header, found->second, query);
             return true;
         }
     }
@@ -244,8 +273,8 @@ bool FindFrameFast(Lookup& query) {
         std::lock_guard lock(mutex);
         const auto found = bases.emplace(key, ObjectBases {probe.lookup.text, probe.lookup.data, std::move(probe.loads)}).first;
         SetBases(query, found->second);
+        LookupInObject(header, found->second, query);
     }
-    SearchHeader(header, query);
     return true;
 }
 #endif
@@ -258,12 +287,7 @@ bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query
     Byte lsdaEncoding;
     if (!DecodeRange(frame, query, p, augmentation, lsdaEncoding)) return false;
     if (query.pc < frame.start || query.pc - frame.start >= frame.length) return false;
-    if (*augmentation == 'z') {
-        Word size = Uleb(p);
-        const Byte* end = p + size;
-        if (lsdaEncoding != 255) frame.lsda = Encoded(p, lsdaEncoding, query.data, frame.start, query.text);
-        p = end;
-    }
+    if (!DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding)) return false;
     frame.begin = p;
     context.region = frame.start;
     context.lsda = frame.lsda;
@@ -300,13 +324,29 @@ const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte
             const Byte* cursor;
             const char* augmentation;
             Byte lsdaEncoding;
-            if (DecodeRange(candidate, Lookup {0, record, 0, 0, 0, end}, cursor, augmentation, lsdaEncoding))
+            if (DecodeRange(candidate, Lookup {0, record, 0, 0, 0, end, begin}, cursor, augmentation, lsdaEncoding))
                 index.emplace_back(candidate.start, record);
         }
         p = next;
     }
     std::sort(index.begin(), index.end());
     return index;
+}
+
+bool SectionBoundsFor(const Byte* base, const IMAGE_NT_HEADERS64* nt, const Byte* ptr, const Byte*& begin, const Byte*& end) {
+    if (!base || !nt || !ptr) return false;
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const Word addr = Word(ptr);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const Word size = sections[i].Misc.VirtualSize ? sections[i].Misc.VirtualSize : sections[i].SizeOfRawData;
+        const Word start = Word(base) + sections[i].VirtualAddress;
+        if (addr >= start && addr - start < size) {
+            begin = reinterpret_cast<const Byte*>(start);
+            end = reinterpret_cast<const Byte*>(start + size);
+            return true;
+        }
+    }
+    return false;
 }
 
 const IMAGE_NT_HEADERS64* ImageHeaders(Word pc, const Byte*& base) {
@@ -439,17 +479,24 @@ struct CompactDwarfAttempt {
     Frame* frame;
     Lookup* query;
     const Byte* eh;
+    const Byte* ehEnd;
     Word base;
 };
 
 bool TryCompactDwarf(std::uint32_t ehOffset, void* user) {
     auto* attempt = static_cast<CompactDwarfAttempt*>(user);
+    if (!attempt->eh || !attempt->ehEnd || attempt->ehEnd <= attempt->eh) return false;
+    if (ehOffset >= static_cast<std::size_t>(attempt->ehEnd - attempt->eh)) return false;
     attempt->query->fde = attempt->eh + ehOffset;
+    attempt->query->fdeBegin = attempt->eh;
+    attempt->query->fdeEnd = attempt->ehEnd;
     attempt->query->text = attempt->base;
     attempt->query->data = attempt->base;
     Frame decoded {};
     if (!DecodeCandidate(*attempt->context, decoded, *attempt->query)) {
         attempt->query->fde = nullptr;
+        attempt->query->fdeBegin = nullptr;
+        attempt->query->fdeEnd = nullptr;
         return false;
     }
     *attempt->frame = decoded;
@@ -463,7 +510,8 @@ bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
     if (query.pc < base) return false;
     const std::span<const Byte> unwind{sections.unwind, static_cast<std::size_t>(sections.unwindSize)};
     const std::span<const Byte> eh = sections.eh == nullptr ? std::span<const Byte>{} : std::span<const Byte>{sections.eh, static_cast<std::size_t>(sections.ehSize)};
-    CompactDwarfAttempt attempt {&context, &frame, &query, sections.eh, base};
+    const Byte* ehEnd = sections.eh == nullptr ? nullptr : sections.eh + sections.ehSize;
+    CompactDwarfAttempt attempt {&context, &frame, &query, sections.eh, ehEnd, base};
     CompactEntry entry {};
     const auto target = static_cast<std::uint32_t>(query.pc - base);
     const auto status = ParseCompactUnwind(unwind, eh, target, TryCompactDwarf, &attempt, entry);
@@ -514,6 +562,7 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
         unsigned long size = 0;
         const Byte* p = getsectiondata(static_cast<const mach_header_64*>(image.dli_fbase), "__TEXT", "__eh_frame", &size);
         if (!p) return false;
+        const Byte* begin = p;
         const Byte* end = p + size;
         while (end - p >= 8) {
             const Byte* record = p;
@@ -523,6 +572,8 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
             const Byte* next = p + length;
             if (Read<std::uint32_t>(p)) {
                 query.fde = record;
+                query.fdeBegin = begin;
+                query.fdeEnd = end;
                 frame = {};
                 if (DecodeCandidate(context, frame, query)) return true;
             }
@@ -548,24 +599,20 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         const auto& section = sections[i];
         if (std::memcmp(section.Name, ".ehmeta", 8) == 0) {
+            const Word metaSize = section.Misc.VirtualSize ? section.Misc.VirtualSize : section.SizeOfRawData;
+            if (metaSize < sizeof(std::uint32_t)) return false;
             const Byte* metadata = base + section.VirtualAddress;
             const Byte* header = base + Read<std::uint32_t>(metadata);
-            if (header[0] != 1 || header[3] == 255) return false;
-            const Byte* p = header + 4;
-            Encoded(p, header[1], Word(header));
-            const Word count = Encoded(p, header[2]);
-            const auto width = EncodingSize(header[3]);
-            const Byte* table = p;
-            Word lo = 0, hi = count;
-            while (lo < hi) {
-                const Word mid = lo + (hi - lo) / 2;
-                p = table + mid * width * 2;
-                if (Encoded(p, header[3], Word(header)) <= query.pc) lo = mid + 1;
-                else hi = mid;
+            const Byte* headerBegin = nullptr;
+            const Byte* headerEnd = nullptr;
+            if (!SectionBoundsFor(base, nt, header, headerBegin, headerEnd)) return false;
+            if (!SearchEhFrameHeader(header, headerEnd, query)) return false;
+            if (!SectionBoundsFor(base, nt, query.fde, query.fdeBegin, query.fdeEnd)) {
+                query.fde = nullptr;
+                query.fdeBegin = nullptr;
+                query.fdeEnd = nullptr;
+                return false;
             }
-            if (!lo) return false;
-            p = table + (lo - 1) * width * 2 + width;
-            query.fde = reinterpret_cast<const Byte*>(Encoded(p, header[3], Word(header)));
             return DecodeCandidate(context, frame, query);
         }
         if (std::memcmp(section.Name, ".ehfram", 8) != 0) continue;
@@ -575,6 +622,8 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
         auto found = std::upper_bound(index.begin(), index.end(), query.pc, [](Word pc, const std::pair<Word, const Byte*>& entry) { return pc < entry.first; });
         if (found == index.begin()) continue;
         query.fde = std::prev(found)->second;
+        query.fdeBegin = frames;
+        query.fdeEnd = frames + section.Misc.VirtualSize;
         frame = {};
         if (DecodeCandidate(context, frame, query)) return true;
     }
