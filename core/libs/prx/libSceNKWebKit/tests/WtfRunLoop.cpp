@@ -323,6 +323,23 @@ void TestThrowingTimerLeavesRun() {
     Destroy(thrower);
 }
 
+void TestThrowingTimerKeepsQueuedFunctions() {
+    GuestTimer thrower;
+    GuestCallable follower;
+    Construct(thrower, Main());
+    thrower.onFired = [](GuestTimer&) { throw std::runtime_error("timer failed"); };
+    Arm(follower, [] { StopMain(); });
+    Start(thrower, 0.0, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Dispatch(Main(), follower);
+    RequireThrows<std::runtime_error>([] { _ZN3WTF7RunLoop3runEv(); }, "an exception from a timer before queued functions leaves run");
+    Require(follower.calls.load() == 0, "a function queued behind a throwing timer waits for the next run");
+    _ZN3WTF7RunLoop3runEv();
+    Require(follower.calls.load() == 1, "the next run performs a function queued behind a throwing timer");
+    Require(follower.deletions.load() == 1, "a function queued behind a throwing timer is destroyed after running");
+    Destroy(thrower);
+}
+
 void TestCycle() {
     std::vector<int> order;
     GuestCallable later;
@@ -486,6 +503,17 @@ void TestDestroyActiveTimer() {
     Require(timer.fired.load() == 0, "destroying an active timer unschedules it");
 }
 
+void TestRepeatingTimerDestroysItselfWhenFired() {
+    const unsigned references = Main()->refCount.load();
+    GuestTimer timer;
+    Construct(timer, Main());
+    timer.onFired = [](GuestTimer& self) { Destroy(self); };
+    Start(timer, 0.001, true);
+    RunWithStopperAfter(0.03);
+    Require(timer.fired.load() == 1, "a repeating timer destroyed by its own callback does not fire again");
+    Require(Main()->refCount.load() == references, "a timer destroyed by its own callback releases its run loop");
+}
+
 void TestTimersFireInScheduleOrder() {
     std::vector<int> order;
     GuestTimer late;
@@ -602,6 +630,7 @@ int main() {
     TestStopWithoutRunningLoop();
     TestThrowingFunctionLeavesRun();
     TestThrowingTimerLeavesRun();
+    TestThrowingTimerKeepsQueuedFunctions();
     TestCycle();
     TestSuspendFunctionDispatch();
     TestWakeUpCallback();
@@ -610,6 +639,7 @@ int main() {
     TestRepeatingTimer();
     TestRestartAndStop();
     TestDestroyActiveTimer();
+    TestRepeatingTimerDestroysItselfWhenFired();
     TestTimersFireInScheduleOrder();
     TestDispatchAfter();
     TestDispatchAfterNegativeDelay();

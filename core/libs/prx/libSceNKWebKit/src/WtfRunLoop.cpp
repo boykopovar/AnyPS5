@@ -421,9 +421,7 @@ void RunImpl(RunLoop* runLoop, RunMode runMode) {
             }
         }
         firedTimers.clear();
-        if (!loop.currentIteration.empty()) {
-            loop.pendingTasks = true;
-        }
+        loop.pendingTasks = true;
         LeaveLoopWithLock(loop, &statusOfThisLoop);
         throw;
     }
