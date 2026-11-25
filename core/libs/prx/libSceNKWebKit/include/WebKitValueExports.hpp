@@ -247,7 +247,18 @@ const void* APS5_VABI WKHitTestResultCopyLookupText(const void* hitTestResultRef
 NKWebKit::RectValue APS5_VABI WKHitTestResultGetElementBoundingBox(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKHitTestResultGetTypeID();
 bool APS5_VABI WKHitTestResultIsContentEditable(const void* hitTestResultRef);
+void APS5_VABI WKIconDatabaseCheckIntegrityBeforeOpening(const void* iconDatabaseRef);
+void APS5_VABI WKIconDatabaseClose(const void* iconDatabaseRef);
+const void* APS5_VABI WKIconDatabaseCopyIconDataForPageURL(const void* iconDatabaseRef, const void* pageURLRef);
+const void* APS5_VABI WKIconDatabaseCopyIconURLForPageURL(const void* iconDatabaseRef, const void* pageURLRef);
+void APS5_VABI WKIconDatabaseEnableDatabaseCleanup(const void* iconDatabaseRef);
 std::uint32_t APS5_VABI WKIconDatabaseGetTypeID();
+void APS5_VABI WKIconDatabaseReleaseIconForURL(const void* iconDatabaseRef, const void* pageURLRef);
+void APS5_VABI WKIconDatabaseRemoveAllIcons(const void* iconDatabaseRef);
+void APS5_VABI WKIconDatabaseRetainIconForURL(const void* iconDatabaseRef, const void* pageURLRef);
+void APS5_VABI WKIconDatabaseSetIconDataForIconURL(const void* iconDatabaseRef, const void* iconDataRef, const void* iconURLRef);
+void APS5_VABI WKIconDatabaseSetIconDatabaseClient(const void* iconDatabaseRef, const void* client);
+void APS5_VABI WKIconDatabaseSetIconURLForPageURL(const void* iconDatabaseRef, const void* iconURLRef, const void* pageURLRef);
 const void* APS5_VABI WKImageCreate(NKWebKit::SizeValue size, unsigned options);
 NKWebKit::SizeValue APS5_VABI WKImageGetSize(const void* imageRef);
 std::uint32_t APS5_VABI WKImageGetTypeID();
@@ -658,8 +669,25 @@ void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled(const void* con
 void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation(const void* contextRef, bool value);
 void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* contextRef, const void* bundleIdentifierRef);
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
+const void* APS5_VABI WKContextGetIconDatabase(const void* contextRef);
+void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* iconDatabasePathRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
+
+const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
+const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
+const void* APS5_VABI WKPluginInformationBundleShortVersionKey();
+const void* APS5_VABI WKPluginInformationBundleVersionKey();
+const void* APS5_VABI WKPluginInformationDefaultLoadPolicyKey();
+const void* APS5_VABI WKPluginInformationDisplayNameKey();
+const void* APS5_VABI WKPluginInformationFrameURLKey();
+const void* APS5_VABI WKPluginInformationHasSandboxProfileKey();
+const void* APS5_VABI WKPluginInformationMIMETypeKey();
+const void* APS5_VABI WKPluginInformationPageURLKey();
+const void* APS5_VABI WKPluginInformationPathKey();
+const void* APS5_VABI WKPluginInformationPluginURLKey();
+const void* APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
+const void* APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
 
 }
