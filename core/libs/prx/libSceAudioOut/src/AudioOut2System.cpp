@@ -1,6 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -30,9 +29,7 @@ int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {
 int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
     if (!state) return static_cast<int>(0x80260502);
     const float loudness = 0.0f;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(state, &loudness, sizeof(loudness));
-    errno = savedErrno;
     return copied ? 0 : static_cast<int>(0x80260502);
 }
 
@@ -59,9 +56,7 @@ int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStatePar
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return ErrorInvalidPointer;
     AudioOut2SystemDebugStateParam guestParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&guestParam, param, sizeof(guestParam));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidPointer;
     if (guestParam.debug_state_id == DebugStateIdUnmodelled && guestParam.param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
     if ((guestParam.debug_state_id == DebugStateIdLoudness || guestParam.debug_state_id == DebugStateIdTwo) && guestParam.param == nullptr) return ErrorInvalidPointer;
