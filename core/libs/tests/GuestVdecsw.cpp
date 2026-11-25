@@ -1,4 +1,5 @@
 #include "prx/libSceVdecsw/libSceVdecsw.hpp"
+#include "prx/libSceVideodec2/include/InventoryExports.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -18,13 +19,6 @@
 #include "HevcFixture.hpp"
 
 using namespace SceVdecsw;
-
-extern "C" {
-int APS5_VABI sceVideodec2DecodeFirstSlice(const void* decoder, const void* input, SceVideodec2::FrameBuffer* frameBuffer);
-int APS5_VABI sceVideodec2DecodeNextSlice(const void* decoder, const void* input);
-int APS5_VABI sceVideodec2SyncAllSlice(const void* decoder, SceVideodec2::OutputInfo* output, const void* syncResult);
-}
-
 
 static_assert(sizeof(SceVideodec2::Vp9PictureInfo) == 0x58 && offsetof(SceVideodec2::Vp9PictureInfo, ptsData) == 0x10 && offsetof(SceVideodec2::Vp9PictureInfo, profile) == 0x28 && offsetof(SceVideodec2::Vp9PictureInfo, bitDepth) == 0x38 && offsetof(SceVideodec2::Vp9PictureInfo, colorSpace) == 0x3c && offsetof(SceVideodec2::Vp9PictureInfo, renderHeight) == 0x50);
 

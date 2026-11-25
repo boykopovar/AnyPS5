@@ -1,4 +1,4 @@
-#include "prx/libSceVideodec2/include/Api.hpp"
+#include "prx/libSceVideodec2/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
