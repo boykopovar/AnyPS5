@@ -412,6 +412,19 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertIn("thunk entry out of bounds", result.stderr)
             self.assertEqual(path.read_bytes(), original)
 
+    def test_exec_rejects_iat_crossing_raw_tail_without_writing(self):
+        self.names = ["sceA", "sceNetRecv"]
+        image = bytearray(self.pe())
+        struct.pack_into("<I", image, 512 + 16, 0x15f8)
+        original = bytes(image)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(original)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("import address table entry out of bounds", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
+
     def test_exec_accepts_macho_without_exports(self):
         from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
         image = self.macho()
