@@ -468,24 +468,63 @@ class Check:
                     if label not in known:
                         self.report("debt-labels", path, number, label)
 
+    def target_debt(self):
+        entries = [(metadata.split(), path) for metadata, path in
+                   (entry.split("\t", 1) for entry in git("ls-tree", "-rz", "--full-tree", self.target, "--", DEBT, DEBT_DIR).split("\0") if entry)]
+        objects = {path: fields[2] for fields, path in entries if fields[1] == "blob" and (is_debt(path) or is_debt_fragment(path))}
+        names = sorted(objects)
+        data = subprocess.run(["git", "cat-file", "--batch"], input="".join(f"{objects[path]}\n" for path in names).encode(),
+                              capture_output=True, check=True).stdout
+        blobs, offset = {}, 0
+        for path in names:
+            end = data.index(b"\n", offset)
+            size = int(data[offset:end].split()[2])
+            blobs[path] = data[end + 1:end + 1 + size]
+            offset = end + 2 + size
+        return blobs
+
     def debt_fragments(self):
         import debt_fold
         changed = {path for path, status in self.status.items() if status != "D" and is_debt_fragment(path)}
-        if not changed:
+        if not changed and not any(is_debt(path) for path in self.status):
             return
         known = {label for labels in DEBT_LABELS.values() for label in labels}
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for path in sorted(path for path in self.tree if is_debt(path) or is_debt_fragment(path)):
+        target = self.target_debt()
+        merged = dict(target)
+        for path in self.renamed_from:
+            merged.pop(path, None)
+        for path, status in self.status.items():
+            if is_debt(path) or is_debt_fragment(path):
+                if status == "D":
+                    merged.pop(path, None)
+                else:
+                    merged[path] = self.blob(path)
+
+        def write(root, files):
+            for path, data in files.items():
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
-                (root / path).write_bytes(self.blob(path))
+                (root / path).write_bytes(data)
+
+        def problems(root):
             try:
                 debt_fold.fold(root, write=False)
             except debt_fold.FoldError as error:
-                for problem in str(error).split("\n"):
-                    found = [(path, int(line)) for path, line in re.findall(r"(\S+\.md):(\d+)", problem) if path in changed]
-                    if found:
-                        self.report("debt-fragment", found[0][0], found[0][1], problem)
+                return str(error).split("\n")
+            return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            write(Path(directory), target)
+            already = set(problems(Path(directory)))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, merged)
+            for problem in problems(root):
+                found = [(path, int(line)) for path, line in re.findall(r"(\S+\.md):(\d+)", problem)]
+                ours = [place for place in found if place[0] in changed]
+                if ours:
+                    self.report("debt-fragment", ours[0][0], ours[0][1], problem)
+                elif found and problem not in already:
+                    self.report("debt-fragment", found[0][0], found[0][1], problem)
             for path in sorted(changed):
                 try:
                     operations = debt_fold.parse(root / path, root)
@@ -705,7 +744,7 @@ def is_debt_fragment(path):
 def link_bases(path, source):
     bases = {}
     base = f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
-    for number, line in enumerate(source.split("\n"), 1):
+    for number, line in enumerate(source.removeprefix("﻿").split("\n"), 1):
         if is_debt_fragment(path) and line.startswith("# "):
             library = line[2:].strip()
             base = DEBT if library == PurePosixPath(DEBT).stem else f"{DEBT_DIR}{library}.md"
@@ -1205,6 +1244,9 @@ if __name__ == "__main__":
             parser.error(f"--event {args.event}: {error}")
         if not isinstance(event, dict):
             parser.error(f"--event {args.event}: not a JSON object")
+        pr = event.get("pull_request")
+        if "pull_request" in event and not (isinstance(pr, dict) and isinstance(pr.get("title"), str) and isinstance(pr.get("body", 0), (str, type(None)))):
+            parser.error(f"--event {args.event}: pull_request needs a title string and a body string or null")
     body = ""
     if args.body:
         try:
