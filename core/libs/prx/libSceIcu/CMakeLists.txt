@@ -21,6 +21,7 @@ target_sources(libSceIcu PRIVATE Availability.cpp StringHash.cpp InvariantChars.
 target_sources(libSceIcu PRIVATE CollatorAvailability.cpp)
 target_sources(libSceIcu PRIVATE DataSwap.cpp)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp DefaultLocale.cpp)
+target_sources(libSceIcu PRIVATE ULocale.cpp)
 target_sources(libSceIcu PRIVATE LocaleDisplay.cpp)
 target_sources(libSceIcu PRIVATE UtcTime.cpp)
 target_sources(libSceIcu PRIVATE NormalizerCombine.cpp)

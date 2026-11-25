@@ -6,6 +6,10 @@
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(&locale_getKeywordsStart_nid_postfix), const char* (APS5_VABI*)(const char*)>);
+static_assert(std::is_same_v<decltype(&ulocale_openForLocaleID_nid_postfix), ULocale* (APS5_VABI*)(const char*, std::int32_t, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ulocale_close_nid_postfix), void (APS5_VABI*)(ULocale*)>);
+static_assert(std::is_same_v<decltype(&ulocale_getLocaleID_nid_postfix), const char* (APS5_VABI*)(const ULocale*)>);
+static_assert(std::is_same_v<decltype(&ulocale_isBogus_nid_postfix), bool (APS5_VABI*)(const ULocale*)>);
 
 namespace {
 
@@ -25,6 +29,32 @@ void CheckNullThrows() {
     }
     std::fputs("a null locale did not throw\n", stderr);
     std::abort();
+}
+
+void CheckLocaleObject() {
+    std::int32_t error = 0;
+    ULocale* locale = ulocale_openForLocaleID_nid_postfix("en_US_extra", 5, &error);
+    if (!locale || error != 0 || std::string(ulocale_getLocaleID_nid_postfix(locale)) != "en_US" ||
+        ulocale_isBogus_nid_postfix(locale)) {
+        std::fputs("locale object did not preserve the bounded locale ID\n", stderr);
+        std::abort();
+    }
+    ulocale_close_nid_postfix(locale);
+    ulocale_close_nid_postfix(nullptr);
+    if (ulocale_getLocaleID_nid_postfix(nullptr) != nullptr || ulocale_isBogus_nid_postfix(nullptr)) {
+        std::fputs("null locale object getters changed ICU behavior\n", stderr);
+        std::abort();
+    }
+    bool threw = false;
+    try {
+        ulocale_openForLocaleID_nid_postfix("en", -1, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw) {
+        std::fputs("a null locale object status did not throw\n", stderr);
+        std::abort();
+    }
 }
 
 }
@@ -55,5 +85,6 @@ int main() {
     Check(noKeywords.c_str(), nullptr);
 
     CheckNullThrows();
+    CheckLocaleObject();
     std::puts("ICU locale keyword tests passed");
 }

@@ -54,4 +54,6 @@ void APS5_VABI ubidi_invertMap_nid_postfix(const std::int32_t*, std::int32_t*, s
 void APS5_VABI ubidi_reorderLogical_nid_postfix(const std::uint8_t*, std::int32_t, std::int32_t*);
 std::int32_t APS5_VABI ubidi_writeReordered_nid_postfix(Icu::BiDi*, char16_t*, std::int32_t, std::uint16_t,
                                                         std::int32_t*);
+std::int32_t APS5_VABI ubidi_writeReverse_nid_postfix(const char16_t*, std::int32_t, char16_t*, std::int32_t,
+                                                      std::uint16_t, std::int32_t*);
 }

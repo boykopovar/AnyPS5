@@ -142,4 +142,36 @@ std::int32_t APS5_VABI ucasemap_utf8ToUpper_nid_postfix(const Icu::CaseMap* case
                                &Status(error));
 }
 
+void APS5_VABI ucasemap_close_nid_postfix(Icu::CaseMap* caseMap) {
+    ucasemap_close(reinterpret_cast<UCaseMap*>(caseMap));
+}
+
+const char* APS5_VABI ucasemap_getLocale_nid_postfix(const Icu::CaseMap* caseMap) {
+    if (!caseMap) APS5_INVALID_ARG_EX;
+    return ucasemap_getLocale(reinterpret_cast<const UCaseMap*>(caseMap));
+}
+
+std::uint32_t APS5_VABI ucasemap_getOptions_nid_postfix(const Icu::CaseMap* caseMap) {
+    if (!caseMap) APS5_INVALID_ARG_EX;
+    return ucasemap_getOptions(reinterpret_cast<const UCaseMap*>(caseMap));
+}
+
+void APS5_VABI ucasemap_setLocale_nid_postfix(Icu::CaseMap* caseMap, const char* locale, std::int32_t* error) {
+    if (!caseMap) APS5_INVALID_ARG_EX;
+    ucasemap_setLocale(reinterpret_cast<UCaseMap*>(caseMap), locale, &Status(error));
+}
+
+void APS5_VABI ucasemap_setOptions_nid_postfix(Icu::CaseMap* caseMap, std::uint32_t options, std::int32_t* error) {
+    if (!caseMap) APS5_INVALID_ARG_EX;
+    ucasemap_setOptions(reinterpret_cast<UCaseMap*>(caseMap), options, &Status(error));
+}
+
+std::int32_t APS5_VABI ucasemap_utf8ToLower_nid_postfix(const Icu::CaseMap* caseMap, char* destination,
+                                                        std::int32_t capacity, const char* source,
+                                                        std::int32_t length, std::int32_t* error) {
+    if (!caseMap) APS5_INVALID_ARG_EX;
+    return ucasemap_utf8ToLower(reinterpret_cast<const UCaseMap*>(caseMap), destination, capacity, source, length,
+                               &Status(error));
+}
+
 }

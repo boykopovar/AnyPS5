@@ -131,6 +131,7 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/resource.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
     ${ICU_SOURCE_DIR}/common/uloc.cpp
+    ${ICU_SOURCE_DIR}/common/ulocale.cpp
     ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
     ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
     ${ICU_SOURCE_DIR}/common/uresbund.cpp

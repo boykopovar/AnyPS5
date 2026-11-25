@@ -298,7 +298,45 @@ void TestUtf8CaseMap() {
               "ucasemap_utf8FoldCase");
     ExpectInt(error, Success, "ucasemap_utf8FoldCase status");
     Expect(std::string(buffer) == "strasse", "ucasemap_utf8FoldCase result");
+    Expect(std::string(ucasemap_getLocale_nid_postfix(caseMap)) == "tr", "ucasemap_getLocale");
+    ExpectInt(ucasemap_getOptions_nid_postfix(caseMap), 0, "ucasemap_getOptions");
+    error = Success;
+    ExpectInt(ucasemap_utf8ToLower_nid_postfix(caseMap, buffer, 64, "I", -1, &error), 2,
+              "ucasemap_utf8ToLower(tr)");
+    Expect(error == Success && std::string(buffer) == "\xC4\xB1", "ucasemap_utf8ToLower(tr) result");
+    ucasemap_setLocale_nid_postfix(caseMap, "en", &error);
+    Expect(error == Success && std::string(ucasemap_getLocale_nid_postfix(caseMap)) == "en", "ucasemap_setLocale");
+    ExpectInt(ucasemap_utf8ToLower_nid_postfix(caseMap, buffer, 64, "I", -1, &error), 1,
+              "ucasemap_utf8ToLower(en)");
+    Expect(std::string(buffer) == "i", "ucasemap_utf8ToLower(en) result");
+    ucasemap_setOptions_nid_postfix(caseMap, ExcludeSpecialI, &error);
+    ExpectInt(ucasemap_getOptions_nid_postfix(caseMap), ExcludeSpecialI, "ucasemap_setOptions");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_getLocale_nid_postfix(nullptr); }, "ucasemap_getLocale null");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_getOptions_nid_postfix(nullptr); }, "ucasemap_getOptions null");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_setLocale_nid_postfix(nullptr, "en", nullptr); },
+                                       "ucasemap_setLocale null");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_setOptions_nid_postfix(nullptr, 0, nullptr); },
+                                       "ucasemap_setOptions null");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_utf8ToLower_nid_postfix(nullptr, nullptr, 0, "", 0, nullptr); },
+                                       "ucasemap_utf8ToLower null");
+    ucasemap_close_nid_postfix(caseMap);
+    ucasemap_close_nid_postfix(nullptr);
     ExpectThrow<std::invalid_argument>([] { ucasemap_open_nid_postfix("", 0, nullptr); }, "ucasemap_open null status");
+}
+
+void TestReverseBidi() {
+    char16_t reversed[16] = {};
+    std::int32_t error = Success;
+    ExpectInt(ubidi_writeReverse_nid_postfix(u"abc \u05d0\u05d1", 6, reversed, 16, 0, &error), 6,
+              "ubidi_writeReverse");
+    ExpectInt(error, Success, "ubidi_writeReverse status");
+    Expect(std::u16string(reversed) == u"\u05d1\u05d0 cba", "ubidi_writeReverse result");
+    error = Success;
+    ExpectInt(ubidi_writeReverse_nid_postfix(u"abc", 3, nullptr, 0, 0, &error), 3,
+              "ubidi_writeReverse preflight");
+    ExpectInt(error, BufferOverflow, "ubidi_writeReverse preflight status");
+    ExpectThrow<std::invalid_argument>([] { ubidi_writeReverse_nid_postfix(u"a", 1, nullptr, 0, 0, nullptr); },
+                                       "ubidi_writeReverse null status");
 }
 
 }
@@ -311,5 +349,6 @@ int main() {
     TestCaseMapEdits();
     TestComparison();
     TestUtf8CaseMap();
+    TestReverseBidi();
     std::puts("ICU case mapping tests passed");
 }

@@ -33,6 +33,7 @@
 #include "ScriptCode.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
+#include "ULocale.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
 #include "Normalizer2Accessors.hpp"

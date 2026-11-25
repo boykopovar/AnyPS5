@@ -487,4 +487,27 @@ std::int32_t APS5_VABI ubidi_writeReordered_nid_postfix(Icu::BiDi* bidi, char16_
     return length;
 }
 
+std::int32_t APS5_VABI ubidi_writeReverse_nid_postfix(const char16_t* source, std::int32_t sourceLength,
+                                                       char16_t* destination, std::int32_t capacity,
+                                                       std::uint16_t options, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return 0;
+    if (capacity < 0 || (!destination && capacity > 0)) {
+        const auto length = ubidi_writeReverse(source, sourceLength, destination, capacity, options, &status);
+        LeaveStatus(error, status, previous, __func__);
+        return length;
+    }
+    std::vector<char16_t> hostDestination(static_cast<std::size_t>(capacity));
+    const auto length = ubidi_writeReverse(source, sourceLength, hostDestination.data(), capacity, options, &status);
+    const auto written = std::min<std::int32_t>(capacity, length < capacity ? length + 1 : length);
+    if (written > 0 &&
+        !GuestCopyOut_nid_no_patch(destination, hostDestination.data(), static_cast<std::size_t>(written) * sizeof(char16_t))) {
+        throw std::runtime_error(__func__);
+    }
+    LeaveStatus(error, status, previous, __func__);
+    return length;
+}
+
 }

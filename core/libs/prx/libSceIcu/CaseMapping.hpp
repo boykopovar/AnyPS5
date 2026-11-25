@@ -23,4 +23,11 @@ std::int32_t APS5_VABI ucasemap_utf8FoldCase_nid_postfix(const Icu::CaseMap*, ch
                                                          std::int32_t, std::int32_t*);
 std::int32_t APS5_VABI ucasemap_utf8ToUpper_nid_postfix(const Icu::CaseMap*, char*, std::int32_t, const char*,
                                                         std::int32_t, std::int32_t*);
+void APS5_VABI ucasemap_close_nid_postfix(Icu::CaseMap*);
+const char* APS5_VABI ucasemap_getLocale_nid_postfix(const Icu::CaseMap*);
+std::uint32_t APS5_VABI ucasemap_getOptions_nid_postfix(const Icu::CaseMap*);
+void APS5_VABI ucasemap_setLocale_nid_postfix(Icu::CaseMap*, const char*, std::int32_t*);
+void APS5_VABI ucasemap_setOptions_nid_postfix(Icu::CaseMap*, std::uint32_t, std::int32_t*);
+std::int32_t APS5_VABI ucasemap_utf8ToLower_nid_postfix(const Icu::CaseMap*, char*, std::int32_t, const char*,
+                                                        std::int32_t, std::int32_t*);
 }
