@@ -22,7 +22,6 @@
 #include <string_view>
 #include <utility>
 #include "prx/libSceIcu/include/LegacyExports.hpp"
-#include <cerrno>
 #include <limits>
 
 namespace {
@@ -121,9 +120,7 @@ bool CopyLocaleId(const char* source, std::string& copied) {
     constexpr int GuestNameTooLong = 63;
     constexpr std::size_t maxSize = std::numeric_limits<std::int32_t>::max();
     for (std::size_t size = 256;; size = std::min(size * 2, maxSize)) {
-        const int savedErrno = errno;
         const int error = CopyGuestString_nid_no_patch(source, size, copied);
-        errno = savedErrno;
         if (error == 0) return true;
         if (error == GuestOutOfMemory) return false;
         if (error != GuestNameTooLong) NotImplemented_nid_no_patch("uloc_setDefault: unreadable locale ID");
@@ -133,9 +130,7 @@ bool CopyLocaleId(const char* source, std::string& copied) {
 
 bool ResolveName(const char* id, std::string& resolved) {
     std::int32_t status = 0;
-    const int savedErrno = errno;
     const std::int32_t length = uloc_getName_nid_postfix(id, nullptr, 0, &status);
-    errno = savedErrno;
     if ((status > 0 && status != Icu::BufferOverflow) || length < 0) return false;
     if (length == 0) {
         resolved.clear();
@@ -145,7 +140,6 @@ bool ResolveName(const char* id, std::string& resolved) {
     resolved.assign(static_cast<std::size_t>(length) + 1, '\0');
     status = 0;
     const std::int32_t written = uloc_getName_nid_postfix(id, resolved.data(), length + 1, &status);
-    errno = savedErrno;
     if (status > 0 || written < 0 || written > length) return false;
     resolved.resize(static_cast<std::size_t>(written));
     return true;
@@ -164,9 +158,7 @@ extern "C" {
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status) {
     Icu::RequireStatus(status);
     std::int32_t incoming = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&incoming, status, sizeof(incoming));
-    errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch("uloc_setDefault: unreadable UErrorCode");
     if (incoming > 0) return;
     if (!newDefaultLocale) {
