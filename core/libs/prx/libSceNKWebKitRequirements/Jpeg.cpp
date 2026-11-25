@@ -2,7 +2,6 @@
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cerrno>
 #include <stdexcept>
 #include <cstddef>
 #include <cstdint>
@@ -403,9 +402,7 @@ NKWebKit::GuestJpegErrorMgr* APS5_VABI jpeg_std_error_nid_postfix(NKWebKit::Gues
     localErr.first_addon_message = 0;
     localErr.last_addon_message = 0;
 
-    const int savedErrno = errno;
     const bool copiedOut = GuestCopyOut_nid_no_patch(err, &localErr, sizeof(localErr));
-    errno = savedErrno;
     if (!copiedOut) throw std::invalid_argument("libjpeg: unwritable error manager");
     return err;
 }
@@ -595,12 +592,10 @@ int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* 
     int ret = 0;
     SyncGuestToHost(b);
     int32_t unreadMarker = 0;
-    const int savedErrno = errno;
     const bool copiedIn = GuestCopyIn_nid_no_patch(
         &unreadMarker,
         reinterpret_cast<const std::byte*>(cinfo) + offsetof(NKWebKit::GuestJpegDecompress, unread_marker),
         sizeof(unreadMarker));
-    errno = savedErrno;
     if (!copiedIn) throw std::invalid_argument("libjpeg: unreadable decompression object");
     b->host_cinfo.unread_marker = unreadMarker;
     if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
