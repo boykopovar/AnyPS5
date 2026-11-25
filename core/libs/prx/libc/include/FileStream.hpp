@@ -743,6 +743,23 @@ inline FileStreamLease_nid_no_patch AcquireFileStreamLease_nid_no_patch(FileStre
     return FileStreamLease_nid_no_patch(pinned, std::move(gate));
 }
 
+class FileStreamOperation_nid_no_patch {
+    FileStreamLease_nid_no_patch _lease;
+    std::unique_lock<std::recursive_mutex> _lock;
+public:
+    explicit FileStreamOperation_nid_no_patch(FileStream* stream)
+        : _lease(AcquireFileStreamLease_nid_no_patch(stream, true)) {
+        if (_lease.Valid()) _lock = std::unique_lock<std::recursive_mutex>(*_lease.Gate());
+    }
+    FileStreamOperation_nid_no_patch(const FileStreamOperation_nid_no_patch&) = delete;
+    FileStreamOperation_nid_no_patch& operator=(const FileStreamOperation_nid_no_patch&) = delete;
+    bool Valid() const { return _lease.Valid(); }
+    bool Open() const { return Valid() && _lease.Stream()->IsOpen(); }
+    void Require(const char* function) const {
+        if (!Valid()) throw std::runtime_error(std::string(function) + ": null or closed stream");
+    }
+};
+
 extern "C" {
 extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;

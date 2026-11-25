@@ -99,11 +99,14 @@ __asm__(".globl \"_thread_autoinit_dummy_decl_stub_nid_postfix\"\n\t"
 #endif
 
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    operation.Require(__func__);
     return stream->Orientation(mode);
 }
 
 int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     const int previousError = errno;
@@ -122,6 +125,8 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
         errno = 22;
         return -1;
     }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Valid()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (const char16_t low = stream->TakeLowSurrogate(); low != 0) return low;
     stream->NoteWideRead();
@@ -152,7 +157,8 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (value == -1) return -1;
     if (value < 0 || value > 0xffff) {
@@ -221,7 +227,8 @@ int APS5_VABI getchar_nid_postfix() { return fgetc_nid_postfix(__stdinp_nid_post
 char* APS5_VABI gets_nid_postfix(char* buffer) {
     if (buffer == nullptr) throw std::invalid_argument("gets: null buffer");
     auto* stream = __stdinp_nid_postfix;
-    if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return nullptr; }
     flockfile_nid_postfix(stream);
 
     struct Unlock {
@@ -247,7 +254,8 @@ std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
@@ -283,7 +291,8 @@ int APS5_VABI __swbuf_nid_postfix(int value, FileStream* stream) { return fputc_
 int APS5_VABI putchar_nid_postfix(int value) { return fputc_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
     static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
@@ -299,7 +308,8 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     if (size < 2) return nullptr;
-    if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
     const int previousError = errno;
@@ -314,10 +324,14 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     return result;
 }
 int APS5_VABI feof_nid_postfix(FileStream* stream) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    operation.Require(__func__);
     stream->SyncStatus();
     return (stream->GuestState().flags & 0x20) != 0;
 }
 int APS5_VABI ferror_nid_postfix(FileStream* stream) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    operation.Require(__func__);
     stream->SyncStatus();
     return (stream->GuestState().flags & 0x40) != 0;
 }
@@ -332,9 +346,11 @@ int APS5_VABI ferror_unlocked_nid_postfix(FileStream* stream) {
     return (stream->GuestState().flags & 0x40) != 0;
 }
 void APS5_VABI clearerr_nid_postfix(FileStream* stream) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    operation.Require(__func__);
     stream->ClearError();
 }
-int APS5_VABI fileno_nid_postfix(FileStream* stream) {
+static int StreamDescriptor(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
 #ifdef _WIN32
     const int descriptor = _fileno(GetNativeStream(stream));
@@ -344,18 +360,24 @@ int APS5_VABI fileno_nid_postfix(FileStream* stream) {
     stream->GuestState().descriptor = static_cast<std::int16_t>(descriptor);
     return descriptor;
 }
+int APS5_VABI fileno_nid_postfix(FileStream* stream) {
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Valid()) { errno = 9; return -1; }
+    return StreamDescriptor(stream);
+}
 void APS5_VABI clearerr_unlocked_nid_postfix(FileStream* stream) {
     stream->ClearError();
 }
 int APS5_VABI fileno_unlocked_nid_postfix(FileStream* stream) {
     if (stream == nullptr || !stream->IsOpen()) return -1;
-    return fileno_nid_postfix(stream);
+    return StreamDescriptor(stream);
 }
 [[noreturn]] char* APS5_VABI fgetln_nid_postfix(FileStream*, std::size_t*) {
     throw std::runtime_error("fgetln: the console's export is a hlt instruction, which ends the process");
 }
 int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, std::size_t size) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
     if (native != _IONBF && (size & 0x80000000u) != 0) return -1;

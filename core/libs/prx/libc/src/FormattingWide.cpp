@@ -393,7 +393,8 @@ int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const
 }
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
-    if (!__stdoutp_nid_postfix->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(__stdoutp_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     _Stdout_nid_postfix.Orientation(1);
     if (!__stdoutp_nid_postfix->SwitchToWriting()) return -1;
     APS5_VA_BEGIN(format);
@@ -413,7 +414,8 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
 
 int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) { errno = 22; return -1; }
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
@@ -443,7 +445,8 @@ int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
 
 int APS5_VABI vfwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
@@ -478,7 +481,8 @@ int APS5_VABI wprintf_s_nid_postfix(const char16_t* format, ...) {
 
 int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     stream->Orientation(1);
     try {
         const std::string bytes = ToUtf8(std::u16string(1, value));
@@ -500,7 +504,8 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
 
 int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
     if (str == nullptr || stream == nullptr) { errno = 22; return -1; }
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     stream->Orientation(1);
     try {
         const std::u16string text(str);
@@ -531,6 +536,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
     if (size < 2) return nullptr;
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Valid()) { errno = 9; return nullptr; }
     if (stream != nullptr) stream->Orientation(1);
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();

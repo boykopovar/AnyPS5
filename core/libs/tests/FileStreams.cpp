@@ -1461,6 +1461,60 @@ static int FcloseallFcloseRaceChild(const std::string& base) {
     return 0;
 }
 
+static int FcloseallReadInProgressChild() {
+    int descriptors[2];
+#ifdef _WIN32
+    if (::_pipe(descriptors, 4096, _O_BINARY) != 0) return 60;
+    std::FILE* const native = ::_fdopen(descriptors[0], "rb");
+#else
+    if (::pipe(descriptors) != 0) return 60;
+    std::FILE* const native = ::fdopen(descriptors[0], "rb");
+#endif
+    if (!native) return 61;
+    FileStream* const reading = new FileStream(native, true);
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(10)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 69);
+#else
+        ::_exit(69);
+#endif
+    });
+    watchdog.detach();
+    std::array<char, 4> buffer{};
+    auto read = std::async(std::launch::async, [&] { return fread_nid_postfix(buffer.data(), 1, buffer.size(), reading); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    for (;;) {
+        if (ftrylockfile_nid_postfix(reading) != 0) break;
+        funlockfile_nid_postfix(reading);
+        if (std::chrono::steady_clock::now() > deadline) return 62;
+        std::this_thread::yield();
+    }
+    auto closed = std::async(std::launch::async, [] { fcloseall_nid_postfix(); });
+    if (closed.wait_for(std::chrono::milliseconds(200)) != std::future_status::timeout) return 63;
+    if (!reading->IsOpen()) return 64;
+    constexpr char payload[] = "data";
+#ifdef _WIN32
+    if (::_write(descriptors[1], payload, 4) != 4) return 65;
+#else
+    if (::write(descriptors[1], payload, 4) != 4) return 65;
+#endif
+    if (read.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 66;
+    if (read.get() != buffer.size() || std::memcmp(buffer.data(), payload, buffer.size()) != 0) return 67;
+    if (closed.wait_for(std::chrono::seconds(3)) != std::future_status::ready) return 68;
+    closed.get();
+    errno = 0;
+    if (fread_nid_postfix(buffer.data(), 1, buffer.size(), reading) != 0 || errno != 9) return 70;
+#ifdef _WIN32
+    ::_close(descriptors[1]);
+#else
+    ::close(descriptors[1]);
+#endif
+    finished.set_value();
+    return 0;
+}
+
 static int FreopenLockChild(const std::string& base) {
     const std::string lockedPath = base + ".freopen.locked";
     const std::string reopenPath = base + ".freopen.target";
@@ -2063,6 +2117,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-closed-host-standard-child") == 0) return FcloseallClosedHostStandardChild();
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-exhausted-host-standard-child") == 0) return FcloseallExhaustedHostStandardChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-fclose-race-child") == 0) return FcloseallFcloseRaceChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-read-in-progress-child") == 0) return FcloseallReadInProgressChild();
     if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--owner-locked-close-child") == 0) return OwnerLockedCloseChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
@@ -2218,6 +2273,8 @@ int main(int argc, char** argv) {
     Require(exhaustedHostStandard == 0, "fcloseall with exhausted host stream slots child failed");
     const int raceResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-fclose-race-child");
     Require(raceResult == 0, "fcloseall racing fclose child failed");
+    const int readInProgress = RunFcloseallChild(argv[0], argv[1], "--fcloseall-read-in-progress-child");
+    Require(readInProgress == 0, "fcloseall waiting for an in-progress read child failed");
     const int freopenLock = RunFcloseallChild(argv[0], argv[1], "--freopen-lock-child");
     Require(freopenLock == 0, "freopen locked-stream child failed");
     const int freopenAliases = RunFcloseallChild(argv[0], argv[1], "--freopen-aliases-child");
