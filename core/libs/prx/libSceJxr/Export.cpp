@@ -95,9 +95,24 @@ TSlot Slot(TFunction* function) {
     return reinterpret_cast<TSlot>(function);
 }
 
-std::int64_t AllocateZeroed(void** out, std::size_t size) {
-    *out = calloc_nid_postfix(1, size);
-    return *out ? WmpErrSuccess : WmpErrOutOfMemory;
+std::int64_t AllocateZeroed(void** out, std::size_t size, void** createdOut = nullptr) {
+    if (!out) APS5_INVALID_ARG_EX;
+    void* existing = nullptr;
+    const int probeErrno = errno;
+    const bool probed = GuestCopyIn_nid_no_patch(&existing, out, sizeof(existing)) &&
+        GuestCopyOut_nid_no_patch(out, &existing, sizeof(existing));
+    errno = probeErrno;
+    if (!probed) APS5_INVALID_ARG_EX;
+    void* allocated = calloc_nid_postfix(1, size);
+    const int writeErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(out, &allocated, sizeof(allocated));
+    errno = writeErrno;
+    if (!written) {
+        free_nid_postfix(allocated);
+        APS5_INVALID_ARG_EX;
+    }
+    if (createdOut) *createdOut = allocated;
+    return allocated ? WmpErrSuccess : WmpErrOutOfMemory;
 }
 
 std::int64_t APS5_VABI CreateStreamFromFilename_nid_no_patch(Jxr::Stream**, const char*, const char*) {
@@ -114,9 +129,17 @@ extern "C" {
 APS5_DUMMY_FUN
 std::int64_t APS5_VABI PKFree_nid_postfix(void** memory) {
     if (memory != nullptr) {
-        free_nid_postfix(*memory);
-
-        *memory = nullptr;
+        void* target = nullptr;
+        const int readErrno = errno;
+        const bool readOk = GuestCopyIn_nid_no_patch(&target, memory, sizeof(target));
+        errno = readErrno;
+        if (!readOk) APS5_INVALID_ARG_EX;
+        void* cleared = nullptr;
+        const int writeErrno = errno;
+        const bool writeOk = GuestCopyOut_nid_no_patch(memory, &cleared, sizeof(cleared));
+        errno = writeErrno;
+        if (!writeOk) APS5_INVALID_ARG_EX;
+        free_nid_postfix(target);
     }
     return WmpErrSuccess;
 }
@@ -159,9 +182,10 @@ std::int64_t APS5_VABI writeIS_nid_postfix(void*, Jxr::BitIo* io) {
 
 std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
-    const auto result = WMPAlloc_nid_postfix(reinterpret_cast<void**>(stream), sizeof(Jxr::Stream));
+    void* raw = nullptr;
+    const auto result = AllocateZeroed(reinterpret_cast<void**>(stream), sizeof(Jxr::Stream), &raw);
     if (result < 0) return result;
-    auto* created = *stream;
+    auto* created = static_cast<Jxr::Stream*>(raw);
     created->state[MemoryBuffer] = reinterpret_cast<std::uintptr_t>(buffer);
     created->state[MemorySize] = size;
     created->state[MemoryPosition] = 0;
@@ -216,9 +240,10 @@ int APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix() {
 
 std::int64_t APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix(void** converter) {
     if (!converter) APS5_INVALID_ARG_EX;
-    const auto result = AllocateZeroed(converter, sizeof(Jxr::FormatConverter));
+    void* raw = nullptr;
+    const auto result = AllocateZeroed(converter, sizeof(Jxr::FormatConverter), &raw);
     if (result != WmpErrSuccess) return result;
-    auto* value = static_cast<Jxr::FormatConverter*>(*converter);
+    auto* value = static_cast<Jxr::FormatConverter*>(raw);
     value->initialize = Slot<decltype(value->initialize)>(&PKFormatConverter_Initialize_nid_postfix);
     value->initializeConvert = Slot<decltype(value->initializeConvert)>(&PKFormatConverter_InitializeConvert_nid_postfix);
     value->getPixelFormat = Slot<decltype(value->getPixelFormat)>(&PKFormatConverter_GetPixelFormat_nid_postfix);
@@ -258,9 +283,10 @@ std::int64_t APS5_VABI PKCreateFactory_Release_nid_postfix(void** factory) {
 
 std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t) {
     if (!factory) APS5_INVALID_ARG_EX;
-    const auto result = AllocateZeroed(factory, sizeof(Jxr::Factory));
+    void* raw = nullptr;
+    const auto result = AllocateZeroed(factory, sizeof(Jxr::Factory), &raw);
     if (result != WmpErrSuccess) return result;
-    auto* value = static_cast<Jxr::Factory*>(*factory);
+    auto* value = static_cast<Jxr::Factory*>(raw);
     value->createStream = Slot<decltype(value->createStream)>(&PKCreateFactory_CreateStream_nid_postfix);
     value->createStreamFromFilename = &CreateStreamFromFilename_nid_no_patch;
     value->createStreamFromMemory = Slot<decltype(value->createStreamFromMemory)>(&CreateWS_Memory_nid_postfix);

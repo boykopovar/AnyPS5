@@ -99,15 +99,20 @@ std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* str
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream) {
     Require(io != nullptr, __func__, "null bit state");
     Jxr::BitIo guestIo{};
+    const int ioReadErrno = errno;
     const bool copiedIo = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));
+    errno = ioReadErrno;
     Require(copiedIo, __func__, "unreadable bit state");
     Require(stream != nullptr, __func__, "null stream");
     Jxr::Stream guestStream{};
+    const int streamReadErrno = errno;
     const bool copiedStream = GuestCopyIn_nid_no_patch(&guestStream, stream, sizeof(guestStream));
+    errno = streamReadErrno;
     Require(copiedStream && guestStream.getPosition != nullptr, __func__, "missing stream position callback");
     const auto address = reinterpret_cast<std::uintptr_t>(io);
     Require(address >= 8192, __func__, "bit state address underflows the packet buffer");
-    guestStream.getPosition(stream, &io->referenceOffset);
+    auto* const referenceOffset = reinterpret_cast<std::size_t*>(address + offsetof(Jxr::BitIo, referenceOffset));
+    guestStream.getPosition(stream, referenceOffset);
     guestIo.start = reinterpret_cast<std::uint8_t*>(address - 8192);
     guestIo.current = guestIo.start;
     guestIo.accumulator = 0;
@@ -116,7 +121,7 @@ std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* st
     guestIo.stream = stream;
     const int ioWriteErrno = errno;
     const bool wroteIo = GuestCopyOut_nid_no_patch(
-        &io->accumulator,
+        reinterpret_cast<void*>(address + offsetof(Jxr::BitIo, accumulator)),
         &guestIo.accumulator,
         offsetof(Jxr::BitIo, referenceOffset) - offsetof(Jxr::BitIo, accumulator));
     errno = ioWriteErrno;
