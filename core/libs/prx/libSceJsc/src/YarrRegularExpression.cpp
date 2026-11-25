@@ -306,14 +306,6 @@ bool APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv(const RegularExpressio
     return Checked(self, "JSC::Yarr::RegularExpression::isValid: null this").d->regExpByteCode != nullptr;
 }
 
-void APS5_VABI JscRegularExpressionConstruct_nid_no_patch(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
-    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode);
-}
-
-int APS5_VABI JscRegularExpressionMatch_nid_no_patch(const RegularExpression* self, const StringReference* string, int startFrom, int* matchLength) {
-    return _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi(self, string, startFrom, matchLength);
-}
-
 void APS5_VABI JscRegularExpressionRelease_nid_no_patch(RegularExpressionPrivate* d) {
     if (!d) return;
     if (d->refCount != 1) {
