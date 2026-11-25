@@ -1908,6 +1908,57 @@ int main() {
     Require(flock_nid_postfix(contender, 1 | 4) == -1 && *__error_nid_postfix() == 35);
     Require(flock_nid_postfix(holder, 8) == 0);
     Require(close_nid_postfix(contender) == 0 && close_nid_postfix(holder) == 0);
+    {
+        const auto lockedFile = root / "open-lock.txt";
+        const auto lockedName = lockedFile.string();
+        constexpr int sharedNonblocking = SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_NONBLOCK;
+        constexpr int exclusiveNonblocking = SCE_KERNEL_O_EXLOCK | SCE_KERNEL_O_NONBLOCK;
+        const int writer = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXLOCK, 0644);
+        Require(writer >= 0 && write_nid_postfix(writer, "lock", 4) == 4);
+        const int spare = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY, 0);
+        Require(spare >= 0 && flock_nid_postfix(spare, 1 | 4) == -1 && *__error_nid_postfix() == 35);
+        Require(close_nid_postfix(spare) == 0);
+        Require(open_nid_postfix(lockedName.c_str(), sharedNonblocking, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(_open_nid_postfix(lockedName.c_str(), sharedNonblocking) == -1 && *__error_nid_postfix() == 35);
+        Require(sceKernelOpen(lockedName.c_str(), sharedNonblocking | SCE_KERNEL_O_EXLOCK, 0) == static_cast<int>(0x80020023u));
+        Require(sceKernelOpen(lockedName.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_TRUNC | exclusiveNonblocking, 0) == static_cast<int>(0x80020023u));
+        Require(std::filesystem::file_size(lockedFile) == 4);
+        const int reused = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY, 0);
+        Require(reused == spare && close_nid_postfix(reused) == 0);
+        Require(close_nid_postfix(writer) == 0);
+        const int first = open_nid_postfix(lockedName.c_str(), sharedNonblocking, 0);
+        const int second = sceKernelOpen(lockedName.c_str(), sharedNonblocking, 0);
+        Require(first >= 0 && second >= 0);
+        Require(open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDWR | exclusiveNonblocking, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(open_nid_postfix(lockedName.c_str(), sharedNonblocking | SCE_KERNEL_O_EXLOCK, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(close_nid_postfix(first) == 0 && sceKernelClose(second) == 0);
+        const int truncating = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_TRUNC | exclusiveNonblocking, 0);
+        Require(truncating >= 0 && std::filesystem::file_size(lockedFile) == 0);
+        Require(open_nid_postfix(lockedName.c_str(), sharedNonblocking, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(close_nid_postfix(truncating) == 0);
+        const int directoryShared = open_nid_postfix(rootName.c_str(), sharedNonblocking, 0);
+        const int directoryOther = open_nid_postfix(rootName.c_str(), sharedNonblocking, 0);
+        Require(directoryShared >= 0 && directoryOther >= 0);
+        Require(open_nid_postfix(rootName.c_str(), SCE_KERNEL_O_RDONLY | exclusiveNonblocking, 0) == -1 && *__error_nid_postfix() == 35);
+        Require(close_nid_postfix(directoryShared) == 0 && close_nid_postfix(directoryOther) == 0);
+        const int directoryExclusive = open_nid_postfix(rootName.c_str(), SCE_KERNEL_O_RDONLY | exclusiveNonblocking, 0);
+        Require(directoryExclusive >= 0 && close_nid_postfix(directoryExclusive) == 0);
+        bool truncateThrew = false;
+        try {
+            open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | SCE_KERNEL_O_SHLOCK, 0);
+        } catch (const std::runtime_error&) {
+            truncateThrew = true;
+        }
+        Require(truncateThrew);
+        constexpr int readTruncateShared = SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | SCE_KERNEL_O_SHLOCK;
+        const int probe = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY, 0);
+        Require(probe >= 0 && close_nid_postfix(probe) == 0);
+        Require(open_nid_postfix(missingName.c_str(), readTruncateShared, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(open_nid_postfix(rootName.c_str(), readTruncateShared, 0) == -1 && *__error_nid_postfix() == 21);
+        const int afterRefusals = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDWR | exclusiveNonblocking, 0);
+        Require(afterRefusals == probe && close_nid_postfix(afterRefusals) == 0);
+        Require(unlink_nid_postfix(lockedName.c_str()) == 0);
+    }
     Require(open_nid_postfix(missingName.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 2);
     Require(_open_nid_postfix(missingName.c_str(), 0) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelOpen(missingName.c_str(), 0, 0) == static_cast<int>(0x80020002u));

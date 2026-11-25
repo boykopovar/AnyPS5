@@ -2123,6 +2123,17 @@ int main() {
     byte = 0;
     Require(aliased >= 0 && sceKernelRead(aliased, &byte, 1) == 1 && byte == 'x');
     Require(sceKernelClose(aliased) == 0);
+    constexpr int sharedNonblocking = SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_NONBLOCK;
+    const int lockedAt = openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_EXLOCK);
+    Require(lockedAt >= 0);
+    Require(openat_nid_postfix(base, "file.txt", sharedNonblocking) == -1 && Error() == 35);
+    Require(_openat_nid_postfix(base, "file.txt", sharedNonblocking) == -1 && Error() == 35);
+    Require(sceKernelClose(lockedAt) == 0);
+    const int sharedAt = openat_nid_postfix(base, "file.txt", sharedNonblocking);
+    const int otherSharedAt = _openat_nid_postfix(base, "file.txt", sharedNonblocking);
+    Require(sharedAt >= 0 && otherSharedAt >= 0);
+    Require(openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_EXLOCK | SCE_KERNEL_O_NONBLOCK) == -1 && Error() == 35);
+    Require(sceKernelClose(sharedAt) == 0 && sceKernelClose(otherSharedAt) == 0);
     const int aliasMade = _openat_nid_postfix(base, "alias.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0600);
     Require(aliasMade >= 0 && sceKernelClose(aliasMade) == 0 && std::filesystem::is_regular_file(root / "alias.bin"));
 #ifndef _WIN32
