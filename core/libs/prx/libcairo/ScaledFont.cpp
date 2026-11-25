@@ -3,7 +3,6 @@
 
 #include <CairoBackend.h>
 
-#include <cerrno>
 #include <cstddef>
 #include <string>
 
@@ -35,9 +34,7 @@ void CopyResult(void* destination, const void* source, std::size_t size, const c
 
 const char* CheckedText(const char* guest, std::string& copy) {
     if (guest == nullptr) return nullptr;
-    const int savedErrno = errno;
     const int copied = CopyGuestString_nid_no_patch(guest, MaximumGuestText, copy);
-    errno = savedErrno;
     if (copied != 0) NotImplementedAt_nid_no_patch("cairo_scaled_font_text_extents: unreadable or unterminated UTF-8",
                                                    __FILE__, __LINE__);
     return copy.c_str();
