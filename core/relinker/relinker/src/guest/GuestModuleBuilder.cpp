@@ -1,4 +1,5 @@
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
@@ -31,10 +32,8 @@ std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const Guest
     for (const auto* table : {&image.Dynamic.RelaPltData, &image.Dynamic.RelaData}) {
         for (std::size_t position = 0; position + 24 <= table->size(); position += 24) {
             const auto info = Io::ReadU64(*table, position + 8);
-            const auto relType = static_cast<std::uint32_t>(info);
-            if (relType != Elfpatcher::R_X86_64_JUMP_SLOT &&
-                relType != Elfpatcher::R_X86_64_GLOB_DAT &&
-                relType != Elfpatcher::R_X86_64_64) {
+            const unsigned rank = PathconfRelocationRank(static_cast<std::uint32_t>(info));
+            if (rank == 0) {
                 continue;
             }
             const auto addend = static_cast<std::int64_t>(Io::ReadU64(*table, position + 16));
@@ -46,29 +45,15 @@ std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const Guest
                 continue;
             }
             const auto& symbol = image.Symbols[symbolIndex];
-            if (symbol.Section != 0) {
+            if (symbol.Section != 0 || !IsPathconfImportSymbolType(symbol.Info & 0x0F) || !IsPathconfImportLibrary(symbol.Library) || !IsPathconfImportName(symbol.Name)) {
                 continue;
             }
-            const auto symType = symbol.Info & 0x0F;
-            if (symType != Elfpatcher::STT_FUNC && symType != Elfpatcher::STT_NOTYPE) {
-                continue;
+            const auto target = Io::ReadU64(*table, position);
+            if (rank == 3) {
+                return target;
             }
-            if (!symbol.Library.empty() && !symbol.Library.starts_with("libkernel")) {
-                continue;
-            }
-            std::string_view name = symbol.Name;
-            const auto hashPos = name.find('#');
-            if (hashPos != std::string_view::npos) {
-                name = name.substr(0, hashPos);
-            }
-            if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
-                const auto target = Io::ReadU64(*table, position);
-                if (relType == Elfpatcher::R_X86_64_JUMP_SLOT) {
-                    return target;
-                }
-                if (!candidate) {
-                    candidate = target;
-                }
+            if (!candidate) {
+                candidate = target;
             }
         }
     }

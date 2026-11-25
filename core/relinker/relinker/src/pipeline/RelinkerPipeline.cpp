@@ -1,5 +1,6 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
@@ -33,30 +34,13 @@ constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs) {
     const NidReference* candidate = nullptr;
     for (const auto& ref : nidRefs) {
-        if (!ref.Library.empty() && !ref.Library.starts_with("libkernel")) {
+        if (ref.Addend != 0 || !IsPathconfImportLibrary(ref.Library) || !IsPathconfImportSymbolType(ref.SymbolType) || !IsPathconfImportName(ref.Nid))
             continue;
-        }
-        std::string_view name = ref.Nid;
-        const auto hashPos = name.find('#');
-        if (hashPos != std::string_view::npos) {
-            name = name.substr(0, hashPos);
-        }
-        if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
-            if (ref.Addend != 0) {
-                continue;
-            }
-            if (ref.SymbolType != STT_FUNC && ref.SymbolType != STT_NOTYPE) {
-                continue;
-            }
-            if (ref.RelocationTypeValue == R_X86_64_JUMP_SLOT) {
-                return &ref;
-            }
-            if (ref.RelocationTypeValue == R_X86_64_GLOB_DAT || ref.RelocationTypeValue == R_X86_64_64) {
-                if (!candidate || (candidate->RelocationTypeValue == R_X86_64_64 && ref.RelocationTypeValue == R_X86_64_GLOB_DAT)) {
-                    candidate = &ref;
-                }
-            }
-        }
+        const unsigned rank = PathconfRelocationRank(ref.RelocationTypeValue);
+        if (rank == 0)
+            continue;
+        if (!candidate || rank > PathconfRelocationRank(candidate->RelocationTypeValue))
+            candidate = &ref;
     }
     return candidate;
 }
