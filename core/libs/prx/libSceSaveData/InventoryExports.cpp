@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSaveData/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstdint>
 
 namespace {
@@ -84,9 +83,7 @@ extern "C" {
 int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg(std::uint64_t* requiredBlocks) {
     if (requiredBlocks == nullptr) return RequiredBlocksNull;
     constexpr std::uint64_t stored = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requiredBlocks, &stored, sizeof(stored));
-    errno = savedErrno;
     return copied ? 0 : RequiredBlocksNull;
 }
 
