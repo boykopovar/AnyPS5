@@ -143,16 +143,21 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         const auto exportDir = Read<PeDataDirectory>(pe, dataDirectoryOffset);
         if (exportDir.VirtualAddress == 0u) throw std::runtime_error("no export directory");
 
-        const std::size_t exportDirOffset = RvaToOffset(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const std::size_t exportDirOffset = RvaRangeToOffset(pe, exportDir.VirtualAddress, sizeof(PeExportDirectory), peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const auto exportTable = Read<PeExportDirectory>(pe, exportDirOffset);
 
         if (exportTable.NumberOfNames == 0u) throw std::runtime_error("no exported names");
 
-        const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-        const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-        if (std::uint64_t{namesArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 4u > pe.size() ||
-            std::uint64_t{ordinalsArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 2u > pe.size())
+        const auto nameRvaTableSize = std::size_t{exportTable.NumberOfNames} * sizeof(std::uint32_t);
+        const auto ordinalTableSize = std::size_t{exportTable.NumberOfNames} * sizeof(std::uint16_t);
+        std::size_t namesArrayOffset;
+        std::size_t ordinalsArrayOffset;
+        try {
+            namesArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfNames, nameRvaTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+            ordinalsArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfNameOrdinals, ordinalTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        } catch (const std::runtime_error&) {
             throw std::runtime_error("export name tables out of file bounds");
+        }
 
         std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
         std::vector<std::string> names(exportTable.NumberOfNames);
@@ -191,7 +196,8 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         };
         std::vector<Forwarder> forwarders;
         std::vector<std::uint32_t> directRvas;
-        const auto functionsArrayOffset = RvaToOffset(pe, exportTable.AddressOfFunctions, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto functionTableSize = std::size_t{exportTable.NumberOfFunctions} * sizeof(std::uint32_t);
+        const auto functionsArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfFunctions, functionTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         for (std::uint32_t index = 0u; index < exportTable.NumberOfFunctions; ++index) {
             const auto entryOffset = functionsArrayOffset + index * sizeof(std::uint32_t);
             const auto rva = Read<std::uint32_t>(pe, entryOffset);
