@@ -507,6 +507,7 @@ int APS5_VABI sceNgs2ModuleQueueEnumItems(const void* queue, void* out, std::uin
     const auto queueAddress = reinterpret_cast<std::uintptr_t>(queue);
     if (queueAddress > UINTPTR_MAX - LockOffset) return 0;
     auto* lockAddress = reinterpret_cast<std::uint32_t*>(queueAddress + LockOffset);
+    if (!GuestWritable_nid_no_patch(lockAddress, sizeof(std::uint32_t))) return 0;
     std::atomic_ref<std::uint32_t> queueLock(*lockAddress);
     std::uint32_t retries = 0;
     for (;;) {
