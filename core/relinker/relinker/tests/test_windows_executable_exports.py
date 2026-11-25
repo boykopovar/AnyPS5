@@ -13,7 +13,8 @@ from test_guest_intel_trampolines import main_fixture, pe_sections
 def fixture(symbols, tls=False):
     image = main_fixture()
     image[0x4020:0x4026] = b'\xb8\x2b\0\0\0\xc3'
-    struct.pack_into('<Q', image, 0x4f00, 0x123456789abcdef0)
+    image[0x4030:0x4036] = b'\xb8\x2c\0\0\0\xc3'
+    struct.pack_into('<QQ', image, 0x4f00, 0x123456789abcdef0, 0xfedcba9876543210)
     strings = bytearray(b'\0')
     table = bytearray(24)
     for name, info, visibility, section, value, size in symbols:
@@ -64,12 +65,14 @@ def native_lookup(output):
     module = kernel.LoadLibraryExW(str(output), None, 1)
     assert module, ctypes.get_last_error()
     try:
-        for name, value in ((b'alpha', 42), (b'weak', 43), (b'zeta', 42)):
+        for name, value in ((b'alpha', 42), (b'weak', 43), (b'zeta', 42), (b'absolute_function', 44)):
             function = kernel.GetProcAddress(module, name)
             assert function, name
             assert ctypes.WINFUNCTYPE(ctypes.c_int)(function)() == value, name
         data = kernel.GetProcAddress(module, b'data')
         assert data and ctypes.c_uint64.from_address(data).value == 0x123456789abcdef0
+        absolute_data = kernel.GetProcAddress(module, b'absolute_data')
+        assert absolute_data and ctypes.c_uint64.from_address(absolute_data).value == 0xfedcba9876543210
         assert not kernel.GetProcAddress(module, b'hidden')
     finally:
         assert kernel.FreeLibrary(module)
@@ -79,11 +82,11 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-main-exports-') as directory:
         work = Path(directory)
-        def convert(label, symbols, tls=False):
+        def convert(label, symbols, tls=False, options=()):
             source = work / (label + '.elf')
             output = work / (label + '.exe')
             source.write_bytes(fixture(symbols, tls))
-            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module',
+            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', *options,
                                      str(source), str(output)], capture_output=True, text=True, timeout=10)
             return result, output
         symbols = [('zeta', 0x12, 0, 1, 0x4000, 6),
@@ -95,14 +98,22 @@ def main():
                    ('hidden', 0x12, 2, 1, 0x4000, 6),
                    ('internal', 0x12, 1, 1, 0x4000, 6),
                    ('local', 0x02, 0, 1, 0x4000, 6),
-                   ('absolute', 0x10, 0, 0xfff1, 1, 0)]
+                   ('absolute', 0x10, 0, 0xfff1, 1, 0),
+                   ('absolute_function', 0x12, 0, 0xfff1, 0x4030, 6),
+                   ('absolute_data', 0x11, 0, 0xfff1, 0x4f08, 8),
+                   ('absolute_outside', 0x12, 0, 0xfff1, 0x9000, 6)]
         result, output = convert('lookup', symbols)
         assert result.returncode == 0, (result.stdout, result.stderr)
         actual = exports(output.read_bytes())
-        assert actual == {'alpha': 0x10000, 'data': 0x10f00,
-                                                'protected': 0x10000, 'weak': 0x10020, 'zeta': 0x10000}, actual
+        assert actual == {'absolute_data': 0x10f08, 'absolute_function': 0x10030,
+                          'alpha': 0x10000, 'data': 0x10f00,
+                          'protected': 0x10000, 'weak': 0x10020, 'zeta': 0x10000}, actual
         if os.name == 'nt':
             native_lookup(output)
+        result, rooted_output = convert('function-roots', symbols, options=('--function-symbol-roots', 'unused-filter=1'))
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        rooted_exports = exports(rooted_output.read_bytes())
+        assert rooted_exports == actual, rooted_exports
         for label, changed, expected in (
                 ('conflict', symbols[:2] + [('alpha#C#B', 0x12, 0, 1, 0x4020, 6)], 'Conflicting executable exports after stripping #: alpha'),
                 ('unmapped', [('bad', 0x11, 0, 1, 0x9000, 6)], 'does not fit inside a PT_LOAD segment'),
