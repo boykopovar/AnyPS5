@@ -473,7 +473,7 @@ struct HostImports {
     std::map<std::uint64_t, std::uint64_t> spaceUses;
     bool dmaBufSelected = false;
     std::uint64_t budgetRefusals = 0;
-    std::array<const HostImport*, 4> recentImports{};
+    std::array<const HostImport*, 16> recentImports{};
     std::uint64_t recentEpoch = std::numeric_limits<std::uint64_t>::max();
     std::size_t recentSize = 0;
     std::size_t recentNext = 0;
@@ -3009,8 +3009,14 @@ const HostImport* peekImport(const HostImports& state, std::uint64_t begin, std:
 }
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    if (recentImportsEnabled()) {
+        if (const auto* recent = recentImport(state, begin, end)) return recent;
+    }
     const auto* entry = peekImport(state, begin, end);
-    if (entry != nullptr) entry->lastUse = ++state.useCounter;
+    if (entry != nullptr) {
+        entry->lastUse = ++state.useCounter;
+        if (recentImportsEnabled()) rememberImport(state, entry);
+    }
     return entry;
 }
 
@@ -5249,8 +5255,12 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    if (importsStale(context, state)) return nullptr;
-    return findImport(state, address, address + bytes);
+    if (importsStale(context, state) && !refreshedFromLoggedChanges(context, state)) return nullptr;
+    const auto end = address + bytes;
+    if (recentImportsEnabled()) {
+        if (const auto* entry = recentImport(state, address, end)) return entry;
+    }
+    return findImport(state, address, end);
 }
 
 std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes) {
