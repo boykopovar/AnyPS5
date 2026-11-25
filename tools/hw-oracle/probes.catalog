@@ -56,6 +56,33 @@
       ]
     },
     {
+      "id": "v-mul-legacy-f32-zero-rule",
+      "instruction": "v_mul_legacy_f32",
+      "description": "Zero times infinity and NaN, signed zero and a normal product.",
+      "body": "v_mul_legacy_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "zero-inf", "input": ["0x00000000", "0x7f800000", 0, 0]},
+        {"name": "inf-zero", "input": ["0x7f800000", "0x00000000", 0, 0]},
+        {"name": "negzero-inf", "input": ["0x80000000", "0x7f800000", 0, 0]},
+        {"name": "zero-nan", "input": ["0x00000000", "0x7fc12345", 0, 0]},
+        {"name": "nan-zero", "input": ["0x7fc12345", "0x00000000", 0, 0]},
+        {"name": "normal", "input": ["0x40000000", "0xc0400000", 0, 0]}
+      ]
+    },
+    {
       "id": "v-min-f32-nan-and-zero",
       "instruction": "v_min_f32",
       "description": "Operand order for quiet NaNs and signed zeros, plus finite and infinite values.",
@@ -107,6 +134,35 @@
         {"name": "negative-zero-first", "input": ["0x80000000", "0x00000000", 0, 0]},
         {"name": "negative-and-positive", "input": ["0xc0000000", "0x40000000", 0, 0]},
         {"name": "infinity-and-finite", "input": ["0xff800000", "0x40400000", 0, 0]}
+      ]
+    },
+    {
+      "id": "v-fract-f32-edges",
+      "instruction": "v_fract_f32",
+      "description": "Signed zeros, infinities, NaN, a tiny negative value and values next to one.",
+      "body": "v_fract_f32 v10, v4",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "pos-zero", "input": ["0x00000000", 0, 0, 0]},
+        {"name": "neg-zero", "input": ["0x80000000", 0, 0, 0]},
+        {"name": "pos-inf", "input": ["0x7f800000", 0, 0, 0]},
+        {"name": "neg-inf", "input": ["0xff800000", 0, 0, 0]},
+        {"name": "nan", "input": ["0x7fc12345", 0, 0, 0]},
+        {"name": "tiny-negative", "input": ["0xb3800000", 0, 0, 0]},
+        {"name": "below-one", "input": ["0x3f7fffff", 0, 0, 0]},
+        {"name": "minus-one", "input": ["0xbf800000", 0, 0, 0]}
       ]
     },
     {
@@ -914,6 +970,222 @@
             0
           ]
         }
+      ]
+    },
+    {
+      "id": "v-ldexp-f32-edges",
+      "instruction": "v_ldexp_f32",
+      "description": "Overflow, underflow, NaN and infinity sources and large exponents.",
+      "body": "v_ldexp_f32 v10, v4, v5",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "overflow", "input": ["0x3f800000", "0x00000080", 0, 0]},
+        {"name": "underflow", "input": ["0x3f800000", "0xffffff6a", 0, 0]},
+        {"name": "nan", "input": ["0x7fc12345", "0x00000001", 0, 0]},
+        {"name": "inf-down", "input": ["0x7f800000", "0xfffffffb", 0, 0]},
+        {"name": "huge-exponent", "input": ["0x3f800000", "0x7fffffff", 0, 0]},
+        {"name": "min-exponent", "input": ["0x3f800000", "0x80000000", 0, 0]}
+      ]
+    },
+    {
+      "id": "ds-write-src2-b64-unaligned-positive",
+      "instruction": "ds_write_src2_b64",
+      "description": "Aligned and four-byte-misaligned addresses with a positive qword displacement on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[4:5]\nds_write_b64 v8, v[6:7] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_write_src2_b64 v20 offset:2\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "unaligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "aligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
+    },
+    {
+      "id": "ds-write-src2-b64-unaligned-negative",
+      "instruction": "ds_write_src2_b64",
+      "description": "Aligned and four-byte-misaligned addresses with a negative qword displacement on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, 8, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[6:7]\nds_write_b64 v8, v[4:5] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_write_src2_b64 v20 offset:32766\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "unaligned-distinct", "input": ["0x11111111", "0x22222222", "0x33333333", "0x44444444"]},
+        {"name": "aligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-boundary", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
+    },
+    {
+      "id": "ds-add-src2-u64-unaligned-positive",
+      "instruction": "ds_add_src2_u64",
+      "description": "Aligned and four-byte-misaligned 64-bit atomic add addresses on gfx1013.",
+      "body": "v_lshlrev_b32 v8, 5, v0\nv_and_b32 v20, 1, v0\nv_lshlrev_b32 v20, 2, v20\nv_or_b32 v20, v8, v20\nds_write_b64 v8, v[4:5]\nds_write_b64 v8, v[6:7] offset:8\nds_write_b64 v8, v[18:19] offset:16\ns_waitcnt lgkmcnt(0)\nds_add_src2_u64 v20 offset:2\ns_waitcnt lgkmcnt(0)\nds_read_b128 v[10:13], v8\ns_waitcnt lgkmcnt(0)",
+      "output_registers": 4,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 0,
+        "dx10_clamp": 0,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "default": false,
+      "rows": [
+        {"name": "aligned-distinct", "input": ["0x00000001", "0x00000002", "0x00000003", "0x00000004"]},
+        {"name": "unaligned-distinct", "input": ["0x00000001", "0x00000002", "0x00000003", "0x00000004"]},
+        {"name": "aligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
+        {"name": "unaligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
+      ]
+    },
+    {
+      "id": "v-cvt-u32-f32-limits",
+      "instruction": "v_cvt_u32_f32",
+      "description": "NaN, infinities, negatives, values past the u32 range and halves.",
+      "body": "v_cvt_u32_f32 v10, v4",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan", "input": ["0x7fc12345", 0, 0, 0]},
+        {"name": "pos-inf", "input": ["0x7f800000", 0, 0, 0]},
+        {"name": "neg-inf", "input": ["0xff800000", 0, 0, 0]},
+        {"name": "minus-one", "input": ["0xbf800000", 0, 0, 0]},
+        {"name": "minus-half", "input": ["0xbf000000", 0, 0, 0]},
+        {"name": "two-pow-32", "input": ["0x4f800000", 0, 0, 0]},
+        {"name": "one-and-half", "input": ["0x3fc00000", 0, 0, 0]}
+      ]
+    },
+    {
+      "id": "v-med3-f32-nan-ieee-off",
+      "instruction": "v_med3_f32",
+      "description": "NaN in each operand position, signed zeros and infinities with IEEE mode disabled.",
+      "body": "v_med3_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", "0x40000000", 0]},
+        {"name": "nan-third", "input": ["0x3f800000", "0x40000000", "0x7fc12345", 0]},
+        {"name": "zeros-pnp", "input": ["0x00000000", "0x80000000", "0x00000000", 0]},
+        {"name": "zeros-npn", "input": ["0x80000000", "0x00000000", "0x80000000", 0]},
+        {"name": "infinities-nan", "input": ["0x7f800000", "0xff800000", "0x7fc12345", 0]}
+      ]
+    },
+    {
+      "id": "v-med3-f32-nan-ieee-on",
+      "instruction": "v_med3_f32",
+      "description": "NaN in each operand position, signalling NaN and signed zeros with IEEE mode enabled.",
+      "body": "v_med3_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", "0x40000000", 0]},
+        {"name": "nan-third", "input": ["0x3f800000", "0x40000000", "0x7fc12345", 0]},
+        {"name": "snan-first", "input": ["0x7fa00000", "0x3f800000", "0x40000000", 0]},
+        {"name": "zeros-pnp", "input": ["0x00000000", "0x80000000", "0x00000000", 0]},
+        {"name": "zeros-npn", "input": ["0x80000000", "0x00000000", "0x80000000", 0]}
+      ]
+    },
+    {
+      "id": "v-cvt-i32-f32-limits",
+      "instruction": "v_cvt_i32_f32",
+      "description": "NaN, infinities, values past the i32 range, halves and negative zero.",
+      "body": "v_cvt_i32_f32 v10, v4",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan", "input": ["0x7fc12345", 0, 0, 0]},
+        {"name": "pos-inf", "input": ["0x7f800000", 0, 0, 0]},
+        {"name": "neg-inf", "input": ["0xff800000", 0, 0, 0]},
+        {"name": "two-pow-31", "input": ["0x4f000000", 0, 0, 0]},
+        {"name": "below-min", "input": ["0xcf000001", 0, 0, 0]},
+        {"name": "two-and-half", "input": ["0x40200000", 0, 0, 0]},
+        {"name": "minus-two-and-half", "input": ["0xc0200000", 0, 0, 0]},
+        {"name": "neg-zero", "input": ["0x80000000", 0, 0, 0]}
       ]
     }
   ]

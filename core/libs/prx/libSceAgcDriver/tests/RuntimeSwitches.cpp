@@ -42,6 +42,7 @@ void registry() {
     }
     Require(RuntimeSwitches::Find("APS5_NO_BARRIER_BATCH") == RuntimeSwitch::NoBarrierBatch, "APS5_NO_BARRIER_BATCH is not a runtime switch");
     Require(RuntimeSwitches::Find("APS5_DRAW_TABLE_SNAPSHOT") == RuntimeSwitch::TableSnapshot, "APS5_DRAW_TABLE_SNAPSHOT is not a runtime switch");
+    Require(RuntimeSwitches::Find("APS5_WIDE_LIBRARY_KEYS") == RuntimeSwitch::WideLibraryKeys, "APS5_WIDE_LIBRARY_KEYS is not a runtime switch");
     Require(RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "a switch set in the environment did not start set");
     Require(!RuntimeSwitches::Find("APS5_FULL_BARRIERS").has_value() && !RuntimeSwitches::Find("APS5_NO_BARRIER_BATCH ").has_value(), "a name that is not a runtime switch was found");
     RuntimeSwitches::Assign(RuntimeSwitch::NoBarrierBatch, false);

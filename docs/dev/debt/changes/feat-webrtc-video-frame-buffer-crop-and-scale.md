@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::VideoFrameBuffer::CropAndScale](../../../core/libs/prx/libwebrtc/src/VideoFrameBufferCropAndScale.cpp) (libwebrtc) - nothing is checked on the console. Follows [video_frame_buffer.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/video/video_frame_buffer.cc) and `CropAndScaleFrom` of [i420_buffer.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/video/i420_buffer.cc), scaling with `libyuv::I420Scale` from `3rdparty/libyuv` at M134's DEPS revision (`10592b60`); the module's revision is unknown, and without SSSE3 a pixel can differ by one step. Arguments are checked before allocating and throw `std::invalid_argument`: a scaled size no I420 buffer holds, a crop libyuv refuses (width below 1, height 0, either above 32768) or outside the buffer, a null `ToI420` or plane. Upstream aborts on some, reads past the planes for a too tall flipped crop, and returns the buffer unscaled when libyuv refuses.

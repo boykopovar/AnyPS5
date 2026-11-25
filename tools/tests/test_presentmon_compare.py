@@ -1,0 +1,378 @@
+import csv
+import hashlib
+import json
+import os
+from unittest.mock import patch
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOLS))
+import presentmon_compare
+
+
+HEADER = ["Application", "ProcessID", "SwapChainAddress", "Runtime", "Dropped",
+          "TimeInSeconds", "msBetweenPresents", "QPCTime"]
+BASELINE_TICKS = [97, 100, 101, 103, 106, 110]
+CANDIDATE_TICKS = list(range(99, 111))
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def present_rows(ticks, pid, swapchain, application, dropped=()):
+    previous = ticks[0] - 1
+    rows = []
+    for tick in ticks:
+        rows.append([application, pid, swapchain, "Other", int(tick in dropped), f"{tick / 100:.2f}",
+                     10 * (tick - previous), tick * 10000])
+        previous = tick
+    return rows
+
+
+class PresentMonCompareTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def csv(self, name, rows, header=HEADER):
+        path = self.root / name
+        with path.open("w", encoding="utf-8-sig", newline="") as output:
+            writer = csv.writer(output)
+            writer.writerow(header)
+            writer.writerows(rows)
+        return path
+
+    def captured(self, run_id, arm, pid, ticks, dropped=()):
+        selected = present_rows(ticks, pid, "0x0000000000000000", "Game.exe", dropped)
+        other_pid = present_rows([100, 101], pid + 10, "0x0", "Game.exe", (101,))
+        other_swapchain = present_rows([100, 102], pid, "0x1234", "Game.exe", (102,))
+        rows = selected[:2] + other_pid + other_swapchain + selected[2:]
+        capture = self.csv(f"{run_id}.csv", rows)
+        return {"id": run_id, "arm": arm, "status": "captured", "capture": capture.name,
+                "sha256": sha256(capture), "pid": pid, "application": "game.exe", "swapchain": "0x0", "start_s": 1}
+
+    def captured_pair(self):
+        return [self.captured("A1", "baseline", 100, BASELINE_TICKS, (101,)),
+                self.captured("B1", "candidate", 101, CANDIDATE_TICKS)]
+
+    def series(self, runs):
+        return {"format": "aps5-presentmon-series/1", "presentmon_version": "1.9.2", "duration_s": 0.1,
+                "context": {"title_id": "PPSA00000", "content_version": "1.0", "scene": "Fixed camera",
+                            "cpu": "CPU", "gpu": "GPU", "os": "Windows", "driver": "driver version",
+                            "resolution": "1920x1080", "settings": "Defaults", "cache_state": "warm",
+                            "save": "c" * 64, "input": "none"},
+                "baseline": {"renderer": "Stock", "revision": "a" * 40, "executable_sha256": "1" * 64},
+                "candidate": {"renderer": "Alternative", "revision": "b" * 40, "executable_sha256": "2" * 64},
+                "runs": runs}
+
+    def write_series(self, data):
+        path = self.root / "series.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path, sha256(path)
+
+    def compare(self, data):
+        return presentmon_compare.compare_presentmon_series(*self.write_series(data))
+
+    def test_pinned_capture_rejects_changes_during_a_read(self):
+        path = self.root / "capture.csv"
+        path.write_bytes(b"snapshot")
+        digest = sha256(path)
+        initial = path.stat()
+        os.utime(path, ns=(initial.st_atime_ns, initial.st_mtime_ns - 2_000_000_000))
+        updated = path.stat()
+        with patch.object(presentmon_compare.os, "fstat", side_effect=[initial, updated]):
+            with self.assertRaisesRegex(ValueError, "changed while reading"):
+                presentmon_compare.read_pinned(path, digest, 100)
+
+    def test_plan_rejects_a_capture_path_with_an_embedded_nul(self):
+        plan = self.series(self.captured_pair())
+        plan["runs"][0]["capture"] = "A\0.csv"
+        with self.assertRaisesRegex(ValueError, r"runs\[0\]\.capture contains a NUL"):
+            presentmon_compare.read_presentmon_plan(json.dumps(plan).encode("utf-8"))
+
+    def test_csv_accepts_blank_lines_before_the_header(self):
+        run = self.captured_pair()[0]
+        raw = (self.root / run["capture"]).read_bytes()
+        bom, csv_data = raw[:3], raw[3:]
+        baseline = list(presentmon_compare.presentmon_stream(raw, run))
+        self.assertTrue(baseline)
+        self.assertEqual(list(presentmon_compare.presentmon_stream(bom + b"\r\n" + csv_data, run)), baseline)
+
+    def test_exact_window_and_intervals_from_selected_process_and_swapchain(self):
+        runs = self.captured_pair()
+        data = self.series(runs)
+        path, digest = self.write_series(data)
+        report = presentmon_compare.compare_presentmon_series(path, digest)
+        self.assertEqual(report["format"], "aps5-presentmon-comparison/1")
+        self.assertEqual(report["source"]["sha256"], digest)
+        self.assertEqual(report["context"], data["context"])
+        self.assertEqual(report["baseline"], data["baseline"])
+        self.assertEqual(report["candidate"], data["candidate"])
+        first, second = report["runs"]
+        self.assertEqual(first["source"]["sha256"], runs[0]["sha256"])
+        self.assertEqual(first["metrics"], {"presents": 4, "dropped": 1, "intervals": 3, "present_fps": 40,
+                                           "present_ms_p50": 20, "present_ms_p99": 30})
+        self.assertEqual(second["metrics"], {"presents": 10, "dropped": 0, "intervals": 9, "present_fps": 100,
+                                            "present_ms_p50": 10, "present_ms_p99": 10})
+        pair, = report["pairs"]
+        self.assertTrue(pair["complete"])
+        self.assertEqual(pair["metrics"]["present_fps"], {"baseline": 40, "candidate": 100, "change": 60,
+                                                          "change_pct": 150})
+        self.assertEqual(pair["metrics"]["present_ms_p50"]["change_pct"], -50)
+        self.assertAlmostEqual(pair["metrics"]["present_ms_p99"]["change_pct"], -200 / 3)
+
+    def test_markdown_preserves_exact_present_counts(self):
+        report = self.compare(self.series(self.captured_pair()))
+        report["runs"][0]["metrics"].update(presents=1000002, dropped=1000001)
+        output = presentmon_compare.render_presentmon_comparison(report)
+        self.assertIn("| A1 | baseline | captured | 1000002 | 1000001 |", output)
+
+    def test_aggregates_complete_pairs_with_equal_weight(self):
+        runs = self.captured_pair()
+        runs += [self.captured("A2", "baseline", 102, CANDIDATE_TICKS),
+                 self.captured("B2", "candidate", 103, BASELINE_TICKS)]
+        report = self.compare(self.series(runs))
+        self.assertEqual(report["aggregate"]["complete_pairs"], 2)
+        self.assertEqual(report["aggregate"]["metrics"]["present_fps"],
+                         {"n": 2, "mean_change_pct": 45, "min_change_pct": -60, "max_change_pct": 150})
+
+    def test_alternating_pairs_keep_failed_and_excluded_attempts(self):
+        runs = list(reversed(self.captured_pair()))
+        runs += [{"id": "B2", "arm": "candidate", "status": "failed", "reason": "Collector stopped"},
+                 {"id": "A2", "arm": "baseline", "status": "excluded", "reason": "Scene changed"}]
+        report = self.compare(self.series(runs))
+        self.assertEqual([row["id"] for row in report["runs"]], ["B1", "A1", "B2", "A2"])
+        for row, declared in zip(report["runs"][2:], runs[2:]):
+            self.assertEqual(row["status"], declared["status"])
+            self.assertEqual(row["reason"], declared["reason"])
+            self.assertIsNone(row["metrics"])
+        first, second = report["pairs"]
+        self.assertEqual((first["baseline"], first["candidate"]), ("A1", "B1"))
+        self.assertTrue(first["complete"])
+        self.assertEqual((second["baseline"], second["candidate"]), ("A2", "B2"))
+        self.assertFalse(second["complete"])
+        self.assertIsNone(second["metrics"]["present_fps"]["change_pct"])
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        self.assertEqual(report["aggregate"]["total_pairs"], 2)
+        self.assertEqual(report["aggregate"]["metrics"]["present_fps"]["n"], 1)
+        self.assertTrue(report["warnings"])
+
+    def test_no_complete_pair_leaves_effects_unknown(self):
+        baseline, _ = self.captured_pair()
+        report = self.compare(self.series([baseline, {"id": "B1", "arm": "candidate", "status": "failed",
+                                                      "reason": "Target exited"}]))
+        self.assertEqual(report["aggregate"]["complete_pairs"], 0)
+        self.assertEqual(report["aggregate"]["metrics"]["present_fps"]["n"], 0)
+        self.assertIsNone(report["aggregate"]["metrics"]["present_fps"]["mean_change_pct"])
+
+    def test_distinct_a_a_captures_are_valid_controls(self):
+        first = self.captured("A1", "baseline", 100, BASELINE_TICKS)
+        second = self.captured("B1", "candidate", 101, BASELINE_TICKS)
+        data = self.series([first, second])
+        data["candidate"] = dict(data["baseline"])
+        report = self.compare(data)
+        self.assertTrue(report["control"])
+        self.assertEqual(report["aggregate"]["metrics"]["present_fps"]["mean_change_pct"], 0)
+
+    def test_rejects_wrong_manifest_hash_and_post_pin_csv_changes(self):
+        runs = self.captured_pair()
+        path, digest = self.write_series(self.series(runs))
+        with self.assertRaisesRegex(ValueError, "(?i)sha-?256"):
+            presentmon_compare.compare_presentmon_series(path, "0" * 64)
+        with (self.root / runs[0]["capture"]).open("ab") as output:
+            output.write(b"\r\n")
+        with self.assertRaisesRegex(ValueError, "(?i)sha-?256"):
+            presentmon_compare.compare_presentmon_series(path, digest)
+
+    def test_rejects_reusing_identical_capture_bytes_at_a_second_path(self):
+        runs = self.captured_pair()
+        first, second = runs
+        (self.root / second["capture"]).write_bytes((self.root / first["capture"]).read_bytes())
+        for key in ("sha256", "pid"):
+            second[key] = first[key]
+        with self.assertRaises(ValueError):
+            self.compare(self.series(runs))
+
+    def test_rejects_malformed_or_incompatible_csv_evidence(self):
+        runs = self.captured_pair()
+        base = runs[0]
+        original_rows = present_rows(BASELINE_TICKS, 100, "0x0", "Game.exe")
+        for label, missing_interval, changed_row, header in (
+            ("current schema instead of v1", False, None, [*HEADER[:6], "MsBetweenPresents", HEADER[-1]]),
+            ("duplicate header", False, None, [*HEADER[:-1], "Dropped"]),
+            ("short row", True, None, HEADER),
+            ("non-finite clock", False, (5, "NaN"), HEADER),
+            ("out-of-order timestamp", False, (5, "1.00"), HEADER),
+            ("omitted preceding present", False, (6, "3"), HEADER),
+            ("malformed dropped flag", False, (4, "2"), HEADER),
+        ):
+            with self.subTest(case=label):
+                rows = [row.copy() for row in original_rows]
+                if missing_interval:
+                    rows[2].pop()
+                if changed_row:
+                    column, value = changed_row
+                    rows[2][column] = value
+                capture = self.csv(base["capture"], rows, header)
+                base["sha256"] = sha256(capture)
+                with self.assertRaises(ValueError):
+                    self.compare(self.series(runs))
+
+    def test_requires_a_bracketed_window_and_measurable_intervals(self):
+        runs = self.captured_pair()
+        for start, duration in [(0.96, 0.1), (1.0, 0.11), (1.001, 0.015)]:
+            with self.subTest(start=start, duration=duration):
+                data = self.series(runs)
+                data["duration_s"] = duration
+                runs[0]["start_s"] = start
+                with self.assertRaises(ValueError):
+                    self.compare(data)
+
+    def test_optional_collector_loss_counters_apply_to_the_whole_csv(self):
+        runs = self.captured_pair()
+        counter_names = ["EtwEventsLost", "EtwBuffersLost", "OverflowedPresents"]
+        target = present_rows(BASELINE_TICKS, 100, "0x0", "Game.exe")
+        distractor, = present_rows([8], 111, "0x0", "OtherGame.exe")
+        rows = [[*row, 0, 0, 0] for row in [distractor, *target]]
+        capture = self.csv(runs[0]["capture"], rows, [*HEADER, *counter_names])
+        runs[0]["sha256"] = sha256(capture)
+        self.assertEqual(self.compare(self.series(runs))["runs"][0]["metrics"]["presents"], 4)
+        for column, counter in enumerate(counter_names, start=len(HEADER)):
+            for value in [1, "NA"]:
+                with self.subTest(counter=counter, value=value):
+                    corrupted = [row.copy() for row in rows]
+                    corrupted[0][column] = value
+                    self.csv(capture.name, corrupted, [*HEADER, *counter_names])
+                    runs[0]["sha256"] = sha256(capture)
+                    with self.assertRaisesRegex(ValueError, counter):
+                        self.compare(self.series(runs))
+
+    def test_rejects_wrong_application_even_with_matching_process_and_swapchain(self):
+        runs = self.captured_pair()
+        runs[0]["application"] = "different.exe"
+        with self.assertRaises(ValueError):
+            self.compare(self.series(runs))
+
+    def test_requires_alternating_arms_and_full_pair_slots(self):
+        runs = self.captured_pair()
+        with self.assertRaises(ValueError):
+            self.compare(self.series(runs[:1]))
+        change, baseline = runs[1], runs[0]
+        same_arm = {"id": "A2", "arm": "baseline", "status": "failed", "reason": "Stopped"}
+        candidate = {"id": "B2", "arm": "candidate", "status": "failed", "reason": "Stopped"}
+        with self.assertRaises(ValueError):
+            self.compare(self.series([change, baseline, same_arm, candidate]))
+
+    def test_cli_reports_verified_input_and_rejects_missing_pin(self):
+        path, digest = self.write_series(self.series(self.captured_pair()))
+        command = [sys.executable, str(TOOLS / "benchmark_compare.py"), "compare-presentmon", str(path)]
+        result = subprocess.run([*command, "--sha256", digest, "--json"], capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertEqual(json.loads(result.stdout)["source"]["sha256"], digest)
+        text = subprocess.run([*command, "--sha256", digest], capture_output=True, check=False)
+        self.assertEqual(text.returncode, 0, text.stderr.decode("utf-8", errors="replace"))
+        self.assertIn(b"PresentMon", text.stdout)
+        self.assertIn(digest.encode(), text.stdout)
+        wrong = subprocess.run([*command, "--sha256", "0" * 64, "--json"], capture_output=True, check=False)
+        self.assertEqual(wrong.returncode, 2)
+        self.assertEqual(wrong.stdout, b"")
+        self.assertIn(b"SHA-256", wrong.stderr)
+        missing = subprocess.run([*command, "--json"], capture_output=True, check=False)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn(b"--sha256", missing.stderr)
+
+
+class PresentMonHelperTests(unittest.TestCase):
+    def test_require_fields_needs_a_dict_with_exactly_the_fields(self):
+        presentmon_compare.require_fields({"a": 1, "b": 2}, ("a", "b"), "pair")
+        for data in ({"a": 1}, {"a": 1, "b": 2, "c": 3}, [("a", 1), ("b", 2)], None):
+            with self.assertRaisesRegex(ValueError, "pair must contain exactly a, b"):
+                presentmon_compare.require_fields(data, ("a", "b"), "pair")
+
+    def test_digest_value_lowercases_sha256_and_rejects_other_values(self):
+        self.assertEqual(presentmon_compare.digest_value("AB" * 32, "digest"), "ab" * 32)
+        for value in ("a" * 63, "a" * 65, "g" * 64, " " + "a" * 63, 1, None):
+            with self.assertRaisesRegex(ValueError, "digest must be a SHA-256 digest"):
+                presentmon_compare.digest_value(value, "digest")
+
+    def test_parse_swapchain_accepts_zero_and_hexadecimal_addresses(self):
+        self.assertEqual(presentmon_compare.parse_swapchain("0"), 0)
+        self.assertEqual(presentmon_compare.parse_swapchain("0x0"), 0)
+        self.assertEqual(presentmon_compare.parse_swapchain("0XfF"), 255)
+        self.assertEqual(presentmon_compare.parse_swapchain("0x" + "f" * 16), 2**64 - 1)
+        for value in ("00", "1", "0x", "0x" + "1" * 17, "0xg", " 0x1", 1, None):
+            with self.assertRaisesRegex(ValueError, "swapchain must be a hexadecimal address or 0"):
+                presentmon_compare.parse_swapchain(value)
+
+    def test_csv_decimal_accepts_bounded_non_negative_decimals(self):
+        self.assertEqual(presentmon_compare.csv_decimal("0", "t"), presentmon_compare.Decimal("0"))
+        self.assertEqual(presentmon_compare.csv_decimal("12.50", "t"), presentmon_compare.Decimal("12.50"))
+        self.assertEqual(presentmon_compare.csv_decimal("5", "t", 5), 5)
+        with self.assertRaisesRegex(ValueError, "t exceeds 5"):
+            presentmon_compare.csv_decimal("5.01", "t", 5)
+        for value in ("", "-1", "+1", "1.", ".5", "1e3", "nan", "inf", "1 ", "1" * 65):
+            with self.assertRaisesRegex(ValueError, "t must be a finite non-negative decimal"):
+                presentmon_compare.csv_decimal(value, "t")
+
+    def test_read_pinned_returns_bytes_and_identity_or_rejects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "capture.csv"
+            path.write_bytes(b"abc")
+            digest = hashlib.sha256(b"abc").hexdigest()
+            raw, info, identity = presentmon_compare.read_pinned(path, digest.upper(), 3)
+            self.assertEqual(raw, b"abc")
+            self.assertEqual(info, {"path": str(path), "sha256": digest, "bytes": 3})
+            self.assertEqual(len(identity), 2)
+            with self.assertRaisesRegex(ValueError, "input exceeds 2 bytes"):
+                presentmon_compare.read_pinned(path, digest, 2)
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                presentmon_compare.read_pinned(path, "0" * 64, 3)
+            with self.assertRaisesRegex(ValueError, "SHA-256 must be a SHA-256 digest"):
+                presentmon_compare.read_pinned(path, "abc", 3)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                presentmon_compare.read_pinned(root, digest, 3)
+            with self.assertRaisesRegex(ValueError, "input must be a regular file"):
+                presentmon_compare.read_pinned(root / "missing.csv", digest, 3)
+
+    def stream(self, rows, header=HEADER, **run):
+        selected = {"pid": 100, "swapchain": "0x0", "application": "game.exe"}
+        selected.update(run)
+        text = ",".join(header) + "\r\n" + "".join(",".join(str(cell) for cell in row) + "\r\n" for row in rows)
+        return list(presentmon_compare.presentmon_stream(text.encode("utf-8"), selected))
+
+    def test_presentmon_stream_yields_the_selected_process_and_swapchain(self):
+        rows = present_rows([100, 101], 100, "0x0", "Game.exe", (101,))
+        rows += present_rows([102], 101, "0x0", "Other.exe") + present_rows([103], 100, "0x1", "Other.exe")
+        self.assertEqual(self.stream(rows), [
+            ("Other", False, presentmon_compare.Decimal("1.00"), presentmon_compare.Decimal("10")),
+            ("Other", True, presentmon_compare.Decimal("1.01"), presentmon_compare.Decimal("10")),
+        ])
+
+    def test_presentmon_stream_rejects_malformed_rows(self):
+        row = present_rows([100], 100, "0x0", "Game.exe")[0]
+        cases = [
+            ([row], HEADER[:-2], "expected distinct PresentMon v1 CSV columns"),
+            ([row], HEADER + ["Runtime"], "expected distinct PresentMon v1 CSV columns"),
+            ([row[:-1]], HEADER, "CSV line 2 has the wrong column count"),
+            ([row[:1] + ["4294967296"] + row[2:]], HEADER, "CSV line 2 ProcessID must be an unsigned 32-bit integer"),
+            ([row[:2] + ["0xg"] + row[3:]], HEADER, "swapchain must be a hexadecimal address or 0"),
+            ([["Else.exe"] + row[1:]], HEADER, "CSV line 2 has a different application for the PID and swapchain"),
+            ([row[:4] + ["2"] + row[5:]], HEADER, "CSV line 2 Dropped must be 0 or 1"),
+            ([row[:5] + ["-1"] + row[6:]], HEADER, "CSV line 2 TimeInSeconds must be a finite non-negative decimal"),
+            ([row + ["1"]], HEADER + ["EtwEventsLost"], "CSV line 2 EtwEventsLost reports collector loss"),
+            ([row + ["x"]], HEADER + ["OverflowedPresents"], "CSV line 2 OverflowedPresents must be an unsigned 32-bit integer"),
+        ]
+        for rows, header, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.stream(rows, header)
+
+
+if __name__ == "__main__":
+    unittest.main()

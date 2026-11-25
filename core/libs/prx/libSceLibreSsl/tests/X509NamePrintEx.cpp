@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -152,10 +153,25 @@ void Compatibility() {
     const Printed printed = Print(name, 0, 0);
     Require(printed.result == 1 && printed.text == "C=US, CN=example.com", "flags of zero use the traditional comma form and return 1");
     Require(Print(name, 7, 0).text == "C=US, CN=example.com", "compatibility ignores the indent");
+    ERR_clear_error_nid_postfix();
+    const Printed minIndent = Print(name, INT_MIN, 0);
+    Require(minIndent.result == 1 && minIndent.text == "C=US, CN=example.com", "compatibility handles INT_MIN indent without signed overflow");
+    Require(ERR_get_error_nid_postfix() == 0, "compatibility with INT_MIN indent leaves the error queue empty");
+    Builder singleCn;
+    singleCn.Add(Object(CommonName), "example.com");
+    const Printed singleMin = Print(singleCn.Build(), INT_MIN, 0);
+    Require(singleMin.result == 1 && singleMin.text == "CN=example.com", "compatibility handles INT_MIN indent on a single CN entry");
+    Require(ERR_get_error_nid_postfix() == 0, "compatibility single CN with INT_MIN indent leaves the error queue empty");
     Builder empty;
     Require(Print(empty.Build(), 0, 0).result == 1 && Print(empty.Build(), 0, 0).text.empty(), "an empty name prints nothing and succeeds");
     Require(Print(nullptr, 0, 0).text == "O X509_NAME", "a null name prints what X509_NAME_oneline returns without its first byte");
+    ERR_clear_error_nid_postfix();
     Require(X509_NAME_print_ex_nid_postfix(nullptr, name, 0, 0) == 0, "compatibility with no BIO fails");
+    Require(ERR_get_error_nid_postfix() == 0x0BFFF007 && ERR_get_error_nid_postfix() == 0, "compatibility with no BIO queues the X509 buffer error");
+    Require(X509_NAME_print_ex_nid_postfix(nullptr, nullptr, 0, 0) == 0, "a null name with no BIO fails on its first write");
+    Require(ERR_get_error_nid_postfix() == 0x0BFFF007 && ERR_get_error_nid_postfix() == 0, "a null name with no BIO queues the X509 buffer error");
+    Require(X509_NAME_print_ex_nid_postfix(nullptr, empty.Build(), 0, 0) == 1, "an empty name with no BIO writes nothing and succeeds");
+    Require(ERR_get_error_nid_postfix() == 0, "an empty name with no BIO queues nothing");
 }
 
 void Counting() {
@@ -317,13 +333,18 @@ void WriteFailures() {
     bio.initialized = 1;
     for (int allowed = 0; allowed < 20; ++allowed) {
         budget = allowed;
+        ERR_clear_error_nid_postfix();
         const int result = X509_NAME_print_ex_nid_postfix(&bio, name, 0, SepCommaPlus);
         Require(result == (allowed >= 19 ? 19 : -1), "a write failure at any point returns -1");
+        Require(ERR_get_error_nid_postfix() == 0, "a write failure outside compatibility mode queues nothing");
     }
     for (int allowed = 0; allowed < 21; ++allowed) {
         budget = allowed;
+        ERR_clear_error_nid_postfix();
         const int result = X509_NAME_print_ex_nid_postfix(&bio, name, 0, 0);
         Require(result == (allowed >= 20 ? 1 : 0), "a compatibility write failure returns 0");
+        Require(ERR_get_error_nid_postfix() == (allowed >= 20 ? 0u : 0x0BFFF007u), "a compatibility write failure queues the X509 buffer error");
+        Require(ERR_get_error_nid_postfix() == 0, "a compatibility write failure queues one error");
     }
 }
 

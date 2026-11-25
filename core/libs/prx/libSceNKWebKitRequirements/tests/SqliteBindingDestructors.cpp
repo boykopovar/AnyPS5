@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 
 #include <array>
+#include <atomic>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
@@ -202,15 +203,50 @@ void Check(std::string_view mode) {
     Require(false, "guest result and destructor trace matches bundled SQLite");
 }
 
+void Registration() {
+    Require(sqlite3_initialize() == SQLITE_OK, "initialize");
+    constexpr int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    auto* native = sqlite3_vfs_find(nullptr);
+    auto* memory = sqlite3_vfs_find("memdb");
+    Require(native != nullptr, "native default VFS");
+    std::atomic<bool> stop{false};
+    std::atomic<int> ready{0};
+    std::atomic<int> failures{0};
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            ready.fetch_add(1);
+            while (!stop.load()) {
+                if (!sqlite3_vfs_find(nullptr)) failures.fetch_add(1);
+            }
+        });
+    }
+    while (ready.load() != static_cast<int>(threads.size())) std::this_thread::yield();
+    sqlite3* db = nullptr;
+    const int opened = sqlite3_open_v2_nid_postfix(":memory:", &db, flags, nullptr);
+    stop.store(true);
+    for (auto& thread : threads) thread.join();
+    Require(opened == SQLITE_OK, "guest open");
+    Require(sqlite3_close_nid_postfix(db) == SQLITE_OK, "guest close");
+    Require(failures.load() == 0, "a default VFS stays registered while the guest VFS is installed");
+    auto* guest = sqlite3_vfs_find(nullptr);
+    Require(guest != native && guest->pAppData == native, "guest VFS wraps the native default");
+    Require(sqlite3_vfs_find(native->zName) == guest, "native VFS unregistered");
+    Require(sqlite3_vfs_find("memdb") == memory, "memdb stays registered");
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc == 2 ? argv[1] : "lifetime";
-    Require(mode == "lifetime" || mode == "errors" || mode == "conversion" || mode == "threads", "mode");
+    Require(mode == "lifetime" || mode == "errors" || mode == "conversion" || mode == "threads" ||
+        mode == "registration", "mode");
     if (mode == "threads") {
         std::array<std::thread, 8> threads;
         for (auto& thread : threads) thread = std::thread([] { Check("lifetime"); Check("errors"); });
         for (auto& thread : threads) thread.join();
+    } else if (mode == "registration") {
+        Registration();
     } else {
         Check(mode);
     }
