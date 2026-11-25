@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLoginMgrServer/include/InventoryExports.hpp"
 #include "prx/libSceLoginMgrServer/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -9,6 +10,8 @@
 namespace {
 
 constexpr int SCE_LOGIN_MGR_SERVER_ERROR_NOT_INITIALIZED = static_cast<int>(0x813E0001);
+
+std::atomic<int> g_initCount{0};
 
 }
 
@@ -67,7 +70,7 @@ int APS5_VABI sceLoginMgrServerGetSharePlayAllowPadOperation() {
 }
 
 int APS5_VABI sceLoginMgrServerInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+    g_initCount.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
 
@@ -76,7 +79,6 @@ int APS5_VABI sceLoginMgrServerInitializeSharePlayAllowPadOperation() {
 }
 
 int APS5_VABI sceLoginMgrServerIsRequestedCdlgClose() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -129,7 +131,11 @@ int APS5_VABI sceLoginMgrServerSetUserStatus() {
 }
 
 int APS5_VABI sceLoginMgrServerTerminate() {
-    return SCE_LOGIN_MGR_SERVER_ERROR_NOT_INITIALIZED;
+    if (g_initCount.load(std::memory_order_relaxed) <= 0) {
+        return SCE_LOGIN_MGR_SERVER_ERROR_NOT_INITIALIZED;
+    }
+    g_initCount.fetch_sub(1, std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI sceLoginMgrServerUpdateUserIdRalatedToPadUniqueId() {

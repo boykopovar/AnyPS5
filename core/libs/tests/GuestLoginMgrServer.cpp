@@ -40,6 +40,7 @@ int main() {
         Require(sceLoginMgrServerSetSharePlayMode() == notInitialized);
         Require(sceLoginMgrServerSetUserStatus() == notInitialized);
         Require(sceLoginMgrServerTerminate() == notInitialized);
+        Require(sceLoginMgrServerIsRequestedCdlgClose() == 0);
         Require(sceLoginMgrServerUpdateUserIdRalatedToPadUniqueId() == notInitialized);
         Require(sceLoginMgrServerNotifySafetyNoticeShownForGen2Vr() == notInitialized);
         Require(sceLoginMgrServerCheckSafetyNoticeShownForGen2Vr() == notInitialized);
@@ -49,5 +50,14 @@ int main() {
         Require(libSceLoginMgrServerUnknown_T7HQTX_minus_ylss_nid_no_patch() == notInitialized);
         Require(libSceLoginMgrServerUnknown_uD_minus_Sde_plus_R4D8_nid_no_patch() == notInitialized);
     }
+    Require(sceLoginMgrServerInitialize() == 0);
+    Require(sceLoginMgrServerIsRequestedCdlgClose() == 0);
+    Require(sceLoginMgrServerTerminate() == 0);
+    Require(sceLoginMgrServerTerminate() == notInitialized);
+    Require(sceLoginMgrServerInitialize() == 0);
+    Require(sceLoginMgrServerInitialize() == 0);
+    Require(sceLoginMgrServerTerminate() == 0);
+    Require(sceLoginMgrServerTerminate() == 0);
+    Require(sceLoginMgrServerTerminate() == notInitialized);
     return 0;
 }
