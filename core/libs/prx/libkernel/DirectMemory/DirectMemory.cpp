@@ -1848,6 +1848,7 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
             }
         }
         mutation.RequireAvailable(*addr, len);
+        if (GuestArena::GuestArenaOverlapsSystemReserved_nid_no_patch(reinterpret_cast<std::uintptr_t>(*addr), len)) return SCE_KERNEL_ERROR_ENOMEM;
         std::uintptr_t usedStart = 0, usedEnd = 0;
         if (GuestArena::GuestArenaAvailable_nid_postfix() &&
             GuestArena::GuestArenaNextUsed_nid_no_patch(reinterpret_cast<std::uintptr_t>(*addr), &usedStart, &usedEnd) &&

@@ -84,7 +84,8 @@ constexpr std::uint64_t FsTableDword3 = 0x5204u;
 void MapDriverMemory() {
     void* mapped;
 #ifdef _WIN32
-    mapped = reinterpret_cast<void*>(DriverMemoryAddress);
+    mapped = GuestArena::GuestArenaAllocateFromHint_nid_postfix(DriverMemoryAddress, DriverMemoryBytes, DriverMemoryBytes);
+    if (reinterpret_cast<std::uint64_t>(mapped) != DriverMemoryAddress) throw std::runtime_error("the AGC driver memory was not mapped at its fixed address");
     GuestArena::GuestArenaCommit_nid_postfix(mapped, DriverMemoryBytes, PAGE_READWRITE, DriverMemoryBytes);
 #elif defined(__APPLE__)
     mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

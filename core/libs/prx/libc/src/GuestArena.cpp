@@ -71,6 +71,10 @@ std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
 
 class Arena {
 public:
+    static bool OverlapsSystemReserved(std::uintptr_t start, std::size_t bytes) {
+        return start < SystemReservedEnd && (start >= SystemReservedStart || SystemReservedStart - start < bytes);
+    }
+
     static Arena& Get() {
         static auto* arena = new Arena;
         return *arena;
@@ -112,6 +116,10 @@ public:
         while (limit >= _base && bytes <= limit - _base) {
             const auto candidate = (limit - bytes) & ~(alignment - 1);
             if (candidate < _base) break;
+            if (OverlapsSystemReserved(candidate, bytes)) {
+                limit = SystemReservedStart;
+                continue;
+            }
             const auto next = _used.lower_bound(candidate + bytes);
             if (next == _used.begin() || std::prev(next)->second <= candidate) return candidate;
             limit = std::prev(next)->first;
@@ -148,6 +156,11 @@ public:
     void MarkUsed(const void* pointer, std::size_t bytes) {
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        if (OverlapsSystemReserved(start, bytes)) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "fixed guest mapping 0x%llx+0x%zx overlaps the system reserved range", static_cast<unsigned long long>(start), bytes);
+            throw std::runtime_error(message);
+        }
         const auto next = _used.lower_bound(start);
         if ((next != _used.end() && next->first < start + bytes) || (next != _used.begin() && std::prev(next)->second > start)) {
             char message[160];
@@ -218,7 +231,6 @@ private:
         }
         _hostRegions = _holes;
         if (std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr) _hostIndex.Build(_hostRegions);
-        _holes.emplace_back(SystemReservedStart, SystemReservedEnd);
         for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
         _base = ArenaStart;
         _end = end;
@@ -380,15 +392,20 @@ private:
 
     std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
         const auto first = hint == 0 ? DefaultAllocationStart : std::max(_base, hint);
+        const bool reservedHint = hint >= SystemReservedStart && hint < SystemReservedEnd;
         auto& prefixEnd = first >= DefaultAllocationStart ? _occupiedDefaultPrefixEnd : _occupiedPrefixEnd;
         std::uintptr_t candidate = alignUp(bytes == 0 ? first : std::max(prefixEnd, first), alignment);
-        auto it = _used.upper_bound(candidate);
-        if (it != _used.begin() && std::prev(it)->second > candidate) --it;
-        for (; it != _used.end(); ++it) {
-            const auto& [start, end] = *it;
-            if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
-            if (start <= prefixEnd) prefixEnd = std::max(prefixEnd, end);
-            candidate = std::max(candidate, alignUp(end, alignment));
+        for (;;) {
+            auto it = _used.upper_bound(candidate);
+            if (it != _used.begin() && std::prev(it)->second > candidate) --it;
+            for (; it != _used.end(); ++it) {
+                const auto& [start, end] = *it;
+                if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
+                if (start <= prefixEnd) prefixEnd = std::max(prefixEnd, end);
+                candidate = std::max(candidate, alignUp(end, alignment));
+            }
+            if (reservedHint || !OverlapsSystemReserved(candidate, bytes)) break;
+            candidate = alignUp(SystemReservedEnd, alignment);
         }
         if (candidate > _end || bytes > _end - candidate) return 0;
         return candidate;
@@ -471,6 +488,10 @@ std::uintptr_t GuestArenaHighestFree_nid_no_patch(std::size_t bytes, std::size_t
 
 bool GuestArenaNextUsed_nid_no_patch(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end) {
     return Arena::Get().NextUsed(address, start, end);
+}
+
+bool GuestArenaOverlapsSystemReserved_nid_no_patch(std::uintptr_t start, std::size_t bytes) {
+    return Arena::OverlapsSystemReserved(start, bytes);
 }
 
 void GuestArenaMarkUsed_nid_postfix(const void* pointer, std::size_t bytes) {
