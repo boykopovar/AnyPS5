@@ -67,12 +67,36 @@ void CommitOutputs(TFirst* first, const TFirst& hostFirst, TSecond* second, cons
     if (second && !GuestCopyOut_nid_no_patch(second, &hostSecond, sizeof(hostSecond))) throw std::runtime_error(caller);
 }
 
+void ValidateParagraphOutputs(std::int32_t* start, std::int32_t* limit, std::uint8_t* level, const char* caller) {
+    if (start && !GuestWritable_nid_no_patch(start, sizeof(*start))) throw std::runtime_error(caller);
+    if (limit && !GuestWritable_nid_no_patch(limit, sizeof(*limit))) throw std::runtime_error(caller);
+    if (level && !GuestWritable_nid_no_patch(level, sizeof(*level))) throw std::runtime_error(caller);
+}
+
+void CommitParagraph(std::int32_t* start, std::int32_t hostStart, std::int32_t* limit, std::int32_t hostLimit,
+                     std::uint8_t* level, std::uint8_t hostLevel, const char* caller) {
+    if (start && !GuestCopyOut_nid_no_patch(start, &hostStart, sizeof(hostStart))) throw std::runtime_error(caller);
+    if (limit && !GuestCopyOut_nid_no_patch(limit, &hostLimit, sizeof(hostLimit))) throw std::runtime_error(caller);
+    if (level && !GuestCopyOut_nid_no_patch(level, &hostLevel, sizeof(hostLevel))) throw std::runtime_error(caller);
+}
+
 }
 
 extern "C" {
 
 Icu::BiDi* APS5_VABI ubidi_open_nid_postfix() {
     return reinterpret_cast<Icu::BiDi*>(ubidi_open());
+}
+
+Icu::BiDi* APS5_VABI ubidi_openSized_nid_postfix(std::int32_t maxLength, std::int32_t maxRunCount,
+                                                 std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return nullptr;
+    auto* bidi = ubidi_openSized(maxLength, maxRunCount, &status);
+    LeaveStatus(error, status, previous, __func__);
+    return reinterpret_cast<Icu::BiDi*>(bidi);
 }
 
 void APS5_VABI ubidi_close_nid_postfix(Icu::BiDi* bidi) {
@@ -238,6 +262,103 @@ std::int8_t APS5_VABI ubidi_isOrderParagraphsLTR_nid_postfix(Icu::BiDi* bidi) {
 
 std::int32_t APS5_VABI ubidi_countParagraphs_nid_postfix(Icu::BiDi* bidi) {
     return ubidi_countParagraphs(Checked(bidi));
+}
+
+void APS5_VABI ubidi_orderParagraphsLTR_nid_postfix(Icu::BiDi* bidi, std::int8_t enabled) {
+    ubidi_orderParagraphsLTR(Checked(bidi), enabled);
+}
+
+void APS5_VABI ubidi_setInverse_nid_postfix(Icu::BiDi* bidi, std::int8_t enabled) {
+    ubidi_setInverse(Checked(bidi), enabled);
+}
+
+void APS5_VABI ubidi_setReorderingMode_nid_postfix(Icu::BiDi* bidi, std::int32_t mode) {
+    ubidi_setReorderingMode(Checked(bidi), static_cast<UBiDiReorderingMode>(mode));
+}
+
+void APS5_VABI ubidi_setReorderingOptions_nid_postfix(Icu::BiDi* bidi, std::uint32_t options) {
+    ubidi_setReorderingOptions(Checked(bidi), options);
+}
+
+void APS5_VABI ubidi_setContext_nid_postfix(Icu::BiDi* bidi, const char16_t* prologue, std::int32_t prologueLength,
+                                            const char16_t* epilogue, std::int32_t epilogueLength,
+                                            std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return;
+    ubidi_setContext(Native(bidi), prologue, prologueLength, epilogue, epilogueLength, &status);
+    LeaveStatus(error, status, previous, __func__);
+}
+
+void APS5_VABI ubidi_setLine_nid_postfix(const Icu::BiDi* paragraph, std::int32_t start, std::int32_t limit,
+                                         Icu::BiDi* line, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return;
+    ubidi_setLine(Native(paragraph), start, limit, Native(line), &status);
+    LeaveStatus(error, status, previous, __func__);
+}
+
+std::int32_t APS5_VABI ubidi_getParagraph_nid_postfix(const Icu::BiDi* bidi, std::int32_t index,
+                                                      std::int32_t* start, std::int32_t* limit, std::uint8_t* level,
+                                                      std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return -1;
+    ValidateParagraphOutputs(start, limit, level, __func__);
+    std::int32_t hostStart = 0;
+    std::int32_t hostLimit = 0;
+    std::uint8_t hostLevel = 0;
+    const auto paragraph = ubidi_getParagraph(Native(bidi), index, &hostStart, &hostLimit, &hostLevel, &status);
+    if (U_SUCCESS(status)) CommitParagraph(start, hostStart, limit, hostLimit, level, hostLevel, __func__);
+    LeaveStatus(error, status, previous, __func__);
+    return paragraph;
+}
+
+void APS5_VABI ubidi_getParagraphByIndex_nid_postfix(const Icu::BiDi* bidi, std::int32_t paragraph,
+                                                     std::int32_t* start, std::int32_t* limit, std::uint8_t* level,
+                                                     std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return;
+    ValidateParagraphOutputs(start, limit, level, __func__);
+    std::int32_t hostStart = 0;
+    std::int32_t hostLimit = 0;
+    std::uint8_t hostLevel = 0;
+    ubidi_getParagraphByIndex(Native(bidi), paragraph, &hostStart, &hostLimit, &hostLevel, &status);
+    if (U_SUCCESS(status)) CommitParagraph(start, hostStart, limit, hostLimit, level, hostLevel, __func__);
+    LeaveStatus(error, status, previous, __func__);
+}
+
+void APS5_VABI ubidi_getClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClassCallback* function,
+                                                  const void** context) {
+    if (!bidi) APS5_INVALID_ARG_EX;
+    if (function && !GuestWritable_nid_no_patch(function, sizeof(*function))) throw std::runtime_error(__func__);
+    if (context && !GuestWritable_nid_no_patch(context, sizeof(*context))) throw std::runtime_error(__func__);
+    Icu::BiDiClassCallback hostFunction = nullptr;
+    const void* hostContext = nullptr;
+    {
+        std::lock_guard lock(classCallbackMutex);
+        const auto entry = classCallbacks.find(bidi);
+        if (entry != classCallbacks.end()) {
+            hostFunction = entry->second->function;
+            hostContext = entry->second->context;
+        }
+    }
+    if (function && !GuestCopyOut_nid_no_patch(function, &hostFunction, sizeof(hostFunction))) {
+        throw std::runtime_error(__func__);
+    }
+    if (context && !GuestCopyOut_nid_no_patch(context, &hostContext, sizeof(hostContext))) {
+        throw std::runtime_error(__func__);
+    }
+}
+
+const char16_t* APS5_VABI ubidi_getText_nid_postfix(const Icu::BiDi* bidi) {
+    return ubidi_getText(Checked(bidi));
 }
 
 }

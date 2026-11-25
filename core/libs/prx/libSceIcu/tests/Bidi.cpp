@@ -30,6 +30,8 @@ constexpr std::int32_t RightToLeft = 1;
 constexpr std::int32_t EuropeanNumber = 2;
 constexpr std::int32_t RightToLeftArabic = 13;
 constexpr std::int32_t ClassDefault = 23;
+constexpr std::int32_t ReorderRunsOnly = 3;
+constexpr std::uint32_t RemoveControls = 2;
 
 void Expect(bool condition, const char* what) {
     if (condition) return;
@@ -196,6 +198,68 @@ void TestStateQueries() {
     ubidi_close_nid_postfix(bidi);
 }
 
+void TestConfigurationAndParagraphs() {
+    std::int32_t error = Success;
+    auto* bidi = ubidi_openSized_nid_postfix(16, 4, &error);
+    Expect(bidi != nullptr, "ubidi_openSized");
+    ExpectInt(error, Success, "ubidi_openSized status");
+
+    ubidi_orderParagraphsLTR_nid_postfix(bidi, 1);
+    ExpectInt(ubidi_isOrderParagraphsLTR_nid_postfix(bidi), 1, "ubidi_orderParagraphsLTR");
+    ubidi_setInverse_nid_postfix(bidi, 1);
+    ExpectInt(ubidi_isInverse_nid_postfix(bidi), 1, "ubidi_setInverse");
+    ubidi_setReorderingMode_nid_postfix(bidi, ReorderRunsOnly);
+    ExpectInt(ubidi_getReorderingMode_nid_postfix(bidi), ReorderRunsOnly, "ubidi_setReorderingMode");
+    ExpectInt(ubidi_isInverse_nid_postfix(bidi), 0, "ubidi_setReorderingMode clears inverse mode");
+    ubidi_setReorderingOptions_nid_postfix(bidi, RemoveControls);
+    ExpectInt(ubidi_getReorderingOptions_nid_postfix(bidi), RemoveControls, "ubidi_setReorderingOptions");
+    ubidi_setReorderingMode_nid_postfix(bidi, 0);
+    ubidi_setReorderingOptions_nid_postfix(bidi, 0);
+
+    ubidi_setContext_nid_postfix(bidi, u"\u05d0", 1, nullptr, 0, &error);
+    ExpectInt(error, Success, "ubidi_setContext");
+    const char16_t neutral[] = u"123";
+    ubidi_setPara_nid_postfix(bidi, neutral, 3, DefaultLtr, nullptr, &error);
+    ExpectInt(error, Success, "ubidi_setPara after context");
+    ExpectInt(ubidi_getParaLevel_nid_postfix(bidi), 1, "ubidi_setContext affected the paragraph level");
+
+    const char16_t text[] = u"abc\n\u05d0\u05d1";
+    ubidi_setPara_nid_postfix(bidi, text, 6, DefaultLtr, nullptr, &error);
+    ExpectInt(error, Success, "ubidi_setPara for paragraph queries");
+    Expect(ubidi_getText_nid_postfix(bidi) == text, "ubidi_getText");
+
+    std::int32_t start = -1;
+    std::int32_t limit = -1;
+    std::uint8_t level = 0xff;
+    ExpectInt(ubidi_getParagraph_nid_postfix(bidi, 0, &start, &limit, &level, &error), 0,
+              "ubidi_getParagraph index");
+    ExpectInt(error, Success, "ubidi_getParagraph status");
+    ExpectInt(start, 0, "ubidi_getParagraph start");
+    ExpectInt(limit, 4, "ubidi_getParagraph limit");
+    ExpectInt(level, 0, "ubidi_getParagraph level");
+
+    ubidi_getParagraphByIndex_nid_postfix(bidi, 1, &start, &limit, &level, &error);
+    ExpectInt(error, Success, "ubidi_getParagraphByIndex status");
+    ExpectInt(start, 4, "ubidi_getParagraphByIndex start");
+    ExpectInt(limit, 6, "ubidi_getParagraphByIndex limit");
+    ExpectInt(level, 1, "ubidi_getParagraphByIndex level");
+
+    auto* line = ubidi_open_nid_postfix();
+    ubidi_setLine_nid_postfix(bidi, 4, 6, line, &error);
+    ExpectInt(error, Success, "ubidi_setLine");
+    ExpectInt(ubidi_getLength_nid_postfix(line), 2, "ubidi_setLine length");
+    Expect(ubidi_getText_nid_postfix(line) == text + 4, "ubidi_setLine text");
+    ubidi_close_nid_postfix(line);
+
+    std::int32_t calls = 0;
+    ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, nullptr, nullptr, &error);
+    Icu::BiDiClassCallback function = nullptr;
+    const void* context = nullptr;
+    ubidi_getClassCallback_nid_postfix(bidi, &function, &context);
+    Expect(function == MarkXRightToLeft && context == &calls, "ubidi_getClassCallback");
+    ubidi_close_nid_postfix(bidi);
+}
+
 void TestArguments() {
     std::int32_t error = Success;
     ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, &error);
@@ -220,6 +284,27 @@ void TestArguments() {
                                        "ubidi_isOrderParagraphsLTR(null)");
     ExpectThrow<std::invalid_argument>([] { ubidi_countParagraphs_nid_postfix(nullptr); },
                                        "ubidi_countParagraphs(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_openSized_nid_postfix(1, 1, nullptr); }, "ubidi_openSized(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_orderParagraphsLTR_nid_postfix(nullptr, 1); },
+                                       "ubidi_orderParagraphsLTR(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_setInverse_nid_postfix(nullptr, 1); }, "ubidi_setInverse(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_setReorderingMode_nid_postfix(nullptr, 0); },
+                                       "ubidi_setReorderingMode(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_setReorderingOptions_nid_postfix(nullptr, 0); },
+                                       "ubidi_setReorderingOptions(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_setContext_nid_postfix(nullptr, nullptr, 0, nullptr, 0, nullptr); },
+                                       "ubidi_setContext(null status)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_setLine_nid_postfix(nullptr, 0, 0, nullptr, nullptr); },
+                                       "ubidi_setLine(null status)");
+    ExpectThrow<std::invalid_argument>([] {
+        ubidi_getParagraph_nid_postfix(nullptr, 0, nullptr, nullptr, nullptr, nullptr);
+    }, "ubidi_getParagraph(null status)");
+    ExpectThrow<std::invalid_argument>([] {
+        ubidi_getParagraphByIndex_nid_postfix(nullptr, 0, nullptr, nullptr, nullptr, nullptr);
+    }, "ubidi_getParagraphByIndex(null status)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getClassCallback_nid_postfix(nullptr, nullptr, nullptr); },
+                                       "ubidi_getClassCallback(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getText_nid_postfix(nullptr); }, "ubidi_getText(null)");
     ubidi_close_nid_postfix(nullptr);
 }
 
@@ -441,6 +526,7 @@ int main() {
     TestClassCallback();
     TestStatelessHelpers();
     TestStateQueries();
+    TestConfigurationAndParagraphs();
     TestArguments();
     TestGuestPointers();
     return 0;

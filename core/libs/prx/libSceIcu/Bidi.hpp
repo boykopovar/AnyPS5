@@ -9,6 +9,7 @@ using BiDiClassCallback = std::int32_t (APS5_VABI*)(const void*, std::int32_t);
 
 extern "C" {
 Icu::BiDi* APS5_VABI ubidi_open_nid_postfix();
+Icu::BiDi* APS5_VABI ubidi_openSized_nid_postfix(std::int32_t, std::int32_t, std::int32_t*);
 void APS5_VABI ubidi_close_nid_postfix(Icu::BiDi*);
 void APS5_VABI ubidi_setPara_nid_postfix(Icu::BiDi*, const char16_t*, std::int32_t, std::uint8_t, std::uint8_t*, std::int32_t*);
 std::uint8_t APS5_VABI ubidi_getParaLevel_nid_postfix(const Icu::BiDi*);
@@ -31,4 +32,17 @@ std::uint32_t APS5_VABI ubidi_getReorderingOptions_nid_postfix(Icu::BiDi*);
 std::int8_t APS5_VABI ubidi_isInverse_nid_postfix(Icu::BiDi*);
 std::int8_t APS5_VABI ubidi_isOrderParagraphsLTR_nid_postfix(Icu::BiDi*);
 std::int32_t APS5_VABI ubidi_countParagraphs_nid_postfix(Icu::BiDi*);
+void APS5_VABI ubidi_orderParagraphsLTR_nid_postfix(Icu::BiDi*, std::int8_t);
+void APS5_VABI ubidi_setInverse_nid_postfix(Icu::BiDi*, std::int8_t);
+void APS5_VABI ubidi_setReorderingMode_nid_postfix(Icu::BiDi*, std::int32_t);
+void APS5_VABI ubidi_setReorderingOptions_nid_postfix(Icu::BiDi*, std::uint32_t);
+void APS5_VABI ubidi_setContext_nid_postfix(Icu::BiDi*, const char16_t*, std::int32_t, const char16_t*, std::int32_t,
+                                            std::int32_t*);
+void APS5_VABI ubidi_setLine_nid_postfix(const Icu::BiDi*, std::int32_t, std::int32_t, Icu::BiDi*, std::int32_t*);
+std::int32_t APS5_VABI ubidi_getParagraph_nid_postfix(const Icu::BiDi*, std::int32_t, std::int32_t*, std::int32_t*,
+                                                      std::uint8_t*, std::int32_t*);
+void APS5_VABI ubidi_getParagraphByIndex_nid_postfix(const Icu::BiDi*, std::int32_t, std::int32_t*, std::int32_t*,
+                                                     std::uint8_t*, std::int32_t*);
+void APS5_VABI ubidi_getClassCallback_nid_postfix(Icu::BiDi*, Icu::BiDiClassCallback*, const void**);
+const char16_t* APS5_VABI ubidi_getText_nid_postfix(const Icu::BiDi*);
 }
