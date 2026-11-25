@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
-#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <new>
@@ -371,9 +370,7 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
     if (titleId == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     std::string id;
-    const int savedErrno = errno;
     const int error = CopyGuestString_nid_no_patch(titleId, 10, id);
-    errno = savedErrno;
     if (error == 14) throw std::logic_error("sceLncUtilLaunchApp: reading a title id where it is not readable faults in firmware 13.60");
     if (error != 0 && error != 63) throw std::bad_alloc();
     if (error == 63 || id.size() != 9 || param == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
@@ -546,13 +543,10 @@ int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle) {
     if (handle == nullptr) return ShellCoreInvalidArgument;
     const std::intptr_t cleared = 0;
-    const int savedErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared));
-    errno = savedErrno;
     if (!writable) return ShellCoreInvalidArgument;
     const std::intptr_t localHandle = nextActivationHandle.fetch_add(ActivationHandleStep);
     const bool copied = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
-    errno = savedErrno;
     if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
@@ -842,22 +836,18 @@ std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
     const std::filesystem::space_info space = HostSpace();
-    const int savedErrno = errno;
     if (freeSize != nullptr) {
         const std::uint64_t localFree = space.available;
         if (!GuestCopyOut_nid_no_patch(freeSize, &localFree, sizeof(localFree))) {
-            errno = savedErrno;
             return static_cast<int>(0x80e30005);
         }
     }
     if (totalSize != nullptr) {
         const std::uint64_t localTotal = space.capacity;
         if (!GuestCopyOut_nid_no_patch(totalSize, &localTotal, sizeof(localTotal))) {
-            errno = savedErrno;
             return static_cast<int>(0x80e30005);
         }
     }
-    errno = savedErrno;
     return 0;
 }
 
