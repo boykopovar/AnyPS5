@@ -467,15 +467,15 @@ void KindCheckpointInRing() {
     AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
     const AgcDriver::FaultToken token = ring.Claim();
     Require(token != 0, "the kind checkpoint token is invalid");
-    ClaimBracketToken(ring, token, 11, 0x5003e9700ull, 9, "dispatch 32x1x1");
+    ClaimBracketToken(ring, token, 11, 0x1240000ull, 9, "dispatch 32x1x1");
     kindMarker = reinterpret_cast<const void*>(AgcDriver::CheckpointMarker(token, AgcDriver::CheckpointKind::barrier));
     const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring);
     Require(lines.size() == 1, "a kind checkpoint after a token in the ring does not report one line");
     char expected[256];
-    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: barrier after token %u batch 11 queue 0x2000 program 0x5003e9700 variant 9 dispatch 32x1x1 at stage 0x1", static_cast<unsigned>(token));
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: barrier after token %u batch 11 queue 0x2000 program 0x1240000 variant 9 dispatch 32x1x1 at stage 0x1", static_cast<unsigned>(token));
     Require(lines[0] == expected, "a kind checkpoint after a token in the ring lost the guest program");
     const auto staged = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockKindCheckpointData, 0, nullptr, AgcDriver::SubmitBracket{}, ring, static_cast<AgcDriver::DeviceFaultResidencyProbe (*)(std::uint64_t)>(nullptr));
-    Require(staged.size() == 1 && staged[0].rfind("[device-fault] checkpoint: barrier after token ", 0) == 0 && staged[0].find("program 0x5003e9700 variant 9 stage ") != std::string::npos, "a kind checkpoint after a token in the ring lost the guest program in the residency report");
+    Require(staged.size() == 1 && staged[0].rfind("[device-fault] checkpoint: barrier after token ", 0) == 0 && staged[0].find("program 0x1240000 variant 9 stage ") != std::string::npos, "a kind checkpoint after a token in the ring lost the guest program in the residency report");
     kindMarker = nullptr;
 }
 

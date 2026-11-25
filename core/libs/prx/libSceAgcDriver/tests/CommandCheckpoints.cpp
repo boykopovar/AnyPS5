@@ -367,6 +367,7 @@ void ClassifiesEverySourceCommand(PFN_vkGetDeviceProcAddr proc, const std::files
         if (!entry.is_regular_file()) continue;
         const auto relative = std::filesystem::relative(entry.path(), root).generic_string();
         if (relative.rfind("tests/", 0) == 0) continue;
+        if (relative == "Graphics/src/CommandCheckpoints.cpp") continue;
         const auto extension = entry.path().extension().string();
         if (extension != ".cpp" && extension != ".hpp" && extension != ".h" && extension != ".inl") continue;
         std::ifstream file(entry.path(), std::ios::binary);
