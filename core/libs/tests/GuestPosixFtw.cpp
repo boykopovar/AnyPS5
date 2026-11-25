@@ -3,6 +3,8 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <vector>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +27,7 @@ constexpr int FtwNs = 4;
 constexpr int GuestEinval = 22;
 
 std::map<std::string, int> g_types;
+std::vector<std::string> g_order;
 int g_stopAt = 0;
 int g_stopReturn = 0;
 int g_calls = 0;
@@ -38,6 +41,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 int APS5_VABI Recorder(const char* path, const void*, int type) {
     g_types[path] = type;
+    g_order.push_back(path);
     ++g_calls;
     if (g_stopAt != 0 && g_calls == g_stopAt) return g_stopReturn;
     return 0;
@@ -81,6 +85,33 @@ int main() {
     Require(g_calls == 2);
     g_stopAt = 0;
     g_stopReturn = 0;
+
+    g_types.clear();
+    g_order.clear();
+    g_calls = 0;
+    Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 0);
+    auto position = [](const std::string& path) {
+        return std::find(g_order.begin(), g_order.end(), path) - g_order.begin();
+    };
+    Require(!g_order.empty() && g_order.front() == "/anyps5-ftw-test");
+    Require(position("/anyps5-ftw-test/d") < position("/anyps5-ftw-test/d/b.txt"));
+    Require(position("/anyps5-ftw-test/d/e") < position("/anyps5-ftw-test/d/e/c.txt"));
+
+    const auto stopIndex = position("/anyps5-ftw-test/d/b.txt") + 1;
+    g_order.clear();
+    g_calls = 0;
+    g_stopAt = static_cast<int>(stopIndex);
+    g_stopReturn = 9;
+    Require(ftw_nid_postfix("/anyps5-ftw-test", Recorder, 4) == 9);
+    Require(static_cast<long>(g_order.size()) == stopIndex && g_order.back() == "/anyps5-ftw-test/d/b.txt");
+    g_stopAt = 0;
+    g_stopReturn = 0;
+
+    g_types.clear();
+    g_order.clear();
+    Require(ftw_nid_postfix("/anyps5-ftw-test/", Recorder, 4) == 0);
+    Require(std::find(g_order.begin(), g_order.end(), "/anyps5-ftw-test/a.txt") != g_order.end());
+    for (const std::string& path : g_order) Require(path.find("//") == std::string::npos);
 
     g_types.clear();
     Require(ftw_nid_postfix("/anyps5-ftw-test/missing", Recorder, 4) == 0);
