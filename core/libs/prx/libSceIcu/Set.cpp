@@ -213,6 +213,14 @@ void APS5_VABI uset_complementRange_nid_postfix(USet* set, std::int32_t start, s
     uset_complementRange(NativeSet(set), start, end);
 }
 
+void APS5_VABI uset_complementAllCodePoints_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_complementAllCodePoints(NativeSet(set), Text(string, length), length);
+}
+
+void APS5_VABI uset_complementString_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_complementString(NativeSet(set), Text(string, length), length);
+}
+
 std::int32_t APS5_VABI uset_indexOf_nid_postfix(const USet* set, std::int32_t codePoint) {
     return uset_indexOf(Icu::NativeSet(set), codePoint);
 }
@@ -225,6 +233,18 @@ std::int32_t APS5_VABI uset_getStringCount_nid_postfix(const USet* set) {
     return uset_getStringCount(Icu::NativeSet(set));
 }
 
+std::int32_t APS5_VABI uset_getRangeCount_nid_postfix(const USet* set) {
+    return uset_getRangeCount(Icu::NativeSet(set));
+}
+
+const char16_t* APS5_VABI uset_getString_nid_postfix(const USet* set, std::int32_t index, std::int32_t* length) {
+    if (!length) return nullptr;
+    std::int32_t nativeLength = 0;
+    const auto* string = uset_getString(Icu::NativeSet(set), index, &nativeLength);
+    if (!GuestCopyOut_nid_no_patch(length, &nativeLength, sizeof(nativeLength))) APS5_INVALID_ARG_EX;
+    return string;
+}
+
 std::int8_t APS5_VABI uset_contains_nid_postfix(const USet* set, std::int32_t codePoint) {
     const auto* native = Icu::NativeSet(set);
     return codePoint >= 0 && codePoint <= MaximumCodePoint && uset_contains(native, codePoint);
@@ -232,6 +252,11 @@ std::int8_t APS5_VABI uset_contains_nid_postfix(const USet* set, std::int32_t co
 
 std::int8_t APS5_VABI uset_containsRange_nid_postfix(const USet* set, std::int32_t start, std::int32_t end) {
     return uset_containsRange(Icu::NativeSet(set), start, end);
+}
+
+std::int8_t APS5_VABI uset_containsAllCodePoints_nid_postfix(const USet* set, const char16_t* string,
+                                                              std::int32_t length) {
+    return uset_containsAllCodePoints(Icu::NativeSet(set), Text(string, length), length);
 }
 
 std::int8_t APS5_VABI uset_equals_nid_postfix(const USet* first, const USet* second) {
@@ -435,6 +460,10 @@ void APS5_VABI uset_removeString_nid_postfix(USet* set, const char16_t* string, 
     uset_removeString(NativeSet(set), Text(string, length), length);
 }
 
+void APS5_VABI uset_removeAllCodePoints_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_removeAllCodePoints(NativeSet(set), Text(string, length), length);
+}
+
 void APS5_VABI uset_removeAll_nid_postfix(USet* set, const USet* remove) {
     uset_removeAll(NativeSet(set), Icu::NativeSet(remove));
 }
@@ -447,6 +476,14 @@ void APS5_VABI uset_retain_nid_postfix(USet* set, std::int32_t start, std::int32
     uset_retain(NativeSet(set), start, end);
 }
 
+void APS5_VABI uset_retainAllCodePoints_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_retainAllCodePoints(NativeSet(set), Text(string, length), length);
+}
+
+void APS5_VABI uset_retainString_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
+    uset_retainString(NativeSet(set), Text(string, length), length);
+}
+
 void APS5_VABI uset_retainAll_nid_postfix(USet* set, const USet* retain) {
     uset_retainAll(NativeSet(set), Icu::NativeSet(retain));
 }
@@ -457,6 +494,20 @@ void APS5_VABI uset_complementAll_nid_postfix(USet* set, const USet* complement)
 
 std::int32_t APS5_VABI uset_size_nid_postfix(const USet* set) {
     return uset_size(Icu::NativeSet(set));
+}
+
+std::int8_t APS5_VABI uset_resemblesPattern_nid_postfix(const char16_t* pattern, std::int32_t length,
+                                                         std::int32_t position) {
+    return uset_resemblesPattern(Text(pattern, length), length, position);
+}
+
+void APS5_VABI uset_set_nid_postfix(USet* set, std::int32_t start, std::int32_t end) {
+    uset_set(NativeSet(set), start, end);
+}
+
+std::int8_t APS5_VABI u_stringHasBinaryProperty_nid_postfix(const char16_t* string, std::int32_t length,
+                                                             std::int32_t property) {
+    return u_stringHasBinaryProperty(Text(string, length), length, static_cast<UProperty>(property));
 }
 
 }

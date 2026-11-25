@@ -415,6 +415,67 @@ void AdditionalMutations() {
     uset_close_nid_postfix(set);
 }
 
+void CodePointAndStringOperations() {
+    static_assert(std::is_same_v<decltype(&uset_complementAllCodePoints_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_complementString_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_containsAllCodePoints_nid_postfix), std::int8_t (APS5_VABI*)(const USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_getRangeCount_nid_postfix), std::int32_t (APS5_VABI*)(const USet*)>);
+    static_assert(std::is_same_v<decltype(&uset_getString_nid_postfix), const char16_t* (APS5_VABI*)(const USet*, std::int32_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&uset_removeAllCodePoints_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_resemblesPattern_nid_postfix), std::int8_t (APS5_VABI*)(const char16_t*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_retainAllCodePoints_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_retainString_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_set_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&u_stringHasBinaryProperty_nid_postfix), std::int8_t (APS5_VABI*)(const char16_t*, std::int32_t, std::int32_t)>);
+
+    USet* set = uset_openEmpty_nid_postfix();
+    uset_set_nid_postfix(set, 'a', 'f');
+    Require(uset_getRangeCount_nid_postfix(set) == 1 && uset_size_nid_postfix(set) == 6, "replace set with range");
+    uset_addString_nid_postfix(set, u"ch", 2);
+    uset_addString_nid_postfix(set, u"sch", -1);
+    std::int32_t length = -1;
+    const auto* string = uset_getString_nid_postfix(set, 0, &length);
+    Require(string && length == 2 && string[0] == u'c' && string[1] == u'h', "get first string");
+    string = uset_getString_nid_postfix(set, 1, &length);
+    Require(string && length == 3 && string[0] == u's' && string[1] == u'c' && string[2] == u'h', "get second string");
+    Require(!uset_getString_nid_postfix(set, 2, &length) && length == 0, "string index past end");
+    Require(!uset_getString_nid_postfix(set, 0, nullptr), "null string length");
+    Require(uset_containsAllCodePoints_nid_postfix(set, u"face", -1), "contains all code points");
+    Require(!uset_containsAllCodePoints_nid_postfix(set, u"cage", 4), "missing code point");
+    uset_removeAllCodePoints_nid_postfix(set, u"ce", 2);
+    Require(!uset_contains_nid_postfix(set, 'c') && !uset_contains_nid_postfix(set, 'e') && uset_containsString_nid_postfix(set, u"ch", 2),
+            "remove code points preserves strings");
+    uset_complementString_nid_postfix(set, u"ch", -1);
+    Require(!uset_containsString_nid_postfix(set, u"ch", 2), "complement removes string");
+    uset_complementString_nid_postfix(set, u"xy", 2);
+    Require(uset_containsString_nid_postfix(set, u"xy", -1), "complement adds string");
+    uset_complementAllCodePoints_nid_postfix(set, u"abef", 4);
+    Require(!uset_contains_nid_postfix(set, 'a') && !uset_contains_nid_postfix(set, 'b') && uset_contains_nid_postfix(set, 'd') &&
+            uset_contains_nid_postfix(set, 'e') && !uset_contains_nid_postfix(set, 'f'), "complement code points");
+    uset_retainAllCodePoints_nid_postfix(set, u"bef", -1);
+    Require(Items(set) == Ranges{{'e', 'e'}} && uset_getStringCount_nid_postfix(set) == 0, "retain code points");
+    uset_addString_nid_postfix(set, u"ch", 2);
+    uset_addString_nid_postfix(set, u"sch", 3);
+    uset_retainString_nid_postfix(set, u"sch", -1);
+    Require(uset_isEmpty_nid_postfix(set) == 0 && uset_getStringCount_nid_postfix(set) == 1 &&
+            uset_containsString_nid_postfix(set, u"sch", 3), "retain one string");
+    uset_retainString_nid_postfix(set, u"ch", 2);
+    Require(uset_isEmpty_nid_postfix(set), "retain absent string clears set");
+    Require(uset_resemblesPattern_nid_postfix(u"[a-z]", -1, 0) && !uset_resemblesPattern_nid_postfix(u"[a-z]", -1, 1),
+            "pattern resemblance");
+    Require(u_stringHasBinaryProperty_nid_postfix(u"\u23f1\ufe0f", 2, 65) &&
+            !u_stringHasBinaryProperty_nid_postfix(u"\u23f1", 1, 65), "string binary property");
+    Require(Rejects([&] { uset_containsAllCodePoints_nid_postfix(set, nullptr, 1); }), "null contained code points");
+    Require(Rejects([&] { uset_removeAllCodePoints_nid_postfix(set, nullptr, 1); }), "null removed code points");
+    Require(Rejects([&] { uset_complementAllCodePoints_nid_postfix(set, nullptr, 1); }), "null complemented code points");
+    Require(Rejects([&] { uset_complementString_nid_postfix(set, nullptr, 1); }), "null complemented string");
+    Require(Rejects([&] { uset_retainAllCodePoints_nid_postfix(set, nullptr, 1); }), "null retained code points");
+    Require(Rejects([&] { uset_retainString_nid_postfix(set, nullptr, 1); }), "null retained string");
+    Require(Rejects([] { uset_resemblesPattern_nid_postfix(nullptr, 1, 0); }), "null pattern");
+    Require(Rejects([] { u_stringHasBinaryProperty_nid_postfix(nullptr, 1, 65); }), "null property string");
+    uset_close_nid_postfix(set);
+}
+
 void PatternsAndSerialization() {
     static_assert(std::is_same_v<decltype(&uset_open_nid_postfix), USet* (APS5_VABI*)(std::int32_t, std::int32_t)>);
     static_assert(std::is_same_v<decltype(&uset_toPattern_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, char16_t*, std::int32_t, std::int8_t, std::int32_t*)>);
@@ -593,6 +654,7 @@ int main() {
     AdditionalOperations();
     AdditionalQueries();
     AdditionalMutations();
+    CodePointAndStringOperations();
     PatternsAndSerialization();
     ItemAccess();
     InvalidSets();

@@ -101,6 +101,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/unisetspan.cpp
     ${ICU_SOURCE_DIR}/common/unistr.cpp
     ${ICU_SOURCE_DIR}/common/unistr_case.cpp
+    ${ICU_SOURCE_DIR}/common/unistr_case_locale.cpp
     ${ICU_SOURCE_DIR}/common/unormcmp.cpp
     ${ICU_SOURCE_DIR}/common/uobject.cpp
     ${ICU_SOURCE_DIR}/common/uprops.cpp
@@ -144,6 +145,8 @@ target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_C
 target_compile_features(icu_common PUBLIC cxx_std_17)
 set_source_files_properties(${ICU_SOURCE_DIR}/common/ucasemap.cpp PROPERTIES COMPILE_DEFINITIONS UCONFIG_NO_BREAK_ITERATION=1)
 target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/uset.cpp)
+target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/uset_props.cpp ${ICU_SOURCE_DIR}/common/uniset_closure.cpp)
+set_source_files_properties(${ICU_SOURCE_DIR}/common/uniset_closure.cpp PROPERTIES COMPILE_DEFINITIONS UCONFIG_NO_BREAK_ITERATION=1)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_common INTERFACE LINKER:--exclude-libs,libicu_common.a)
