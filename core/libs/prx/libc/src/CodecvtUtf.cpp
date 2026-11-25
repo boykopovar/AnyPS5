@@ -5,7 +5,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -49,27 +48,21 @@ TValue ReadMode(const void* self) {
     if (address > std::numeric_limits<std::uintptr_t>::max() - ModeOffset)
         throw std::invalid_argument("UTF codecvt: invalid facet address");
     TValue mode = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&mode, reinterpret_cast<const void*>(address + ModeOffset), sizeof(mode));
-    errno = savedErrno;
     if (!copied)
         throw std::invalid_argument("UTF codecvt: unreadable facet mode");
     return mode;
 }
 
 void WriteNext(char** next, char* first) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(next, &first, sizeof(first));
-    errno = savedErrno;
     if (!copied)
         throw std::invalid_argument("UTF codecvt: unwritable next pointer");
 }
 
 template<typename T>
 void WriteLibcxxNext(T** next, T* first) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(next, &first, sizeof(first));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("libc++ codecvt<char,char>: unwritable next pointer");
 }
 
@@ -261,9 +254,7 @@ int APS5_VABI CodecvtUtf16Out_nid_no_patch(const void* self, void* state, const 
 int APS5_VABI CodecvtUtf16Unshift_nid_no_patch(const void*, void* state, char* first, char*, char** next) {
     WriteNext(next, first);
     std::uint16_t pending = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&pending, state, sizeof(pending));
-    errno = savedErrno;
     if (!copied)
         throw std::invalid_argument("UTF codecvt: unreadable shift state");
     return pending > 1 ? Error : Ok;
