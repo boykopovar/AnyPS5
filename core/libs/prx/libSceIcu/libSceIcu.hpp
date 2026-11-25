@@ -50,9 +50,11 @@
 #include "Configuration.hpp"
 #include "DataInfo.hpp"
 
+#include "BreakRules.hpp"
 #include "ConverterHelpers.hpp"
 #include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
 #include "UtfConversions.hpp"
 #include "ConverterFileSeparator.hpp"
+#include "BreakIterator.hpp"
