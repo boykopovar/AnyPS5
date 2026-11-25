@@ -19,6 +19,7 @@ public:
     BeginResult Next{Outcome::Started, {}};
     bool ThrowOnBegin = false;
     bool ThrowOnEnd = false;
+    bool ThrowNonStdOnEnd = false;
     int Begins = 0;
     int Ends = 0;
 
@@ -33,6 +34,7 @@ public:
     void End() override {
         ++Ends;
         if (ThrowOnEnd) throw std::runtime_error("end exploded");
+        if (ThrowNonStdOnEnd) throw 42;
     }
 };
 
@@ -129,6 +131,14 @@ void ThrowingBackendsAreContained() {
     active.Stop();
     Require(active.Current() == State::Ended, "a throwing end must still end the session");
     Require(releasing.Lines.size() == 2 && releasing.Lines[1].find("end exploded") != std::string::npos, "a throwing end must be logged");
+
+    Harness releasingNonStd;
+    releasingNonStd.Backend.ThrowNonStdOnEnd = true;
+    auto activeNonStd = releasingNonStd.Make(Mode::On);
+    activeNonStd.Start();
+    activeNonStd.Stop();
+    Require(activeNonStd.Current() == State::Ended, "a non-std throwing end must still end the session");
+    Require(releasingNonStd.Lines.size() == 2 && releasingNonStd.Lines[1] == "fake: release failed", "a non-std throwing end must log without parenthesized detail");
 }
 
 void ConcurrentStartsReachTheBackendOnce() {
