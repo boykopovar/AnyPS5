@@ -3,7 +3,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -208,9 +207,7 @@ extern "C" int APS5_VABI i2d_X509_nid_postfix(const LibreSsl3Certificate* certif
         if (!allocated) return -1;
         std::memcpy(allocated, encoded.data(), encoded.size());
     } else {
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(target, encoded.data(), encoded.size());
-        errno = savedErrno;
         if (!written) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     unsigned char* const next = allocated ? allocated : target + encoded.size();
