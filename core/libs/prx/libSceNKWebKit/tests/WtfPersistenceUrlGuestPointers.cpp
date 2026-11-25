@@ -244,6 +244,34 @@ static void TestFailedEncodesKeepEncoder() {
     }
 }
 
+static void TestFailedWriteKeepsBuffer() {
+    constexpr std::size_t encoderPages = (sizeof(Encoder) + pageBytes - 1) / pageBytes;
+    unsigned char* guestPages = MapPages(encoderPages);
+    auto* guest = reinterpret_cast<Encoder*>(guestPages);
+    _ZN3WTF11Persistence7EncoderC1Ev(guest);
+    unsigned char* bufferPages = MapPages(2);
+    std::memset(bufferPages, 0x5A, pageBytes);
+    Protect(bufferPages + pageBytes, 1, true);
+    auto* inlineBuffer = guest->buffer;
+    unsigned inlineCapacity = guest->capacity;
+    guest->buffer = bufferPages;
+    guest->capacity = 2 * pageBytes;
+    guest->size = pageBytes - 4;
+    std::vector<unsigned char> encoderBefore(guestPages, guestPages + sizeof(Encoder));
+    std::vector<unsigned char> bufferBefore(bufferPages, bufferPages + 2 * pageBytes);
+
+    Require(FaultsAsNotImplemented([&] { return &_ZN3WTF11Persistence7EncoderlsEm(guest, 0x0123456789ABCDEFULL); }, "_ZN3WTF11Persistence7EncoderlsEm"));
+    Require(std::memcmp(guestPages, encoderBefore.data(), sizeof(Encoder)) == 0);
+    Require(std::memcmp(bufferPages, bufferBefore.data(), bufferBefore.size()) == 0);
+
+    guest->buffer = inlineBuffer;
+    guest->capacity = inlineCapacity;
+    guest->size = 0;
+    _ZN3WTF11Persistence7EncoderD1Ev(guest);
+    UnmapPages(bufferPages, 2);
+    UnmapPages(guestPages, encoderPages);
+}
+
 static void TestDecoder() {
     auto* unreadable = reinterpret_cast<Decoder*>(0x10);
     Require(FaultsAsNotImplemented([&] { return _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(unreadable, 1); },
@@ -378,6 +406,7 @@ static void TestURL() {
 int main() {
     TestEncoder();
     TestFailedEncodesKeepEncoder();
+    TestFailedWriteKeepsBuffer();
     TestDecoder();
     TestURL();
     return 0;

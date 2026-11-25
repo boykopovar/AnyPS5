@@ -329,7 +329,14 @@ bool EncoderEnsure(Encoder* enc, EncoderState& state, std::size_t additional) {
 }
 
 bool EncoderWrite(Encoder* enc, EncoderState& state, unsigned salt, const void* data, std::size_t length) {
-    if (!EncoderEnsure(enc, state, length) || !GuestCopyOut_nid_no_patch(state.buffer + state.size, data, length)) return false;
+    if (!EncoderEnsure(enc, state, length)) return false;
+    uint8_t* target = state.buffer + state.size;
+    std::vector<uint8_t> previous(length);
+    if (!GuestWritable_nid_no_patch(target, length) || !GuestCopyIn_nid_no_patch(previous.data(), target, length)) return false;
+    if (!GuestCopyOut_nid_no_patch(target, data, length)) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(target, previous.data(), length));
+        return false;
+    }
     Sha1Add(&state.sha1, reinterpret_cast<const uint8_t*>(&salt), sizeof(salt));
     Sha1Add(&state.sha1, static_cast<const uint8_t*>(data), length);
     state.size += static_cast<unsigned>(length);
