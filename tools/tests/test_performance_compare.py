@@ -606,6 +606,38 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("window.spec", result.stderr)
 
+    def test_periodic_summaries_allow_different_first_present_counters(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SUMMARY_EVERY": "10"}
+            summary["window"].update(spec="summary_every 10", ms=10000.0)
+        self.baseline["window"]["first_present"] = 2932
+        self.candidate["window"]["first_present"] = 2992
+        self.baseline["presents"] = 172
+        self.candidate["presents"] = 176
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["configuration_differences"], {})
+
+    def test_periodic_summaries_still_require_the_same_interval(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SUMMARY_EVERY": "10"}
+            summary["window"]["spec"] = "summary_every 10"
+        self.candidate["window"].update(spec="summary_every 30", first_present=700)
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.spec"})
+        self.candidate["window"]["spec"] = "seconds 10:10"
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.spec"})
+
+    def test_malformed_periodic_spec_keeps_first_present_check(self):
+        for summary in (self.baseline, self.candidate):
+            summary["window"]["spec"] = "summary_every ten"
+        self.candidate["window"]["first_present"] = 700
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.first_present"})
+
     def test_unknown_window_syntax_keeps_first_present_check(self):
         for summary in (self.baseline, self.candidate):
             summary["window"]["spec"] = "seconds unknown"
