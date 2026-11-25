@@ -87,6 +87,8 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 
+    target_compile_definitions(nkwebkit_graphemeclusters_tests PRIVATE ANYPS5_GRAPHEME_BREAK_TEST="${ICU_SOURCE_DIR}/test/testdata/GraphemeBreakTest.txt")
+
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/CharactersToNumber.cpp)

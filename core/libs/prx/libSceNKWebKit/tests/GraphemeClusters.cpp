@@ -3,10 +3,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <source_location>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -58,6 +61,46 @@ template<typename Function> bool Throws(Function function, std::string_view mess
         return std::string_view(error.what()).find(message) != std::string_view::npos;
     }
     return false;
+}
+
+void CheckUnicodeBreaks() {
+    std::ifstream data(ANYPS5_GRAPHEME_BREAK_TEST);
+    Require(data.is_open());
+    unsigned cases = 0;
+    unsigned lineNumber = 0;
+    for (std::string line; std::getline(data, line);) {
+        ++lineNumber;
+        std::istringstream fields(line.substr(0, line.find('#')));
+        std::u16string text;
+        std::vector<unsigned> boundaries;
+        for (std::string token; fields >> token;) {
+            if (token == "\xc3\xb7") {
+                boundaries.push_back(static_cast<unsigned>(text.size()));
+            } else if (token != "\xc3\x97") {
+                unsigned long scalar = std::stoul(token, nullptr, 16);
+                if (scalar >= 0x10000) {
+                    scalar -= 0x10000;
+                    text.push_back(static_cast<char16_t>(0xd800 + (scalar >> 10)));
+                    scalar = 0xdc00 + (scalar & 0x3ff);
+                }
+                text.push_back(static_cast<char16_t>(scalar));
+            }
+        }
+        if (boundaries.empty()) continue;
+        ++cases;
+        const StringView view{text.data(), static_cast<unsigned>(text.size()), false};
+        if (Clusters(view) != boundaries.size() - 1) {
+            throw std::runtime_error("GraphemeBreakTest cluster count at line " + std::to_string(lineNumber));
+        }
+        for (unsigned i = 0; i < boundaries.size(); ++i) {
+            const unsigned units = CodeUnits(view, i);
+            if (units != boundaries[i]) {
+                throw std::runtime_error("GraphemeBreakTest line " + std::to_string(lineNumber) + ", boundary " +
+                    std::to_string(i) + ": expected " + std::to_string(boundaries[i]) + ", got " + std::to_string(units));
+            }
+        }
+    }
+    Require(!data.bad() && cases != 0);
 }
 
 void Run() {
@@ -126,5 +169,6 @@ void Run() {
 
 int main() {
     Run();
+    CheckUnicodeBreaks();
     return 0;
 }
