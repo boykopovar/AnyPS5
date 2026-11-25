@@ -176,10 +176,11 @@ def validate_trace(raw, summary, process):
     events = document["traceEvents"]
     if len(events) > MAX_EVENTS:
         raise ValueError("native trace exceeds its event limit")
-    trace = trace_digest.Trace(document)
     process_names, presents = [], []
     threads, activity_threads, presenters, loss_threads = set(), set(), set(), set()
     for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("native trace event must be an object")
         if type(event.get("pid")) is not int or event["pid"] != process:
             raise ValueError("native trace process identity differs from its filename")
         tid = event.get("tid")
@@ -205,7 +206,8 @@ def validate_trace(raw, summary, process):
             continue
         activity_threads.add(tid)
         if phase == "C":
-            if args.keys() != {"ms"} or args["ms"] < 0:
+            duration = args.get("ms")
+            if args.keys() != {"ms"} or type(duration) not in (int, float) or not 0 <= duration < math.inf:
                 raise ValueError("native folded counter must contain a nonnegative ms value")
         elif phase == "i" and name == "present":
             presenters.add(tid)
@@ -214,7 +216,8 @@ def validate_trace(raw, summary, process):
                 raise ValueError("native trace present identity must fit uint64")
             presents.append((event["ts"], present))
         elif phase == "i" and name == "trace buffer full":
-            if tid in loss_threads or not 0 < args["events_lost"] <= UINT64_MAX:
+            lost = args.get("events_lost")
+            if tid in loss_threads or type(lost) is not int or not 0 < lost <= UINT64_MAX:
                 raise ValueError("native trace loss marker must be unique per thread and carry a positive uint64 count")
             loss_threads.add(tid)
         elif phase == "i":
@@ -235,9 +238,9 @@ def validate_trace(raw, summary, process):
     if presents[0][0] != 0 or any(timestamp < 0 or timestamp > summary["window"]["ms"] * 1000 + 1
                                    for timestamp, _ in presents):
         raise ValueError("native trace present times differ from its summary window")
-    if trace.losses and not summary["trace_dropped"]:
+    if loss_threads and not summary["trace_dropped"]:
         raise ValueError("native trace reports event losses absent from its summary")
-    return trace
+    return trace_digest.Trace(document)
 
 
 def capture_warnings(summary, trace):

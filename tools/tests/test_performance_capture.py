@@ -258,6 +258,24 @@ class InvalidSummaries(CaptureFixture):
 
 
 class InvalidTraces(CaptureFixture):
+    def test_native_fields_are_validated_before_trace_digest(self):
+        events = self.trace["traceEvents"]
+        loss = {"name": "trace buffer full", "ph": "i", "ts": 1, "pid": 42, "tid": 1}
+        folded = {"name": "presenter folded", "ph": "C", "ts": 1, "pid": 42, "tid": 1}
+        cases = [
+            (None, "native trace event must be an object"),
+            (loss, "positive uint64 count"),
+            (dict(loss, args={"events_lost": 1.5}), "positive uint64 count"),
+            (dict(loss, args={"events_lost": True}), "positive uint64 count"),
+            (dict(folded, args={"ms": "1"}), "nonnegative ms value"),
+            (dict(folded, args={"ms": True}), "nonnegative ms value"),
+        ]
+        for event, message in cases:
+            with self.subTest(event=event):
+                raw = gzip.compress(json.dumps({"traceEvents": [*events, event]}).encode())
+                with self.assertRaisesRegex(ValueError, message):
+                    performance_capture.validate_trace(raw, self.summary, 42)
+
     def test_malformed_native_event_streams_cannot_complete_a_capture(self):
         self.summary["trace_dropped"] = True
         self.write_summary()
