@@ -4,7 +4,6 @@
 #include <cstring>
 #include <atomic>
 #include <array>
-#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "AudioOut2Internal.hpp"
@@ -51,9 +50,7 @@ constexpr std::size_t AUDIO_OUT_MASTERING_LIMITER_OUTPUT_PEAK_OFFSET = 272;
 constexpr std::size_t AUDIO_OUT_MASTERING_LIMITER_GAIN_PEAK_OFFSET = 304;
 
 bool ReadMasteringId(const void* source, std::uint32_t& id) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&id, source, sizeof(id));
-    errno = savedErrno;
     return copied;
 }
 
@@ -61,9 +58,7 @@ bool ClearMasteringMeter(void* state, std::size_t offset, std::size_t bytes) {
     constexpr std::array<std::byte, 96> zeros{};
     const auto address = reinterpret_cast<std::uintptr_t>(state);
     if (bytes > zeros.size() || address > UINTPTR_MAX - offset) return false;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), zeros.data(), bytes);
-    errno = savedErrno;
     return copied;
 }
 
@@ -134,7 +129,6 @@ int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* stat
     if (state == nullptr) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
     std::uint32_t id = 0;
     if (!ReadMasteringId(state, id)) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
-    const int savedErrno = errno;
     bool copied = false;
     switch (id) {
         case AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT: {
@@ -158,10 +152,8 @@ int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* stat
             break;
         }
         default:
-            errno = savedErrno;
             return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_STATES_ID;
     }
-    errno = savedErrno;
     return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
 }
 
