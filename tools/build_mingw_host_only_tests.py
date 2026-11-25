@@ -251,6 +251,13 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
     return sorted(set(matched), key=str.casefold)
 
 
+def read_changed_paths(path):
+    data = path.read_bytes()
+    if b"\0" in data:
+        return [name for name in data.decode("utf-8").split("\0") if name]
+    return data.decode("utf-8-sig").splitlines()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="build core/libs test executables that do not link guest libc")
     parser.add_argument("build_dir", type=Path)
@@ -259,7 +266,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        changed_paths = read_changed_paths(args.changed_paths) if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:
             print("No changed host-only core/libs test executables require a link check")

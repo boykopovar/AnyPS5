@@ -396,6 +396,8 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     const originalFiles = archive.files.filter(item => !replaced.has("app0/" + item.name));
     for (const item of originalFiles) claim("app0/" + item.name);
     claim(outputName);
+    const receiptName = "anyps5-conversion.json";
+    if (options.receipt) claim(receiptName);
     if (converted.diagnostics) claim("windows-diagnostics-imports.txt");
     for (const module of converted.modules) {
       if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error(translate(locale, "invalidModulePath"));
@@ -405,6 +407,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
       ...libraryEntries.map(entry => ({ name: entry.filename, directory: entry.directory })),
       ...originalFiles.map(item => ({ name: "app0/" + item.name, directory: item.entry.directory })),
       { name: outputName },
+      ...(options.receipt ? [{ name: receiptName }] : []),
       ...(converted.diagnostics ? [{ name: "windows-diagnostics-imports.txt" }] : []),
       ...converted.modules.map(module => ({ name: module.name }))
     ];
@@ -418,6 +421,10 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     }
     const binary = { versionMadeBy: 0x31e, externalFileAttributes: (0o100755 << 16) >>> 0 };
     await writer.add(outputPath(outputName), new Uint8ArrayReader(converted.executable), binary);
+    if (options.receipt) {
+      const receipt = new TextEncoder().encode(JSON.stringify(options.receipt, null, 2) + "\n");
+      await writer.add(outputPath(receiptName), new Uint8ArrayReader(receipt));
+    }
     if (converted.diagnostics) await writer.add(outputPath("windows-diagnostics-imports.txt"), new Uint8ArrayReader(new TextEncoder().encode(converted.diagnostics)));
     for (const module of converted.modules) await writer.add(outputPath(module.name), new Uint8ArrayReader(module.bytes), binary);
     for (const entry of libraryEntries) {

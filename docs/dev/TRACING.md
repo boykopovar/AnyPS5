@@ -32,6 +32,9 @@ the last 40 matches. Raise `--limit` to inspect earlier events, such as the mapp
 records, not confirmation that each attempted operation succeeded; no matching event does not prove the address was
 unmapped.
 
+The address query reads UTF-8 logs and logs with a UTF-16 or UTF-32 byte-order mark. It prints source line numbers
+from the saved log.
+
 ## GPU and memory
 
 | Switch | Output |

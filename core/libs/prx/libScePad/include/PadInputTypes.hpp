@@ -29,7 +29,8 @@ enum class InputControl {
     VolumeUp,
     VolumeDown,
     ToggleMute,
-    ReloadInputMapping
+    ReloadInputMapping,
+    ToggleBorderless
 };
 
 enum class PadButton : std::uint32_t {

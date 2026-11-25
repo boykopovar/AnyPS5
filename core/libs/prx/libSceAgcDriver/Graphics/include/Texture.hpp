@@ -54,6 +54,8 @@ bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes);
 VkFormat StorageFormatForGuest(const Context& context, std::uint32_t guestFormat);
 // Whether StorageFormatForGuest would succeed, without throwing (unknown guest formats included).
 bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
+bool StorageSegmentsServe(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes);
+bool StorageSegmentsServe(const Context& context, const StorageTexture& image);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
