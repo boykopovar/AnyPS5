@@ -20,4 +20,15 @@ void APS5_VABI ubidi_reorderVisual_nid_postfix(const std::uint8_t*, std::int32_t
 void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi*, Icu::BiDiClassCallback, const void*, Icu::BiDiClassCallback*,
                                                   const void**, std::int32_t*);
 std::int32_t APS5_VABI ubidi_getClass_nid_postfix(std::int32_t);
+std::int32_t APS5_VABI ubidi_getDirection_nid_postfix(const Icu::BiDi*);
+std::int32_t APS5_VABI ubidi_getLength_nid_postfix(const Icu::BiDi*);
+std::int32_t APS5_VABI ubidi_getProcessedLength_nid_postfix(const Icu::BiDi*);
+std::int32_t APS5_VABI ubidi_getResultLength_nid_postfix(const Icu::BiDi*);
+std::uint8_t APS5_VABI ubidi_getLevelAt_nid_postfix(const Icu::BiDi*, std::int32_t);
+std::int32_t APS5_VABI ubidi_getCustomizedClass_nid_postfix(Icu::BiDi*, std::int32_t);
+std::int32_t APS5_VABI ubidi_getReorderingMode_nid_postfix(Icu::BiDi*);
+std::uint32_t APS5_VABI ubidi_getReorderingOptions_nid_postfix(Icu::BiDi*);
+std::int8_t APS5_VABI ubidi_isInverse_nid_postfix(Icu::BiDi*);
+std::int8_t APS5_VABI ubidi_isOrderParagraphsLTR_nid_postfix(Icu::BiDi*);
+std::int32_t APS5_VABI ubidi_countParagraphs_nid_postfix(Icu::BiDi*);
 }

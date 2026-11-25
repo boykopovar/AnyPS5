@@ -38,6 +38,16 @@ const UBiDi* Native(const Icu::BiDi* bidi) {
     return reinterpret_cast<const UBiDi*>(bidi);
 }
 
+UBiDi* Checked(Icu::BiDi* bidi) {
+    if (!bidi) APS5_INVALID_ARG_EX;
+    return Native(bidi);
+}
+
+const UBiDi* Checked(const Icu::BiDi* bidi) {
+    if (!bidi) APS5_INVALID_ARG_EX;
+    return Native(bidi);
+}
+
 bool EnterStatus(std::int32_t* error, UErrorCode& status, std::int32_t& previous, const char* caller) {
     if (!GuestCopyIn_nid_no_patch(&previous, error, sizeof(previous))) throw std::runtime_error(caller);
     status = static_cast<UErrorCode>(previous);
@@ -184,6 +194,50 @@ void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClas
 
 std::int32_t APS5_VABI ubidi_getClass_nid_postfix(std::int32_t character) {
     return ubidi_getClass(character);
+}
+
+std::int32_t APS5_VABI ubidi_getDirection_nid_postfix(const Icu::BiDi* bidi) {
+    return ubidi_getDirection(Checked(bidi));
+}
+
+std::int32_t APS5_VABI ubidi_getLength_nid_postfix(const Icu::BiDi* bidi) {
+    return ubidi_getLength(Checked(bidi));
+}
+
+std::int32_t APS5_VABI ubidi_getProcessedLength_nid_postfix(const Icu::BiDi* bidi) {
+    return ubidi_getProcessedLength(Checked(bidi));
+}
+
+std::int32_t APS5_VABI ubidi_getResultLength_nid_postfix(const Icu::BiDi* bidi) {
+    return ubidi_getResultLength(Checked(bidi));
+}
+
+std::uint8_t APS5_VABI ubidi_getLevelAt_nid_postfix(const Icu::BiDi* bidi, std::int32_t index) {
+    return ubidi_getLevelAt(Checked(bidi), index);
+}
+
+std::int32_t APS5_VABI ubidi_getCustomizedClass_nid_postfix(Icu::BiDi* bidi, std::int32_t character) {
+    return ubidi_getCustomizedClass(Checked(bidi), character);
+}
+
+std::int32_t APS5_VABI ubidi_getReorderingMode_nid_postfix(Icu::BiDi* bidi) {
+    return ubidi_getReorderingMode(Checked(bidi));
+}
+
+std::uint32_t APS5_VABI ubidi_getReorderingOptions_nid_postfix(Icu::BiDi* bidi) {
+    return ubidi_getReorderingOptions(Checked(bidi));
+}
+
+std::int8_t APS5_VABI ubidi_isInverse_nid_postfix(Icu::BiDi* bidi) {
+    return ubidi_isInverse(Checked(bidi));
+}
+
+std::int8_t APS5_VABI ubidi_isOrderParagraphsLTR_nid_postfix(Icu::BiDi* bidi) {
+    return ubidi_isOrderParagraphsLTR(Checked(bidi));
+}
+
+std::int32_t APS5_VABI ubidi_countParagraphs_nid_postfix(Icu::BiDi* bidi) {
+    return ubidi_countParagraphs(Checked(bidi));
 }
 
 }

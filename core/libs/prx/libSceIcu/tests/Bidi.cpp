@@ -23,6 +23,7 @@ constexpr std::int32_t InvalidState = 27;
 constexpr std::uint8_t DefaultLtr = 0xfe;
 constexpr std::int32_t Ltr = 0;
 constexpr std::int32_t Rtl = 1;
+constexpr std::int32_t Mixed = 2;
 constexpr std::int32_t Neutral = 3;
 constexpr std::int32_t LeftToRight = 0;
 constexpr std::int32_t RightToLeft = 1;
@@ -169,12 +170,56 @@ void TestStatelessHelpers() {
     ExpectInt(ubidi_getClass_nid_postfix(0x0627), RightToLeftArabic, "ubidi_getClass(U+0627)");
 }
 
+void TestStateQueries() {
+    auto* bidi = ubidi_open_nid_postfix();
+    Expect(bidi != nullptr, "ubidi_open for state queries");
+    ExpectInt(ubidi_getReorderingMode_nid_postfix(bidi), 0, "ubidi_getReorderingMode default");
+    ExpectInt(ubidi_getReorderingOptions_nid_postfix(bidi), 0, "ubidi_getReorderingOptions default");
+    ExpectInt(ubidi_isInverse_nid_postfix(bidi), 0, "ubidi_isInverse default");
+    ExpectInt(ubidi_isOrderParagraphsLTR_nid_postfix(bidi), 0, "ubidi_isOrderParagraphsLTR default");
+    ExpectInt(ubidi_getCustomizedClass_nid_postfix(bidi, u'A'), LeftToRight, "ubidi_getCustomizedClass(A)");
+    ExpectInt(ubidi_getCustomizedClass_nid_postfix(bidi, 0x05d0), RightToLeft,
+              "ubidi_getCustomizedClass(U+05D0)");
+
+    const char16_t text[] = u"abc\n\u05d0\u05d1";
+    std::int32_t error = Success;
+    ubidi_setPara_nid_postfix(bidi, text, 6, DefaultLtr, nullptr, &error);
+    ExpectInt(error, Success, "ubidi_setPara for state queries");
+    ExpectInt(ubidi_getDirection_nid_postfix(bidi), Mixed, "ubidi_getDirection");
+    ExpectInt(ubidi_getLength_nid_postfix(bidi), 6, "ubidi_getLength");
+    ExpectInt(ubidi_getProcessedLength_nid_postfix(bidi), 6, "ubidi_getProcessedLength");
+    ExpectInt(ubidi_getResultLength_nid_postfix(bidi), 6, "ubidi_getResultLength");
+    ExpectInt(ubidi_getLevelAt_nid_postfix(bidi, 0), 0, "ubidi_getLevelAt Latin");
+    ExpectInt(ubidi_getLevelAt_nid_postfix(bidi, 4), 1, "ubidi_getLevelAt Hebrew");
+    ExpectInt(ubidi_getLevelAt_nid_postfix(bidi, 6), 0, "ubidi_getLevelAt end");
+    ExpectInt(ubidi_countParagraphs_nid_postfix(bidi), 2, "ubidi_countParagraphs");
+    ubidi_close_nid_postfix(bidi);
+}
+
 void TestArguments() {
     std::int32_t error = Success;
     ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, &error);
     ExpectInt(error, IllegalArgument, "ubidi_setPara(null)");
     ExpectThrow<std::invalid_argument>([] { ubidi_getLogicalRun_nid_postfix(nullptr, 0, nullptr, nullptr); },
                                        "ubidi_getLogicalRun(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getDirection_nid_postfix(nullptr); }, "ubidi_getDirection(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getLength_nid_postfix(nullptr); }, "ubidi_getLength(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getProcessedLength_nid_postfix(nullptr); },
+                                       "ubidi_getProcessedLength(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getResultLength_nid_postfix(nullptr); },
+                                       "ubidi_getResultLength(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getLevelAt_nid_postfix(nullptr, 0); }, "ubidi_getLevelAt(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getCustomizedClass_nid_postfix(nullptr, 0); },
+                                       "ubidi_getCustomizedClass(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getReorderingMode_nid_postfix(nullptr); },
+                                       "ubidi_getReorderingMode(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_getReorderingOptions_nid_postfix(nullptr); },
+                                       "ubidi_getReorderingOptions(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_isInverse_nid_postfix(nullptr); }, "ubidi_isInverse(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_isOrderParagraphsLTR_nid_postfix(nullptr); },
+                                       "ubidi_isOrderParagraphsLTR(null)");
+    ExpectThrow<std::invalid_argument>([] { ubidi_countParagraphs_nid_postfix(nullptr); },
+                                       "ubidi_countParagraphs(null)");
     ubidi_close_nid_postfix(nullptr);
 }
 
@@ -395,6 +440,7 @@ int main() {
     TestParagraph();
     TestClassCallback();
     TestStatelessHelpers();
+    TestStateQueries();
     TestArguments();
     TestGuestPointers();
     return 0;
