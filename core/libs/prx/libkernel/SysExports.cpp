@@ -22,7 +22,10 @@ int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) 
         *__error_nid_postfix() = 3;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid != 0 && pid != getpid_nid_postfix()) {
+        *__error_nid_postfix() = 3;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
@@ -68,29 +71,31 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* wor
     return 0;
 }
 
-int APS5_VABI sceKernelAllocateToolMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetToolMemoryRange(std::int32_t partition, std::int64_t* start, std::int64_t* end) {
+    if (!start || !end) return SCE_KERNEL_ERROR_EINVAL;
+    (void)partition;
+    const std::int64_t toolStart = 0;
+    const std::int64_t toolEnd = static_cast<std::int64_t>(sceKernelGetDirectMemorySize());
+    if (!GuestCopyOut_nid_no_patch(start, &toolStart, sizeof(toolStart))) return SCE_KERNEL_ERROR_EFAULT;
+    if (!GuestCopyOut_nid_no_patch(end, &toolEnd, sizeof(toolEnd))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
-int APS5_VABI sceKernelAvailableToolMemorySize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t searchStart, std::int64_t searchEnd, size_t len, size_t alignment, int memoryType, std::int64_t* physAddrOut) {
+    (void)partition;
+    return sceKernelAllocateDirectMemory(searchStart, searchEnd, len, alignment, memoryType, physAddrOut);
 }
 
-int APS5_VABI sceKernelMapToolMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut) {
+    return sceKernelAvailableDirectMemorySize(searchStart, searchEnd, alignment, physAddrOut, sizeOut);
 }
 
-int APS5_VABI sceKernelReleaseToolMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment) {
+    return sceKernelMapDirectMemory(addr, len, prot, flags, start, alignment);
 }
 
-int APS5_VABI sceKernelGetToolMemoryRange(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len) {
+    return sceKernelReleaseDirectMemory(start, len);
 }
 
 int APS5_VABI sceKernelSetProcessProperty(void) {

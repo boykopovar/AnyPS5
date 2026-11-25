@@ -724,8 +724,8 @@ void TestGcProtectWeakAndWatchdog() {
     ClassTestState st1;
     JSObjectRef obj1 = JSObjectMake(ctx, cls, &st1);
     JSWeakRef weak1 = JSWeakCreate(group, obj1);
-    JSWeakRetain(weak1);
-    JSWeakRelease(weak1);
+    JSWeakRetain(group, weak1);
+    JSWeakRelease(group, weak1);
     Require(JSWeakGetObject(weak1) == obj1);
 
     bool mapDestroyed = false;
@@ -778,7 +778,7 @@ void TestGcProtectWeakAndWatchdog() {
 
     delete weakMap;
     Require(mapDestroyed);
-    JSWeakRelease(weak1);
+    JSWeakRelease(group, weak1);
     JSClassRelease(cls);
 
     int watchdogCalls = 0;

@@ -484,7 +484,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); }, macos)->Convert(std::move(image.Bytes), image.Headers);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
@@ -599,14 +599,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
+    struct Identity {
+        std::string Soname;
+        std::vector<std::string> ModuleNames;
+    };
+    std::map<std::size_t, Identity> identities;
+    const auto identity = [&](std::size_t index) -> const Identity& {
+        const auto [found, inserted] = identities.try_emplace(index);
+        if (inserted) {
+            auto image = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots);
+            found->second = {std::move(image.Soname), std::move(image.ModuleNames)};
+        }
         return found->second;
     };
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    const auto match = [&](std::size_t copy, std::size_t original) -> const char* {
+        const auto& left = identity(copy);
+        const auto& right = identity(original);
+        if (!left.Soname.empty() || !right.Soname.empty()) return left.Soname == right.Soname ? "same SONAME" : nullptr;
+        return !left.ModuleNames.empty() && left.ModuleNames == right.ModuleNames ? "same module names" : nullptr;
+    };
+    std::vector<BackupCopy> skipped;
     std::vector<bool> copies(modules.size());
     for (std::size_t copy = 0; copy < modules.size(); ++copy) {
         const auto& path = modules[copy].Path;
@@ -615,9 +628,10 @@ std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBacku
             const auto& kept = modules[original].Path;
             const auto prefix = Io::Utf8Path(kept.filename());
             if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            const auto* matched = match(copy, original);
+            if (matched == nullptr) continue;
             copies[copy] = true;
-            skipped.emplace_back(path, kept);
+            skipped.push_back({path, kept, matched});
             break;
         }
     }

@@ -3,6 +3,7 @@
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
@@ -1639,6 +1640,18 @@ void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
 #endif
 }
 
+void RequireZeroPagesOffGpu(std::uint64_t address, std::uint64_t size) {
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address + offset), false);
+        Require(range != nullptr && !range->gpu && !range->gpuWritable && !range->HostReadable());
+    }
+}
+
+bool GpuRegistered(std::uint64_t address) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false);
+    return range != nullptr && range->gpu;
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1661,6 +1674,7 @@ void TestAmmPrt() {
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
     RequireReadOnlyZeroPages(prt, 4 * page);
+    RequireZeroPagesOffGpu(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1672,6 +1686,7 @@ void TestAmmPrt() {
     Require(sceAmprAmmCommandBufferRemapIntoPrt(&back.buffer, prt + 3 * page, source, page, cpuReadWrite, 0) == 0);
     SubmitAmm(back);
     Require(Protection(prt) == 0x10 && Protection(prt + page) == 0x03 && Protection(prt + 2 * page) == 0x33 && Protection(prt + 3 * page) == 0x03);
+    RequireZeroPagesOffGpu(prt, page);
     At(prt + page) = 0x71;
     At(prt + 2 * page) = 0x72;
     Require(At(prt + page) == 0x71 && At(prt + 2 * page) == 0x72 && At(prt + 3 * page) == 0x88 && At(prt) == 0);
@@ -1695,6 +1710,7 @@ void TestAmmPrt() {
     RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
     RequireReadOnlyZeroPages(prt + page, 2 * page);
+    RequireZeroPagesOffGpu(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);
@@ -1704,6 +1720,12 @@ void TestAmmPrt() {
         At(prt + index * page) = 0x90 + index;
     }
     Require(At(prt) == 0x90 && At(prt + page) == 0x91 && At(prt + 2 * page) == 0x92 && At(prt + 3 * page) == 0x88);
+
+    Recorder gpuPage;
+    Require(sceAmprAmmCommandBufferUnmapToPrt(&gpuPage.buffer, prt, page) == 0);
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&gpuPage.buffer, prt, page, 0, cpuGpuReadWrite) == 0);
+    SubmitAmm(gpuPage);
+    Require(Protection(prt) == 0x33 && GpuRegistered(prt));
 
     const std::int64_t ammRejected = invalidArgument;
     Recorder empty;

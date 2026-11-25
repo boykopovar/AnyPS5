@@ -101,6 +101,7 @@ struct OpaqueJSContextGroup {
     JSValue weakRefDerefFunc = JS_UNDEFINED;
     JSClassID callbackObjectClassId = 0;
     JSClassID callbackCallableClassId = 0;
+    JSClassID dateConstructorClassId = 0;
     JSAtom toStringTagAtom = JS_ATOM_NULL;
     JSAtom toPrimitiveAtom = JS_ATOM_NULL;
     JSAtom hasInstanceAtom = JS_ATOM_NULL;
@@ -109,6 +110,7 @@ struct OpaqueJSContextGroup {
     OpaqueJSValue trueHandle{};
     OpaqueJSValue falseHandle{};
     std::vector<OpaqueJSContext*> contexts;
+    std::vector<OpaqueJSContext*> releasedContexts;
     std::vector<OpaqueJSValue*> allHandles;
     std::unordered_map<void*, OpaqueJSValue*> objectHandles;
     std::unordered_map<void*, CallbackObjectData*> callbackDataByPtr;
@@ -121,6 +123,9 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    double cpuDeadlineSeconds = 0.0;
+    bool deadlineArmed = false;
+    int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
     void* terminateContext = nullptr;
     OpaqueJSContext* activeContext = nullptr;
@@ -131,14 +136,31 @@ struct OpaqueJSContextGroup {
     ~OpaqueJSContextGroup();
 
     OpaqueJSContext* DefaultContext() const;
+    void DestroyReleasedContexts();
     OpaqueJSValue* ToHandle(OpaqueJSContext* ctx, JSValue v);
     OpaqueJSValue* BorrowHandle(OpaqueJSContext* ctx, JSValueConst v);
     CallbackObjectData* FindCallbackData(const OpaqueJSValue* handle) const;
     CallbackObjectData* FindCallbackDataByPtr(void* ptr) const;
     void NotifyObjectFinalized(void* ptr, OpaqueJSValue* handle);
     void CollectGarbage();
-    void DrainMicrotasks(OpaqueJSContext* ctx);
+    void DrainMicrotasks();
     void RefreshDeadline();
+    void EnterVm();
+    void ExitVm();
+    void UpdateStackLimit();
+};
+
+struct VmEntryScope {
+    OpaqueJSContextGroup* group;
+
+    explicit VmEntryScope(OpaqueJSContextGroup* grp) : group(grp) {
+        if (group) group->EnterVm();
+    }
+    VmEntryScope(const VmEntryScope&) = delete;
+    VmEntryScope& operator=(const VmEntryScope&) = delete;
+    ~VmEntryScope() {
+        if (group) group->ExitVm();
+    }
 };
 
 struct OpaqueJSContext {
@@ -147,6 +169,10 @@ struct OpaqueJSContext {
     JSContext* qctx = nullptr;
     OpaqueJSValue* globalObject = nullptr;
     JSValue globalExoticInterceptor = JS_UNDEFINED;
+    JSValue dateConstructor = JS_UNDEFINED;
+    JSValue errorConstructor = JS_UNDEFINED;
+    JSValue regExpConstructor = JS_UNDEFINED;
+    JSValue reflectSet = JS_UNDEFINED;
     std::unordered_map<OpaqueJSClass*, OpaqueJSValue*> classPrototypes;
     OpaqueJSValue* unhandledRejectionCallback = nullptr;
     std::vector<std::pair<JSValue, JSValue>> pendingUnhandledRejections;
@@ -223,16 +249,20 @@ std::string JsStringToUtf8(const GuestJSString* str);
 GuestJSString* Utf8ToJsString(const std::string& utf8);
 GuestJSString* JsValueToJsString(JSContext* qctx, JSValueConst val);
 JSValue JsStringToJsValue(JSContext* qctx, const GuestJSString* str);
+void InstallErrorInfo(JSContext* qctx, JSValueConst global);
 JSAtom JsStringToAtom(JSContext* qctx, const GuestJSString* str);
 GuestJSString* AtomToJsString(JSContext* qctx, JSAtom atom);
 std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
+void InstallDateConstructor(OpaqueJSContextGroup* group, JSContext* qctx);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
+void DefineToPrimitive(OpaqueJSContext* ctx, JSValueConst target, bool forGlobalObject);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
 void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
+void DefineConsoleObject(OpaqueJSContext* ctx, JSValueConst global);
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
 
