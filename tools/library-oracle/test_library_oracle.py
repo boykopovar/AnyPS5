@@ -1,5 +1,6 @@
 import hashlib
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -143,6 +144,25 @@ class KnownTests(unittest.TestCase):
 
 
 class FetchTests(unittest.TestCase):
+    def test_refreshing_a_stale_cache_entry_preserves_its_linked_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            linked = root / "original.tsv"
+            linked.write_bytes(b"old")
+            cache = root / "cache"
+            cache.mkdir()
+            try:
+                os.link(linked, cache / "rtc.golden.tsv")
+            except OSError as error:
+                self.skipTest(str(error))
+            data = b"verified"
+            with mock.patch.dict(library_oracle.FAMILIES, rtc=hashlib.sha256(data).hexdigest()):
+                path = library_oracle.fetch("rtc", cache, lambda *args, **kwargs: io.BytesIO(data))
+            self.assertEqual(linked.read_bytes(), b"old")
+            self.assertEqual(path.read_bytes(), data)
+            self.assertEqual(list(cache.iterdir()), [path])
+
+
     def test_fetch_checks_the_pinned_digest_and_caches(self):
         data = b"# console-oracle golden v1\n"
         calls = []

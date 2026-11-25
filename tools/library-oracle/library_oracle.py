@@ -3,6 +3,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -42,7 +43,14 @@ def fetch(family, cache, opener=urllib.request.urlopen):
     if hashlib.sha256(data).hexdigest() != FAMILIES[family]:
         raise SystemExit(f"{family}: the downloaded measurements do not match the pinned digest")
     cache.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+    output = tempfile.NamedTemporaryFile(dir=cache, prefix=f".{path.name}.", delete=False)
+    temporary = Path(output.name)
+    try:
+        with output:
+            output.write(data)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
 
 
