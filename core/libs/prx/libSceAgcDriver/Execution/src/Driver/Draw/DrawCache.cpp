@@ -90,6 +90,30 @@ bool Driver::verifyDrawPushWord() {
     return verify;
 }
 
+
+
+uint64_t Driver::drawEntryBytes(const DrawEntry& entry) {
+  const auto held = [](const auto& values) { return static_cast<uint64_t>(values.capacity()) * sizeof(values[0]); };
+  uint64_t bytes = sizeof(DrawEntry);
+  if (entry.decode) {
+    bytes += sizeof(DrawDecode);
+    bytes += held(entry.decode->programs);
+    bytes += held(entry.decode->roles);
+  }
+  if (auto recipes = entry.recipes.load()) {
+    bytes += held(*recipes);
+    for (const auto& record : *recipes) {
+      bytes += held(record.stages);
+      if (record.recipe) {
+        bytes += sizeof(DrawRecipe);
+        bytes += held(record.recipe->targets);
+        bytes += held(record.recipe->targetViews);
+      }
+    }
+  }
+  return bytes;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
@@ -200,7 +224,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
                     for (const auto& variant : variants) accountDrawVariant(*variant, false);
                 }
                 drawOrder.erase(previous->second->order);
-                drawCache.erase(previous);
+                drawCacheVariantBytes -= drawEntryBytes(*previous->second);
+  drawCache.erase(previous);
             }
             drawShapes.erase(shapeOf);
         }
@@ -240,11 +265,14 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
-        drawCache.emplace(key, std::move(replacement));
+        drawCacheVariantBytes += drawEntryBytes(*replacement);
+    drawCache.emplace(key, std::move(replacement));
     } else {
         replacement->order = found->second->order;
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
-        found->second = std::move(replacement);
+        drawCacheVariantBytes -= drawEntryBytes(*found->second);
+    drawCacheVariantBytes += drawEntryBytes(*replacement);
+    found->second = std::move(replacement);
     }
     while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
         const bool overBytes = drawCache.size() <= drawCacheEntries();
@@ -255,7 +283,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
         if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
         drawOrder.erase(last->second->order);
-        drawCache.erase(last);
+        drawCacheVariantBytes -= drawEntryBytes(*last->second);
+  drawCache.erase(last);
         ++drawCacheEvictions;
         ++counters.evictions;
         if (overBytes) {
@@ -273,7 +302,8 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
     }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
     drawOrder.erase(found->second->order);
-    drawCache.erase(found);
+    drawCacheVariantBytes -= drawEntryBytes(*found->second);
+  drawCache.erase(found);
 }
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {

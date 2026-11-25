@@ -221,6 +221,7 @@ private:
     static bool drawCacheIndirect();
     static bool drawCachePushWord();
     static bool verifyDrawPushWord();
+  uint64_t drawEntryBytes(const DrawEntry& entry);
     void accountDrawVariant(const DispatchVariant& variant, bool added);
     void insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape = 0, bool replaceShape = false);
     bool admitDrawKey(std::uint64_t key, std::uint64_t shape);
