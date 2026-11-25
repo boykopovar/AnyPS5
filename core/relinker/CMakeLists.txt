@@ -889,6 +889,11 @@ if(BUILD_TESTING)
         set_tests_properties(tls_initial_image PROPERTIES TIMEOUT 20)
         add_test(NAME guest_needed_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_modules.py $<TARGET_FILE:relinker>)
+        foreach(target windows linux macos)
+            add_test(NAME guest_import_scope_${target} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_import_scope.py $<TARGET_FILE:relinker> ${target})
+            set_tests_properties(guest_import_scope_${target} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME guest_module_dir COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_dir.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_directories COMMAND ${Python3_EXECUTABLE}

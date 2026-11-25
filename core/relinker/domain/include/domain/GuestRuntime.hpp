@@ -32,6 +32,7 @@ struct GuestRuntime {
     bool DeferInitialization = false;
     std::vector<std::string> DeferredDependencies;
     std::vector<std::string> DeferredSweep;
+    std::vector<std::string> ImportScope;
 };
 
 }
