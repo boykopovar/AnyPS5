@@ -7,6 +7,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
@@ -231,7 +232,11 @@ int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev) {
     if (ev == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    return static_cast<int>((static_cast<uint64_t>(ev->data) >> 12u) & 0xfu);
+    KernelEvent event{};
+    if (!GuestPtr<const KernelEvent>(ev).CopyIn(event)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    return static_cast<int>((static_cast<uint64_t>(event.data) >> 12u) & 0xfu);
 }
 
 }
