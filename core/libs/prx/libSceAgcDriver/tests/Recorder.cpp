@@ -15247,6 +15247,95 @@ void msaaClearPassTests(const Device& device, Recorder& recorder, ColorMetadataP
     std::cout << name << " MSAA clear and resolve tests passed\n";
 }
 
+void metadataPassOverMultisampleMemoryTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || base.hostImportAlignment == 0) {
+        std::cout << "4x color targets or host imports unavailable: a CB metadata pass over multisampled memory not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 128;
+    constexpr std::size_t targetBytes = 65536u;
+    constexpr std::size_t cmaskBytes = 4096u;
+    constexpr std::size_t bytes = 5u * 65536u + 2u * cmaskBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, (bytes + 65535u) & ~std::size_t{65535u});
+#endif
+    Require(block != nullptr, "cannot allocate the metadata pass reuse block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto cmaskAddress = address + 5u * 65536u;
+    const auto reuseCmaskAddress = cmaskAddress + cmaskBytes;
+    std::memset(reinterpret_cast<void*>(reuseCmaskAddress), 0xff, cmaskBytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    ColorTarget multisampled{};
+    multisampled.address = address;
+    multisampled.surfaceAddress = address;
+    multisampled.extent = {side, side};
+    multisampled.surfaceExtent = multisampled.extent;
+    multisampled.format = VK_FORMAT_R8G8B8A8_UNORM;
+    multisampled.elementBytes = 4;
+    multisampled.bytes = targetBytes;
+    multisampled.samples = 4;
+    multisampled.cmaskAddress = cmaskAddress;
+    multisampled.cmaskBytes = cmaskBytes;
+    multisampled.cmaskFastClear = true;
+    multisampled.clearWords = {0x11223344u, 0};
+    {
+        std::lock_guard gpu(GpuMutex());
+        RunColorMetadataPass(context, {ColorMetadataPass::Mode::FmaskDecompress, {multisampled}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    Require(MultisampleColorTargetOverlaps(address, targetBytes), "the FMASK decompress left no multisampled color target to reuse");
+    ColorTarget reuse{};
+    reuse.address = address;
+    reuse.surfaceAddress = address;
+    reuse.extent = {side, side};
+    reuse.surfaceExtent = reuse.extent;
+    reuse.format = VK_FORMAT_R8G8B8A8_UNORM;
+    reuse.elementBytes = 4;
+    reuse.bytes = targetBytes;
+    reuse.samples = 1;
+    reuse.tileMode = ColorTileMode::RenderTarget;
+    reuse.cmaskAddress = reuseCmaskAddress;
+    reuse.cmaskBytes = cmaskBytes;
+    {
+        std::lock_guard gpu(GpuMutex());
+        RunColorMetadataPass(context, {ColorMetadataPass::Mode::EliminateFastClear, {reuse}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    Require(!MultisampleColorTargetOverlaps(address, targetBytes), "a CB metadata pass over a single-sample target in a multisampled target's memory left the multisampled target guarded");
+    std::cout << "CB metadata pass over a multisampled target's memory tests passed\n";
+}
+
 void tiledResolveTests(const Device& device, Recorder& recorder) {
     namespace GuestMemory = AgcDriver::GuestMemory;
     auto context = device.GetContext();
@@ -19202,6 +19291,7 @@ int main(int argc, char** argv) {
             oneFragmentFmaskGuardTests(device);
             msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
             msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
+            metadataPassOverMultisampleMemoryTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
@@ -19286,6 +19376,7 @@ int main(int argc, char** argv) {
         tiledResolveTests(device, recorder);
         msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
         msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
+        metadataPassOverMultisampleMemoryTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         pendingUploadGpuCopyTests(device, recorder);
