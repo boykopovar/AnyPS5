@@ -66,7 +66,15 @@ public:
     bool mayStartMediaWhenInWindow = true;
     std::uint32_t mediaState = 0;
 };
-class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
+class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
+public:
+    std::uint32_t cacheModel = 0;
+    bool quotaReset = false;
+    bool diskCacheCleared = false;
+    bool useITPDatabase = false;
+    bool bundleIdentifierInNetworkProcessCleared = false;
+    Retained<String> bundleIdentifierInNetworkProcess;
+};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
 inline std::optional<std::u16string> OptionalString(const void* ref, const char* function) {

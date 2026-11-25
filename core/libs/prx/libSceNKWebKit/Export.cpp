@@ -1237,10 +1237,6 @@ int APS5_VABI _ZNK7WebCore7Element10shadowRootEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreClearDiskCache() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_8NZOKIOOCHQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6007,10 +6003,6 @@ int APS5_VABI _ZN7WebCore22SkewTransformOperationC1EddNS_18TransformOperation13O
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreSetUseITPDatabase() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_l5n05sKvMM8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9298,10 +9290,6 @@ int APS5_VABI WKWebsiteDataStoreClearAppBoundSession() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreCreateNonPersistentDataStore() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9414,15 +9402,7 @@ int APS5_VABI WKWebsiteDataStoreRemoveLocalStorage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreResetQuota() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreSetAdditionalRootCA() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetCacheModelSynchronouslyForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9595,10 +9575,6 @@ int APS5_VABI WKWebsiteDataStoreStatisticsResetToConsistentState() {
 }
 
 int APS5_VABI WKWebsiteDataStoreStatisticsUpdateCookieBlocking() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
 

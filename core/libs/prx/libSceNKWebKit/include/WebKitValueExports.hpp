@@ -661,6 +661,12 @@ void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);
+void APS5_VABI WKWebsiteDataStoreResetQuota(const void* dataStoreRef);
+void APS5_VABI WKWebsiteDataStoreClearDiskCache(const void* dataStoreRef);
+void APS5_VABI WKWebsiteDataStoreSetUseITPDatabase(const void* dataStoreRef, bool value);
+void APS5_VABI WKWebsiteDataStoreSetCacheModelSynchronouslyForTesting(const void* dataStoreRef, std::uint32_t cacheModel);
+void APS5_VABI WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess(const void* dataStoreRef);
+void APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess(const void* dataStoreRef, const void* bundleIdentifierRef);
 
 const void* APS5_VABI WKPlugInInformationReplacementObscuredKey();
 const void* APS5_VABI WKPluginInformationBundleIdentifierKey();
