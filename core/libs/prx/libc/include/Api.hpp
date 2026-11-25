@@ -122,6 +122,11 @@ struct ErrorCode { int reserved; int value; const CategoryObject* category; };
 
 struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
 
+struct LibcxxRegexErrorObject {
+    ExceptionObject base;
+    std::int32_t code;
+};
+
 struct FutureErrorObject { const void* vtable; GuestLocale::String message; ErrorCode code; };
 
 }
@@ -456,6 +461,22 @@ double APS5_VABI carg_nid_postfix(__complex__ double z);
 float APS5_VABI cargf_nid_postfix(__complex__ float z);
 long double APS5_VABI cargl_nid_postfix(__complex__ long double z);
 double APS5_VABI cabs_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI cacos_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI cacosh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI casin_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI casinh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI catan_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI catanh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI ccos_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI ccosh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI cexp_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI clog_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI csin_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI csinh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI csqrt_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI ctan_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI ctanh_nid_postfix(__complex__ double z);
+__complex__ double APS5_VABI cpow_nid_postfix(__complex__ double x, __complex__ double y);
 float APS5_VABI cabsf_nid_postfix(__complex__ float z);
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z);
 __complex__ float APS5_VABI cacosf_nid_postfix(__complex__ float z);
@@ -1799,6 +1820,8 @@ const char* APS5_VABI _ZNKSt11regex_error4whatEv_nid_postfix(const LibcException
 void APS5_VABI _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
+void APS5_VABI _ZNSt3__111regex_errorC1ENS_15regex_constants10error_typeE_nid_postfix(LibcException::LibcxxRegexErrorObject* self, std::int32_t code);
+void APS5_VABI _ZNSt3__111regex_errorD1Ev_nid_postfix(LibcException::LibcxxRegexErrorObject* self) noexcept;
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self);

@@ -13,6 +13,7 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AesWrap.c
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BignumDup.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Hmac.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/InventoryNames.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectFromText.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestContext.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherInit.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherUpdate.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherFinal.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Pbkdf2.cpp)
@@ -167,6 +168,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_libtls PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_libtls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    add_test_executable(guest_libressl3_object_from_text_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ObjectFromText.cpp)
+    target_include_directories(guest_libressl3_object_from_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_object_from_text_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_object_from_text_tests)
+    add_test(NAME guest_libressl3_object_from_text COMMAND guest_libressl3_object_from_text_tests)
+    set_tests_properties(guest_libressl3_object_from_text PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_object_from_text PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 

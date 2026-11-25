@@ -66,6 +66,13 @@ def original(blocks=(ALPHA, BETA), items="agc_gamma_tests", tweaks="", image=Tru
 
 
 class SplitTextTests(unittest.TestCase):
+    def test_split_moves_properties_for_a_multiline_bracket_test_name(self):
+        property_call = "set_tests_properties([=[\nagc_alpha]=] PROPERTIES TIMEOUT 20)"
+        alpha = ALPHA.replace("set_tests_properties(agc_alpha PROPERTIES TIMEOUT 20)", property_call)
+        lists, fragments = agc_test_split.migrated(original(blocks=(alpha, BETA)), EXECUTION)
+        self.assertIn(property_call, fragments["agc_alpha_tests"])
+        self.assertNotIn(property_call, lists)
+
     def test_refactor_registers_default_tests_through_a_function(self):
         text = agc_test_split.refactor(original())
         self.assertIn("function(agc_add_default_test agcTest)", text)
@@ -167,6 +174,20 @@ class ArgumentTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("line 1: unterminated", result.stdout)
+
+    def test_bracket_arguments_ignore_only_the_first_immediate_newline(self):
+        values = (("\npath", "path"), ("\n\npath", "\npath"), ("\n path", " path"),
+                  (" \npath", " \npath"), (r"\npath", r"\npath"), ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"set(A [{equals}[{content}]{equals}] tail)"
+                    current, following = agc_test_split.commands(command + "\nset(B next)\n")
+                    self.assertEqual(current.arguments, ["A", expected, "tail"])
+                    self.assertEqual(current.last, command.count("\n"))
+                    self.assertEqual(following.first, current.last + 1)
+        quoted, = agc_test_split.commands('set(A "\npath" tail)\n')
+        self.assertEqual(quoted.arguments, ["A", "\npath", "tail"])
 
 
 class ResolveTests(unittest.TestCase):

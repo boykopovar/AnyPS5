@@ -113,3 +113,6 @@
 [submodule "3rdparty/libpng"]
 	path = 3rdparty/libpng
 	url = https://github.com/pnggroup/libpng.git
+[submodule "3rdparty/libyuv"]
+	path = 3rdparty/libyuv
+	url = https://chromium.googlesource.com/libyuv/libyuv

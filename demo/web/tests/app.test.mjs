@@ -786,9 +786,11 @@ for (const kind of ["batch", "single", "folder"]) {
     assert.equal(worker.messages.at(-1).type, "convert");
     await worker.onmessage({ data: {
       type: "complete", mode: worker.messages.at(-1).mode, blob: kind === "folder" ? null : new Blob([new Uint8Array(5)]),
-      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length
+      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length,
+      revision: "0123456789abcdef0123456789abcdef01234567"
     } });
     assert.equal(get("done").hidden, false);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     const href = get("download").href;
     const download = get("download").download;
     const note = get("result-note");
@@ -805,6 +807,7 @@ for (const kind of ["batch", "single", "folder"]) {
     get("locale").onclick();
     assert.equal(document.documentElement.lang, "de");
     assert.match(get("result-info").textContent, /Systembibliotheken/);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     if (kind === "folder") {
       assert.match(get("result-info").textContent, /Gespeichert in first-linux\//);
       assert.match(get("result-info").textContent, /chmod \+x "main\.elf"/);
