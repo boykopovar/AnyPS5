@@ -90,6 +90,7 @@ int main() {
         GuestBlock small(WindowBytes);
         GuestBlock large(std::size_t{1} << 20u);
         GuestBlock many(static_cast<std::size_t>(LabelLimitBytes) + 4 * WindowBytes);
+        GuestBlock fresh(WindowBytes);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -159,6 +160,11 @@ int main() {
             Require(!AgcDriver::Graphics::HostImportCovers(context, large.Address() + 3 * WindowBytes + 64, 4), "the least recently used label window was not the one retired");
             Require(AgcDriver::GuestMemory::Watched(large.Address() + 3 * WindowBytes, WindowBytes) == largeWatched, "the retired label window did not get back the write watch it had before its import");
             Require(AgcDriver::Graphics::HostImportCovers(context, many.Address() + 16, 4) && AgcDriver::Graphics::HostImportCovers(context, last, 4), "a more recent label window was retired");
+            Require(AgcDriver::Graphics::HostImportCovers(context, work.Address(), 4096), "the normal import was retired before the budget check");
+            Require(device->FillBuffer(fresh.Address(), 4096, pattern), "cannot record work on a fresh allocation");
+            Require(AgcDriver::Graphics::HostImportCovers(context, fresh.Address(), 4096), "a normal import within the budget was refused while the label windows are full");
+            Require(AgcDriver::Graphics::HostImportCovers(context, work.Address(), 4096), "label windows consumed the normal host import budget and retired a normal import");
+            Require(AgcDriver::Graphics::HostImportCounters().labelBytes == LabelLimitBytes && AgcDriver::Graphics::HostImportCovers(context, many.Address() + 16, 4), "a normal import retired a label window");
             device->WaitIdle();
             for (std::size_t index = 0; index <= room + 1; ++index) Require(many.Word(index * WindowBytes + 16) == 0xc0de0000u + index, "label " + std::to_string(index) + " did not land");
         }
