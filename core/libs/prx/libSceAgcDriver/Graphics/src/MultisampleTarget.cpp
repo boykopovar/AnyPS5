@@ -1948,6 +1948,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
         Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
         requireNoColorOwner();
     };
+    if (ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes))) requireNoColorOwner();
     Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
     RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes), std::nullopt, true, DepthReadCause::Attachment);
     SynchronizeMultisampleTargetRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes));
