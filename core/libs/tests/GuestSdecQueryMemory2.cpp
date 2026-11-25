@@ -306,6 +306,82 @@ void CheckCreate(std::array<std::byte, 64>& process) {
     Require(errno == 71, "errno changed across unmapped creates");
 }
 
+void CheckCreateAndDestroyLifecycle(std::array<std::byte, 64>& process) {
+    SetSdkVersion(process, 0x4000000);
+    SdecConfig2 config = Config(51, 16, 16, 1, 1);
+    config.unknown28 = 256;
+    config.unknown2C = 256;
+    const SdecRecord qRecord = QueryRecord(1, 0, 0);
+    const SdecRecord2 cRecord = CreateRecord(1, 0, 0);
+    SdecMemory memory{};
+    std::uint32_t dpbFrames = 0;
+    Require(sceSdecQueryMemorySw2(&config, &qRecord, 1, &memory, &dpbFrames, 1, nullptr) == 0, "lifecycle query failed");
+
+    std::vector<std::byte> block0(memory.blocks[0].size, std::byte{0xCC});
+    std::vector<std::byte> block1(memory.blocks[1].size, std::byte{UntouchedByte});
+    std::vector<std::byte> block2(memory.blocks[2].size, std::byte{UntouchedByte});
+    memory.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block0.data()));
+    memory.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    memory.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+
+    const int attributes = 0;
+    void* handle = nullptr;
+    errno = 71;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &memory, &handle) == 0, "sceSdecCreateSw2 lifecycle failed");
+    Require(errno == 71, "sceSdecCreateSw2 must preserve errno");
+    Require(handle == block0.data(), "handle must equal blocks[0].base");
+
+    const std::uint64_t expectedWs = memory.blocks[0].base + 0x18;
+    const std::uint64_t expectedCodec = ((expectedWs + 0x20) & ~std::uint64_t{0x1f}) + 0x20;
+    std::array<std::uint64_t, 3> handleHeader{};
+    std::memcpy(handleHeader.data(), block0.data(), sizeof(handleHeader));
+    Require(handleHeader[0] == 1, "handle header[0] must be 1");
+    Require(handleHeader[1] == expectedWs, "handle header[1] must point to workspace");
+    Require(handleHeader[2] == expectedCodec, "handle header[2] must point to codec");
+
+    std::array<std::uint64_t, 4> wsHeader{};
+    std::memcpy(wsHeader.data(), block0.data() + 0x18, sizeof(wsHeader));
+    Require(wsHeader[0] == expectedWs + 0x20, "workspace header[0] start mismatch");
+    Require(wsHeader[1] == expectedCodec + 0x180, "workspace header[1] bump mismatch");
+    Require(wsHeader[2] == memory.blocks[0].base + memory.blocks[0].size, "workspace header[2] end mismatch");
+    Require(wsHeader[3] == 0, "workspace header[3] must be 0");
+
+    const std::byte* codecPtr = block0.data() + static_cast<std::size_t>(expectedCodec - memory.blocks[0].base);
+    std::uint64_t codecFlag = 0;
+    std::uint64_t codecWs = 0;
+    std::uint32_t codecFrames = 0;
+    std::uint32_t codecUnknown28 = 0;
+    std::uint32_t codecUnknown2C = 0;
+    SdecMemory codecMemory{};
+    std::uint64_t codecUnknown10 = 0;
+    std::uint32_t codecInstanceMode = 0;
+    std::memcpy(&codecFlag, codecPtr + 0x00, sizeof(codecFlag));
+    std::memcpy(&codecWs, codecPtr + 0x10, sizeof(codecWs));
+    std::memcpy(&codecFrames, codecPtr + 0x30, sizeof(codecFrames));
+    std::memcpy(&codecUnknown28, codecPtr + 0x34, sizeof(codecUnknown28));
+    std::memcpy(&codecUnknown2C, codecPtr + 0x38, sizeof(codecUnknown2C));
+    std::memcpy(&codecMemory, codecPtr + 0x78, sizeof(codecMemory));
+    std::memcpy(&codecUnknown10, codecPtr + 0xc0, sizeof(codecUnknown10));
+    std::memcpy(&codecInstanceMode, codecPtr + 0x118, sizeof(codecInstanceMode));
+    Require(codecFlag == 1, "codec flag must be 1");
+    Require(codecWs == expectedWs, "codec workspace back-pointer mismatch");
+    Require(codecFrames == 1 && codecUnknown28 == 256 && codecUnknown2C == 256, "codec frame dimensions mismatch");
+    Require(std::memcmp(&codecMemory, &memory, sizeof(memory)) == 0, "codec memory copy mismatch");
+    Require(codecUnknown10 == cRecord.unknown10, "codec unknown10 mismatch");
+    Require(codecInstanceMode == 1, "codec instanceMode mismatch");
+
+    Require(std::all_of(block1.begin(), block1.end(), [](std::byte b) { return b == std::byte{0}; }), "blocks[1] must be zeroed");
+
+    errno = 73;
+    Require(sceSdecDestroySw2(handle) == 0, "sceSdecDestroySw2 lifecycle failed");
+    Require(errno == 73, "sceSdecDestroySw2 must preserve errno");
+    std::memcpy(handleHeader.data(), block0.data(), sizeof(handleHeader));
+    Require(handleHeader[0] == 1 && handleHeader[1] == 0 && handleHeader[2] == 0, "destroy must clear workspace and codec fields");
+
+    Require(sceSdecDestroySw2(handle) == 0, "idempotent sceSdecDestroySw2 failed");
+    Require(errno == 73, "idempotent sceSdecDestroySw2 must preserve errno");
+}
+
 } // namespace
 
 int main() {
@@ -314,6 +390,7 @@ int main() {
     CheckQuerySizes(process);
     CheckQueryRefusals();
     CheckCreate(process);
+    CheckCreateAndDestroyLifecycle(process);
     std::puts("Sdec query memory 2 tests passed");
     return 0;
 }
