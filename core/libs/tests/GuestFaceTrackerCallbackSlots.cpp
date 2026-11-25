@@ -1,8 +1,15 @@
 #include "prx/libSceFaceTracker/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -12,6 +19,7 @@ void Require(bool condition) {
     }
 }
 
+constexpr int kErrInvalid = static_cast<int>(0x812a0001);
 constexpr int kErrNullContext = static_cast<int>(0x812a0002);
 constexpr int kErrNotInitialized = static_cast<int>(0x812a0003);
 
@@ -81,5 +89,41 @@ int main() {
     Require(StoredPtr(context, 0x1838) == replacementArg);
     Require(StoredPtr(context, 0x1818) == callbacks[1]);
     Require(StoredPtr(context, 0x1858) == arguments[4]);
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    const std::size_t protectedBytes = ((kContextSize + pageSize - 1) / pageSize) * pageSize;
+    auto* const readOnlyContext = static_cast<std::uint8_t*>(
+        VirtualAlloc(nullptr, protectedBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(readOnlyContext != nullptr);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(size);
+    const std::size_t protectedBytes = ((kContextSize + pageSize - 1) / pageSize) * pageSize;
+    auto* const readOnlyContext = static_cast<std::uint8_t*>(
+        mmap(nullptr, protectedBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(readOnlyContext != MAP_FAILED);
+#endif
+    std::memset(readOnlyContext, 0, protectedBytes);
+    readOnlyContext[kInitFlag] = 1;
+#ifdef _WIN32
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(readOnlyContext, protectedBytes, PAGE_READONLY, &oldProtection) != 0);
+#else
+    Require(mprotect(readOnlyContext, protectedBytes, PROT_READ) == 0);
+#endif
+    errno = 71;
+    for (int i = 0; i < 5; ++i) {
+        Require(kRegistrations[i](callbacks[i], arguments[i], readOnlyContext) == kErrInvalid);
+        Require(errno == 71);
+    }
+#ifdef _WIN32
+    Require(VirtualFree(readOnlyContext, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnlyContext, protectedBytes) == 0);
+#endif
     return 0;
 }
