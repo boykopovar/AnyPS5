@@ -60,6 +60,7 @@ struct Memory {
     alignas(256) volatile std::uint32_t afterPrefetch;
     alignas(256) volatile std::uint32_t refused;
     alignas(256) volatile std::uint32_t predicated;
+    alignas(256) volatile std::uint32_t workload;
 };
 
 class GuestBlock {
@@ -215,6 +216,24 @@ void TestComputeQueues() {
     Require(sceGnmUnmapComputeQueue(again) == 0, "sceGnmUnmapComputeQueue of the remapped ring failed");
 }
 
+void TestWorkloadDingDong() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    const int queue = sceGnmMapComputeQueue(0, 0, memory.ringA, RingWords, &memory.readA);
+    Require(queue > 0, "sceGnmMapComputeQueue did not return a queue id");
+    std::vector<std::uint32_t> words;
+    WriteData(words, &memory.workload, 3);
+    const auto offset = Put(memory.ringA, 0, words);
+    Require(sceGnmDingDongForWorkload_nid_disambig1(0, offset, 1) == 0, "sceGnmDingDongForWorkload for queue 0 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.workload == 0 && memory.readA == 0, "sceGnmDingDongForWorkload for queue 0 rang a queue");
+    Require(sceGnmDingDongForWorkload_nid_disambig1(static_cast<std::uint32_t>(queue), offset, 1) == 0, "sceGnmDingDongForWorkload failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.workload == 3 && memory.readA == offset, "sceGnmDingDongForWorkload did not run the ring's new packets and move its read offset");
+    Require(ExpectFailure([&] { sceGnmDingDongForWorkload_nid_disambig1(0x7fffffffu, 0, 1); }).find("not mapped") != std::string::npos, "sceGnmDingDongForWorkload for an unknown queue id did not throw as sceGnmDingDong does");
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+}
+
 std::vector<std::uint32_t> Call(const std::uint32_t* target, std::size_t words) {
     return {Type3(0x3f, 3), Low(target), High(target) & 0xffffu, static_cast<std::uint32_t>(words)};
 }
@@ -295,6 +314,7 @@ int main() {
         device.reset();
         TestComputeQueues();
         TestCalledBuffers();
+        TestWorkloadDingDong();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {

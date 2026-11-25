@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cerrno>
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -120,8 +121,8 @@ bool IsScriptLanguageValid(int script, int language) {
 }
 
 void ResetScaleOutputs(float* w, float* h) {
-    if (w) *w = 0.0f;
-    if (h) *h = 0.0f;
+    if (w) CopyOutGuest(w, 0.0f);
+    if (h) CopyOutGuest(h, 0.0f);
 }
 
 void ResetDpiOutputs(std::uint32_t* hDpi, std::uint32_t* vDpi) {
@@ -149,9 +150,7 @@ int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* 
     return AccessFontSettings(fontHandle, [&](FontState& state) {
         if (oldAttribute) {
             const int previous = state.attribute;
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(oldAttribute, &previous, sizeof(previous));
-            errno = savedErrno;
             if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
         state.attribute = attribute;
@@ -163,7 +162,9 @@ int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* now
     (void)attribute;
     if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return AccessFontSettings(fontHandle, [&](FontState& state) {
-        *nowAttribute = state.attribute;
+        const int localAttr = state.attribute;
+        const bool copied = GuestCopyOut_nid_no_patch(nowAttribute, &localAttr, sizeof(localAttr));
+        if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return SCE_FONT_OK;
     });
 }
@@ -233,15 +234,35 @@ int APS5_VABI sceFontSetEffectWeight(FontHandle fontHandle, float weightXScale, 
 }
 
 int APS5_VABI sceFontGetScalePixel(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetScalePixel(&font->style, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePixel(&font->style, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetScalePoint(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadFontStyle(fontHandle, false, [&](FontHandleNative* font) { return StyleStateGetScalePoint(&font->style, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadFontStyle(fontHandle, false, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePoint(&font->style, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetResolutionDpi(FontHandle fontHandle, std::uint32_t* hDpi, std::uint32_t* vDpi) {
@@ -263,9 +284,17 @@ int APS5_VABI sceFontGetResolutionDpi(FontHandle fontHandle, std::uint32_t* hDpi
 }
 
 int APS5_VABI sceFontGetEffectSlant(FontHandle fontHandle, float* slantRatio) {
-    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetSlantRatio(&font->style, slantRatio); });
-    if (rc != SCE_FONT_OK && slantRatio) *slantRatio = 0.0f;
-    return rc;
+    float localSlant = 0.0f;
+    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetSlantRatio(&font->style, &localSlant);
+    });
+    if (rc != SCE_FONT_OK) {
+        if (slantRatio) CopyOutGuest(slantRatio, 0.0f);
+        return rc;
+    }
+    if (!CopyOutGuest(slantRatio, localSlant)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {
@@ -316,21 +345,49 @@ int APS5_VABI sceFontSetupRenderEffectWeight(FontHandle fontHandle, float weight
 }
 
 int APS5_VABI sceFontGetRenderScalePixel(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) { return StyleStateGetScalePixel(&font->cached_style.state, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePixel(&font->cached_style.state, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetRenderScalePoint(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) { return StyleStateGetScalePoint(&font->cached_style.state, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePoint(&font->cached_style.state, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetRenderEffectSlant(FontHandle fontHandle, float* slantRatio) {
-    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetSlantRatio(&font->cached_style.state, slantRatio); });
-    if (rc != SCE_FONT_OK && slantRatio) *slantRatio = 0.0f;
-    return rc;
+    float localSlant = 0.0f;
+    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetSlantRatio(&font->cached_style.state, &localSlant);
+    });
+    if (rc != SCE_FONT_OK) {
+        if (slantRatio) CopyOutGuest(slantRatio, 0.0f);
+        return rc;
+    }
+    if (!CopyOutGuest(slantRatio, localSlant)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetRenderEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {
