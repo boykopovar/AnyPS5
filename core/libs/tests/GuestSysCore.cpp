@@ -95,10 +95,13 @@ int main() {
         Require(sceApplicationSendResultOfDebuggerSaveRequest() == notInitialized);
         Require(sceApplicationSwitchToPprNativeMode() == notInitialized);
         Require(sceApplicationSwitchToPprNativeMode2() == notInitialized);
+        Require(libSceSysCoreUnknown_KJ3Cw7ZH6pU_nid_no_patch() == notInitialized);
         Require(libSceSysCoreUnknown_Q5nkKEHtW18_nid_no_patch() == notInitialized);
         Require(libSceSysCoreUnknown_V7awqOXNG30_nid_no_patch() == notInitialized);
+        Require(libSceSysCoreUnknown_WoJ7K_minus_2EIKk_nid_no_patch() == notInitialized);
         Require(libSceSysCoreUnknown_lGA8mxzKIhk_nid_no_patch() == notInitialized);
         Require(libSceSysCoreUnknown_piCjhbSYauo_nid_no_patch() == notInitialized);
+        Require(libSceSysCoreUnknown_x6tZHyeLijI_nid_no_patch() == notInitialized);
         for (const std::byte value : info.data) Require(value == std::byte{0});
     }
     return 0;
