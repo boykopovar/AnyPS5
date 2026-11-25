@@ -111,8 +111,8 @@ def default_of(match, window):
     default = match.groupdict().get("default")
     if default:
         return default
-    found = re.search(r"\?[\s\S]*?:\s*(" + INTEGER + ")", window)
-    return found.group(1) if found else ""
+    found = re.search(r"\?[\s\S]*?:\s*([+-]?)\s*(" + INTEGER + ")", window)
+    return "".join(found.groups()) if found else ""
 
 
 def expression_window(text, code, matches, match, start, end):
