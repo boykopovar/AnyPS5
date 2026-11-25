@@ -144,6 +144,18 @@ class DiffTests(unittest.TestCase):
         self.assertGreater(gpu["b_busy_ms_per_frame"], 0.0)
         self.assertEqual(gpu["busy_delta_ms_per_frame"], gpu["b_busy_ms_per_frame"])
 
+    def test_threads_with_the_same_name_contribute_to_one_total(self):
+        baseline = events(10000)
+        candidate = baseline + [
+            {"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 3,
+             "args": {"name": "queue worker 0x0"}},
+            complete(3, "Driver.Packet", 0, 4000),
+        ]
+        result = self.diff(baseline, candidate)
+        worker = next(row for row in result["threads"] if row["thread"] == "queue worker 0x0")
+        self.assertEqual(worker["a_busy_ms_per_frame"], 10.0)
+        self.assertEqual(worker["b_busy_ms_per_frame"], 14.0)
+
     def test_a_slice_below_the_top_cut_on_one_side_keeps_its_real_delta(self):
         result = self.diff(stepped({}), stepped({9: 4.0, 10: 9.8}))
         rows = {row["name"]: row for row in result["slices"]}
