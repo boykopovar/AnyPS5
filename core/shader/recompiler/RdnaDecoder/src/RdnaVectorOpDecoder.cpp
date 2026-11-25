@@ -687,6 +687,10 @@ bool isVop3BCarryOutOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VAddI32 || opcode == RdnaOpcode::VSubI32 || opcode == RdnaOpcode::VSubrevI32;
 }
 
+bool isVop3BCarryOpcode(RdnaOpcode opcode) {
+    return isVop3BCarryOutOpcode(opcode) || opcode == RdnaOpcode::VAddcU32 || opcode == RdnaOpcode::VSubCoCiU32 || opcode == RdnaOpcode::VSubrevCoCiU32;
+}
+
 bool isVop3BMadU64Opcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VMadU64U32 || opcode == RdnaOpcode::VMadI64I32 || opcode == RdnaOpcode::VDivScaleF32 || opcode == RdnaOpcode::VDivScaleF64;
 }
@@ -1805,6 +1809,20 @@ bool isVop3pIntegerSaturate(RdnaOpcode opcode) {
     }
 }
 
+bool ignoresVop3pIntegerClamp(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::VPkMulLoU16:
+        case RdnaOpcode::VPkMaxI16:
+        case RdnaOpcode::VPkMinI16:
+        case RdnaOpcode::VPkMaxU16:
+        case RdnaOpcode::VPkMinU16:
+        case RdnaOpcode::VPkLshlrevB16:
+        case RdnaOpcode::VPkLshrrevB16:
+        case RdnaOpcode::VPkAshrrevI16: return true;
+        default: return false;
+    }
+}
+
 bool isMadMixF16(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VMadMixloF16 || opcode == RdnaOpcode::VMadMixhiF16;
 }
@@ -2049,7 +2067,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (isNativeVop3B16BinaryOpcode(opcode)) {
-        if (abs != 0u || (clamp != 0u && !isVop3Integer16AddSubOpcode(opcode)) || omod != 0u || neg != 0u) {
+        if (abs != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2057,7 +2075,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     if (carryInOut || scalarDst) {
         const bool floatCompare = scalarDst && isVopcFloatCompareOpcode(opcode);
         const bool divScale = opcode == RdnaOpcode::VDivScaleF32 || opcode == RdnaOpcode::VDivScaleF64;
-        if ((clamp != 0u && !isVop3BMadU64Opcode(opcode) && !floatCompare) || (omod != 0u && !divScale) || (neg != 0u && !floatCompare && !divScale)) {
+        if ((clamp != 0u && !isVop3BMadU64Opcode(opcode) && !isVop3BCarryOpcode(opcode) && !floatCompare) || (omod != 0u && !divScale) || (neg != 0u && !floatCompare && !divScale)) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2075,7 +2093,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (opcode == RdnaOpcode::VCvtPkU8F32) {
-        if ((abs & ~1u) != 0u || opSel != 0u || clamp != 0u || omod != 0u || (neg & ~1u) != 0u) {
+        if ((abs & ~1u) != 0u || opSel != 0u || omod != 0u || (neg & ~1u) != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2397,7 +2415,7 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
         instruction.destination = DecodeRdnaVectorGpr(vdst);
     }
     instruction.source0 = DecodeRdnaScalarSource(src0, programCounter);
-    instruction.destination.clamp = (supportsNativeVop3Clamp(instruction.op) || vop3bMadU64) && clamp != 0u;
+    instruction.destination.clamp = (supportsNativeVop3Clamp(instruction.op) || vop3bUsesSdst) && clamp != 0u;
     instruction.destination.omod = nativeResultModifiers ? omod : 0u;
     if (permlane) {
         instruction.destination.opSel = (opSel & 0x1u) != 0u;
@@ -2520,7 +2538,7 @@ RdnaInstruction DecodeRdnaVop3p(std::uint32_t programCounter, std::span<const st
     }
     if (instruction.op == RdnaOpcode::VFmaF32 || instruction.op == RdnaOpcode::VDot2F32F16 || isMadMixF16(instruction.op) || isPackedVop3p(instruction.op) || isVop3pIntegerSaturate(instruction.op)) {
         instruction.destination.clamp = clamp != 0u;
-    } else if (clamp != 0u && instruction.op != RdnaOpcode::VPkMulLoU16) {
+    } else if (clamp != 0u && !ignoresVop3pIntegerClamp(instruction.op)) {
         throw std::invalid_argument("VOP3P integer clamp is not implemented");
     }
     if (isVop3pIntegerDot(instruction.op)) {

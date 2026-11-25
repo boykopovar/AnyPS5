@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/OutlineTransform.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,16 @@ template <typename TCall> bool Throws(TCall call) {
         call();
     } catch (const std::runtime_error&) {
         return true;
+    }
+    return false;
+}
+
+template <typename TCall> bool Invalid(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
     }
     return false;
 }
@@ -77,6 +88,18 @@ void Transform() {
     Shape small({{1, 2}}, {0});
     small.outline.points = nullptr;
     Require(Throws([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&small.outline, &shear); }), "null points with a positive count throw");
+
+    Shape guarded({{1, 2}}, {0});
+    const auto* unmappedOutline = reinterpret_cast<const GuestOutline*>(std::uintptr_t{0x10});
+    const auto* unmappedMatrix = reinterpret_cast<const GuestMatrix*>(std::uintptr_t{0x10});
+    Require(Invalid([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(unmappedOutline, &shear); }), "an unmapped outline is invalid");
+    Require(Invalid([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&guarded.outline, unmappedMatrix); }), "an unmapped matrix is invalid");
+    Shape empty({{7, 8}}, {0});
+    empty.outline.n_points = 0;
+    sceFreeTypeOtOutlineTransform_nid_no_patch(&empty.outline, unmappedMatrix);
+    Require(empty.Is({{7, 8}}), "an outline without points never reads the matrix");
+    guarded.outline.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    Require(Invalid([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&guarded.outline, &shear); }), "unmapped points are invalid");
 }
 
 void Embolden() {
@@ -110,6 +133,17 @@ void Embolden() {
     Shape weak({{0, 0}, {0, 640}, {640, 640}, {640, 0}}, {3});
     weak.outline.points = nullptr;
     Require(sceFreeTypeOtOutlineEmboldenXY_nid_no_patch(&weak.outline, 1, -1) == 0, "strengths that halve to zero return before reading the outline");
+
+    Shape unmapped({{0, 0}, {0, 640}, {640, 640}, {640, 0}}, {3});
+    errno = 71;
+    Require(sceFreeTypeOtOutlineEmbolden_nid_no_patch(reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10}), 128) == 0x06 && errno == 71,
+            "an unmapped outline is Invalid_Argument");
+    unmapped.outline.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    Require(sceFreeTypeOtOutlineEmbolden_nid_no_patch(&unmapped.outline, 128) == 0x06 && errno == 71, "unmapped points are Invalid_Argument");
+    unmapped.outline.points = unmapped.points.data();
+    unmapped.outline.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    Require(sceFreeTypeOtOutlineEmbolden_nid_no_patch(&unmapped.outline, 128) == 0x06 && errno == 71 && unmapped.Is({{0, 0}, {0, 640}, {640, 640}, {640, 0}}),
+            "unmapped contours are Invalid_Argument and leave the points unchanged");
 
     Shape outside({{0, 0}, {0, 640}, {640, 640}, {640, 0}}, {4});
     Require(Throws([&] { sceFreeTypeOtOutlineEmbolden_nid_no_patch(&outside.outline, 128); }) && outside.Is({{0, 0}, {0, 640}, {640, 640}, {640, 0}}),

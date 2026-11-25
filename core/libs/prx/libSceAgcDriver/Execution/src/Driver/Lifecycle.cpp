@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -19,6 +20,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cerrno>
@@ -211,10 +213,25 @@ void Driver::stop() {
     PerformanceTrace::StopOutput();
     FlushAsyncLogAtEnd_nid_no_patch();
     StopProfileOutput_nid_no_patch();
+    CaptureTrace::Stop();
     stopped = true;
 }
 
+#ifdef APS5_PROFILE_GENERATE
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+#endif
+
 Driver::Driver() {
+#ifdef APS5_PROFILE_GENERATE
+    std::thread([] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(20));
+            __gcov_dump();
+            __gcov_reset();
+        }
+    }).detach();
+#endif
     InstallAsyncLog_nid_no_patch();
     static const bool driverMemory = (MapDriverMemory(), true);
     static_cast<void>(driverMemory);
@@ -272,6 +289,10 @@ void Driver::WaitIdle() {
         checkStopping();
     }
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+void Driver::WaitDeviceIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
 }
 

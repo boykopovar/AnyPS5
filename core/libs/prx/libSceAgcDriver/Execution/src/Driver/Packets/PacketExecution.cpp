@@ -268,9 +268,13 @@ void Driver::execute(Submission& submission) {
     auto& packetCounters = PacketCounters::ThisThread();
 
     static const bool epochEach = std::getenv("APS5_SUBMISSION_EPOCH_EACH") != nullptr;
+    const bool orderedAtSubmit = submission.rewindTail == nullptr && submission.enqueuedAt != std::chrono::steady_clock::time_point{};
+    const auto submittedAt = orderedAtSubmit ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(submission.enqueuedAt.time_since_epoch()).count()) : 0;
     if (epochEach || submission.enqueuedAt == std::chrono::steady_clock::time_point{} || submission.enqueuedAt > lastEpochBump()) {
         if (!epochEach) noteReleasedTails(submission);
-        bumpEpoch(&EpochBumps::submissions);
+        bumpEpochSince(&EpochBumps::submissions, submittedAt);
+    } else {
+        raiseEpochSince(submittedAt);
     }
     clearResolvedAhead();
     gateOpened() = true;
@@ -319,7 +323,7 @@ void Driver::execute(Submission& submission) {
         if (submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled()) noteRingPacket(submission.queue, submission.serial, opcode, header);
         PerformanceTimer timing("Driver.Packet");
         if (!predicated) noteLabelIssue(packet, submission.queue);
-        if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue))) {
+        if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue, queue.sampleDumpBlocks))) {
             traceLabel(packet, submission.queue);
             recent.Record(cursor);
             cursor = nextCursor;
@@ -338,7 +342,7 @@ void Driver::execute(Submission& submission) {
                 continue;
             }
             if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
-                bumpWaitEpoch(awaited, awaitedBytes);
+                bumpWaitEpoch(awaited, awaitedBytes, storeOrderingSince(packet, awaited, awaitedBytes, submission.received, submission.queue));
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
                 noteLabelPass(packet, submission.queue);
@@ -360,7 +364,9 @@ void Driver::execute(Submission& submission) {
         if (predicated) {
             landPendingWaits(submission.queue);
             recordQueuedLabelsBeforeRead(submission.queue);
-            if (!Pm4::PredicationPasses(queue)) {
+            const bool passes = Pm4::PredicationPasses(queue);
+            publishReadPoint();
+            if (!passes) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
                 continue;
             }
@@ -491,10 +497,7 @@ void Driver::execute(Submission& submission) {
             currentPacketOffset() = cursor;
             if (gateOpened()) {
                 gateOpened() = false;
-                if (!pipelineDispatch() || submission.queue != 0) {
-                    if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode);
-                    timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
-                }
+                if (!pipelineDispatch() || submission.queue != 0) timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
             }
             const bool ringOverlap = submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled();
             if (ringOverlap) Graphics::Recorder::SetDispatchOrder(submission.queue + 1u, ringOrder.afterDispatch);
@@ -579,7 +582,7 @@ void Driver::execute(Submission& submission) {
             recordQueuedLabelsBeforeRead(submission.queue);
             Pm4::Execute(packet, queue);
         } else if (sampleDump && !wroteOnGpu) {
-            dumpSampleCounters(Pm4::SampleDumpAddress(packet));
+            dumpSampleCounters(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         } else if (submission.queue == 0 && sealsWriteOnly(packet, opcode)) {
             if (std::exchange(drawnSinceSeal(), false)) {
                 const auto seal = [this] {
@@ -590,7 +593,7 @@ void Driver::execute(Submission& submission) {
                 if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, seal, {});
                 else seal();
             }
-        } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
+        } else if (opcode != 0x42 && (opcode != 0x46 || Pm4::SampleControl(packet)) && opcode != 0x58) {
             if (!wroteOnGpu) {
                 if (Pm4::IndirectRegisterOpcode(opcode)) {
                     const auto& listed = submission.registerLists.at(cursor);
