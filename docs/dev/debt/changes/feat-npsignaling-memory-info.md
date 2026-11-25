@@ -1,0 +1,9 @@
+# libSceNpSignaling
+
+## change [libSceNpSignaling]
+
+- [libSceNpSignaling](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - not measured on a PS5: the checks, their order, context ids 1 to 8 and the NpId rule (`term` 0, 3 to 16 characters, the first alphanumeric, the rest alphanumeric, `_` or `-`) follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/np/np_signaling/np_signaling.cpp#L118-L170) and its [state helpers](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/np/np_signaling/np_signaling_state.cpp#L120-L170). `sceNpSignalingInitialize` creates the module's heap (see `sceNpSignalingGetMemoryInfo`) but starts no thread, so the thread arguments are unchecked and callbacks are never called. `sceNpSignalingActivateConnection` returns `SCE_NP_ERROR_SIGNED_OUT` after shadPS4's checks up to `OWN_NP_ID`, without its rate limit; with no connection, the connection calls answer `CONN_NOT_FOUND`
+
+## change [sceNpSignalingGetMemoryInfo]
+
+- [sceNpSignalingGetMemoryInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - no console measurement: the record is `maxSystemSize` at +0, `currentInUse` at +8 and `peakInUse` at +0x10, filled from `sceLibcMspaceMallocStats` (`MallocManagedSize` size 0x28, version 1) over the heap Initialize creates and destroys, as read from the 11.00 (VA 0xbbe0) and 13.40 (VA 0xb750) modules. Contexts are host maps, so the in-use fields stay 0 where the console allocates from the pool. A negative size throws `NotImplemented_nid_no_patch` (console error unmeasured); an unwritable output returns `INVALID_ARGUMENT` through a guarded copy (host-safety choice). Closes when: the console reports non-zero in-use fields or defines the negative-size error.

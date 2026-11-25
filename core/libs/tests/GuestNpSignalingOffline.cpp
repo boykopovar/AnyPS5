@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 
 namespace {
 
@@ -33,6 +34,16 @@ void Require(bool value, const char* name, const char* what) {
     if (value) return;
     std::fprintf(stderr, "%s: %s\n", name, what);
     ++failures;
+}
+
+template <typename TCall>
+bool Throws(TCall&& call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
 }
 
 SignalingNpId MakeNpId(const char* handle) {
@@ -314,6 +325,8 @@ int main() {
     Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized, "sceNpSignalingGetMemoryInfo", "getting memory info post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetPeerNetInfo(1, nullptr, &reqId) == NotInitialized, "sceNpSignalingGetPeerNetInfo", "a call after termination did not return NOT_INITIALIZED");
 
+    Require(Throws([] { sceNpSignalingInitialize(-1, 0, 0, 0); }), "sceNpSignalingInitialize", "a negative heap size was accepted");
+    Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == NotInitialized, "sceNpSignalingGetMemoryInfo", "a rejected initialization left the library initialized");
     Require(sceNpSignalingInitialize(0x1234, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initializing with a size failed");
     Require(sceNpSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.maxSystemSize == 0x4000 && memoryInfo.currentInUse == 0 && memoryInfo.peakInUse == 0, "sceNpSignalingGetMemoryInfo", "the heap size was not rounded up to the 0x4000 granule");
     Require(sceNpSignalingTerminate() == 0, "sceNpSignalingTerminate", "terminating after a sized initialization failed");

@@ -177,7 +177,7 @@ int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriori
     (void)threadStackSize;
     std::lock_guard lock(signalingMutex);
     if (initialized) return SCE_NP_SIGNALING_ERROR_ALREADY_INITIALIZED;
-    if (memorySize < 0) return SCE_NP_SIGNALING_ERROR_HEAP_CREATE;
+    if (memorySize < 0) NotImplemented_nid_no_patch(__func__);
     const std::uint64_t requested = memorySize != 0 ? static_cast<std::uint64_t>(memorySize) : SIGNALING_DEFAULT_MEMORY_SIZE;
     const std::uint64_t remainder = requested & (SIGNALING_MEMORY_ALIGNMENT - 1);
     const std::uint64_t size = remainder == 0 ? requested : requested + SIGNALING_MEMORY_ALIGNMENT - remainder;
