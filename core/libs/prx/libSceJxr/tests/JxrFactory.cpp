@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -101,7 +102,14 @@ void Factory() {
     Require(PKFree_nid_postfix(&stream) == 0 && !stream, "stream release fails");
 
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
+    Require(PKFree_nid_postfix(nullptr) == 0, "null PKFree failed");
+    errno = 71;
+    RequireInvalidArgument([] { PKFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "unmapped PKFree pointer is accepted");
+    Require(errno == 71, "PKFree unmapped pointer changed errno");
     RequireInvalidArgument([] { PKCreateFactory_nid_postfix(nullptr, 0); }, "null factory pointer is accepted");
+    errno = 71;
+    RequireInvalidArgument([] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); }, "unmapped factory pointer is accepted");
+    Require(errno == 71, "PKCreateFactory unmapped pointer changed errno");
     RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(nullptr); }, "null stream pointer is accepted");
 
     failAllocation = true;
@@ -140,6 +148,9 @@ void Codecs() {
     Require(value->decoder == nullptr, "converter decoder is set");
     Require(PKFree_nid_postfix(&converter) == 0 && !converter, "converter release fails");
     RequireInvalidArgument([&] { factory->createFormatConverter(nullptr); }, "null converter pointer is accepted");
+    errno = 71;
+    RequireInvalidArgument([&] { factory->createFormatConverter(reinterpret_cast<void**>(0x10)); }, "unmapped converter pointer is accepted");
+    Require(errno == 71, "createFormatConverter unmapped pointer changed errno");
 
     failAllocation = true;
     converter = reinterpret_cast<void*>(1);

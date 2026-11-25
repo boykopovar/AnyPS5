@@ -602,10 +602,16 @@ void RunEdges() {
     errno = 71;
     RequireInvalidArgument([&] { attachISWrite_nid_postfix(unmappedIo, &okStream); }, "unmapped io in attachISWrite");
     Require(errno == 71, "attachISWrite unmapped io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(reinterpret_cast<Jxr::BitIo*>(0x10), &okStream); }, "low unmapped io in attachISWrite");
+    Require(errno == 71, "attachISWrite low unmapped io changed errno");
     auto validIo = Attach(ring, 0, 0, 0);
     errno = 71;
     RequireInvalidArgument([&] { attachISWrite_nid_postfix(&validIo, unmappedStream); }, "unmapped stream in attachISWrite");
     Require(errno == 71, "attachISWrite unmapped stream changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(&validIo, reinterpret_cast<Jxr::Stream*>(0x10)); }, "low unmapped stream in attachISWrite");
+    Require(errno == 71, "attachISWrite low unmapped stream changed errno");
     errno = 71;
     RequireInvalidArgument([&] { putBit16z_nid_postfix(unmappedIo, 1, 1); }, "unmapped io in putBit16z");
     Require(errno == 71, "putBit16z unmapped io changed errno");
