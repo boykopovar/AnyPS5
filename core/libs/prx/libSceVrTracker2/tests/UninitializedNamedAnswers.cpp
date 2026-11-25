@@ -181,5 +181,93 @@ int main() {
             "get extended play area result before initialization");
     Require(parameter.Untouched(), "get extended play area result wrote nothing to the parameter");
     Require(output.Untouched(), "get extended play area result wrote nothing to the result");
+    Require(VrTracker2GetCounter(reinterpret_cast<std::uint64_t*>(output.bytes), 0) == NotInitialized,
+            "get counter before initialization");
+    Require(output.Untouched(), "get counter wrote nothing");
+    Require(VrTracker2GetDiagnosticResult(reinterpret_cast<VrTracker2DiagnosticResult*>(output.bytes)) == NotInitialized,
+            "get diagnostic result before initialization");
+    Require(output.Untouched(), "get diagnostic result wrote nothing");
+    Require(VrTracker2GetExtendedResult(reinterpret_cast<VrTracker2ExtendedResult*>(output.bytes)) == NotInitialized,
+            "get extended result before initialization");
+    Require(output.Untouched(), "get extended result wrote nothing");
+    Require(VrTracker2GetDiagnosticText(reinterpret_cast<VrTracker2DiagnosticText*>(output.bytes)) == NotInitialized,
+            "get diagnostic text before initialization");
+    Require(output.Untouched(), "get diagnostic text wrote nothing");
+    Require(VrTracker2GetDiagnosticState(reinterpret_cast<VrTracker2DiagnosticState*>(output.bytes)) == NotInitialized,
+            "get diagnostic state before initialization");
+    Require(output.Untouched(), "get diagnostic state wrote nothing");
+    Require(VrTracker2GetExtendedDiagnosticState(reinterpret_cast<VrTracker2ExtendedDiagnosticState*>(output.bytes)) == NotInitialized,
+            "get extended diagnostic state before initialization");
+    Require(output.Untouched(), "get extended diagnostic state wrote nothing");
+    Require(VrTracker2GetSensorDiagnostics(reinterpret_cast<VrTracker2SensorDiagnostics*>(output.bytes)) == NotInitialized,
+            "get sensor diagnostics before initialization");
+    Require(output.Untouched(), "get sensor diagnostics wrote nothing");
+    Require(VrTracker2GetDeviceDiagnostics(reinterpret_cast<VrTracker2DeviceDiagnostics*>(output.bytes)) == NotInitialized,
+            "get device diagnostics before initialization");
+    Require(output.Untouched(), "get device diagnostics wrote nothing");
+    Require(VrTracker2GetTimingDiagnostics(reinterpret_cast<VrTracker2TimingDiagnostics*>(output.bytes)) == NotInitialized,
+            "get timing diagnostics before initialization");
+    Require(output.Untouched(), "get timing diagnostics wrote nothing");
+    Require(VrTracker2GetSensorSummary(reinterpret_cast<VrTracker2SensorSummary*>(output.bytes)) == NotInitialized,
+            "get sensor summary before initialization");
+    Require(output.Untouched(), "get sensor summary wrote nothing");
+    Require(VrTracker2GetTrackingFlags(reinterpret_cast<bool*>(output.bytes), reinterpret_cast<std::uint8_t*>(output.bytes + 8)) == NotInitialized,
+            "get tracking flags before initialization");
+    Require(output.Untouched(), "get tracking flags wrote nothing");
+    Require(VrTracker2GetDeviceState(1, reinterpret_cast<std::int32_t*>(output.bytes)) == NotInitialized,
+            "get device state before initialization");
+    Require(output.Untouched(), "get device state wrote nothing");
+    Require(VrTracker2GetDeviceCalibrationStatus(1, reinterpret_cast<VrTracker2DeviceCalibrationStatus*>(output.bytes)) == NotInitialized,
+            "get device calibration status before initialization");
+    Require(output.Untouched(), "get device calibration status wrote nothing");
+    Require(VrTracker2AcquireCameraFrame(0, reinterpret_cast<VrTracker2CameraFrame*>(output.bytes)) == NotInitialized,
+            "acquire camera frame before initialization");
+    Require(output.Untouched(), "acquire camera frame wrote nothing");
+    Require(VrTracker2AcquireCameraFrameWithMetadata(0, reinterpret_cast<VrTracker2CameraFrame*>(output.bytes), reinterpret_cast<VrTracker2CameraFrameMetadata*>(output.bytes + 4096)) == NotInitialized,
+            "acquire camera frame with metadata before initialization");
+    Require(output.Untouched(), "acquire camera frame with metadata wrote nothing");
+    Require(VrTracker2ReleaseCameraFrame(reinterpret_cast<const VrTracker2CameraFrame*>(parameter.bytes)) == NotInitialized,
+            "release camera frame before initialization");
+    Require(parameter.Untouched(), "release camera frame wrote nothing to the frame");
+    Require(VrTracker2SetScalarOption(1.0f) == NotInitialized,
+            "set scalar option before initialization");
+    Require(VrTracker2GetScalarOption(reinterpret_cast<float*>(output.bytes)) == NotInitialized,
+            "get scalar option before initialization");
+    Require(output.Untouched(), "get scalar option wrote nothing");
+    Require(VrTracker2FitBoundary(reinterpret_cast<const VrTracker2BoundaryGeometry*>(parameter.bytes), reinterpret_cast<VrTracker2BoundaryFitResult*>(output.bytes)) == NotInitialized,
+            "fit boundary before initialization");
+    Require(parameter.Untouched(), "fit boundary wrote nothing to the geometry");
+    Require(output.Untouched(), "fit boundary wrote nothing");
+    Require(VrTracker2FitBoundaryWithBounds(reinterpret_cast<const VrTracker2BoundaryGeometry*>(parameter.bytes), reinterpret_cast<VrTracker2OrientedBoundingBox*>(output.bytes), reinterpret_cast<VrTracker2OrientedBoundingBox*>(output.bytes + 4096), reinterpret_cast<VrTracker2BoundaryFitResult*>(output.bytes + 8192)) == NotInitialized,
+            "fit boundary with bounds before initialization");
+    Require(output.Untouched(), "fit boundary with bounds wrote nothing");
+    Require(VrTracker2UnsupportedCoordinateOperation(reinterpret_cast<const VrTracker2UnsupportedCoordinateParameter*>(parameter.bytes)) == NotInitialized,
+            "unsupported coordinate operation before initialization");
+    Require(parameter.Untouched(), "unsupported coordinate operation wrote nothing to the parameter");
+    Require(VrTracker2GetMapConfiguration(reinterpret_cast<VrTracker2MapConfiguration*>(output.bytes)) == NotInitialized,
+            "get map configuration before initialization");
+    Require(output.Untouched(), "get map configuration wrote nothing");
+    Require(VrTracker2SetMapConfiguration(reinterpret_cast<const VrTracker2MapConfiguration*>(parameter.bytes)) == NotInitialized,
+            "set map configuration before initialization");
+    Require(parameter.Untouched(), "set map configuration wrote nothing to the configuration");
+    Require(VrTracker2GetMapStatus(reinterpret_cast<VrTracker2MapStatus*>(output.bytes)) == NotInitialized,
+            "get map status before initialization");
+    Require(output.Untouched(), "get map status wrote nothing");
+    Require(VrTracker2GetMapScalar(reinterpret_cast<float*>(output.bytes), reinterpret_cast<const VrTracker2MapData*>(parameter.bytes)) == NotInitialized,
+            "get map scalar before initialization");
+    Require(parameter.Untouched(), "get map scalar wrote nothing to the map data");
+    Require(output.Untouched(), "get map scalar wrote nothing");
+    Require(VrTracker2GetTimedPose(reinterpret_cast<VrTracker2TimedPoseResult*>(output.bytes), 1, 2) == NotInitialized,
+            "get timed pose before initialization");
+    Require(output.Untouched(), "get timed pose wrote nothing");
+    Require(VrTracker2GetMapData(reinterpret_cast<VrTracker2MapData*>(output.bytes), 32) == NotInitialized,
+            "get map data before initialization");
+    Require(output.Untouched(), "get map data wrote nothing");
+    Require(SceVrTracker2DepthCubeMapUpdate(reinterpret_cast<const VrTracker2ImageFrame*>(parameter.bytes)) == NotInitialized,
+            "depth cube map update before initialization");
+    Require(parameter.Untouched(), "depth cube map update wrote nothing to the frame");
+    Require(SceVrTracker2DepthCubeMapGetData(reinterpret_cast<VrTracker2ImagePoseResult*>(output.bytes)) == NotInitialized,
+            "depth cube map get data before initialization");
+    Require(output.Untouched(), "depth cube map get data wrote nothing");
     return 0;
 }

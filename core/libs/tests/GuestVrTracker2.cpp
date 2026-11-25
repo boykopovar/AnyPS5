@@ -206,6 +206,8 @@ int main() {
     auto second = Filled();
     Require(sceVrTracker2GetMapQuality(nullptr, second.data()) == NotInitialized, "second checked, first null");
     Require(sceVrTracker2GetMapQuality(second.data(), nullptr) == InvalidArgument, "second null");
+    Require(sceVrTracker2GetMapQuality(second.data(), second.data()) == NotInitialized, "both map quality arguments non-null");
+    Require(AllEqual(second.data(), second.data() + 32, 0xAA), "both non-null map quality wrote nothing");
     Require(AllEqual(second.data(), second.data() + 32, 0xAA), "second untouched");
 
     Require(VrTracker2Accept() == 0, "accepting export");
