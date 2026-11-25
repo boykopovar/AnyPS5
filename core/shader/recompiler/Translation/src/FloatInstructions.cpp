@@ -784,12 +784,13 @@ bool TranslationContext::ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opc
     return true;
 }
 
+IrU32 TranslationContext::orderF16Bits(const IrU32& bits) {
+    IrValue& value = ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&bits.Value(), &ir.Constant(0u), &ir.Constant(16u)});
+    return IrU32(ir.BitwiseXor(value, ir.BitwiseAnd(ir.ShiftRightArithmetic(value, ir.Constant(31u)), ir.Constant(0x7fffu))));
+}
+
 IrU32 TranslationContext::minMaxF16Bits(bool maxValue, IrU32 lhs, IrU32 rhs) {
-    const auto order = [&](const IrU32& bits) -> IrValue& {
-        IrValue& value = ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&bits.Value(), &ir.Constant(0u), &ir.Constant(16u)});
-        return ir.BitwiseXor(value, ir.BitwiseAnd(ir.ShiftRightArithmetic(value, ir.Constant(31u)), ir.Constant(0x7fffu)));
-    };
-    const IrU1 ordered(ir.Emit(maxValue ? IrOpcode::SGreaterThanEqual32 : IrOpcode::SLessThan32, IrType::U1, {&order(lhs), &order(rhs)}));
+    const IrU1 ordered(ir.Emit(maxValue ? IrOpcode::SGreaterThanEqual32 : IrOpcode::SLessThan32, IrType::U1, {&orderF16Bits(lhs).Value(), &orderF16Bits(rhs).Value()}));
     return IrU32(ir.Select(ordered.Value(), lhs.Value(), rhs.Value()));
 }
 
@@ -827,7 +828,12 @@ bool TranslationContext::minMaxF16(const RdnaInstruction& inst, IrOpcode opcode)
     } else {
         const IrU1 anyNan(ir.LogicalOr(ir.LogicalOr(isNan(args[0]).Value(), isNan(args[1]).Value()), isNan(args[2]).Value()));
         const IrU32 minimum = pair(IrOpcode::FPMin32, pair(IrOpcode::FPMin32, args[0], args[1]), args[2]);
-        const IrU32 median = minMaxF16Bits(true, minMaxF16Bits(false, args[0], args[1]), minMaxF16Bits(false, minMaxF16Bits(true, args[0], args[1]), args[2]));
+        const auto keyOp = [&](IrOpcode keyOpcode, const IrU32& lhs, const IrU32& rhs) { return IrU32(ir.Emit(keyOpcode, IrType::U32, {&lhs.Value(), &rhs.Value()})); };
+        const IrU32 key0 = orderF16Bits(args[0]);
+        const IrU32 key1 = orderF16Bits(args[1]);
+        const IrU32 upper = keyOp(IrOpcode::SMin32, keyOp(IrOpcode::SMax32, key0, key1), orderF16Bits(args[2]));
+        const IrU32 medianKey = keyOp(IrOpcode::SMax32, keyOp(IrOpcode::SMin32, key0, key1), upper);
+        const IrU32 median(ir.BitwiseAnd(orderF16Bits(medianKey).Value(), ir.Constant(0xffffu)));
         result = IrU32(ir.Select(anyNan.Value(), minimum.Value(), median.Value()));
     }
     write16Bits(inst.destination, clampF16Bits(inst.destination, result));
