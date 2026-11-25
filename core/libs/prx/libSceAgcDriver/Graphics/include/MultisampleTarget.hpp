@@ -112,6 +112,7 @@ std::vector<std::byte> ReadMultisampleTargetSamples_nid_no_patch(const Context& 
 MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
+bool RepeatMultisampleTargetView(const Context& context, const ColorTarget& target, const std::shared_ptr<void>& owner, VkImage image, VkImageView view);
 void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);

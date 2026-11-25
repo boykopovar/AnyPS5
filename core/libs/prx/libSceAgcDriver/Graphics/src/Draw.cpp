@@ -4700,14 +4700,19 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !pipeline->ReordersSamples() &&
+            (!multisampled || std::ranges::all_of(targets, &TargetBinding::multisampled))) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
             recipe->key = contentKey;
             recipe->pipeline = pipeline;
             recipe->framebuffer = framebuffer;
-            for (const auto& owner : owners) recipe->targets.emplace_back(owner);
+            if (multisampled) {
+                for (const auto& binding : targets) recipe->multisampleAttachments.push_back({binding.multisampleOwner, binding.multisampleImage});
+            } else {
+                for (const auto& owner : owners) recipe->targets.emplace_back(owner);
+            }
             recipe->targetViews = targetViews;
             recipe->passKey = DrawRenderPassKey(context, state, targetViews);
             recipe->vertexInput = inputs.VertexLayout();
@@ -5171,7 +5176,9 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (recipe.hasDepth != state.depth.has_value()) return miss(DrawRecipeMiss::TargetGone);
     if (!ZeroVertexLayoutMatches(recipe.vertexInput, shaders.front().program->vertexAttributes)) return miss(DrawRecipeMiss::Proof);
     const std::size_t expectedViews = state.colors.size() + (recipe.hasDepth ? 1u : 0u);
-    Require(recipe.targets.size() == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
+    const bool multisampled = !recipe.multisampleAttachments.empty();
+    const auto colorCount = multisampled ? recipe.multisampleAttachments.size() : recipe.targets.size();
+    Require(colorCount == state.colors.size() && recipe.targetViews.size() == expectedViews, "draw recipe targets do not match the state");
     const auto plan = planDraw(context, state, draw, shaders, &recipe, outcome, timer);
     DrawInputs inputs;
     if (plan.nothing) inputs.nothing = true;
@@ -5190,20 +5197,37 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (ownsTargetMemo(memo) && (memo.colors.valid || memo.depth.valid)) noteTargetMemo(TargetMemoEvent::RecipeInvalidated);
     memo.Invalidate();
     const bool passAttachments = PassAttachmentMemoEnabled();
-    const bool verifyAttachments = passAttachments && VerifyPassAttachments() && [&] {
+    std::vector<std::shared_ptr<void>> multisampleOwners;
+    std::vector<VkImage> multisampleImages;
+    if (multisampled) {
+        multisampleOwners.reserve(state.colors.size());
+        multisampleImages.reserve(state.colors.size());
+    }
+    const bool verifyAttachments = passAttachments && !multisampled && VerifyPassAttachments() && [&] {
         InlineList<std::shared_ptr<StorageTexture>, 8> ignored;
         return matchAttachmentMemo(context, state, ignored, recipe.targetViews);
     }();
     InlineList<std::shared_ptr<StorageTexture>, 8> targets;
-    const bool attachmentsFromMemo = passAttachments && !VerifyPassAttachments() && matchAttachmentMemo(context, state, targets, recipe.targetViews);
+    const bool attachmentsFromMemo = passAttachments && !multisampled && !VerifyPassAttachments() && matchAttachmentMemo(context, state, targets, recipe.targetViews);
     if (attachmentsFromMemo) {
         noteAttachments(AttachmentEvent::Hit);
         for (std::size_t index = 0; index < state.colors.size(); ++index) {
             if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
         }
     } else {
-        for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
+        for (std::size_t index = 0; index < colorCount; ++index) {
             timer.phase(PhaseSetup);
+            if (multisampled) {
+                const auto& color = state.colors[index];
+                const auto& attachment = recipe.multisampleAttachments[index];
+                auto owner = attachment.owner.lock();
+                if (!RepeatMultisampleTargetView(context, color, owner, attachment.image, recipe.targetViews[index])) return miss(DrawRecipeMiss::TargetGone);
+                multisampleOwners.push_back(std::move(owner));
+                multisampleImages.push_back(attachment.image);
+                targets.EmplaceBack(nullptr);
+                timer.phase(PhaseReadTarget);
+                continue;
+            }
             if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
             auto stored = recipe.targets[index].lock();
             if (stored == nullptr || !StorageImageCached(context, stored.get()) || !StorageImageServesKeys(*stored, SurfaceForTarget(state.colors[index]).dccAddress)) return miss(DrawRecipeMiss::TargetGone);
@@ -5247,6 +5271,13 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     const auto moved = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
     if (!moved.has_value()) return miss(DrawRecipeMiss::Buffers);
+    if (multisampled) {
+        const auto& sources = resources->MultisampleSources();
+        for (const auto& color : state.colors) {
+            if (std::ranges::find(sources, color.surfaceAddress) != sources.end()) return miss(DrawRecipeMiss::Proof);
+        }
+        if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
+    }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
     if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     SharedResourceCache().Touch(recipe.key);
@@ -5263,7 +5294,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     auto framebuffer = recipe.framebuffer.lock();
     if (framebuffer == nullptr) {
         const auto stored = targets.Span();
-        const std::vector<std::shared_ptr<void>> framebufferOwners(stored.begin(), stored.end());
+        const auto framebufferOwners = multisampled ? multisampleOwners : std::vector<std::shared_ptr<void>>(stored.begin(), stored.end());
         framebuffer = pipeline->AcquireFramebuffer(recipe.targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
     }
     timer.phase(PhasePipeline);
@@ -5275,6 +5306,8 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.moved = *moved;
     record.targetViews = recipe.targetViews;
     record.targets = targets.Span();
+    record.multisampleTargets = std::move(multisampleOwners);
+    record.multisampleImages = std::move(multisampleImages);
     InlineList<std::pair<std::uint32_t, std::uint32_t>, 8> slices;
     for (const auto& color : state.colors) slices.EmplaceBack(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
     record.targetSlices = slices.Span();

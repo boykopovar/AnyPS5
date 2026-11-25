@@ -83,13 +83,16 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     add_test(NAME agc_driver_target_memo_recipe_views COMMAND agc_driver_target_memo_tests --r3 recipe-views)
-    set_tests_properties(agc_driver_target_memo_recipe_views PROPERTIES
+    add_test(NAME agc_driver_multisample_color_recipe COMMAND agc_driver_target_memo_tests --r3 multisample-recipe)
+    set_tests_properties(agc_driver_multisample_color_recipe agc_driver_target_memo_recipe_views PROPERTIES
             TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1"
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1")
+    set_property(TEST agc_driver_target_memo_recipe_views APPEND PROPERTY ENVIRONMENT APS5_PROFILE_DRAW=1)
+    set_tests_properties(agc_driver_target_memo_recipe_views PROPERTIES
             PASS_REGULAR_EXPRESSION "recipe views: pass attachment memo on.*target state memo tests passed"
             FAIL_REGULAR_EXPRESSION "differ from the full lookup")
     if(WIN32)
-        set_tests_properties(agc_driver_target_memo_recipe_views PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_driver_multisample_color_recipe agc_driver_target_memo_recipe_views PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     if(NOT WIN32)
         add_test(NAME agc_driver_target_memo_watched_imports COMMAND agc_driver_target_memo_tests)

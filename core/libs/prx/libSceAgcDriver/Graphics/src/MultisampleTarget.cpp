@@ -1478,14 +1478,16 @@ bool holdHostOnly(const MultisampleTarget& target) {
     return true;
 }
 
-MultisampleTarget& acquire(const Context& context, const ColorTarget& requested, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> initialUpload = {}, std::vector<std::byte> initialBaseline = {}) {
+MultisampleTarget* acquireExisting(const Context& context, const ColorTarget& requested, const MultisampleTarget* expected = nullptr, VkImage expectedImage = VK_NULL_HANDLE) {
     discardRetiredTargets();
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || !target->Serves(requested)) continue;
         auto use = requested;
         use.format = target->target.format;
-        if (recreated(target->target, use)) {
+        const bool recreate = recreated(target->target, use);
+        if (expected != nullptr && (target.get() != expected || target->image != expectedImage || recreate)) return nullptr;
+        if (recreate) {
             {
                 std::unique_lock lock(guardedMutex());
                 if (!target->active->load(std::memory_order_acquire)) continue;
@@ -1496,7 +1498,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             target->use->hostOnly.store(true, std::memory_order_release);
             guard(context, use, target->active, target->metadataValid, target->use, target);
             target->ApplyFastClear(use);
-            return *target;
+            return target.get();
         }
         {
             std::unique_lock lock(guardedMutex());
@@ -1522,8 +1524,13 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
         target->ApplyFastClear(use);
         collectFmaskWrites(target->target);
         stampUse(*target->use, target->target.address, guardedColorBytes(target->target));
-        return *target;
+        return target.get();
     }
+    return nullptr;
+}
+
+MultisampleTarget& acquire(const Context& context, const ColorTarget& requested, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> initialUpload = {}, std::vector<std::byte> initialBaseline = {}) {
+    if (auto* existing = acquireExisting(context, requested)) return *existing;
     const auto& use = requested;
     auto target = std::make_shared<MultisampleTarget>(context, use, false, initialClear, std::move(initialUpload), std::move(initialBaseline));
     target->Keep();
@@ -1951,6 +1958,18 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     owner = acquired.shared_from_this();
     if (image != nullptr) *image = acquired.image;
     return acquired.View(target.format);
+}
+
+bool RepeatMultisampleTargetView(const Context& context, const ColorTarget& target, const std::shared_ptr<void>& owner, VkImage image, VkImageView view) {
+    if (owner == nullptr || target.samples <= 1 || target.staged) return false;
+    storeEarlierStorageResults(target);
+    const DccPublication publication(target);
+    TargetsLock lock;
+    auto* existing = acquireExisting(context, target, static_cast<const MultisampleTarget*>(owner.get()), image);
+    if (existing == nullptr || existing->View(target.format) != view) return false;
+    existing->drawn = true;
+    ++existing->contents;
+    return true;
 }
 
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner) {
