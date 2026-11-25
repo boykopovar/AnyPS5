@@ -3981,7 +3981,7 @@ static bool surfaceFootprintOverlaps(const DepthSurface& surface, std::uint64_t 
     const auto& target = surface.target;
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
-    return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || overlaps(target.stencilAddress, planeBytes(1u)) || overlaps(target.htileAddress, HtileMetadataBytes(target.extent));
+    return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || overlaps(target.stencilAddress, planeBytes(1u)) || overlaps(target.htileAddress, TargetHtileBytes(target));
 }
 
 RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
@@ -4951,7 +4951,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
         std::lock_guard lock(surfacesMutex());
         for (const auto& surface : surfaces()) {
             const auto& target = surface->target;
-            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || target.samples == 1u || target.htileAddress == 0u || !HtileFillCovers(target.htileAddress, target.extent, address, bytes)) continue;
+            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || target.samples == 1u || target.htileAddress == 0u || !TargetHtileFillCovers(target, address, bytes)) continue;
             clearedPlanes.push_back(surface->sampling.initial[0]);
             if (target.htileStencil && surface->sampling.initial.size() > 2u) clearedPlanes.push_back(surface->sampling.initial[2]);
         }

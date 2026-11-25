@@ -2299,6 +2299,8 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     const auto words = DepthSampleWords(target);
     auto texture = CachedSampledTexture(context, words);
     Require(texture != nullptr && CachedSampledTexture(context, words) == texture, "native depth with a separate stencil plane: sampled view was not reused");
+    const auto paddingRetired = RetireReplacedDepth_nid_no_patch(target.htileAddress + metadataBytes, 1u);
+    Require(paddingRetired.surfaces == 0u && DepthSurfaceAt(target.address), "replacing memory beyond the target HTILE retired its native depth surface");
     if (fault == PlaneFault::StencilWrite) {
         stencil.Data()[stencilBytes - 1u] ^= std::byte{0x01};
         CachedSampledTexture(context, words);
