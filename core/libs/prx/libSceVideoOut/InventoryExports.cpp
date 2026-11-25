@@ -3,8 +3,8 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
-#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <cstring>
 #include <limits>
