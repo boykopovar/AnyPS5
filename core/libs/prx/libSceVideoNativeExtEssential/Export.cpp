@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/InventoryExports.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/Api.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -11,11 +12,34 @@
 namespace {
 
 constexpr int ErrorNotInitialized = static_cast<int>(0xF0000000u);
+constexpr int ErrorAlreadyInitialized = static_cast<int>(0xF0000002u);
 constexpr int ErrorInvalidArgument = static_cast<int>(0xF0000003u);
 constexpr int ErrorUnknownType = static_cast<int>(0xF0000008u);
 
+struct AllocatorCallbacks {
+    std::uint64_t allocFn;
+    std::uint64_t freeFn;
+    std::uint64_t reallocFn;
+};
+
+std::atomic<bool> initialized{false};
+
 bool IsInitialized() {
-    return false;
+    return initialized.load(std::memory_order_acquire);
+}
+
+bool IsKnownDecoderType(std::uint32_t type) {
+    switch (type) {
+        case 2:
+        case 4:
+        case 0x2715:
+        case 0x2718:
+        case 0x271A:
+        case 0x271C:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool IsValidType2ProfileAndLevel(std::uint16_t profile, std::uint16_t level) {
@@ -68,7 +92,6 @@ T ReadGuest(const void* address, const char* what) {
 extern "C" {
 
 int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, void** instance) {
-    (void)param;
     const std::uint64_t none = 0;
     if (instance == nullptr) {
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
@@ -80,29 +103,40 @@ int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, vo
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
     }
     if (!IsInitialized()) return ErrorNotInitialized;
+    const auto type = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param));
+    if (!IsKnownDecoderType(type)) return ErrorUnknownType;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_DestroyDecInstance(void* const* instance) {
-    (void)instance;
     if (!IsInitialized()) return ErrorNotInitialized;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (instance == nullptr) return ErrorInvalidArgument;
+    if (ReadGuest<void*>(instance, "sceVideoNativeExtEssential_DestroyDecInstance: unreadable instance") == nullptr) {
+        return ErrorInvalidArgument;
+    }
+    return ErrorInvalidArgument;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_Finalize() {
-    NotImplemented_nid_no_patch(__func__);
+    initialized.store(false, std::memory_order_release);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_Initialize(const void* param) {
     if (param == nullptr) return ErrorInvalidArgument;
-    if (ReadGuest<std::uint64_t>(param, "sceVideoNativeExtEssential_Initialize: unreadable parameter") == 0) return ErrorInvalidArgument;
+    const auto allocatorAddress = ReadGuest<std::uint64_t>(param, "sceVideoNativeExtEssential_Initialize: unreadable parameter");
+    if (allocatorAddress == 0) return ErrorInvalidArgument;
     if (ReadGuest<std::uint32_t>(static_cast<const std::byte*>(param) + 8, "sceVideoNativeExtEssential_Initialize: unreadable parameter") != 1) {
         return ErrorInvalidArgument;
     }
-    NotImplemented_nid_no_patch(__func__);
+    if (IsInitialized()) return ErrorAlreadyInitialized;
+    const auto* allocatorBytes = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(allocatorAddress));
+    (void)ReadGuest<AllocatorCallbacks>(allocatorBytes + 0x40, "sceVideoNativeExtEssential_Initialize: unreadable allocator");
+    bool expected = false;
+    if (!initialized.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return ErrorAlreadyInitialized;
+    }
     return 0;
 }
 

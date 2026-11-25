@@ -30,6 +30,7 @@ void RequireAcceptedThrowsAndZeroes(std::int32_t type, std::uint32_t profile, st
 }
 
 constexpr int notInitialized = static_cast<int>(0xF0000000u);
+constexpr int alreadyInitialized = static_cast<int>(0xF0000002u);
 constexpr int invalidArgument = static_cast<int>(0xF0000003u);
 constexpr int unknownType = static_cast<int>(0xF0000008u);
 
@@ -38,6 +39,8 @@ constexpr int unknownType = static_cast<int>(0xF0000008u);
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    Require(sceVideoNativeExtEssential_IsInit() == 0);
+    Require(sceVideoNativeExtEssential_Finalize() == 0);
     Require(sceVideoNativeExtEssential_IsInit() == 0);
 
     void* instance = reinterpret_cast<void*>(0x1234);
@@ -63,6 +66,47 @@ int main() {
         Require(sceVideoNativeExtEssential_Initialize(param.data()) == invalidArgument);
         Require(errno == 71);
     }
+    Require(sceVideoNativeExtEssential_IsInit() == 0);
+
+    alignas(16) std::array<std::uint8_t, 0x58> allocator{};
+    const auto allocatorPtr = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(allocator.data()));
+    const std::uint32_t validKind = 1;
+    std::memcpy(param.data(), &allocatorPtr, sizeof(allocatorPtr));
+    std::memcpy(param.data() + 8, &validKind, sizeof(validKind));
+    errno = 71;
+    Require(sceVideoNativeExtEssential_Initialize(param.data()) == 0);
+    Require(errno == 71);
+    Require(sceVideoNativeExtEssential_IsInit() == 1);
+    errno = 71;
+    Require(sceVideoNativeExtEssential_Initialize(param.data()) == alreadyInitialized);
+    Require(errno == 71);
+
+    instance = reinterpret_cast<void*>(0x1234);
+    errno = 71;
+    Require(sceVideoNativeExtEssential_CreateDecInstance(nullptr, &instance) == unknownType);
+    Require(instance == nullptr && errno == 71);
+    instance = reinterpret_cast<void*>(0x1234);
+    errno = 71;
+    Require(sceVideoNativeExtEssential_CreateDecInstance(
+                reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0xFFFFFFFFu)), &instance) == unknownType);
+    Require(instance == nullptr && errno == 71);
+
+    void* nullHandle = nullptr;
+    errno = 71;
+    Require(sceVideoNativeExtEssential_DestroyDecInstance(nullptr) == invalidArgument);
+    Require(errno == 71);
+    Require(sceVideoNativeExtEssential_DestroyDecInstance(&nullHandle) == invalidArgument);
+    Require(errno == 71);
+    Require(sceVideoNativeExtEssential_DestroyDecInstance(&existing) == invalidArgument);
+    Require(existing == reinterpret_cast<void*>(0x5678) && errno == 71);
+
+    Require(sceVideoNativeExtEssential_Finalize() == 0);
+    Require(sceVideoNativeExtEssential_IsInit() == 0);
+    Require(sceVideoNativeExtEssential_DestroyDecInstance(&existing) == notInitialized);
+
+    Require(sceVideoNativeExtEssential_Initialize(param.data()) == 0);
+    Require(sceVideoNativeExtEssential_IsInit() == 1);
+    Require(sceVideoNativeExtEssential_Finalize() == 0);
     Require(sceVideoNativeExtEssential_IsInit() == 0);
 
     std::uint32_t output = 0;
