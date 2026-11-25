@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,7 +46,7 @@ def check_pad(pad):
     if "events" not in pad or not set(pad) <= PAD_FIELDS:
         raise ValueError(f"pad must hold events and may hold {', '.join(sorted(PAD_FIELDS - {'events'}))}")
     pad_timeline.integer(pad.get("after_s", PAD_AFTER_SECONDS), "pad.after_s", 0, 3600)
-    pad_text(pad, 1)
+    pad_text(pad, pad_input.MAX_SEQUENCE)
 
 
 def pad_record_signature(path):
@@ -123,7 +124,12 @@ def stage_files(files, work, content):
                 missing.append(content_name)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as error:
+            if os.name != "nt" or linked_path(target) or not target.is_file() or target.stat().st_mode & stat.S_IWRITE:
+                raise
+            remove_read_only(os.unlink, target, error)
         if content_file is None:
             with target.open("w", encoding="utf-8", newline="\n") as output:
                 output.write(source["text"])
@@ -566,10 +572,26 @@ def render_markdown(summary, previous=None):
     return "\n".join(lines + [""])
 
 
+def package_parameters(directory):
+    checks = PathChecks()
+    seen = set()
+    for directory_path, subdirs, _ in os.walk(directory):
+        folder = Path(directory_path)
+        identity = checks.identity(folder)
+        if identity is None or identity in seen:
+            subdirs.clear()
+            continue
+        seen.add(identity)
+        subdirs.sort()
+        param = folder / "sce_sys/param.json"
+        if param.is_file():
+            yield param
+
+
 def discover(directories, wanted=(), packages=None):
     found = {}
     for directory in directories:
-        for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
+        for param in sorted(package_parameters(directory)):
             package = param.parent.parent
             if not (package / "eboot.bin").is_file():
                 continue
@@ -639,15 +661,24 @@ def copy_asset(source, target):
 
 
 def link_tree(source, target, skip):
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source)
-        if relative.parts[0] in skip:
-            continue
-        if path.is_dir():
-            (target / relative).mkdir(parents=True, exist_ok=True)
-        else:
-            (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            copy_asset(path, target / relative)
+    checks = PathChecks()
+    pending = [(source, target, frozenset())]
+    while pending:
+        folder, destination, ancestors = pending.pop()
+        identity = checks.identity(folder)
+        if identity in ancestors:
+            raise ValueError(f"asset directory cycle at {folder}")
+        parents = ancestors | {identity}
+        for path in sorted(folder.iterdir()):
+            if folder == source and path.name in skip:
+                continue
+            staged = destination / path.name
+            if path.is_dir():
+                staged.mkdir(parents=True, exist_ok=True)
+                pending.append((path, staged, parents))
+            else:
+                destination.mkdir(parents=True, exist_ok=True)
+                copy_asset(path, staged)
 
 
 def lock_work(path):
@@ -1336,9 +1367,10 @@ def validate_performance_args(parser, args):
 def source_root(build):
     cache = Path(build) / "CMakeCache.txt"
     if cache.is_file():
-        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("CMAKE_HOME_DIRECTORY:"):
-                return Path(line.split("=", 1)[1])
+        for line in cache.read_text(encoding="utf-8-sig", errors="replace").split("\n"):
+            key, _, value = line.partition("=")
+            if key.startswith("CMAKE_HOME_DIRECTORY:") and value:
+                return Path(value)
     return ROOT
 
 
@@ -1383,11 +1415,93 @@ def write_summary(output, summary):
         staged.replace(target)
 
 
+def saved_smoke_group(runs):
+    samples = []
+    for run in runs:
+        fps = run.get("fps")
+        if run["outcome"] == "rendering" and type(fps) in (int, float) and 0 <= fps <= sys.float_info.max:
+            samples.append(float(fps))
+    samples.sort()
+    count = len(samples)
+    fps = {"count": count, "min": None, "median": None, "max": None}
+    if samples:
+        lower, upper = samples[(count - 1) // 2], samples[count // 2]
+        fps.update(min=samples[0], median=lower + (upper - lower) / 2, max=samples[-1])
+    return {"outcomes": [run["outcome"] for run in runs], "fps": fps}
+
+
+def saved_smoke_title(title):
+    if title is None:
+        return None
+    groups = {"cold": [], "warm": [], "unknown": []}
+    for run in title["runs"]:
+        cache = run.get("cache")
+        groups[cache if cache in ("cold", "warm") else "unknown"].append(run)
+    version = title.get("version")
+    return {"version": version if isinstance(version, str) else None,
+            "groups": {cache: saved_smoke_group(runs) for cache, runs in groups.items() if runs}}
+
+
+def render_saved_smoke_comparison(titles):
+    lines = ["FPS uses recorded samples from rendering runs. Cold and warm are saved run labels.", "",
+             "| Title | ID | Side | Version | Cache | Outcomes | FPS samples | Median FPS | FPS range |",
+             "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |"]
+    for title_id, title in titles.items():
+        for side in ("baseline", "candidate"):
+            heading = [title["name"], title_id, side.capitalize()]
+            entry = title[side]
+            if entry is None:
+                row = heading + ["-", "-", "not recorded", "-", "-", "-"]
+                lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
+                continue
+            for cache, group in entry["groups"].items():
+                outcomes = ", ".join(f"{name} {count}" for name, count in Counter(group["outcomes"]).items())
+                fps = group["fps"]
+                bounds = f"{display(fps['min'])} to {display(fps['max'])}" if fps["count"] else "-"
+                row = heading + [entry["version"] or "-", cache, outcomes,
+                                 f"{fps['count']}/{len(group['outcomes'])}", display(fps["median"]), bounds]
+                lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
+    return "\n".join(lines)
+
+
+def compare_saved_smoke_runs(argv):
+    parser = argparse.ArgumentParser(prog="title_run.py compare", description="Compare two saved smoke-run summaries.")
+    parser.add_argument("baseline", type=Path, help="baseline summary.json")
+    parser.add_argument("candidate", type=Path, help="candidate summary.json")
+    parser.add_argument("--json", action="store_true", help="print the comparison as JSON")
+    args = parser.parse_args(argv)
+    summaries = []
+    for path in (args.baseline, args.candidate):
+        try:
+            document = load_json(path.read_text(encoding="utf-8-sig"), path)
+            if isinstance(document, dict) and document.get("format") == "anyps5-performance-capture/1":
+                raise ValueError("expected a smoke-run summary, got a performance capture summary")
+            validate_comparison(document)
+        except (OSError, ValueError) as error:
+            parser.error(f"{path}: {error}")
+        summaries.append(document["titles"])
+    baseline, candidate = summaries
+    titles = {}
+    for title_id in sorted(baseline.keys() | candidate.keys()):
+        before, after = baseline.get(title_id), candidate.get(title_id)
+        titles[title_id] = {"name": (after or before)["name"], "baseline": saved_smoke_title(before),
+                            "candidate": saved_smoke_title(after)}
+    if args.json:
+        print(json.dumps({"format": "title-run-repeatability", "version": 1, "titles": titles}, indent=2, allow_nan=False))
+    else:
+        print(render_saved_smoke_comparison(titles))
+    return 0
+
+
 def run_cli(argv, capture_resources):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "compare":
+        return compare_saved_smoke_runs(argv[1:])
+    parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.",
+                                     epilog="Use %(prog)s compare --help to compare two saved summaries without running a title.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")

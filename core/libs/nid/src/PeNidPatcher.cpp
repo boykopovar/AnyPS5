@@ -38,6 +38,18 @@ std::size_t RvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, 
     return static_cast<std::size_t>(offset);
 }
 
+std::size_t RvaRangeToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::size_t size, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
+    const std::size_t sectionOffset = FindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
+    const auto relative = rva - section.VirtualAddress;
+    if (relative > section.SizeOfRawData || size > section.SizeOfRawData - relative)
+        throw std::runtime_error("rva range exceeds section file data");
+    const auto offset = std::uint64_t{section.PointerToRawData} + relative;
+    if (offset > pe.size() || size > pe.size() - offset)
+        throw std::runtime_error("rva range exceeds file bounds");
+    return static_cast<std::size_t>(offset);
+}
+
 std::string ReadRvaCStr(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader, std::size_t skip = 0u) {
     const std::size_t sectionOffset = FindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
@@ -53,6 +65,21 @@ std::string ReadRvaCStr(const std::vector<std::uint8_t>& pe, std::uint32_t rva, 
     const auto limit = pe.begin() + static_cast<std::ptrdiff_t>(offset + available);
     const auto end = std::find(begin, limit, std::uint8_t{0});
     if (end == limit) throw std::runtime_error("rva string exceeds section file data");
+    return std::string(begin, end);
+}
+
+std::string ReadCoffString(const std::vector<std::uint8_t>& pe, const std::size_t tableOffset, const std::size_t stringOffset) {
+    if (tableOffset > pe.size() || sizeof(std::uint32_t) > pe.size() - tableOffset)
+        throw std::runtime_error("COFF string table out of bounds");
+    const auto tableSize = Internal::Read<std::uint32_t>(pe, tableOffset);
+    if (tableSize < sizeof(std::uint32_t) || tableSize > pe.size() - tableOffset)
+        throw std::runtime_error("COFF string table out of bounds");
+    if (stringOffset < sizeof(std::uint32_t) || stringOffset >= tableSize)
+        throw std::runtime_error("COFF string offset out of bounds");
+    const auto begin = pe.begin() + static_cast<std::ptrdiff_t>(tableOffset + stringOffset);
+    const auto limit = pe.begin() + static_cast<std::ptrdiff_t>(tableOffset + tableSize);
+    const auto end = std::find(begin, limit, std::uint8_t{0});
+    if (end == limit) throw std::runtime_error("COFF string is not terminated within string table");
     return std::string(begin, end);
 }
 
@@ -82,7 +109,9 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         if (pe[offset] != '/' || !symbolTable) continue;
         const std::string reference(reinterpret_cast<const char*>(pe.data() + offset), 8);
         const auto stringOffset = std::stoul(reference.substr(1));
-        const auto name = ReadCStr(pe, static_cast<std::size_t>(symbolTable) + static_cast<std::size_t>(symbolCount) * 18 + stringOffset);
+        const auto stringTableOffsetValue = std::uint64_t{symbolTable} + std::uint64_t{symbolCount} * 18u;
+        if (stringTableOffsetValue > pe.size()) throw std::runtime_error("COFF string table out of bounds");
+        const auto name = ReadCoffString(pe, static_cast<std::size_t>(stringTableOffsetValue), stringOffset);
         if (name == ".eh_frame") {
             const char shortName[8] = ".ehfram";
             std::memcpy(pe.data() + offset, shortName, 8);
@@ -114,16 +143,21 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         const auto exportDir = Read<PeDataDirectory>(pe, dataDirectoryOffset);
         if (exportDir.VirtualAddress == 0u) throw std::runtime_error("no export directory");
 
-        const std::size_t exportDirOffset = RvaToOffset(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const std::size_t exportDirOffset = RvaRangeToOffset(pe, exportDir.VirtualAddress, sizeof(PeExportDirectory), peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const auto exportTable = Read<PeExportDirectory>(pe, exportDirOffset);
 
         if (exportTable.NumberOfNames == 0u) throw std::runtime_error("no exported names");
 
-        const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-        const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-        if (std::uint64_t{namesArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 4u > pe.size() ||
-            std::uint64_t{ordinalsArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 2u > pe.size())
+        const auto nameRvaTableSize = std::size_t{exportTable.NumberOfNames} * sizeof(std::uint32_t);
+        const auto ordinalTableSize = std::size_t{exportTable.NumberOfNames} * sizeof(std::uint16_t);
+        std::size_t namesArrayOffset;
+        std::size_t ordinalsArrayOffset;
+        try {
+            namesArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfNames, nameRvaTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+            ordinalsArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfNameOrdinals, ordinalTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        } catch (const std::runtime_error&) {
             throw std::runtime_error("export name tables out of file bounds");
+        }
 
         std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
         std::vector<std::string> names(exportTable.NumberOfNames);
@@ -162,7 +196,8 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         };
         std::vector<Forwarder> forwarders;
         std::vector<std::uint32_t> directRvas;
-        const auto functionsArrayOffset = RvaToOffset(pe, exportTable.AddressOfFunctions, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto functionTableSize = std::size_t{exportTable.NumberOfFunctions} * sizeof(std::uint32_t);
+        const auto functionsArrayOffset = RvaRangeToOffset(pe, exportTable.AddressOfFunctions, functionTableSize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         for (std::uint32_t index = 0u; index < exportTable.NumberOfFunctions; ++index) {
             const auto entryOffset = functionsArrayOffset + index * sizeof(std::uint32_t);
             const auto rva = Read<std::uint32_t>(pe, entryOffset);
@@ -293,25 +328,30 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     };
     std::vector<ImportUse> imports;
     std::vector<std::string> importNames;
-    std::size_t importDescOffset = RvaToOffset(pe, importDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    std::size_t importDescOffset = RvaRangeToOffset(pe, importDir.VirtualAddress, importDir.Size, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const std::size_t importDescEnd = importDescOffset + importDir.Size;
+    bool foundNullImportDescriptor = false;
 
-    while (true) {
-        if (importDescOffset + sizeof(PeImportDescriptor) > pe.size())
-            throw std::runtime_error("import descriptor out of bounds");
-
+    while (importDescOffset <= importDescEnd && sizeof(PeImportDescriptor) <= importDescEnd - importDescOffset) {
         const auto desc = Read<PeImportDescriptor>(pe, importDescOffset);
-        if (desc.OriginalFirstThunk == 0u && desc.FirstThunk == 0u)
+        if (desc.OriginalFirstThunk == 0u && desc.FirstThunk == 0u) {
+            foundNullImportDescriptor = true;
             break;
+        }
 
         const std::uint32_t thunkRva = desc.OriginalFirstThunk != 0u ? desc.OriginalFirstThunk : desc.FirstThunk;
         std::size_t thunkOffset = RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkStartOffset = thunkOffset;
+        const auto thunkSectionOffset = FindSectionOffsetByRva(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto thunkSection = Internal::Read<PeSectionHeader>(pe, thunkSectionOffset);
+        const auto thunkRawEnd = std::uint64_t{thunkSection.PointerToRawData} + thunkSection.SizeOfRawData;
 
         const bool is64 = magic == 0x20bu;
         const std::size_t thunkEntrySize = is64 ? 8u : 4u;
         const std::uint64_t ordinalFlag = is64 ? (std::uint64_t{1} << 63u) : (std::uint64_t{1} << 31u);
 
         while (true) {
-            if (thunkOffset + thunkEntrySize > pe.size())
+            if (thunkOffset > thunkRawEnd || thunkEntrySize > thunkRawEnd - thunkOffset || thunkOffset > pe.size() || thunkEntrySize > pe.size() - thunkOffset)
                 throw std::runtime_error("thunk entry out of bounds");
 
             const std::uint64_t thunk = is64
@@ -321,6 +361,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
             if (thunk == 0u)
                 break;
 
+            const auto addressRvaValue = std::uint64_t{desc.FirstThunk} + (thunkOffset - thunkStartOffset);
+            if (addressRvaValue > std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("import address table entry out of bounds");
+            std::size_t addressOffset;
+            try {
+                addressOffset = RvaRangeToOffset(pe, static_cast<std::uint32_t>(addressRvaValue), thunkEntrySize, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+            } catch (const std::runtime_error&) {
+                throw std::runtime_error("import address table entry out of bounds");
+            }
+
             if (!(thunk & ordinalFlag)) {
                 const auto hintNameRva = static_cast<std::uint32_t>(thunk & 0x7fffffffffffffffu);
                 const std::size_t hintNameOffset = RvaToOffset(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
@@ -329,7 +379,6 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
                 const std::string funcName = ReadRvaCStr(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader, 2u);
                 if (!funcName.empty()) {
-                    const auto addressOffset = RvaToOffset(pe, desc.FirstThunk, peHeaderOffset, numberOfSections, sizeOfOptionalHeader) + thunkOffset - RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
                     imports.push_back({hintNameOffset + 2u, thunkOffset, addressOffset, funcName});
                     importNames.push_back(funcName);
                 }
@@ -340,6 +389,8 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
         importDescOffset += sizeof(PeImportDescriptor);
     }
+    if (!foundNullImportDescriptor)
+        throw std::runtime_error("import descriptor table is not terminated within import directory");
     const auto importMap = ResolveImportNids(importNames, excludedExports, options);
     const auto fitsInPlace = [&](const ImportUse& item) {
         return !options.executable && importMap.at(item.Name).size() <= item.Name.size();

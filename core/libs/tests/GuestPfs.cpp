@@ -277,7 +277,7 @@ void SingleBlockReadCommandV3() {
     Require(scePfsGetSingleBlockReadCommand(&image, table, 0, command.data()) == 0);
     Require(command[0] == 0x140 - 0x100);
     Require(command[1] == 0x60000 + 0x100);
-    Require(command[2] == (0x2a0 - 0x200) | 0x8000000000000000ULL);
+    Require(command[2] == ((0x2a0 - 0x200) | 0x8000000000000000ULL));
     Require(command[3] == 0x100);
     Require(command[4] == 0x200);
     Require(command[5] == 0);
