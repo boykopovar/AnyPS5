@@ -380,6 +380,37 @@ void testPs4Buffers() {
     VideoOutBuffers ps5Buffer{storage.data(), nullptr, {nullptr, nullptr}};
     check(sceVideoOutRegisterBuffers2(ps5Handle, 0, 0, &ps5Buffer, 1, &ps5, 0, nullptr) == 0, "the PS5 group was not registered");
     sceVideoOutClose(ps5Handle);
+    const int vrHandle = sceVideoOutOpen(255, 0, 0, nullptr);
+    void* const plainBuffer[1] = {storage.data()};
+    void* const vrBuffer[1] = {storage.data() + 32768};
+    void* const vrStrictBuffer[1] = {storage.data() + 65536};
+    auto vr = tiled;
+    vr.option = 7;
+    auto vrStrict = tiled;
+    vrStrict.option = 15;
+    check(sceVideoOutRegisterBuffers(vrHandle, 0, plainBuffer, 1, &tiled) == 0, "the PS4 buffer without an option was not registered as set 0");
+    check(sceVideoOutRegisterBuffers(vrHandle, 1, vrBuffer, 1, &vr) == 1, "the PS4 buffer with option 7 (VR) was not registered as set 1");
+    check(sceVideoOutRegisterBuffers(vrHandle, 2, vrStrictBuffer, 1, &vrStrict) == 2, "the PS4 buffer with options 7 and 8 was not registered as set 2");
+    auto vrChange = vrStrict;
+    vrChange.pitch_in_pixel = 128;
+    check(sceVideoOutSubmitChangeBufferAttribute(vrHandle, 0, &vrChange) == 0, "the PS4 change to options 7 and 8 failed");
+    for (const std::uint32_t option : {3u, 6u, 0x17u}) {
+        auto partial = tiled;
+        partial.option = option;
+        check(expectFailure([&] { sceVideoOutRegisterBuffers(vrHandle, 3, vrStrictBuffer, 1, &partial); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 buffer option without all VR bits or with bit 0x10 was accepted");
+        auto partialChange = vrChange;
+        partialChange.option = option;
+        check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute(vrHandle, 0, &partialChange); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 change to an option without all VR bits or with bit 0x10 was accepted");
+    }
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(vrHandle);
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.option == 15 && cfg->groups[0].ps4Pitch == 128 && cfg->groups[1].attribute.option == 7 && cfg->groups[2].attribute.option == 15, "the PS4 VR buffer options were not stored");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[0], cfg->groups[0]); }).find("buffer option 15") != std::string::npos, "a PS4 buffer changed to the VR option can be shown");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[1], cfg->groups[1]); }).find("buffer option 7") != std::string::npos, "a PS4 buffer with the VR option can be shown");
+        check(expectFailure([&] { DescribeVideoOutBuffer(cfg->buffers[2], cfg->groups[2]); }).find("buffer option 15") != std::string::npos, "a PS4 buffer with the VR and strict colorimetry options can be shown");
+    }
+    sceVideoOutClose(vrHandle);
     LibcRunShutdown_nid_postfix();
 }
 

@@ -381,6 +381,50 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertIn("string exceeds section file data", result.stderr)
             self.assertEqual(path.read_bytes(), image)
 
+    def test_pe_import_descriptor_walk_stays_within_declared_directory(self):
+        image = self.pe()
+        import_directory = 0x58 + 112 + 8
+        struct.pack_into("<I", image, import_directory + 4, 20)
+        struct.pack_into("<IIIII", image, 512, 0x14f0, 0, 0, 0x15f0, 0x14f8)
+        struct.pack_into("<IIIII", image, 532, 0x1040, 0, 0, 0x15f0, 0x10c0)
+        image[552:572] = bytes(20)
+        image[2032:2041] = b"test.prx\0"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("import descriptor table is not terminated within import directory", result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+    def test_exec_rejects_thunk_crossing_raw_tail_without_writing(self):
+        image = bytearray(self.pe())
+        section = 0x58 + 240
+        struct.pack_into("<I", image, section + 16, 0x44)
+        struct.pack_into("<Q", image, 576, (1 << 63) | 1)
+        struct.pack_into("<Q", image, 584, 0)
+        original = bytes(image)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(original)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("thunk entry out of bounds", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_exec_rejects_iat_crossing_raw_tail_without_writing(self):
+        self.names = ["sceA", "sceNetRecv"]
+        image = bytearray(self.pe())
+        struct.pack_into("<I", image, 512 + 16, 0x15f8)
+        original = bytes(image)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(original)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("import address table entry out of bounds", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
+
     def test_exec_accepts_macho_without_exports(self):
         from test_macho_nids import LC_DYLD_EXPORTS_TRIE, command_fields
         image = self.macho()
@@ -590,6 +634,33 @@ class LibraryImportTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("delay-loaded", result.stdout + result.stderr)
                     self.assertEqual(patched, image)
+
+    def test_long_section_name_uses_coff_string_table(self):
+        image = self.library(["sceKernelLongerName"])
+        coff_header = 0x44
+        section_header = 0x58 + 240
+        string_table = 0x780
+        struct.pack_into("<II", image, coff_header + 8, string_table, 0)
+        image[section_header:section_header + 8] = b"/4\0\0\0\0\0\0"
+        struct.pack_into("<I", image, string_table, 14)
+        image[string_table + 4:string_table + 14] = b".eh_frame\0"
+        result, patched = self.patch(image)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(patched[section_header:section_header + 8], b".ehfram\0")
+
+    def test_long_section_name_stays_within_coff_string_table(self):
+        image = self.library(["sceKernelLongerName"])
+        coff_header = 0x44
+        section_header = 0x58 + 240
+        string_table = 0x780
+        struct.pack_into("<II", image, coff_header + 8, string_table, 0)
+        image[section_header:section_header + 8] = b"/4\0\0\0\0\0\0"
+        struct.pack_into("<I", image, string_table, 13)
+        image[string_table + 4:string_table + 14] = b".eh_frame\0"
+        result, patched = self.patch(image)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("not terminated within string table", result.stdout + result.stderr)
+        self.assertEqual(patched, image)
 
     def test_huge_name_count_is_rejected_before_allocation(self):
         for count in (0xFFFFFFFF, 0x40000000):
