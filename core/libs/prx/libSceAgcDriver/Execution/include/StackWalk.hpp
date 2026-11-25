@@ -104,10 +104,7 @@ private:
         Byte lsdaEncoding = 0;
         if (!LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{pc, std::prev(found)->second, 0, 0, 0, framesEnd}, p, augmentation, lsdaEncoding)) return Step::Failed;
         if (pc < frame.start || pc - frame.start >= frame.length) return Step::NoRecord;
-        if (*augmentation == 'z') {
-            const auto size = LibcUnwind::Uleb(p);
-            p += size;
-        }
+        if (!LibcUnwind::DecodeFdeAugmentation(frame, LibcUnwind::Lookup{pc}, p, augmentation, 255)) return Step::Failed;
         frame.begin = p;
         return Step::Stepped;
     }
