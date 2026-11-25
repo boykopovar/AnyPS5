@@ -140,7 +140,8 @@ bool IndirectDrawsDisabled() {
 // nowhere) or a user-data register of the vertex-side stage banks (0x8c.. for the vertex / geometry
 // programs, 0x10c.. for the local / hull programs).
 bool drawLocation(std::uint32_t value) {
-    return value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
+    const bool gcnVertexStage = ShaderRecompiler::GcnGuestShaders() && (value - 0x4cu < 16u || value - 0xccu < 16u || value - 0x14cu < 16u);
+    return gcnVertexStage || value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
 }
 
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {

@@ -1531,6 +1531,27 @@ void testGcnCalledBufferPacketForms() {
     check(std::atomic_ref<std::uint32_t>(target).load() == 0x150, "a called buffer with the GCN packet forms did not run on a compute queue");
 }
 
+void testGcnIndirectDrawLocations() {
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x50, 0, 2}), 0); }, "invalid indirect draw register location");
+    struct GcnGuest {
+        GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(true); }
+        ~GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } gcn;
+    for (const auto base : {0x4cu, 0xccu, 0x14cu}) {
+        AgcDriver::Pm4::Validate(makePacket(0x24, {0, base, base + 15u, 2}), 0);
+        AgcDriver::Pm4::Validate(makePacket(0x25, {0, base + 4u, 0, 0}), 0);
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, base + 16u, 0, 2}), 0); }, "invalid indirect draw register location");
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0, base - 1u, 2}), 0); }, "invalid indirect draw register location");
+    }
+    AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x8d, 0x10c, 2}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x0c, 0, 2}), 0); }, "invalid indirect draw register location");
+    AgcDriver::QueueState state;
+    state.userConfig[0x24a] = 0;
+    execute(state, makePacket(0x11, {1, 0x5d87fc40, 0x10}));
+    const auto draw = AgcDriver::Pm4::ResolveDraw(makePacket(0x24, {0, 0x50, 0xd3, 2}), state);
+    check(draw.indirect.has_value() && draw.indirect->baseVertexLocation == 0x50 && draw.indirect->startInstanceLocation == 0xd3, "a GCN indirect draw did not keep its VS and ES user-data register locations");
+}
+
 void testMemSemaphore() {
     alignas(8) static std::uint64_t semaphore = 0;
     alignas(8) static std::uint32_t marker = 0;
@@ -3095,6 +3116,7 @@ int main(int argc, char** argv) {
         testReleaseMemDataSelects();
         testGcnReleaseMemSystemCounter();
         testGcnCalledBufferPacketForms();
+        testGcnIndirectDrawLocations();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();

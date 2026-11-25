@@ -93,7 +93,7 @@ std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector
     if (location == 0x280u) return words;
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
-        const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+        const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
         if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
     }
     return words;
