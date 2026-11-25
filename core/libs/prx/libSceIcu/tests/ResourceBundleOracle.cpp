@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/tests/ResourceBundleOracle.hpp"
 #include "unicode/ures.h"
+#include "uresimp.h"
 #include "unicode/udata.h"
 #include "unicode/uclean.h"
 #include <type_traits>
@@ -35,7 +36,7 @@ std::int32_t ResourceOracleType(const void* handle) { return ures_getType(static
 const char* ResourceOracleKey(const void* handle) { return ures_getKey(static_cast<const UResourceBundle*>(handle)); }
 const char* ResourceOracleLocale(const void* handle, std::int32_t* status) {
     auto error = static_cast<UErrorCode>(*status);
-    const auto* locale = ures_getLocale(static_cast<const UResourceBundle*>(handle), &error);
+    const auto* locale = ures_getLocaleInternal(static_cast<const UResourceBundle*>(handle), &error);
     *status = error;
     return locale;
 }
