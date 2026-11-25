@@ -80,5 +80,6 @@ extern "C" int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix(LibreSslCt
     int loaded = 0;
     if (!file.empty() && Load(store, file.c_str(), nullptr)) loaded = 1;
     if (!directory.empty() && Load(store, nullptr, directory.c_str())) loaded = 1;
+    ERR_clear_error_nid_postfix();
     return loaded;
 }

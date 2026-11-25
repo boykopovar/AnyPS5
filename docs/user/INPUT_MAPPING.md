@@ -213,7 +213,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`, and is at most 32 characters (`MaxTitleIdLength`). A longer ID, or one with other characters, selects no per-game file, and no message is logged for it. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -274,7 +274,7 @@ Controls, Configuration and Help are separate views; switching views preserves b
 
 The translation button selects one of 22 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
 
-Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
+Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `74be4c2836da0940f0144d0d97852606f9ab11e9`, the commit `3rdparty/SDL2` is pinned to. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
 For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
 

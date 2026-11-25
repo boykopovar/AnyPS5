@@ -6,6 +6,13 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <cerrno>
+#include <cstdint>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using NKWebKit::WebCoreAbi::ResourceError;
 using NKWebKit::WebCoreAbi::ResourceErrorType;
@@ -76,6 +83,72 @@ void TestInternalError() {
     }
     Require(threw);
     Require(urlImpl.refCount == 0x40000006);
+
+    unsigned char savedBytes[sizeof(URL)];
+    std::memcpy(savedBytes, &url, sizeof(URL));
+    for (auto bad : {static_cast<const URL*>(nullptr), reinterpret_cast<const URL*>(std::uintptr_t{0x10}), reinterpret_cast<const URL*>(~std::uintptr_t{0})}) {
+        if (!bad) continue;
+        threw = false;
+        int savedErrno = errno;
+        try {
+            _ZN7WebCore13internalErrorERKN3WTF3URLE(bad);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(errno == savedErrno);
+        Require(std::memcmp(&url, savedBytes, sizeof(URL)) == 0);
+        Require(urlImpl.refCount == 0x40000006);
+    }
+
+    URL badImplGuest{};
+    badImplGuest.impl = reinterpret_cast<StringImpl*>(std::uintptr_t{0x10});
+    threw = false;
+    try {
+        _ZN7WebCore13internalErrorERKN3WTF3URLE(&badImplGuest);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(urlImpl.refCount == 0x40000006);
+
+    unsigned char implBefore[sizeof(StringImpl)];
+    std::memcpy(implBefore, &urlImpl, sizeof(StringImpl));
+#ifdef _WIN32
+    void* readOnlyPage = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* readOnlyPage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+#endif
+#ifdef _WIN32
+    Require(readOnlyPage != nullptr);
+#else
+    Require(readOnlyPage != MAP_FAILED);
+#endif
+    std::memcpy(readOnlyPage, &urlImpl, sizeof(StringImpl));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(readOnlyPage, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(readOnlyPage, 4096, PROT_READ) == 0);
+#endif
+    URL readOnlyImplGuest{};
+    readOnlyImplGuest.impl = static_cast<StringImpl*>(readOnlyPage);
+    threw = false;
+    try {
+        _ZN7WebCore13internalErrorERKN3WTF3URLE(&readOnlyImplGuest);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    unsigned char implAfter[sizeof(StringImpl)];
+    std::memcpy(implAfter, readOnlyPage, sizeof(StringImpl));
+    Require(std::memcmp(implBefore, implAfter, sizeof(StringImpl)) == 0);
+    Require(urlImpl.refCount == 0x40000006);
+#ifdef _WIN32
+    Require(VirtualFree(readOnlyPage, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnlyPage, 4096) == 0);
+#endif
 
     for (ResourceError* error : {&first, &second, &withoutURL}) {
         NKWebKit::WtfAbi::Release(error->domain);

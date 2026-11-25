@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCES_HPP
 
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
+#include "ImageOverwrite.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
@@ -127,6 +128,7 @@ struct ImageResource {
     bool targetMerge = false;
     bool flattened1DArray = false;
     bool flattenAllowed = false;
+    ImageOverwrite overwrite;
 
     bool operator==(const ImageResource& other) const = default;
 };

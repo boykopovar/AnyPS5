@@ -674,6 +674,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
                 physical.imageFlattened1DArray.push_back(mode.flattened1DArray);
+                physical.imageOverwrites.push_back(image.overwrite);
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {
