@@ -8534,43 +8534,60 @@ void samplerTableNonSeamlessCubeTests() {
     }
 }
 
-void samplerTableMinmaxCapabilityTests() {
+void samplerTableCapabilityTests() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     constexpr auto count = Abi::SamplerEntryElements;
-    mock = MockVulkan{};
-    ShaderRecompiler::RecompileResult program;
-    auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 1u));
-    map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
-    map.guestDescriptor[Abi::HeaderSamplerCount] = count;
-    map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
-    map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
-    program.bindings.push_back(map);
-    auto samplers = makeBinding(Role::SamplerTable, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::SamplerTable), count, {});
-    samplers.kind = Kind::Sampler;
-    const std::array<std::uint32_t, 4> words{0x92u | (1u << 29u), (4u * 256u) << 12u, 0u, 0u};
-    for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
-        samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), words.begin(), words.end());
-        samplers.samplerDepthCompare.push_back(false);
-    }
-    program.bindings.push_back(std::move(samplers));
-    const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-    for (const bool supported : {true, false, true}) {
-        mock = MockVulkan{};
-        auto context = mockContext();
-        context.samplerTableCapacity = count;
-        context.limits.maxDescriptorSetSamplers = count;
-        context.limits.maxPerStageDescriptorSamplers = count;
-        context.limits.maxSamplerAnisotropy = 1.0f;
-        context.samplerFilterMinmax = supported;
-        {
-            AgcDriver::Graphics::ShaderResources resources(context, shader, {}, true);
-            resources.Complete();
-            const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
-            std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
-            std::memcpy(actual.data(), bytes.data(), bytes.size());
-            Require(actual[Abi::HeaderPoisonCount] == (supported ? 0u : 1u), "a sampler table verdict ignored whether the device supports min or max reduction");
+    struct Case {
+        std::array<std::uint32_t, 4> words;
+        void (*support)(AgcDriver::Graphics::Context&, bool);
+        const char* failure;
+    };
+    const std::array<std::uint32_t, 4> anisotropic{0x92u | (2u << 9u), (4u * 256u) << 12u, (2u << 20u) | (2u << 22u), 0u};
+    const std::array<Case, 5> cases{{
+        {{0x92u | (1u << 29u), (4u * 256u) << 12u, 0u, 0u}, [](AgcDriver::Graphics::Context& context, bool supported) { context.samplerFilterMinmax = supported; }, "a sampler table verdict ignored whether the device supports min or max reduction"},
+        {anisotropic, [](AgcDriver::Graphics::Context& context, bool supported) { context.samplerAnisotropy = supported; }, "a sampler table verdict ignored whether the device supports anisotropic filtering"},
+        {anisotropic, [](AgcDriver::Graphics::Context& context, bool supported) { context.limits.maxSamplerAnisotropy = supported ? 16.0f : 2.0f; }, "a sampler table verdict ignored the device's anisotropy limit"},
+        {{0x92u, (4u * 256u) << 12u, 256u, 0u}, [](AgcDriver::Graphics::Context& context, bool supported) { context.limits.maxSamplerLodBias = supported ? 16.0f : 0.5f; }, "a sampler table verdict ignored the device's LOD bias limit"},
+        {{0x93u, (4u * 256u) << 12u, 0u, 0u}, [](AgcDriver::Graphics::Context& context, bool supported) { context.samplerMirrorClampToEdge = supported; }, "a sampler table verdict ignored whether the device supports mirror-once clamping"}
+    }};
+    for (const auto& item : cases) {
+        ShaderRecompiler::RecompileResult program;
+        auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 1u));
+        map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+        map.guestDescriptor[Abi::HeaderSamplerCount] = count;
+        map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+        map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
+        program.bindings.push_back(map);
+        auto samplers = makeBinding(Role::SamplerTable, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::SamplerTable), count, {});
+        samplers.kind = Kind::Sampler;
+        for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
+            samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), item.words.begin(), item.words.end());
+            samplers.samplerDepthCompare.push_back(false);
         }
-        Require(mock.live == 0, "the min or max reduction sampler table leaked Vulkan objects");
+        program.bindings.push_back(std::move(samplers));
+        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        for (const bool supported : {true, false, true}) {
+            mock = MockVulkan{};
+            auto context = mockContext();
+            context.samplerTableCapacity = count;
+            context.limits.maxDescriptorSetSamplers = count;
+            context.limits.maxPerStageDescriptorSamplers = count;
+            context.samplerAnisotropy = true;
+            context.samplerFilterMinmax = true;
+            context.samplerMirrorClampToEdge = true;
+            context.limits.maxSamplerAnisotropy = 16.0f;
+            context.limits.maxSamplerLodBias = 16.0f;
+            item.support(context, supported);
+            {
+                AgcDriver::Graphics::ShaderResources resources(context, shader, {}, true);
+                resources.Complete();
+                const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
+                std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
+                std::memcpy(actual.data(), bytes.data(), bytes.size());
+                Require(actual[Abi::HeaderPoisonCount] == (supported ? 0u : 1u), item.failure);
+            }
+            Require(mock.live == 0, "the sampler table capability checks leaked Vulkan objects");
+        }
     }
 }
 
@@ -16243,7 +16260,7 @@ int main(int argc, char** argv) {
         imageTableAllocationTests();
         imageTableSnapshotAllocationTests();
         samplerTableNonSeamlessCubeTests();
-        samplerTableMinmaxCapabilityTests();
+        samplerTableCapabilityTests();
         samplerLodBiasTests();
         samplerTableDeviceLimitTests();
         tableUpdateAfterBindTests();
