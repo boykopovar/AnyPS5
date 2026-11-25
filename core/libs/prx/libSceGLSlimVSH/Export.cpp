@@ -413,3 +413,26 @@ extern "C" void APS5_VABI glUniformMatrix4fv_nid_postfix(GLint location, GLsizei
 extern "C" EGLSurface APS5_VABI eglCreateWindowSurface_nid_postfix(EGLDisplay display, EGLConfig config, void* window, const EGLint* attributes) {
     NotImplemented_nid_no_patch(__func__);
 }
+
+extern "C" {
+int APS5_VABI sceSlimglClientLiveTimeout() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceSlimglClientMonitorServerEnd() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceSlimglClientMonitorServerStart() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceSlimglClientPulse() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceSlimglSupportServerProcess() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+}

@@ -200,3 +200,11 @@ void APS5_VABI glUniformMatrix4fv_nid_postfix(GLint location, GLsizei count, GLb
 EGLSurface APS5_VABI eglCreateWindowSurface_nid_postfix(EGLDisplay display, EGLConfig config, void* window, const EGLint* attributes);
 
 }
+
+extern "C" {
+int APS5_VABI sceSlimglClientLiveTimeout();
+int APS5_VABI sceSlimglClientMonitorServerEnd();
+int APS5_VABI sceSlimglClientMonitorServerStart();
+int APS5_VABI sceSlimglClientPulse();
+int APS5_VABI sceSlimglSupportServerProcess();
+}

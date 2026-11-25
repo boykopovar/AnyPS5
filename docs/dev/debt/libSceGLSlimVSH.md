@@ -29,6 +29,8 @@
 | `sceSlimglCompositorSetIndirectRenderTargetConfigCommand` | `iyTnezpw1jE` |
 
 - [sceSlimglClientStartIPC and sceSlimglIPCSetup](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (`QvXbiLqpn6c`, `F4pQ5tsDo74`) - their prototypes are unverified and they keep the no-parameter declarations. In firmware 13.42 both bodies are `xor %eax,%eax; ret`: they return 0 without reading an argument or setting up any IPC, and so do these. Read from disassembly, not measured on a console.
+- [5 named exports completed from the 13.60 inventory](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (libSceGLSlimVSH) throw on every call. Their names and NIDs are confirmed defined function exports in the pinned [PS5 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceglslimvsh-d20bcf7d7a.jsonl) (`defined_function_export`, `firmware_13_60_export_confirmed`); signatures and behavior remain unknown. Parameterless `int` declarations are import placeholders, not verified prototypes or working implementations, and nothing here is measured on a console. Each library name is declared once repo-wide, so these are the exports the 13.60 table attributes to libSceGLSlimVSH that no other library provides.
+
 
 ### Additional callable exports
 
