@@ -2070,8 +2070,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             highest = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
             inputs.indexInputBehindGpuWrite = true;
         } else if (import != nullptr) {
-            const std::uint32_t largestIndex = draw.indexSize == 2 ? 0xffffu : (skipRestart ? 0xfffffffeu : std::numeric_limits<std::uint32_t>::max());
-            if (shaders.front().program->vertexAttributes.empty() && !restartTable && !state.stages.mesh && draw.indexCount != 0 && largestIndex <= context.limits.maxDrawIndexedIndexValue && draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - largestIndex) {
+            const std::uint32_t largestIndex = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+            if (shaders.front().program->vertexAttributes.empty() && !skipRestart && !state.stages.mesh && draw.indexCount != 0 && largestIndex <= context.limits.maxDrawIndexedIndexValue && draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - largestIndex) {
                 highest = largestIndex;
                 lowest = 0u;
             } else {
