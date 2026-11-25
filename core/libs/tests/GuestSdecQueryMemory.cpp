@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -270,6 +271,54 @@ void CheckCreateRefusals() {
     Require(errno == 71, "errno changed across unmapped creates");
 }
 
+void CheckCreateAndDestroyLifecycle() {
+    const SdecConfig config = Config(10, 11, 9, -1);
+    const SdecRecord record = Record(1, 0);
+    SdecMemory memory = Filled();
+    std::uint32_t dpbFrames = Untouched;
+    Require(Query(config, record, &memory, &dpbFrames) == 0, "lifecycle query refused");
+
+    std::vector<std::uint8_t> buf0(static_cast<std::size_t>(memory.blocks[0].size), 0xCD);
+    std::vector<std::uint8_t> buf1(static_cast<std::size_t>(memory.blocks[1].size) + 256, 0xCD);
+    std::vector<std::uint8_t> buf2(static_cast<std::size_t>(memory.blocks[2].size) + 256, 0xCD);
+    const auto align256 = [](std::uint8_t* ptr) -> std::uint64_t {
+        const auto addr = reinterpret_cast<std::uintptr_t>(ptr);
+        return static_cast<std::uint64_t>((addr + 255u) & ~std::uintptr_t{255u});
+    };
+    memory.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(buf0.data()));
+    memory.blocks[1].base = align256(buf1.data());
+    memory.blocks[2].base = align256(buf2.data());
+
+    void* handle = nullptr;
+    errno = 71;
+    Require(Create(config, record, memory, &handle) == 0, "create rejected queried buffers");
+    Require(errno == 71, "errno changed across create");
+    Require(handle == buf0.data(), "create returned wrong handle");
+
+    std::array<std::uint64_t, 3> header{};
+    std::memcpy(header.data(), handle, sizeof(header));
+    Require(header[0] == 1, "wrong handle header tag");
+    Require(header[1] == memory.blocks[0].base + 0x18, "wrong workspace pointer");
+    Require(header[2] >= header[1] + 0x20, "wrong codec pointer");
+
+    std::uint32_t codecState = 0;
+    const auto* codecBytes = reinterpret_cast<const std::uint8_t*>(static_cast<std::uintptr_t>(header[2]));
+    std::memcpy(&codecState, codecBytes + 0xf0, sizeof(codecState));
+    Require(codecState == 1, "codec state not initialized");
+
+    errno = 71;
+    Require(sceSdecDestroySw(handle) == 0, "destroy returned error");
+    Require(errno == 71, "errno changed across destroy");
+    std::memcpy(header.data(), handle, sizeof(header));
+    Require(header[1] == 0 && header[2] == 0, "destroy did not clear workspace and codec fields");
+
+    std::array<std::uint64_t, 8> standaloneCodec{};
+    standaloneCodec[6] = 0x12345678u;
+    std::array<std::uint64_t, 4> standaloneDecoder{1, 0x2000, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(standaloneCodec.data())), 0x4444};
+    Require(sceSdecDestroySw(standaloneDecoder.data()) == 0, "destroy standalone codec returned error");
+    Require(standaloneDecoder[1] == 0 && standaloneDecoder[2] == 0 && standaloneCodec[6] == 0, "destroy did not clear codec fields");
+}
+
 }
 
 int main() {
@@ -277,6 +326,7 @@ int main() {
     CheckQueryDpbFrames();
     CheckQueryRefusals();
     CheckCreateRefusals();
+    CheckCreateAndDestroyLifecycle();
     std::puts("Sdec query memory tests passed");
     return 0;
 }

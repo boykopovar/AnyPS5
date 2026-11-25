@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
@@ -23,6 +24,9 @@ constexpr std::uint64_t PictureAlignment = 256;
 constexpr std::uint64_t HandleHeaderSize = 0x18;
 constexpr std::uint64_t MinimumDecoderSize = 0x1f;
 constexpr std::uint64_t FirstBlockSlack = 0x20;
+constexpr std::uint64_t WorkspaceHeaderSize = 0x20;
+constexpr std::uint64_t CodecObjectSize = 0x140;
+constexpr std::uint64_t SubCodecSize = 0x3fca0;
 
 constexpr std::array<LevelLimits, 15> Levels{{
     {10, 396, 99}, {11, 900, 396}, {12, 2376, 396}, {13, 2376, 396}, {20, 2376, 396},
@@ -78,6 +82,63 @@ int CheckCreate(const SdecConfig& config, const SdecRecord& record, const SdecMe
     return 0;
 }
 
+bool InitializeDecoderWorkspace(const SdecConfig& config, const SdecRecord& record, const SdecMemory& memory, int savedErrno) {
+    const std::uint64_t base = memory.blocks[0].base;
+    const std::uint64_t ws = base + HandleHeaderSize;
+    const std::uint64_t wsEnd = base + memory.blocks[0].size;
+    const std::uint64_t codecAddr = ((ws + WorkspaceHeaderSize) & ~std::uint64_t{0x1f}) + WorkspaceHeaderSize;
+    const std::uint64_t nextCursor = codecAddr + CodecObjectSize;
+    if (nextCursor > wsEnd) return false;
+
+    std::uint64_t subCodecAddr = 0;
+    std::uint64_t finalCursor = nextCursor;
+    if (nextCursor + SubCodecSize <= wsEnd) {
+        subCodecAddr = nextCursor;
+        finalCursor = nextCursor + SubCodecSize;
+        std::array<std::uint64_t, 4> subHeader{0, 0, ws, 0};
+        const bool subWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(subCodecAddr)), subHeader.data(), sizeof(subHeader));
+        errno = savedErrno;
+        if (!subWritten) return false;
+    }
+
+    const std::array<std::uint64_t, 4> wsHeader{ws + WorkspaceHeaderSize, finalCursor, wsEnd, 0};
+    const bool wsWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(ws)), wsHeader.data(), sizeof(wsHeader));
+    errno = savedErrno;
+    if (!wsWritten) return false;
+
+    std::array<std::byte, CodecObjectSize> codecBytes{};
+    const auto write32 = [&](std::size_t offset, std::uint32_t val) {
+        std::memcpy(codecBytes.data() + offset, &val, sizeof(val));
+    };
+    const auto write64 = [&](std::size_t offset, std::uint64_t val) {
+        std::memcpy(codecBytes.data() + offset, &val, sizeof(val));
+    };
+    write64(0x00, 1);
+    write64(0x10, ws);
+    write64(0x30, subCodecAddr);
+    write32(0x6c, static_cast<std::uint32_t>(config.widthInMbs));
+    write32(0x70, static_cast<std::uint32_t>(config.heightInMbs));
+    write32(0x74, config.level);
+    std::memcpy(codecBytes.data() + 0x78, &memory, sizeof(memory));
+    write32(0xc8, static_cast<std::uint32_t>(record.extraFrames));
+    write64(0xd0, 1);
+    write32(0xf0, 1);
+    for (std::size_t off = 0xf8; off <= 0x108; off += 4) {
+        write32(off, 0xffffffffu);
+    }
+    write64(0x10c, 0x201000000ull);
+    write32(0x110, record.instanceMode == 1 ? 1u : 2u);
+
+    const bool codecWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(codecAddr)), codecBytes.data(), codecBytes.size());
+    errno = savedErrno;
+    if (!codecWritten) return false;
+
+    const std::array<std::uint64_t, 3> handleHeader{1, ws, codecAddr};
+    const bool headerWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(base)), handleHeader.data(), sizeof(handleHeader));
+    errno = savedErrno;
+    return headerWritten;
+}
+
 } // namespace
 
 extern "C" {
@@ -100,12 +161,39 @@ int APS5_VABI sceSdecCreateSw(const SdecConfig* config, const void* attributes, 
         errno = savedErrno;
         return status;
     }
-    NotImplemented_nid_no_patch("sceSdecCreateSw decoder setup");
+    if (!InitializeDecoderWorkspace(localConfig, localRecord, localMemory, savedErrno)) {
+        void* const none = nullptr;
+        GuestCopyOut_nid_no_patch(handle, &none, sizeof(none));
+        errno = savedErrno;
+        return SdecInvalid;
+    }
+    void* const created = reinterpret_cast<void*>(static_cast<std::uintptr_t>(localMemory.blocks[0].base));
+    const bool handleWritten = GuestCopyOut_nid_no_patch(handle, &created, sizeof(created));
+    errno = savedErrno;
+    return handleWritten ? 0 : SdecInvalid;
 }
 
 int APS5_VABI sceSdecDestroySw(void* decoder) {
-    if (decoder == nullptr || DestroyedWithoutCodec(decoder)) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    if (decoder == nullptr) return 0;
+    const int savedErrno = errno;
+    auto* base = static_cast<unsigned char*>(decoder);
+    std::uint64_t codec = 0;
+    if (GuestCopyIn_nid_no_patch(&codec, base + 0x10, sizeof(codec)) && codec != 0) {
+        std::uint64_t subCodec = 0;
+        auto* codecPtr = reinterpret_cast<unsigned char*>(static_cast<std::uintptr_t>(codec));
+        if (GuestCopyIn_nid_no_patch(&subCodec, codecPtr + 0x30, sizeof(subCodec)) && subCodec != 0) {
+            const std::uint64_t zero = 0;
+            GuestCopyOut_nid_no_patch(codecPtr + 0x30, &zero, sizeof(zero));
+        }
+        const std::uint64_t zero = 0;
+        GuestCopyOut_nid_no_patch(base + 0x10, &zero, sizeof(zero));
+    }
+    std::uint64_t field = 0;
+    if (GuestCopyIn_nid_no_patch(&field, base + 0x08, sizeof(field)) && field != 0) {
+        const std::uint64_t zero = 0;
+        GuestCopyOut_nid_no_patch(base + 0x08, &zero, sizeof(zero));
+    }
+    errno = savedErrno;
     return 0;
 }
 
