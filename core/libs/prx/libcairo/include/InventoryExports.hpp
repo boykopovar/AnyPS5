@@ -59,7 +59,6 @@ int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_scaled_font_text_to_glyphs();
-int APS5_VABI cairo_scaled_font_glyph_extents();
 int APS5_VABI cairo_set_font_face();
 int APS5_VABI cairo_scaled_font_create();
 int APS5_VABI cairo_pattern_create_radial();

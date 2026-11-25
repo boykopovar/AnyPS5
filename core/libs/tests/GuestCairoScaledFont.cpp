@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/ScaledFont.hpp"
+#include "prx/libcairo/include/GlyphDrawing.hpp"
 
 #include <CairoBackend.h>
 
@@ -21,6 +22,7 @@ using Status = int (APS5_VABI*)(CairoScaledFont*);
 using GetMatrix = void (APS5_VABI*)(CairoScaledFont*, CairoMatrix*);
 using GetExtents = void (APS5_VABI*)(CairoScaledFont*, CairoFontExtents*);
 using GetTextExtents = void (APS5_VABI*)(CairoScaledFont*, const char*, CairoTextExtents*);
+using GetGlyphExtents = void (APS5_VABI*)(CairoScaledFont*, const CairoGlyph*, int, CairoTextExtents*);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_reference), Reference>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_destroy), Destroy>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_status), Status>);
@@ -28,6 +30,7 @@ static_assert(std::is_same_v<decltype(&cairo_scaled_font_get_font_matrix), GetMa
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_get_ctm), GetMatrix>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_extents), GetExtents>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_text_extents), GetTextExtents>);
+static_assert(std::is_same_v<decltype(&cairo_scaled_font_glyph_extents), GetGlyphExtents>);
 
 namespace {
 
@@ -141,6 +144,14 @@ void CompareNativeExample(const Example& example) {
     Compare(guestTextExtents, std::bit_cast<CairoTextExtents>(nativeTextExtents), "text extents");
     CompareMetricRasters(guestTextExtents, nativeTextExtents);
 
+    const CairoGlyph testGlyphs[2] = {{1, 0.0, 0.0}, {2, 10.0, 0.0}};
+    const cairo_glyph_t nativeTestGlyphs[2] = {{1, 0.0, 0.0}, {2, 10.0, 0.0}};
+    CairoTextExtents guestGlyphExtents{};
+    cairo_text_extents_t nativeGlyphExtents{};
+    cairo_scaled_font_glyph_extents(guest, testGlyphs, 2, &guestGlyphExtents);
+    aps5_cairo_scaled_font_glyph_extents(native, nativeTestGlyphs, 2, &nativeGlyphExtents);
+    Compare(guestGlyphExtents, std::bit_cast<CairoTextExtents>(nativeGlyphExtents), "glyph extents");
+
     const unsigned int refs = aps5_cairo_scaled_font_get_reference_count(native);
     Check(cairo_scaled_font_reference(guest) == guest, "reference retains pointer identity");
     Check(aps5_cairo_scaled_font_get_reference_count(native) == refs + 1,
@@ -172,6 +183,12 @@ void CompareNativeExample(const Example& example) {
         for (double value : {empty.x_bearing, empty.y_bearing, empty.width, empty.height,
                              empty.x_advance, empty.y_advance})
             Check(value == 0, "null text zero extents match pinned Cairo");
+
+        CairoTextExtents emptyGlyphs{};
+        cairo_scaled_font_glyph_extents(guest, nullptr, 0, &emptyGlyphs);
+        for (double value : {emptyGlyphs.x_bearing, emptyGlyphs.y_bearing, emptyGlyphs.width,
+                             emptyGlyphs.height, emptyGlyphs.x_advance, emptyGlyphs.y_advance})
+            Check(value == 0, "null glyphs zero extents match pinned Cairo");
     }
 
     const auto invalid = reinterpret_cast<void*>(std::uintptr_t{1});
@@ -181,6 +198,9 @@ void CompareNativeExample(const Example& example) {
     Rejects([&] { cairo_scaled_font_text_extents(guest, example.text, nullptr); });
     Rejects([&] { cairo_scaled_font_text_extents(guest, reinterpret_cast<const char*>(invalid),
                                                 &guestTextExtents); });
+    Rejects([&] { cairo_scaled_font_glyph_extents(guest, testGlyphs, 2, nullptr); });
+    Rejects([&] { cairo_scaled_font_glyph_extents(guest, reinterpret_cast<const CairoGlyph*>(invalid), 2,
+                                                  &guestGlyphExtents); });
     Check(cairo_scaled_font_status(guest) == CAIRO_STATUS_SUCCESS,
           "bad guest pointers leave native scaled-font state intact");
 

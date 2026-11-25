@@ -1,11 +1,14 @@
 #include "prx/libcairo/include/ScaledFont.hpp"
+#include "prx/libcairo/include/GlyphDrawing.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <CairoBackend.h>
 
 #include <cerrno>
 #include <cstddef>
+#include <limits>
 #include <string>
+#include <vector>
 
 static_assert(sizeof(CairoMatrix) == sizeof(cairo_matrix_t));
 static_assert(offsetof(CairoMatrix, yx) == offsetof(cairo_matrix_t, yx));
@@ -87,6 +90,35 @@ void APS5_VABI cairo_scaled_font_text_extents(CairoScaledFont* font, const char*
     cairo_text_extents_t native{};
     aps5_cairo_scaled_font_text_extents(nativeFont, checkedUtf8, &native);
     CopyResult(extents, &native, sizeof(native), "cairo_scaled_font_text_extents: invalid output");
+}
+
+void APS5_VABI cairo_scaled_font_glyph_extents(CairoScaledFont* font, const CairoGlyph* glyphs,
+                                               int num_glyphs, CairoTextExtents* extents) {
+    auto* nativeFont = Backend(font);
+    cairo_text_extents_t native{};
+    if (num_glyphs <= 0 || glyphs == nullptr) {
+        aps5_cairo_scaled_font_glyph_extents(nativeFont, nullptr, 0, &native);
+    } else {
+        std::vector<CairoGlyph> guestGlyphs(static_cast<std::size_t>(num_glyphs));
+        if (!GuestCopyIn_nid_no_patch(guestGlyphs.data(), glyphs, num_glyphs * sizeof(CairoGlyph))) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if constexpr (sizeof(unsigned long) == sizeof(std::uint64_t)) {
+            static_assert(sizeof(cairo_glyph_t) == sizeof(CairoGlyph));
+            static_assert(offsetof(cairo_glyph_t, x) == offsetof(CairoGlyph, x));
+            static_assert(offsetof(cairo_glyph_t, y) == offsetof(CairoGlyph, y));
+            aps5_cairo_scaled_font_glyph_extents(nativeFont, reinterpret_cast<const cairo_glyph_t*>(guestGlyphs.data()),
+                                                 num_glyphs, &native);
+        } else {
+            std::vector<cairo_glyph_t> host(static_cast<std::size_t>(num_glyphs));
+            for (std::size_t i = 0; i < host.size(); ++i) {
+                if (guestGlyphs[i].index > std::numeric_limits<unsigned long>::max()) NotImplemented_nid_no_patch(__func__);
+                host[i] = {static_cast<unsigned long>(guestGlyphs[i].index), guestGlyphs[i].x, guestGlyphs[i].y};
+            }
+            aps5_cairo_scaled_font_glyph_extents(nativeFont, host.data(), num_glyphs, &native);
+        }
+    }
+    CopyResult(extents, &native, sizeof(native), "cairo_scaled_font_glyph_extents: invalid output");
 }
 
 FreeType::GuestFaceRec* APS5_VABI cairo_ft_scaled_font_lock_face(CairoScaledFont* font) {
