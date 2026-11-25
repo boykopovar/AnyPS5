@@ -1,6 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceSystemLogger2NativeQueueClient/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -16,9 +15,7 @@ constexpr std::size_t checkResultBytes = 0x40;
 
 void ZeroGuest(void* destination, std::size_t bytes, const char* function) {
     static const unsigned char zeros[eventBytes] = {};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, zeros, bytes);
-    errno = savedErrno;
     if (!copied) NotImplemented_nid_no_patch(function);
 }
 
