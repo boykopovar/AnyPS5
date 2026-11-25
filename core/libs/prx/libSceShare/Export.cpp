@@ -2,7 +2,6 @@
 #include "prx/libSceShare/include/InventoryExports.hpp"
 #include "prx/libSceShare/include/Api.hpp"
 #include <cstdint>
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -25,16 +24,12 @@ constexpr std::int32_t REQUEST_ID_INVALID = -1;
 
 bool WriteRequestIdInvalid(std::int32_t* requestId) {
     const std::int32_t invalid = REQUEST_ID_INVALID;
-    const auto savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &invalid, sizeof(invalid));
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const auto savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
     return copied;
 }
 
@@ -69,12 +64,9 @@ int APS5_VABI sceShareGetCurrentStatus(uint32_t feature_flag, ShareCurrentStatus
         return ERROR_INVALID_PARAM;
     }
     const ShareCurrentStatus zeroStatus{};
-    const auto savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(status, &zeroStatus, sizeof(zeroStatus))) {
-        errno = savedErrno;
         return ERROR_INVALID_PARAM;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -146,21 +138,16 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
         return ERROR_INVALID_PARAM;
     }
     const std::uint32_t zeroStatus = 0;
-    const auto savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(status, &zeroStatus, sizeof(zeroStatus))) {
-        errno = savedErrno;
         return ERROR_INVALID_PARAM;
     }
-    errno = savedErrno;
     return 0;
 }
 
 int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* applicationTitle) {
     if (applicationTitle == nullptr) return ERROR_INVALID_PARAM;
     std::string title;
-    const auto savedErrno = errno;
     const int copied = CopyGuestString_nid_no_patch(applicationTitle, 5120, title);
-    errno = savedErrno;
     if (copied != 0 || title.empty()) return ERROR_INVALID_PARAM;
     return 0;
 }
