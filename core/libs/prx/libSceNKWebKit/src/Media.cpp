@@ -904,10 +904,6 @@ WebCore::PlatformTimeRanges& APS5_VABI _ZN7WebCore18PlatformTimeRangesaSERKS0_(W
 }
 
 void APS5_VABI _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(WebCore::PlatformTimeRanges* self, const WTF::MediaTime& start, const WTF::MediaTime& end) {
-    if (_ZNK3WTF9MediaTimegtERKS0_(&start, end)) {
-        return;
-    }
-
     WebCore::PlatformTimeRanges::Range addedRange{start, end};
     unsigned overlappingArcIndex = 0;
 

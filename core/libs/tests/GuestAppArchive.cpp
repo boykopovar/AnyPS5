@@ -1,10 +1,12 @@
 #include "AppArchiveFixture.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -72,8 +74,46 @@ void Present(const std::filesystem::path& root) {
     Require(ResolvePath_nid_no_patch("/app0/Data/Missing.bin") == root / "app0" / "Data" / "Missing.bin", "a path missing everywhere was refused");
     Require(Lookup("/app0/sce_sys", node) == false && ResolvePath_nid_no_patch("/app0/sce_sys") == root / "app0" / "sce_sys", "a directory only on disk was not left to the disk");
 
-    bool rejected = false;
     const auto expected = AppArchiveFixture::Pattern(BigSize);
+    FileStream* stream = fopen_nid_postfix("/app0/data/big.bin", "rb");
+    Require(stream != nullptr, "fopen did not open an archive-only file");
+    std::vector<char> streamed(BigSize + 16, 0);
+    Require(fread_nid_postfix(streamed.data(), 1, streamed.size(), stream) == BigSize && std::equal(expected.begin(), expected.end(), streamed.begin()), "fopen did not read the archived bytes");
+    Require(fseek_nid_postfix(stream, 65536, 0) == 0 && ftell_nid_postfix(stream) == 65536, "fopen of an archived file did not seek");
+    Require(fread_nid_postfix(streamed.data(), 1, 4, stream) == 4 && std::equal(streamed.begin(), streamed.begin() + 4, expected.begin() + 65536), "fopen read wrong bytes after a seek");
+    const int streamed_descriptor = fileno_nid_postfix(stream);
+    AppArchiveNode materialized{};
+    Require(AppArchiveMaterializedDescriptor_nid_no_patch(streamed_descriptor, &materialized) && materialized.Size == BigSize && !materialized.Directory, "fopen did not record its descriptor as an archived file");
+    Require(!AppArchiveDescriptor_nid_no_patch(streamed_descriptor, nullptr, nullptr), "fopen's copy was attached as an archive placeholder");
+    constexpr int Duplicate = 1000005;
+    AppArchiveShare_nid_no_patch(streamed_descriptor, Duplicate);
+    Require(AppArchiveMaterializedDescriptor_nid_no_patch(Duplicate, nullptr), "a duplicate of fopen's descriptor lost the archived file");
+    AppArchiveDetach_nid_no_patch(Duplicate);
+    Require(!AppArchiveMaterializedDescriptor_nid_no_patch(Duplicate, nullptr) && AppArchiveMaterializedDescriptor_nid_no_patch(streamed_descriptor, nullptr), "detaching a duplicate detached fopen's descriptor");
+    Require(fclose_nid_postfix(stream) == 0, "fclose of an archived file failed");
+    Require(!AppArchiveMaterializedDescriptor_nid_no_patch(streamed_descriptor, nullptr), "fclose left the descriptor recorded as an archived file");
+    stream = fopen_nid_postfix("/app0/Data/Empty.txt", "r");
+    Require(stream != nullptr && fread_nid_postfix(streamed.data(), 1, 1, stream) == 0 && fclose_nid_postfix(stream) == 0, "fopen of an empty archived file failed");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Readme.TXT", "r+") == nullptr && errno == 30, "fopen for update of an archived file did not report EROFS");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Readme.TXT", "w") == nullptr && errno == 30, "fopen for writing an archived file did not report EROFS");
+    errno = 0;
+    Require(fopen_nid_postfix("/app0/Readme.TXT", "wx") == nullptr && errno == 17, "exclusive fopen of an archived file did not report EEXIST");
+    bool refused = false;
+    try { (void)fopen_nid_postfix("/app0/Data", "r"); } catch (const std::runtime_error& error) { refused = std::strstr(error.what(), "not implemented") != nullptr; }
+    Require(refused, "fopen of an archived directory did not throw");
+    Require(access_nid_postfix("/app0/Data/Big.bin", 0) == 0 && access_nid_postfix("/app0/Data/Big.bin", 4) == 0, "access did not find an archived file");
+    Require(access_nid_postfix("/app0/Data", 5) == 0, "access did not search an archived directory");
+    errno = 0;
+    Require(access_nid_postfix("/app0/Data/Big.bin", 1) == -1 && errno == 13, "access granted execution of an archived file");
+    refused = false;
+    try { (void)access_nid_postfix("/app0/Data/Big.bin", 2); } catch (const std::runtime_error& error) { refused = std::strstr(error.what(), "not implemented") != nullptr; }
+    Require(refused, "access for writing to an archived file did not throw");
+    errno = 0;
+    Require(access_nid_postfix("/app0/Data/Missing.bin", 0) == -1 && errno == 2, "access found a path missing everywhere");
+
+    bool rejected = false;
     std::vector<char> buffer(BigSize + 64, 0);
     Require(AppArchiveRead_nid_no_patch(big, 0, buffer.data(), BigSize) == BigSize && std::equal(expected.begin(), expected.end(), buffer.begin()), "the whole file did not read back");
     for (const std::uint64_t offset : {std::uint64_t{1}, std::uint64_t{65535}, std::uint64_t{65536}, std::uint64_t{131071}, std::uint64_t{BigSize - 5}}) {
