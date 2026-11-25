@@ -1,21 +1,36 @@
 #include "prx/libSceWebTransport/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+constexpr int sceWebTransportErrorInvalidMode = static_cast<int>(0x80100004);
+constexpr int sceWebTransportErrorNullParam = static_cast<int>(0x80100005);
+
+std::atomic<std::uint32_t> g_logFlags{0};
+std::atomic<void*> g_logCallback{nullptr};
+std::atomic<std::uint32_t> g_backendMode{0};
+std::mutex g_pairMutex;
+std::uint32_t g_pair0 = 0;
+std::uint32_t g_pair1 = 0;
+
+}
 
 extern "C" {
 
 APS5_EXPORT("yDQLZ5vLNAo", sceWebTransportUnknown00);
-int APS5_VABI sceWebTransportUnknown00(void) {
-    NotImplemented_nid_no_patch("yDQLZ5vLNAo");
-    return 0;
+void APS5_VABI sceWebTransportUnknown00(std::uint32_t flags) {
+    g_logFlags.store(flags, std::memory_order_relaxed);
 }
 
 APS5_EXPORT("aRuF-dyJTf0", sceWebTransportUnknown01);
-int APS5_VABI sceWebTransportUnknown01(void) {
-    NotImplemented_nid_no_patch("aRuF-dyJTf0");
-    return 0;
+void APS5_VABI sceWebTransportUnknown01(void* callback) {
+    g_logCallback.store(callback, std::memory_order_relaxed);
 }
 
 APS5_EXPORT("sO-Qj8LdN0w", sceWebTransportUnknown02);
@@ -25,26 +40,38 @@ int APS5_VABI sceWebTransportUnknown02(void) {
 }
 
 APS5_EXPORT("7dZ6MtRYlxk", sceWebTransportUnknown03);
-int APS5_VABI sceWebTransportUnknown03(void) {
-    NotImplemented_nid_no_patch("7dZ6MtRYlxk");
+int APS5_VABI sceWebTransportUnknown03(const std::uint32_t* params) {
+    std::uint32_t v0 = 0;
+    std::uint32_t v1 = 0;
+    if (params != nullptr) {
+        std::memcpy(&v0, params, sizeof(v0));
+        std::memcpy(&v1, params + 1, sizeof(v1));
+    }
+    std::lock_guard<std::mutex> lock(g_pairMutex);
+    g_pair0 = v0;
+    g_pair1 = v1;
     return 0;
 }
 
 APS5_EXPORT("RZ7msPQyMrw", sceWebTransportUnknown04);
-int APS5_VABI sceWebTransportUnknown04(void) {
-    NotImplemented_nid_no_patch("RZ7msPQyMrw");
+int APS5_VABI sceWebTransportUnknown04(std::uint32_t* statsOut) {
+    if (statsOut == nullptr) {
+        return sceWebTransportErrorNullParam;
+    }
+    std::memset(statsOut, 0, sizeof(std::uint32_t) * 12);
     return 0;
 }
 
 APS5_EXPORT("FuwKcReb9Qs", sceWebTransportUnknown05);
-int APS5_VABI sceWebTransportUnknown05(void) {
-    NotImplemented_nid_no_patch("FuwKcReb9Qs");
-    return 0;
+void APS5_VABI sceWebTransportUnknown05(std::uint64_t* countersOut) {
+    if (countersOut == nullptr) {
+        return;
+    }
+    std::memset(countersOut, 0, sizeof(std::uint64_t) * 10);
 }
 
 APS5_EXPORT("gpxgv3ZGouY", sceWebTransportUnknown06);
 int APS5_VABI sceWebTransportUnknown06(void) {
-    NotImplemented_nid_no_patch("gpxgv3ZGouY");
     return 0;
 }
 
@@ -91,14 +118,43 @@ int APS5_VABI sceWebTransportUnknown13(void) {
 }
 
 APS5_EXPORT("F1waH8GrH5c", sceWebTransportUnknown14);
-int APS5_VABI sceWebTransportUnknown14(void) {
-    NotImplemented_nid_no_patch("F1waH8GrH5c");
-    return 0;
+void APS5_VABI sceWebTransportUnknown14(void* configOut) {
+    if (configOut == nullptr) {
+        return;
+    }
+    auto* bytes = static_cast<std::uint8_t*>(configOut);
+    std::memset(bytes, 0, 0xf0);
+    const std::uint64_t block50[4] = {
+        0x403e000000000000ULL,
+        0x403e000000000000ULL,
+        0x4024000000000000ULL,
+        0x3fd54fdf3b645a1dULL,
+    };
+    const std::uint64_t scalar70 = 0x3f9999999999999aULL;
+    const std::uint64_t block78[4] = {
+        3ULL,
+        2ULL,
+        100ULL,
+        103ULL,
+    };
+    const std::uint64_t blocka8[4] = {
+        0x100000ULL,
+        0x100000ULL,
+        0x100000ULL,
+        0x100000ULL,
+    };
+    std::memcpy(bytes + 0x50, block50, sizeof(block50));
+    std::memcpy(bytes + 0x70, &scalar70, sizeof(scalar70));
+    std::memcpy(bytes + 0x78, block78, sizeof(block78));
+    std::memcpy(bytes + 0xa8, blocka8, sizeof(blocka8));
 }
 
 APS5_EXPORT("HNbe4GmHVoE", sceWebTransportUnknown15);
-int APS5_VABI sceWebTransportUnknown15(void) {
-    NotImplemented_nid_no_patch("HNbe4GmHVoE");
+int APS5_VABI sceWebTransportUnknown15(std::uint32_t mode) {
+    if (mode > 1u) {
+        return sceWebTransportErrorInvalidMode;
+    }
+    g_backendMode.store(mode, std::memory_order_relaxed);
     return 0;
 }
 

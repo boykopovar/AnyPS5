@@ -1,15 +1,16 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
 
-int APS5_VABI sceWebTransportUnknown00(void);
-int APS5_VABI sceWebTransportUnknown01(void);
+void APS5_VABI sceWebTransportUnknown00(std::uint32_t flags);
+void APS5_VABI sceWebTransportUnknown01(void* callback);
 int APS5_VABI sceWebTransportUnknown02(void);
-int APS5_VABI sceWebTransportUnknown03(void);
-int APS5_VABI sceWebTransportUnknown04(void);
-int APS5_VABI sceWebTransportUnknown05(void);
+int APS5_VABI sceWebTransportUnknown03(const std::uint32_t* params);
+int APS5_VABI sceWebTransportUnknown04(std::uint32_t* statsOut);
+void APS5_VABI sceWebTransportUnknown05(std::uint64_t* countersOut);
 int APS5_VABI sceWebTransportUnknown06(void);
 int APS5_VABI sceWebTransportUnknown07(void);
 int APS5_VABI sceWebTransportUnknown08(void);
@@ -18,8 +19,8 @@ int APS5_VABI sceWebTransportUnknown10(void);
 int APS5_VABI sceWebTransportUnknown11(void);
 int APS5_VABI sceWebTransportUnknown12(void);
 int APS5_VABI sceWebTransportUnknown13(void);
-int APS5_VABI sceWebTransportUnknown14(void);
-int APS5_VABI sceWebTransportUnknown15(void);
+void APS5_VABI sceWebTransportUnknown14(void* configOut);
+int APS5_VABI sceWebTransportUnknown15(std::uint32_t mode);
 int APS5_VABI sceWebTransportUnknown16(void);
 int APS5_VABI sceWebTransportUnknown17(void);
 int APS5_VABI sceWebTransportUnknown18(void);
