@@ -1,5 +1,4 @@
 #include "prx/libScePlayReady2/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -12,9 +11,7 @@ constexpr std::uint32_t InitParamsMagic = 0x50524459;
 
 template <typename TValue>
 bool ReadField(const void* base, std::size_t offset, TValue& value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, static_cast<const unsigned char*>(base) + offset, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
@@ -130,10 +127,8 @@ int APS5_VABI scePlayReadyApiSetInitParamFlags(void* params, std::uint32_t flags
         if (check == Check::Fail) return ErrorInvalidArgument;
         if (check == Check::Unreadable) NotImplemented_nid_no_patch(__func__);
     }
-    const int savedErrno = errno;
     const bool written =
         GuestCopyOut_nid_no_patch(static_cast<unsigned char*>(params) + 0x8, &flags, sizeof(flags));
-    errno = savedErrno;
     if (!written) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
