@@ -801,6 +801,9 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 
 ### Bug report bundle
 
+Run `python3 tools/bug_report.py --preview` to list the redacted bundle entries and their uncompressed sizes.
+The preview creates no ZIP and prints no file contents.
+
 `python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
 
 - By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
