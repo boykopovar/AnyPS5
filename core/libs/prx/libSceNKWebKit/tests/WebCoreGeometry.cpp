@@ -11,7 +11,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <emmintrin.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -27,6 +35,35 @@ static bool AlmostEqual(float a, float b, float eps = 1e-4f) {
 
 static bool AlmostEqual(double a, double b, double eps = 1e-6) {
     return std::abs(a - b) <= eps;
+}
+
+template <typename Function>
+static bool FaultsAsNotImplemented(Function function, const char* name) {
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+static void* MapReadOnlyPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return page;
+}
+
+static void UnmapPage(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
 }
 
 static void TestFloatPoint() {
@@ -319,6 +356,60 @@ static void TestLayoutRect() {
     Require(_ZNK7WebCore10LayoutRect8containsERKS0_(&lrA, insideLr));
 }
 
+static WebCore::Color RawColor(std::uint64_t bits) {
+    WebCore::Color color;
+    color.m_colorAndFlags = bits;
+    return color;
+}
+
+static void TestColorMoveAssignEqual() {
+    constexpr std::uint64_t first = 0x11040000FF0000FFull;
+    constexpr std::uint64_t second = 0x110400000000FFFFull;
+
+    WebCore::Color same = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&same, std::move(same));
+    Require(same.m_colorAndFlags == first);
+
+    WebCore::Color target = RawColor(first);
+    WebCore::Color equal = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(equal));
+    Require(target.m_colorAndFlags == first);
+    Require(equal.m_colorAndFlags == first);
+
+    WebCore::Color invalid = RawColor(0);
+    WebCore::Color alsoInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&invalid, std::move(alsoInvalid));
+    Require(invalid.m_colorAndFlags == 0 && alsoInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color different = RawColor(second);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(different));
+    Require(target.m_colorAndFlags == second);
+    Require(different.m_colorAndFlags == 0);
+
+    WebCore::Color fromInvalid = RawColor(0);
+    _ZN7WebCore5ColoraSEOS0_(&target, std::move(fromInvalid));
+    Require(target.m_colorAndFlags == 0 && fromInvalid.m_colorAndFlags == 0);
+
+    WebCore::Color nearlyEqual = RawColor(first ^ 1ull);
+    WebCore::Color original = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&original, std::move(nearlyEqual));
+    Require(original.m_colorAndFlags == (first ^ 1ull));
+    Require(nearlyEqual.m_colorAndFlags == 0);
+
+    WebCore::Color flagged = RawColor(first | (1ull << 48));
+    WebCore::Color plain = RawColor(first);
+    _ZN7WebCore5ColoraSEOS0_(&plain, std::move(flagged));
+    Require(plain.m_colorAndFlags == (first | (1ull << 48)));
+    Require(flagged.m_colorAndFlags == 0);
+
+    WebCore::Color copied = RawColor(first);
+    WebCore::Color source = RawColor(first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, source);
+    Require(copied.m_colorAndFlags == first && source.m_colorAndFlags == first);
+    _ZN7WebCore5ColoraSERKS0_(&copied, copied);
+    Require(copied.m_colorAndFlags == first);
+}
+
 static void TestRoundedRect() {
     WebCore::LayoutRect lr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{6400, 6400}};
     WebCore::LayoutSize sz{640, 640};
@@ -343,6 +434,156 @@ static void TestRoundedRect() {
 
     WebCore::LayoutRect insideLr{WebCore::LayoutPoint{1280, 1280}, WebCore::LayoutSize{640, 640}};
     Require(_ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&rr1, insideLr));
+}
+
+constexpr int LayoutIntMax = std::numeric_limits<int>::max();
+constexpr int LayoutIntMin = std::numeric_limits<int>::min();
+constexpr int LayoutBig = 0x40000000;
+constexpr int LayoutWide = 0x60000000;
+constexpr int LayoutInfiniteOrigin = -1073741808;
+constexpr int LayoutInfiniteExtent = 2147483615;
+
+static WebCore::LayoutRect RawLayoutRect(int x, int y, int width, int height) {
+    return WebCore::LayoutRect{WebCore::LayoutPoint{x, y}, WebCore::LayoutSize{width, height}};
+}
+
+static bool SameLayoutRect(const WebCore::LayoutRect& rect, int x, int y, int width, int height) {
+    return rect.m_location.m_x.m_value == x && rect.m_location.m_y.m_value == y
+        && rect.m_size.m_width.m_value == width && rect.m_size.m_height.m_value == height;
+}
+
+static bool UniteGives(WebCore::LayoutRect self, const WebCore::LayoutRect& other, int x, int y, int width, int height) {
+    _ZN7WebCore10LayoutRect5uniteERKS0_(&self, other);
+    return SameLayoutRect(self, x, y, width, height);
+}
+
+static bool LayoutContains(const WebCore::LayoutRect& self, const WebCore::LayoutRect& other) {
+    return _ZNK7WebCore10LayoutRect8containsERKS0_(&self, other);
+}
+
+static bool ScaleGives(WebCore::LayoutRect self, float factor, int x, int y, int width, int height) {
+    _ZN7WebCore10LayoutRect5scaleEf(&self, factor);
+    return SameLayoutRect(self, x, y, width, height);
+}
+
+static bool RoundedContains(const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight,
+    const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight, const WebCore::LayoutRect& other) {
+    WebCore::RoundedRect rounded;
+    _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&rounded, rect, topLeft, topRight, bottomLeft, bottomRight);
+    return _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&rounded, other);
+}
+
+static bool FloatSizeIsZero(float width, float height) {
+    const WebCore::FloatSize size{width, height};
+    return _ZNK7WebCore9FloatSize6isZeroEv(&size);
+}
+
+static void TestFloatSizeIsZeroThreshold() {
+    const float epsilon = std::numeric_limits<float>::epsilon();
+    const float below = std::nextafter(epsilon, 0.0f);
+    Require(FloatSizeIsZero(0.0f, 0.0f));
+    Require(FloatSizeIsZero(1e-8f, 0.0f));
+    Require(FloatSizeIsZero(0.0f, 1e-8f));
+    Require(FloatSizeIsZero(-1e-8f, -1e-8f));
+    Require(FloatSizeIsZero(below, below));
+    Require(FloatSizeIsZero(-below, below));
+    Require(!FloatSizeIsZero(epsilon, 0.0f));
+    Require(!FloatSizeIsZero(0.0f, epsilon));
+    Require(!FloatSizeIsZero(-epsilon, 0.0f));
+    Require(!FloatSizeIsZero(0.0f, -epsilon));
+    Require(!FloatSizeIsZero(1e-8f, 1.0f));
+    Require(!FloatSizeIsZero(1.0f, 1e-8f));
+    Require(!FloatSizeIsZero(-1.0f, 0.0f));
+}
+
+static void TestLayoutRectSaturatedEdges() {
+    Require(UniteGives(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(320, 320, 640, 640), 0, 0, 960, 960));
+    Require(UniteGives(RawLayoutRect(LayoutBig, 0, LayoutBig, 64), RawLayoutRect(0, 0, 64, 64), 0, 0, LayoutIntMax, 64));
+    Require(UniteGives(RawLayoutRect(LayoutIntMin, 0, 64, 64), RawLayoutRect(LayoutBig, 0, LayoutBig, 64), LayoutIntMin, 0, LayoutIntMax, 64));
+    Require(UniteGives(RawLayoutRect(0, LayoutBig, 64, LayoutBig), RawLayoutRect(0, LayoutIntMin, 64, 64), 0, LayoutIntMin, 64, LayoutIntMax));
+    Require(UniteGives(RawLayoutRect(0, LayoutIntMin, 64, 64), RawLayoutRect(0, LayoutBig, 64, LayoutBig), 0, LayoutIntMin, 64, LayoutIntMax));
+    Require(UniteGives(RawLayoutRect(LayoutBig, LayoutBig, LayoutBig, LayoutBig), RawLayoutRect(0, 0, 0, 64),
+        LayoutBig, LayoutBig, LayoutBig, LayoutBig));
+    Require(UniteGives(RawLayoutRect(LayoutBig, LayoutBig, 0, LayoutBig), RawLayoutRect(LayoutWide, LayoutWide, LayoutWide, LayoutWide),
+        LayoutWide, LayoutWide, LayoutWide, LayoutWide));
+
+    Require(LayoutContains(RawLayoutRect(LayoutBig, 0, LayoutBig, 64), RawLayoutRect(LayoutBig, 0, 64, 64)));
+    Require(LayoutContains(RawLayoutRect(LayoutBig, 0, LayoutBig, 64), RawLayoutRect(0x50000000, 0, 0x50000000, 64)));
+    Require(!LayoutContains(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(0x7FFFFF00, 0, 0x200, 64)));
+    Require(LayoutContains(RawLayoutRect(0, LayoutBig, 64, LayoutBig), RawLayoutRect(0, LayoutBig, 64, 64)));
+    Require(!LayoutContains(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(0, 0x7FFFFF00, 64, 0x200)));
+    Require(!LayoutContains(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(600, 0, 64, 64)));
+    Require(!LayoutContains(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(0, 600, 64, 64)));
+    Require(!LayoutContains(RawLayoutRect(64, 64, 640, 640), RawLayoutRect(0, 64, 64, 64)));
+    Require(!LayoutContains(RawLayoutRect(64, 64, 640, 640), RawLayoutRect(64, 0, 64, 64)));
+    Require(LayoutContains(RawLayoutRect(0, 0, 640, 640), RawLayoutRect(64, 64, 128, 128)));
+}
+
+static void TestLayoutRectScaleInfinite() {
+    const int origin = LayoutInfiniteOrigin;
+    const int extent = LayoutInfiniteExtent;
+    Require(origin == (LayoutIntMin + 32) / 2 && extent == LayoutIntMax - 32);
+    Require(ScaleGives(RawLayoutRect(origin, origin, extent, extent), 2.0f, origin, origin, extent, extent));
+    Require(ScaleGives(RawLayoutRect(origin, origin, extent, extent), 0.5f, origin, origin, extent, extent));
+    Require(ScaleGives(RawLayoutRect(LayoutIntMin / 2, LayoutIntMin / 2, extent, extent), 2.0f,
+        LayoutIntMin, LayoutIntMin, LayoutIntMax, LayoutIntMax));
+    Require(ScaleGives(RawLayoutRect(origin + 64, origin, extent, extent), 2.0f, -2147483520, LayoutIntMin, LayoutIntMax, LayoutIntMax));
+    Require(ScaleGives(RawLayoutRect(origin, origin + 64, extent, extent), 2.0f, LayoutIntMin, -2147483520, LayoutIntMax, LayoutIntMax));
+    Require(ScaleGives(RawLayoutRect(origin, origin, 64, extent), 2.0f, LayoutIntMin, LayoutIntMin, 128, LayoutIntMax));
+    Require(ScaleGives(RawLayoutRect(origin, origin, extent, 64), 2.0f, LayoutIntMin, LayoutIntMin, LayoutIntMax, 128));
+    Require(ScaleGives(RawLayoutRect(96, 144, 640, 1280), 2.0f, 192, 288, 1280, 2560));
+}
+
+static void TestRoundedRectSaturatedCorners() {
+    const WebCore::LayoutSize none{0, 0};
+    const WebCore::LayoutSize circle{640, 640};
+    const WebCore::LayoutSize narrow{128, 640};
+    const WebCore::LayoutSize flat{640, 128};
+    const WebCore::LayoutSize thin{32, 640};
+    const WebCore::LayoutSize low{640, 32};
+    const WebCore::LayoutSize slim{64, 640};
+    const WebCore::LayoutSize shallow{640, 64};
+    const int edge = LayoutIntMax - 128;
+
+    Require(RoundedContains(RawLayoutRect(LayoutBig, 0, LayoutBig, 64), none, none, none, none, RawLayoutRect(LayoutBig, 0, 64, 64)));
+    Require(RoundedContains(RawLayoutRect(0, LayoutBig, 64, LayoutBig), none, none, none, none, RawLayoutRect(0, LayoutBig, 64, 64)));
+
+    const WebCore::LayoutRect wideX = RawLayoutRect(LayoutWide, 0, LayoutWide, 6400);
+    const WebCore::LayoutRect wideY = RawLayoutRect(0, LayoutWide, 6400, LayoutWide);
+    const WebCore::LayoutRect wideBoth = RawLayoutRect(LayoutWide, LayoutWide, LayoutWide, LayoutWide);
+    Require(!RoundedContains(wideX, none, circle, none, none, RawLayoutRect(edge, 0, 64, 64)));
+    Require(RoundedContains(wideX, none, circle, none, none, RawLayoutRect(edge, 640, 64, 64)));
+    Require(!RoundedContains(wideY, none, none, circle, none, RawLayoutRect(0, edge, 64, 64)));
+    Require(RoundedContains(wideY, none, none, circle, none, RawLayoutRect(640, edge, 64, 64)));
+    Require(!RoundedContains(wideBoth, none, none, none, circle, RawLayoutRect(edge, edge, 64, 64)));
+    Require(RoundedContains(wideBoth, none, none, none, circle, RawLayoutRect(LayoutIntMax - 1280, edge, 64, 64)));
+
+    Require(RoundedContains(wideX, none, narrow, none, none, RawLayoutRect(edge, 320, 64, 64)));
+    Require(RoundedContains(wideX, none, thin, none, none, RawLayoutRect(edge, 0, 64, 64)));
+    Require(RoundedContains(wideY, none, none, flat, none, RawLayoutRect(320, edge, 64, 64)));
+    Require(RoundedContains(wideY, none, none, low, none, RawLayoutRect(0, edge, 64, 64)));
+    Require(RoundedContains(wideBoth, none, none, none, narrow, RawLayoutRect(edge, 2147483200, 64, 64)));
+    Require(RoundedContains(wideBoth, none, none, none, flat, RawLayoutRect(2147483200, edge, 64, 64)));
+    Require(RoundedContains(wideBoth, none, none, none, thin, RawLayoutRect(edge, edge, 64, 64)));
+    Require(RoundedContains(wideBoth, none, none, none, low, RawLayoutRect(edge, edge, 64, 64)));
+
+    Require(!RoundedContains(RawLayoutRect(LayoutIntMax - 100, 0, 640, 6400), circle, none, none, none,
+        RawLayoutRect(LayoutIntMax - 100, 0, 10, 10)));
+    Require(!RoundedContains(RawLayoutRect(0, LayoutIntMax - 100, 6400, 640), circle, none, none, none,
+        RawLayoutRect(0, LayoutIntMax - 100, 10, 10)));
+    Require(!RoundedContains(RawLayoutRect(2147482944, 0, 640, 6400), slim, none, none, none, RawLayoutRect(2147482944, 320, 64, 64)));
+    Require(!RoundedContains(RawLayoutRect(0, 2147482944, 6400, 640), shallow, none, none, none, RawLayoutRect(320, 2147482944, 64, 64)));
+    Require(!RoundedContains(RawLayoutRect(0, 2147482944, 6400, 640), none, shallow, none, none, RawLayoutRect(6000, 2147482944, 64, 64)));
+    Require(!RoundedContains(RawLayoutRect(2147482944, 0, 640, 6400), none, none, slim, none, RawLayoutRect(2147482944, 6000, 64, 64)));
+
+    const WebCore::LayoutRect box = RawLayoutRect(0, 0, 6400, 6400);
+    Require(!RoundedContains(box, circle, circle, circle, circle, RawLayoutRect(0, 0, 64, 64)));
+    Require(!RoundedContains(box, circle, circle, circle, circle, RawLayoutRect(6336, 0, 64, 64)));
+    Require(!RoundedContains(box, circle, circle, circle, circle, RawLayoutRect(0, 6336, 64, 64)));
+    Require(!RoundedContains(box, circle, circle, circle, circle, RawLayoutRect(6336, 6336, 64, 64)));
+    Require(RoundedContains(box, circle, circle, circle, circle, RawLayoutRect(1280, 1280, 640, 640)));
+    Require(!RoundedContains(box, none, none, none, none, RawLayoutRect(6400, 0, 64, 64)));
+    Require(RoundedContains(box, none, none, none, none, RawLayoutRect(6336, 6336, 64, 64)));
 }
 
 static void TestColor() {
@@ -394,6 +635,56 @@ static void TestColor() {
     cLightened.m_colorAndFlags = 0xFFFFFFFFull;
     Require(_ZNK7WebCore5Color9lightenedEv(&cLightened, &cBlack) == &cLightened);
     Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
+}
+
+static void TestColorGuestPointers() {
+    auto* unreadable = reinterpret_cast<WebCore::Color*>(0x10);
+    auto* readOnly = static_cast<WebCore::Color*>(MapReadOnlyPage());
+    WebCore::Color source;
+    source.m_colorAndFlags = 0x11223344ull;
+    WebCore::Color target;
+    target.m_colorAndFlags = 0x55667788ull;
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(&target, *unreadable); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC1ERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2ERKS0_(readOnly, source); return 0; }, "_ZN7WebCore5ColorC2ERKS0_"));
+
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*unreadable)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(readOnly, std::move(source)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(source.m_colorAndFlags == 0x11223344ull);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC1EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC1EOS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore5ColorC2EOS0_(&target, std::move(*readOnly)); return 0; }, "_ZN7WebCore5ColorC2EOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*readOnly)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull);
+
+    target.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(unreadable, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(&target, *unreadable); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSERKS0_(readOnly, source); }, "_ZN7WebCore5ColoraSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(unreadable, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(&target, std::move(*unreadable)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN7WebCore5ColoraSEOS0_(readOnly, std::move(source)); }, "_ZN7WebCore5ColoraSEOS0_"));
+    Require(target.m_colorAndFlags == 0x55667788ull && source.m_colorAndFlags == 0x11223344ull);
+    Require(_ZN7WebCore5ColoraSERKS0_(&target, source) == &target && target.m_colorAndFlags == 0x11223344ull);
+
+    WebCore::Color derived;
+    derived.m_colorAndFlags = 0x55667788ull;
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(&derived, unreadable, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(&derived, unreadable); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(derived.m_colorAndFlags == 0x55667788ull);
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color14colorWithAlphaEf(readOnly, &source, 0.5f); }, "_ZNK7WebCore5Color14colorWithAlphaEf"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color8darkenedEv(readOnly, &source); }, "_ZNK7WebCore5Color8darkenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightenedEv(readOnly, &source); }, "_ZNK7WebCore5Color9lightenedEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9lightnessEv(unreadable); }, "_ZNK7WebCore5Color9lightnessEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore5Color9luminanceEv(unreadable); }, "_ZNK7WebCore5Color9luminanceEv"));
+    Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(readOnly), 0.0));
+    UnmapPage(readOnly);
 }
 
 static void TestAffineTransform() {
@@ -763,9 +1054,15 @@ int main() {
     TestFloatQuad();
     TestFloatRoundedRect();
     TestIntPointIntSizeIntRect();
+    TestColorMoveAssignEqual();
     TestLayoutRect();
     TestRoundedRect();
+    TestFloatSizeIsZeroThreshold();
+    TestLayoutRectSaturatedEdges();
+    TestLayoutRectScaleInfinite();
+    TestRoundedRectSaturatedCorners();
     TestColor();
+    TestColorGuestPointers();
     TestAffineTransform();
     TestTransformationMatrix();
     TestApplyPerspective();

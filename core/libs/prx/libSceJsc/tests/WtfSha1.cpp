@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "prx/libSceJsc/src/WtfStringAbi.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -17,13 +19,17 @@
 #include <vector>
 
 using Jsc::WtfAbi::CStringBuffer;
+using Jsc::WtfAbi::CStringBuffer;
+using Jsc::WtfAbi::OptionalCString;
 using Jsc::WtfAbi::OptionalSHA1Digest;
 using Jsc::WtfAbi::OwnedCString;
+using Jsc::WtfAbi::OptionalString;
 using Jsc::WtfAbi::PersistenceAllocator;
 using Jsc::WtfAbi::PersistenceDecoder;
 using Jsc::WtfAbi::PersistenceEncoder;
 using Jsc::WtfAbi::SHA1;
 using Jsc::WtfAbi::SHA1Digest;
+using Jsc::WtfAbi::StringImpl;
 
 static_assert(std::is_same_v<decltype(&_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE),
                              OwnedCString (APS5_VABI*)(const SHA1Digest*)>);
@@ -131,6 +137,225 @@ void TestDeallocate(void* ptr) {
     Check(it != live.end(), __LINE__);
     live.erase(it);
     std::free(ptr);
+}
+
+std::vector<std::uint8_t> Stream(std::initializer_list<std::vector<std::uint8_t>> parts) {
+    std::vector<std::uint8_t> bytes;
+    for (const auto& part : parts) bytes.insert(bytes.end(), part.begin(), part.end());
+    return bytes;
+}
+
+std::vector<std::uint8_t> Word(std::uint32_t value) {
+    return {static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value >> 16),
+        static_cast<std::uint8_t>(value >> 24)};
+}
+
+PersistenceDecoder Decoder(const std::vector<std::uint8_t>& bytes) {
+    PersistenceDecoder decoder;
+    std::memset(&decoder, 0xA5, sizeof(decoder));
+    decoder.buffer = bytes.data();
+    decoder.bufferPosition = bytes.data();
+    decoder.bufferEnd = bytes.data() + bytes.size();
+    decoder.sha1 = Make({InitialHash, {}, 0, ""});
+    return decoder;
+}
+
+bool Hashed(const PersistenceDecoder& decoder, const std::vector<std::uint8_t>& bytes) {
+    return decoder.sha1.cursor == bytes.size() && decoder.sha1.totalBytes == bytes.size() &&
+        (bytes.empty() || std::memcmp(decoder.sha1.buffer, bytes.data(), bytes.size()) == 0);
+}
+
+OptionalCString DecodeCString(PersistenceDecoder& decoder) {
+    OptionalCString result;
+    std::memset(&result, 0x5A, sizeof(result));
+    Check(_ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE(&result, &decoder) == &result, __LINE__);
+    return result;
+}
+
+OptionalString DecodeString(PersistenceDecoder& decoder) {
+    OptionalString result;
+    std::memset(&result, 0x5A, sizeof(result));
+    Check(_ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE(&result, &decoder) == &result, __LINE__);
+    return result;
+}
+
+void DecodeCStrings() {
+    const auto abc = Stream({Word(3), Bytes("abcx")});
+    {
+        auto decoder = Decoder(abc);
+        Check(ThrowsException<std::runtime_error>([&] { DecodeCString(decoder); }), __LINE__);
+    }
+
+    TestAllocatorState state;
+    activeAllocatorState = &state;
+    const PersistenceAllocator allocator{&TestAllocate, &TestDeallocate};
+    RegisterPersistenceAllocator_nid_no_patch(&allocator);
+
+    {
+        auto decoder = Decoder(abc);
+        const auto result = DecodeCString(decoder);
+        Check(result.hasValue && result.value.buffer, __LINE__);
+        Check(state.allocateCalls == 1 && state.lastAllocateSize == sizeof(CStringBuffer) + 4, __LINE__);
+        Check(result.value.buffer->refCount == 1 && result.value.buffer->length == 3, __LINE__);
+        Check(std::memcmp(result.value.buffer + 1, "abc", 4) == 0, __LINE__);
+        Check(decoder.bufferPosition == abc.data() + 7, __LINE__);
+        Check(Hashed(decoder, Stream({Word(11), Word(3), Word(101), Bytes("abc")})), __LINE__);
+        TestDeallocate(result.value.buffer);
+    }
+    {
+        const auto bytes = Word(0);
+        auto decoder = Decoder(bytes);
+        const auto result = DecodeCString(decoder);
+        Check(result.hasValue && result.value.buffer && result.value.buffer->length == 0, __LINE__);
+        Check(state.lastAllocateSize == sizeof(CStringBuffer) + 1, __LINE__);
+        Check(*reinterpret_cast<const char*>(result.value.buffer + 1) == 0, __LINE__);
+        Check(Hashed(decoder, Stream({Word(11), Word(0), Word(101)})), __LINE__);
+        TestDeallocate(result.value.buffer);
+    }
+    {
+        const auto bytes = Stream({Word(0xFFFFFFFFU), Bytes("a")});
+        auto decoder = Decoder(bytes);
+        const std::size_t calls = state.allocateCalls;
+        const auto result = DecodeCString(decoder);
+        Check(result.hasValue && !result.value.buffer && state.allocateCalls == calls, __LINE__);
+        Check(decoder.bufferPosition == bytes.data() + 4 && Hashed(decoder, Stream({Word(11), Word(0xFFFFFFFFU)})), __LINE__);
+    }
+    {
+        const std::vector<std::uint8_t> bytes{3, 0, 0};
+        auto decoder = Decoder(bytes);
+        const auto result = DecodeCString(decoder);
+        Check(!result.hasValue && decoder.bufferPosition == bytes.data() && Hashed(decoder, {}), __LINE__);
+    }
+    {
+        const auto bytes = Stream({Word(5), Bytes("ab")});
+        auto decoder = Decoder(bytes);
+        const std::size_t calls = state.allocateCalls;
+        const auto result = DecodeCString(decoder);
+        Check(!result.hasValue && state.allocateCalls == calls, __LINE__);
+        Check(decoder.bufferPosition == bytes.data() + 4 && Hashed(decoder, Stream({Word(11), Word(5)})), __LINE__);
+    }
+    {
+        auto decoder = Decoder(abc);
+        state.failNext = true;
+        Check(ThrowsException<std::bad_alloc>([&] { DecodeCString(decoder); }), __LINE__);
+        state.failNext = false;
+    }
+    {
+        auto decoder = Decoder(abc);
+        OptionalCString result{};
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE(nullptr, &decoder); }), __LINE__);
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE(&result, nullptr); }), __LINE__);
+        decoder.sha1.cursor = 64;
+        Check(ThrowsInvalidArgument([&] { DecodeCString(decoder); }), __LINE__);
+        decoder = Decoder(abc);
+        decoder.bufferPosition = decoder.bufferEnd + 1;
+        Check(ThrowsInvalidArgument([&] { DecodeCString(decoder); }), __LINE__);
+    }
+
+    Check(state.liveAllocations.empty(), __LINE__);
+    RegisterPersistenceAllocator_nid_no_patch(nullptr);
+    activeAllocatorState = nullptr;
+}
+
+void DecodeStrings() {
+    const auto latin1 = Stream({Word(2), {1}, Bytes("hix")});
+    {
+        auto decoder = Decoder(latin1);
+        Check(ThrowsException<std::runtime_error>([&] { DecodeString(decoder); }), __LINE__);
+    }
+
+    TestAllocatorState state;
+    activeAllocatorState = &state;
+    const PersistenceAllocator allocator{&TestAllocate, &TestDeallocate};
+    RegisterPersistenceAllocator_nid_no_patch(&allocator);
+    constexpr std::size_t charactersOffset = 20;
+
+    {
+        auto decoder = Decoder(latin1);
+        const auto result = DecodeString(decoder);
+        Check(result.hasValue && result.value, __LINE__);
+        Check(state.allocateCalls == 1 && state.lastAllocateSize == charactersOffset + 2, __LINE__);
+        const StringImpl& string = *result.value;
+        Check(string.refCount == 2 && string.length == 2 && string.hashAndFlags == Jsc::WtfAbi::StringImplFlag8Bit, __LINE__);
+        Check(string.data == reinterpret_cast<const std::uint8_t*>(result.value) + charactersOffset, __LINE__);
+        Check(std::memcmp(string.data, "hi", 2) == 0, __LINE__);
+        Check(decoder.bufferPosition == latin1.data() + 7, __LINE__);
+        Check(Hashed(decoder, Stream({Word(11), Word(2), Word(3), {1}, Word(101), Bytes("hi")})), __LINE__);
+        TestDeallocate(result.value);
+    }
+    {
+        const auto bytes = Stream({Word(2), {0}, {0x41, 0x00, 0x3A, 0x26}});
+        auto decoder = Decoder(bytes);
+        const auto result = DecodeString(decoder);
+        Check(result.hasValue && result.value, __LINE__);
+        Check(state.lastAllocateSize == charactersOffset + 4, __LINE__);
+        const StringImpl& string = *result.value;
+        Check(string.refCount == 2 && string.length == 2 && string.hashAndFlags == 0, __LINE__);
+        const char16_t expected[] = {u'A', static_cast<char16_t>(0x263A)};
+        Check(std::memcmp(string.data, expected, sizeof(expected)) == 0, __LINE__);
+        Check(decoder.bufferPosition == bytes.data() + 9, __LINE__);
+        Check(Hashed(decoder, Stream({Word(11), Word(2), Word(3), {0}, Word(101), {0x41, 0x00, 0x3A, 0x26}})), __LINE__);
+        TestDeallocate(result.value);
+    }
+    {
+        const auto bytes = Stream({Word(0xFFFFFFFFU), {1}});
+        auto decoder = Decoder(bytes);
+        const std::size_t calls = state.allocateCalls;
+        const auto result = DecodeString(decoder);
+        Check(result.hasValue && !result.value && state.allocateCalls == calls, __LINE__);
+        Check(decoder.bufferPosition == bytes.data() + 4 && Hashed(decoder, Stream({Word(11), Word(0xFFFFFFFFU)})), __LINE__);
+    }
+    {
+        const auto bytes = Word(2);
+        auto decoder = Decoder(bytes);
+        const auto result = DecodeString(decoder);
+        Check(!result.hasValue && decoder.bufferPosition == bytes.data() + 4, __LINE__);
+        Check(Hashed(decoder, Stream({Word(11), Word(2)})), __LINE__);
+    }
+    {
+        const auto bytes = Stream({Word(2), {0}, Bytes("abc")});
+        auto decoder = Decoder(bytes);
+        const std::size_t calls = state.allocateCalls;
+        const auto result = DecodeString(decoder);
+        Check(!result.hasValue && state.allocateCalls == calls, __LINE__);
+        Check(decoder.bufferPosition == bytes.data() + 5 && Hashed(decoder, Stream({Word(11), Word(2), Word(3), {0}})), __LINE__);
+    }
+    {
+        const std::vector<std::uint8_t> bytes{2, 0};
+        auto decoder = Decoder(bytes);
+        const auto result = DecodeString(decoder);
+        Check(!result.hasValue && decoder.bufferPosition == bytes.data() && Hashed(decoder, {}), __LINE__);
+    }
+    {
+        const auto bytes = Stream({Word(1), {2}, Bytes("a")});
+        auto decoder = Decoder(bytes);
+        Check(ThrowsInvalidArgument([&] { DecodeString(decoder); }), __LINE__);
+    }
+    {
+        const auto bytes = Stream({Word(0), {1}});
+        auto decoder = Decoder(bytes);
+        const std::size_t calls = state.allocateCalls;
+        Check(ThrowsException<std::runtime_error>([&] { DecodeString(decoder); }), __LINE__);
+        Check(state.allocateCalls == calls, __LINE__);
+    }
+    {
+        auto decoder = Decoder(latin1);
+        state.failNext = true;
+        Check(ThrowsException<std::bad_alloc>([&] { DecodeString(decoder); }), __LINE__);
+        state.failNext = false;
+    }
+    {
+        auto decoder = Decoder(latin1);
+        OptionalString result{};
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE(nullptr, &decoder); }), __LINE__);
+        Check(ThrowsInvalidArgument([&] { _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE(&result, nullptr); }), __LINE__);
+        decoder.sha1.cursor = 64;
+        Check(ThrowsInvalidArgument([&] { DecodeString(decoder); }), __LINE__);
+    }
+
+    Check(state.liveAllocations.empty(), __LINE__);
+    RegisterPersistenceAllocator_nid_no_patch(nullptr);
+    activeAllocatorState = nullptr;
 }
 
 }
@@ -443,5 +668,7 @@ int main() {
         RegisterPersistenceAllocator_nid_no_patch(nullptr);
         activeAllocatorState = nullptr;
     }
+    DecodeCStrings();
+    DecodeStrings();
     return 0;
 }

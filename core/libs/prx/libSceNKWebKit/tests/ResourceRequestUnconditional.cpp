@@ -63,7 +63,7 @@ void CheckPreserved(ResourceRequestBase& request, const String& commonValue, con
     Require(uncommonValue.impl->refCount == 4);
     {
         String gotCommon = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldENS_14HTTPHeaderNameE(&request, HTTPHeaderName::Accept);
-        String gotUncommon = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &uncommonKey);
+        String gotUncommon = _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(&headers, uncommonKey);
         Require(gotCommon.impl == commonValue.impl);
         Require(gotUncommon.impl == uncommonValue.impl);
         Require(commonValue.impl->refCount == 6);

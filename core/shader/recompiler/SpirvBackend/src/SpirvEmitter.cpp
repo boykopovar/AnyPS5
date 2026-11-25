@@ -321,6 +321,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
+    state.spannedShuffleThroughMemory = state.spannedWave && target.spannedShuffleThroughMemory;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;
         state.requirements.subgroupBallot = true;

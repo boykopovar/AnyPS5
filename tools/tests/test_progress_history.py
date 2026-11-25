@@ -149,6 +149,26 @@ class HistoryCsvTests(unittest.TestCase):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
                 self.assertEqual((output / "history.csv").read_bytes(), original)
 
+    def test_csv_includes_optional_gfx1013_counts(self):
+        import csv
+        metric = {"done": 1, "total": 2, "percent": 50.0}
+        points = [
+            {"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric},
+            {"date": "2026-01-02", "commit": "b" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 0, "total": 8, "percent": 0.0}},
+            {"date": "2026-01-03", "commit": "c" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 5, "total": 8, "percent": 62.5}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([directory, "--csv"])
+            with (Path(directory) / "history.csv").open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                columns = ["gfx1013_done", "gfx1013_total", "gfx1013_percent"]
+                self.assertEqual(reader.fieldnames[-4:], ["shader_metric", *columns])
+                self.assertEqual([[row[column] for column in columns] for row in reader],
+                                 [["", "", ""], ["0", "8", "0.0"], ["5", "8", "62.5"]])
+
 
 class HistoryReportOutputTests(unittest.TestCase):
     def test_report_output_errors_are_usage_errors_and_allow_retry(self):
@@ -749,11 +769,12 @@ class ProgressHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "site"
             with patch.object(progress_history, "collect", return_value=[point]):
-                progress_history.main([str(output)])
+                progress_history.main([str(output), "--ref", "feature/a&b"])
             svg = (output / "history.svg").read_text(encoding="utf-8")
             self.assertIn("\u25cf", svg)
             html = (output / "history.html").read_text(encoding="utf-8")
             self.assertIn("<!DOCTYPE html>", html)
+            self.assertIn("<code>feature/a&amp;b</code>", html)
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
             badge = (output / "badge-week.svg").read_text(encoding="utf-8")
@@ -838,6 +859,34 @@ class ProgressHistoryTests(unittest.TestCase):
                     progress_history.load_cache(path, "signature")
             self.assertIn(str(path), str(raised.exception))
             self.assertEqual(path.read_bytes(), b"preserve cache")
+
+    def test_duplicate_cache_commit_is_rejected_before_writing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            output.mkdir()
+            csv_report = output / "history.csv"
+            csv_report.write_bytes(b"previous CSV")
+            cache = root / "counts.json"
+            checkout = root / "checkout"
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            day = "2026-01-01"
+            commit(checkout, day, "example", "int APS5_VABI Ready() { return 1; }\n")
+            sha = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+            counts = {"libraries": {"done": 1, "total": 2, "percent": 50},
+                      "shaders": {"done": 0, "total": 1, "percent": 0}, "shader_metric": "legacy"}
+            changed = {**counts, "libraries": {"done": 2, "total": 2, "percent": 100}}
+            original = (f'{{"schema_version":2,"rules":"{progress_history.cache_signature()}",'
+                        f'"commits":{{"{sha}":{json.dumps(counts)},"{sha}":{json.dumps(changed)}}}}}').encode()
+            cache.write_bytes(original)
+            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(output), "--csv",
+                                        "--cache", str(cache), "--since", day, "--until", day],
+                                       capture_output=True, timeout=10, env={**os.environ, "GIT_DIR": str(checkout / ".git")})
+            self.assertEqual(completed.returncode, 2, (completed.stdout, completed.stderr, csv_report.read_bytes()))
+            self.assertIn(f"{cache}: duplicate JSON key '{sha}'".encode(), completed.stderr)
+            self.assertEqual(cache.read_bytes(), original)
+            self.assertEqual(csv_report.read_bytes(), b"previous CSV")
+            self.assertFalse((output / "history.json").exists())
 
     def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
         with tempfile.TemporaryDirectory() as directory:

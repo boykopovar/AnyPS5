@@ -1,5 +1,0 @@
-# libSceNet
-
-## change [sceNetSetsockopt, sceNetGetsockopt and sceNetConnect]
-
-- [sceNetSetsockopt, sceNetGetsockopt and sceNetConnect](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - retries past the first after an expired `0x1109` connect timeout are unmeasured. They answer from the host attempt, as FreeBSD 11.4 does once [`kern_connectat`](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/kern/uipc_syscalls.c#L558-L620) has cleared `SS_ISCONNECTING`: `EADDRINUSE` while pending, `EISCONN` once connected, `ECONNREFUSED` once refused or timed out ([`tcp_usr_connect`](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/netinet/tcp_usrreq.c#L511-L541)); `SO_ERROR` keeps the host error, which FreeBSD clears. On a PS5 the timeout returned `EAGAIN`, `SO_ERROR` 0, the next connect `EADDRINUSE`. `0x1109` is an `int` of microseconds ([shadPS4's `ORBIS_NET_SO_CONNECTTIMEO`](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/net/net_types.h)); 1 reads back as 1000 there, 1 here. Closes when: later retries measured on a PS5

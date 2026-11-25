@@ -35,7 +35,7 @@ struct FloatSize {
     float m_height{0.0f};
 
     float aspectRatio() const {
-        return m_height != 0.0f ? (m_width / m_height) : 0.0f;
+        return m_width / m_height;
     }
 };
 
