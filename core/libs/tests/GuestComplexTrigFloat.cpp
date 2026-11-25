@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cfenv>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -32,6 +34,18 @@ int main() {
     Require(Near(cacosf_nid_postfix(zero), pi / 2, 0.0f));
     Require(Near(casinf_nid_postfix(zero), 0.0f, 0.0f));
     Require(Near(catanf_nid_postfix(zero), 0.0f, 0.0f));
+    const auto largeAtan = catanf_nid_postfix(Make(1e30f, 1e30f));
+    Require(__real__ largeAtan == 0x1.921fb6p+0f && __imag__ largeAtan == 0x1.4484cp-101f);
+    const auto largeAtanh = catanhf_nid_postfix(Make(1e5f, 1.0f));
+    Require(__real__ largeAtanh == 0x1.4f8b58p-17f && __imag__ largeAtanh == 0x1.921fb6p+0f);
+    const auto nearPole = catanhf_nid_postfix(Make(1.0f, std::numeric_limits<float>::denorm_min()));
+    Require(__real__ nearPole == 0x1.9fe368p+5f && __imag__ nearPole == 0x1.921fb6p-1f);
+    const auto belowCut = catanhf_nid_postfix(Make(-2.0f, -0.0f));
+    Require(__real__ belowCut == -0x1.193ea8p-1f && __imag__ belowCut == -0x1.921fb6p+0f);
+    std::feclearexcept(FE_DIVBYZERO);
+    const auto pole = catanf_nid_postfix(Make(-0.0f, -1.0f));
+    Require(__real__ pole == 0.0f && std::signbit(__real__ pole) && std::isinf(__imag__ pole) && std::signbit(__imag__ pole));
+    Require(std::fetestexcept(FE_DIVBYZERO) != 0);
     Require(Near(ccosf_nid_postfix(zero), 1.0f, 0.0f));
     Require(Near(csinf_nid_postfix(zero), 0.0f, 0.0f));
     Require(Near(ctanf_nid_postfix(zero), 0.0f, 0.0f));

@@ -723,13 +723,28 @@ __complex__ float APS5_VABI casinhf_nid_postfix(__complex__ float z) {
 }
 
 __complex__ float APS5_VABI catanf_nid_postfix(__complex__ float z) {
-    const auto result = std::atan(std::complex<float>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
+    const auto rotated = catanhf_nid_postfix(MakeComplex(__imag__ z, __real__ z));
+    return MakeComplex(__imag__ rotated, __real__ rotated);
 }
 
 __complex__ float APS5_VABI catanhf_nid_postfix(__complex__ float z) {
-    const auto result = std::atanh(std::complex<float>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
+    const float real = __real__ z;
+    const float imaginary = __imag__ z;
+    if (std::isinf(real) || std::isinf(imaginary)) {
+        const float angle = std::isnan(imaginary) ? imaginary : static_cast<float>(atan2_nid_postfix(std::copysign(1.0, imaginary), 0.0));
+        return MakeComplex(std::copysign(0.0f, real), angle);
+    }
+    if (std::isnan(real) || std::isnan(imaginary)) {
+        const float nan = real + imaginary;
+        return MakeComplex(real == 0.0f ? real : nan, nan);
+    }
+    const double x = std::abs(static_cast<double>(real));
+    const double y = imaginary;
+    if (x == 1.0 && imaginary == 0.0f) return MakeComplex(real / std::abs(imaginary), imaginary);
+    const double delta = 1.0 - x;
+    const double magnitude = 0.25 * log1p_nid_postfix(4.0 * x / (delta * delta + y * y));
+    const double angle = 0.5 * atan2_nid_postfix(2.0 * y, delta * (1.0 + x) - y * y);
+    return MakeComplex(static_cast<float>(std::copysign(magnitude, real)), static_cast<float>(angle));
 }
 
 __complex__ float APS5_VABI ccosf_nid_postfix(__complex__ float z) {
