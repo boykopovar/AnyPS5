@@ -115,7 +115,7 @@ static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the pla
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
 static_assert(sizeof(DescriptorSource) == 224, "DescriptorSource changed: update the plan encoder");
 static_assert(sizeof(TableColumn) == 120, "TableColumn changed: update the plan encoder");
-static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
+static_assert(sizeof(KeyDomain) == 24, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 104, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
 static_assert(sizeof(UniformFill) == 28, "UniformFill changed: update the plan encoder");
@@ -155,7 +155,7 @@ static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update t
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 20, "TableColumn changed: update the plan encoder");
-static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
+static_assert(fieldCount<KeyDomain>() == 7, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
 static_assert(fieldCount<UniformFill>() == 5, "UniformFill changed: update the plan encoder");
@@ -1228,6 +1228,9 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             domains.Value(domain.offset);
             domains.Value(domain.stride);
             domains.Value(domain.value);
+            domains.Value(domain.child);
+            domains.Value(domain.shift);
+            domains.Value(domain.mask);
         });
         out.Value(column.unkeyed);
         out.Value(column.indirect);
@@ -1390,11 +1393,14 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.sampler);
         in.Value(column.address);
         in.Value(column.buffer);
-        in.List(column.keyDomains, 13, [](Reader& domains, KeyDomain& domain) {
+        in.List(column.keyDomains, 22, [](Reader& domains, KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
             domains.Value(domain.stride);
             domains.Value(domain.value);
+            domains.Value(domain.child);
+            domains.Value(domain.shift);
+            domains.Value(domain.mask);
         });
         in.Value(column.unkeyed);
         in.Value(column.indirect);
