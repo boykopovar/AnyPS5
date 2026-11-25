@@ -1945,6 +1945,16 @@ int main() {
         Require(close_nid_postfix(directoryShared) == 0 && close_nid_postfix(directoryOther) == 0);
         const int directoryExclusive = open_nid_postfix(rootName.c_str(), SCE_KERNEL_O_RDONLY | exclusiveNonblocking, 0);
         Require(directoryExclusive >= 0 && close_nid_postfix(directoryExclusive) == 0);
+#ifdef __APPLE__
+        for (const int lock : {SCE_KERNEL_O_SHLOCK, SCE_KERNEL_O_EXLOCK}) {
+            const int seed = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_WRONLY, 0);
+            Require(seed >= 0 && write_nid_postfix(seed, "sample", 6) == 6 && close_nid_postfix(seed) == 0);
+            const int fd = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | lock, 0);
+            Require(fd >= 0 && std::filesystem::file_size(lockedFile) == 0);
+            Require(write_nid_postfix(fd, "x", 1) == -1 && *__error_nid_postfix() == 9);
+            Require(close_nid_postfix(fd) == 0);
+        }
+#else
         bool truncateThrew = false;
         try {
             open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | SCE_KERNEL_O_SHLOCK, 0);
@@ -1952,6 +1962,7 @@ int main() {
             truncateThrew = true;
         }
         Require(truncateThrew);
+#endif
         constexpr int readTruncateShared = SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | SCE_KERNEL_O_SHLOCK;
         const int probe = open_nid_postfix(lockedName.c_str(), SCE_KERNEL_O_RDONLY, 0);
         Require(probe >= 0 && close_nid_postfix(probe) == 0);

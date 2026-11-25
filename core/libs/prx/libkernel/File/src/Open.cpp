@@ -198,6 +198,12 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_SYNC) f |= O_SYNC;
     if (sceFlags & SCE_KERNEL_O_DIRECTORY) f |= O_DIRECTORY;
     if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= O_CLOEXEC;
+#ifdef __APPLE__
+    if (sceFlags & (SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_EXLOCK)) {
+        f |= (sceFlags & SCE_KERNEL_O_EXLOCK) ? O_EXLOCK : O_SHLOCK;
+        if (sceFlags & SCE_KERNEL_O_NONBLOCK) f |= O_NONBLOCK;
+    }
+#endif
     return f;
 }
 #endif
@@ -250,8 +256,9 @@ static int CreationThroughSeparatorError(const std::filesystem::path& native, in
 }
 #endif
 
-static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
-    if ((flags & SCE_KERNEL_O_DIRECTORY) != 0) flags &= ~SCE_KERNEL_O_CREAT;
+static int OpenNative(const std::filesystem::path& native, int requestedFlags, std::uint16_t mode, bool* lockedAtOpen = nullptr) {
+    if ((requestedFlags & SCE_KERNEL_O_DIRECTORY) != 0) requestedFlags &= ~SCE_KERNEL_O_CREAT;
+    int flags = lockedAtOpen ? requestedFlags & ~SCE_KERNEL_O_TRUNC : requestedFlags;
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
@@ -305,9 +312,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if (separatorError == 2) errno = ENOENT;
     else fd = NativeOpen(openNative, MapFlags(flags), mode);
 #else
+#ifdef __APPLE__
+    if (lockedAtOpen) {
+        flags = requestedFlags;
+        *lockedAtOpen = true;
+    }
+#endif
     int fd = NativeOpen(native, MapFlags(flags), mode);
 #endif
 #ifdef __APPLE__
+    if (fd < 0 && lockedAtOpen && errno == EWOULDBLOCK) return SCE_KERNEL_ERROR_EWOULDBLOCK;
     if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
         struct stat opened{};
         if (::fstat(fd, &opened) == 0 && S_ISDIR(opened.st_mode)) {
@@ -360,8 +374,9 @@ static int OpenNativeLocked(const std::filesystem::path& native, int flags, std:
     if ((flags & (SCE_KERNEL_O_SHLOCK | SCE_KERNEL_O_EXLOCK)) == 0) return OpenNative(native, flags, mode);
     constexpr int GuestEisdir = 21;
     const bool truncate = (flags & SCE_KERNEL_O_TRUNC) != 0;
-    const int fd = OpenNative(native, flags & ~SCE_KERNEL_O_TRUNC, mode);
-    if (fd < 0) return fd;
+    bool lockedAtOpen = false;
+    const int fd = OpenNative(native, flags, mode, &lockedAtOpen);
+    if (fd < 0 || lockedAtOpen) return fd;
     const int operation = ((flags & SCE_KERNEL_O_EXLOCK) != 0 ? 2 : 1) | ((flags & SCE_KERNEL_O_NONBLOCK) != 0 ? 4 : 0);
     int error = 0;
     try {
