@@ -514,8 +514,9 @@ void APS5_VABI libSceLibcInternalInventory_132_nid_no_patch(void* self) {
 }
 APS5_EXPORT("WoCt9o2SYHw", libSceLibcInternalInventory_132_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_133_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_133_nid_no_patch(void* self, const void* info, std::size_t refs) {
+    _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(
+        static_cast<GuestLocale::Facet*>(self), static_cast<const GuestLocale::LocinfoStorage*>(info), refs);
 }
 APS5_EXPORT("Ky+C-qbKcX0", libSceLibcInternalInventory_133_nid_no_patch);
 
@@ -589,11 +590,6 @@ void APS5_VABI libSceLibcInternalInventory_149_nid_no_patch(void* self, const vo
 }
 APS5_EXPORT("eLB2+1+mVvg", libSceLibcInternalInventory_149_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_150_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("96Ev+CE1luE", libSceLibcInternalInventory_150_nid_no_patch);
-
 void APS5_VABI libSceLibcInternalInventory_153_nid_no_patch(void* self) {
     (void)self;
 }
@@ -603,11 +599,6 @@ void APS5_VABI libSceLibcInternalInventory_154_nid_no_patch(void* self) {
     (void)self;
 }
 APS5_EXPORT("yDdbQr1oLOc", libSceLibcInternalInventory_154_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_155_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("XghI4vmw8mU", libSceLibcInternalInventory_155_nid_no_patch);
 
 void APS5_VABI libSceLibcInternalInventory_159_nid_no_patch(void* self) {
     (void)self;
@@ -938,16 +929,6 @@ void APS5_VABI libSceLibcInternalInventory_234_nid_no_patch(void* self) {
     (void)self;
 }
 APS5_EXPORT("zb3436295XU", libSceLibcInternalInventory_234_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_235_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("FX+eS2YsEtY", libSceLibcInternalInventory_235_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_236_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("i4J5FvRPG-w", libSceLibcInternalInventory_236_nid_no_patch);
 
 [[noreturn]] void APS5_VABI libSceLibcInternalInventory_237_nid_no_patch(const char* message) {
     if (message == nullptr) NotImplemented_nid_no_patch("std::_Rng_abort with a null message");

@@ -452,11 +452,9 @@ int APS5_VABI sceNpMatching2JoinLobby(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2JoinRoomA(void) {
-    std::lock_guard lock(matching2Mutex);
-    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2JoinRoomA(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId) {
+    (void)requestOpt;
+    return StartRequest(__func__, ctxId, request, requestId, Leading::RoomId);
 }
 
 int APS5_VABI sceNpMatching2LeaveLobby(void) {

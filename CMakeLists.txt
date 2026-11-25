@@ -308,6 +308,24 @@ if(BUILD_TESTING)
         core/shader/recompiler/ControlFlow/include)
     add_test(NAME shader_ssa_pass_reads COMMAND shader_ssa_pass_reads_tests)
     set_tests_properties(shader_ssa_pass_reads PROPERTIES TIMEOUT 20)
+    add_test_executable(shader_image_overwrite_proof_tests
+        core/shader/recompiler/tests/ImageOverwriteProof.cpp
+        core/shader/recompiler/Optimization/src/ImageOverwriteProof.cpp
+        core/shader/recompiler/RdnaDecoder/src/RdnaImageOpDecoder.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrProgram.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrType.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_image_overwrite_proof_tests PRIVATE
+        core/shader/recompiler
+        core/shader/recompiler/IntermediateRepresentation/include
+        core/shader/recompiler/Optimization/include
+        core/shader/recompiler/RdnaDecoder/include
+        core/shader/recompiler/ControlFlow/include)
+    add_test(NAME shader_image_overwrite_proof COMMAND shader_image_overwrite_proof_tests)
+    set_tests_properties(shader_image_overwrite_proof PROPERTIES TIMEOUT 20)
     add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
@@ -561,6 +579,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_helpers.py)
+        set_tests_properties(conventions_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         set_tests_properties(test_registration PROPERTIES TIMEOUT 60)
@@ -610,7 +631,7 @@ if(BUILD_TESTING)
         add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
         add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests EnvironmentLoaderRetentionTests)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests HighRefreshLimitationTests EnvironmentLoaderRetentionTests)
         add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
         set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
@@ -701,6 +722,18 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME vulkan_validation_gate_arguments COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ArgumentTests)
+        add_test(NAME vulkan_validation_gate_identity COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IdentityTests)
+        add_test(NAME vulkan_validation_gate_cache COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CacheTests)
+        add_test(NAME vulkan_validation_gate_save COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py SaveTests)
+        add_test(NAME vulkan_validation_gate_wait COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py WaitTests)
+        add_test(NAME vulkan_validation_gate_parse_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ParseReportTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
@@ -759,7 +792,9 @@ if(BUILD_TESTING)
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchScanTests)
+        add_test(NAME pr_overlap_branch_scan_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py ExportSourceTests)
         add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
         add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
@@ -839,6 +874,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
+        add_test(NAME tool_script_modes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_tool_script_modes.py)
+        set_tests_properties(tool_script_modes PROPERTIES TIMEOUT 20)
         add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
         set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
@@ -881,6 +919,10 @@ if(BUILD_TESTING)
         add_test(NAME trace_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_timeline.py)
         set_tests_properties(trace_timeline PROPERTIES TIMEOUT 60)
+
+        add_test(NAME trace_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_diff.py)
+        set_tests_properties(trace_diff PROPERTIES TIMEOUT 60)
         set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
         file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")

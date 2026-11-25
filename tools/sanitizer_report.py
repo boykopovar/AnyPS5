@@ -61,8 +61,11 @@ def first_report(output):
 def reports(path):
     found = {}
     for case in ET.parse(path).getroot().iter("testcase"):
-        output = "\n".join(case.findtext(channel) or "" for channel in ("system-out", "system-err"))
-        if report := first_report(output):
+        output = [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
+        for element in case:
+            if element.tag in ("failure", "error"):
+                output.extend((element.text or "", element.get("message", "")))
+        if report := first_report("\n".join(output)):
             found[case.get("name")] = report
     return found
 
@@ -170,7 +173,10 @@ def main(argv=None):
         if args.summary:
             with args.summary.open("a", encoding="utf-8") as summary:
                 summary.write(text)
-    except (OSError, ET.ParseError, ValueError, RuntimeError) as error:
+    except ET.ParseError as error:
+        print(f"sanitizer_report: {args.junit}: {error}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, RuntimeError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
     sys.stdout.write(output)
