@@ -262,7 +262,7 @@ static void TestSubmixerKeyInput() {
     option.rack_option.max_ports = 1;
     option.max_channels = 2;
     option.max_envelope_points = 1;
-    option.max_inputs = 2;
+    option.max_inputs = 3;
     option.num_peak_meter_blocks = 1;
     Ngs2ContextBufferInfo query{};
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &query) == SCE_NGS2_OK);
@@ -289,9 +289,16 @@ static void TestSubmixerKeyInput() {
     Ngs2SubmixerVoiceCompressorParam param{{}, 0x8, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0};
     Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
     Render(system, {0.25f * 0.5f / 0.75f});
+    Route(input0, 1, submixer, 2);
+    Render(system, {0.25f * 0.5f / 0.75f});
     param.flags = 0xa;
     Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
     Render(system, {0.25f * 0.5f / 0.75f});
+    param.flags = 0;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
+    Render(system, {0.25f});
+    param.flags = 0xa;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, param);
     Route(input1, 0, 0);
     Render(system, {0.25f});
     Route(input1, 0, submixer, 1);
