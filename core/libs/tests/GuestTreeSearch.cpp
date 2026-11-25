@@ -160,5 +160,13 @@ int main() {
         void* parent = tdelete_nid_postfix(&first, &tree, CompareInts);
         Require(parent != nullptr && *static_cast<const int* const*>(parent) == &second);
     }
+    {
+        int four = 4, two = 2, six = 6, one = 1, three = 3, five = 5, seven = 7;
+        std::array<int*, 7> keys{&four, &two, &six, &one, &three, &five, &seven};
+        void* deep = nullptr;
+        for (int* key : keys) Require(tsearch_nid_postfix(key, &deep, CompareInts) != nullptr);
+        void* slot = tdelete_nid_postfix(&one, &deep, CompareInts);
+        Require(slot != nullptr && *static_cast<const int* const*>(slot) == &two);
+    }
     return 0;
 }
