@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import errno
 import io
@@ -68,6 +69,13 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
         image[0x800:0x800 + len(symbols)] = symbols
         image[0x800 + len(symbols):0x800 + len(symbols) + len(strings)] = strings
     Path(path).write_bytes(bytes(image))
+
+
+class FakeSymbolizer:
+    modules = {}
+
+    def frame(self, frame):
+        return frame.upper()
 
 
 class SymbolizeSamplesTests(unittest.TestCase):
@@ -372,6 +380,67 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 for path, content in original.items():
                     self.assertEqual(path.read_bytes(), content)
 
+    def test_code_section_overlaps_are_rejected_before_symbolization(self):
+        path = self.libs / "overlap.prx"
+        sections = 0x58 + 240
+        cases = {
+            "code": [(sections + 80 + 12, 0x1040)],
+            "data_after": [(sections + 40 + 12, 0x1080)],
+            "data_before": [(sections + 40 + 12, 0x0F80)],
+            "contained_data": [(sections + 40 + 12, 0x1040), (sections + 40 + 8, 0x10),
+                               (sections + 40 + 16, 0x10)],
+            "same_start": [(sections + 80 + 12, 0x1000)],
+            "raw_padding": [(sections + 16, 0x200), (sections + 80 + 12, 0x1100)],
+            "virtual_tail": [(sections + 8, 0x200), (sections + 80 + 12, 0x1100)],
+            "headers": [(0x58 + 60, 0x1001)],
+        }
+        inventory = Path(__file__).resolve().parents[1] / "pe_symbol_inventory.py"
+        for name, updates in cases.items():
+            with self.subTest(name=name):
+                build_pe(path, second_code=True)
+                image = bytearray(path.read_bytes())
+                for offset, value in updates:
+                    struct.pack_into("<I", image, offset, value)
+                path.write_bytes(image)
+                with self.assertRaisesRegex(ValueError, "code section overlaps"):
+                    symbolize_samples.PeModule(path)
+                warnings = []
+                symbolizer = symbolize_samples.Symbolizer([self.libs], {path.name: (SIZE_OF_IMAGE, TIMESTAMP)},
+                                                          warn=warnings.append)
+                frame = "overlap.prx+0x1080"
+                self.assertEqual(symbolizer.frame(frame), frame)
+                self.assertIn("code section overlaps", "\n".join(warnings))
+        build_pe(path, second_code=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, sections + 80 + 12, 0x1040)
+        path.write_bytes(image)
+        result = subprocess.run([sys.executable, str(inventory), str(path)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("code section overlaps", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_adjacent_code_sections_and_empty_overlapping_sections_remain_supported(self):
+        path = self.libs / "boundaries.prx"
+        sections = 0x58 + 240
+        for index in (1, 2):
+            with self.subTest(empty_section=index):
+                build_pe(path, second_code=True)
+                image = bytearray(path.read_bytes())
+                struct.pack_into("<I", image, sections + index * 40 + 12, 0x1040)
+                struct.pack_into("<I", image, sections + index * 40 + 8, 0)
+                struct.pack_into("<I", image, sections + index * 40 + 16, 0)
+                path.write_bytes(image)
+                self.assertEqual(symbolize_samples.PeModule(path).name(0x1085), "static_f")
+        build_pe(path, second_code=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, sections + 80 + 12, 0x1100)
+        path.write_bytes(image)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.name(0x1085), "static_f")
+        self.assertEqual(module.name(0x1140), "late_fn")
+
     def test_coff_symbols_name_code_addresses(self):
         module = symbolize_samples.PeModule(self.libs / "libSceAgcDriver.prx")
         self.assertEqual((module.size, module.timestamp), (SIZE_OF_IMAGE, TIMESTAMP))
@@ -673,6 +742,14 @@ class SymbolizeSamplesTests(unittest.TestCase):
         capture = symbolize_samples.load(samples)
         self.assertEqual(capture.stacks, {stack: 5})
         self.assertEqual(capture.self_counts, {})
+
+    def test_collapsed_stack_rejects_empty_frames(self):
+        samples = self.root / "worker.collapsed.txt"
+        for stack in (";draw", "worker;", "worker;;draw", "worker; \t ;draw"):
+            with self.subTest(stack=stack):
+                samples.write_text(f"# samples=5\n{stack} 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"worker\.collapsed\.txt:2:.*empty frame"):
+                    symbolize_samples.load(samples)
 
     def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
         samples = self.root / "mixed.txt"
@@ -1251,6 +1328,16 @@ class SymbolizeSamplesTests(unittest.TestCase):
                     {"name": "libSceAgcDriver.prx", "candidate_accepted": timestamp == TIMESTAMP,
                      "identity_recorded": True, "identity_matches": timestamp == TIMESTAMP}])
 
+    def test_hex_and_ascii_digit_predicates(self):
+        for value in ("0", "ff", "0x1F", "0XaB", "DEADbeef"):
+            self.assertTrue(symbolize_samples.is_hex(value), value)
+        for value in ("", "0x", "g1", "-1", "1 2", "1\n", "0x0x1"):
+            self.assertFalse(symbolize_samples.is_hex(value), value)
+        for value in ("0", "0123456789"):
+            self.assertTrue(symbolize_samples.is_ascii_digits(value), value)
+        for value in ("", "1a", "-1", "1.5", "١", "²"):
+            self.assertFalse(symbolize_samples.is_ascii_digits(value), value)
+
 
 class CandidateModuleTests(unittest.TestCase):
     def setUp(self):
@@ -1438,6 +1525,26 @@ class MappedExportTests(unittest.TestCase):
         module = self.module()
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
+
+    def test_export_directory_must_hold_its_header(self):
+        for size in (0, 1, 39):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                with self.assertRaisesRegex(ValueError, "PE export directory is smaller than its header"):
+                    self.module()
+
+    def test_export_directory_cannot_wrap_the_rva_address_space(self):
+        struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, 0xFFFFFFFF)
+        with self.assertRaisesRegex(ValueError, "PE export directory exceeds address space"):
+            self.module()
+
+    def test_export_directory_size_boundaries_remain_valid(self):
+        for size in (40, 0xFFFFE000):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                module = self.module()
+                self.assertEqual(module.name(0x1021), "~first_func")
+                self.assertEqual(module.name(0x1061), "~second_func")
 
     def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
         struct.pack_into("<H", self.data, 0x46, 3)
@@ -1641,6 +1748,103 @@ class MappedExportTests(unittest.TestCase):
         self.data[0xAFE:0xB08] = b"ab_beyond\0"
         with self.assertRaisesRegex(ValueError, "address space"):
             self.module()
+
+
+class WindowHelperTests(unittest.TestCase):
+    def test_subtract_keeps_only_positive_differences(self):
+        later = collections.Counter({"a": 3, "b": 1})
+        earlier = collections.Counter({"a": 1, "b": 1, "c": 2})
+        self.assertEqual(symbolize_samples.subtract(later, earlier), collections.Counter({"a": 2}))
+
+    def test_sample_counts_splits_self_and_inclusive_counts(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        total, self_counts, inclusive = symbolize_samples.sample_counts(FakeSymbolizer(), samples)
+        self.assertEqual(total, 4)
+        self.assertEqual(self_counts, collections.Counter({"WORK": 3, "IDLE": 1}))
+        self.assertEqual(inclusive, collections.Counter({"MAIN": 4, "WORK": 3, "IDLE": 1}))
+
+    def test_summarize_lists_the_hottest_self_symbol_with_its_share(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        lines = symbolize_samples.summarize(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("hottest by self:", lines)
+        self.assertTrue(any("75.0%" in line and "WORK" in line for line in lines))
+        self.assertFalse(any("IDLE" in line for line in lines))
+
+    def test_json_report_lists_totals_and_symbols(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        report = symbolize_samples.json_report(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(report["samples"], 4)
+        self.assertEqual(report["self"], [{"symbol": "WORK", "count": 3}])
+        self.assertEqual(report["modules"], [])
+class HeaderWindowTests(unittest.TestCase):
+    def test_read_headers_marks_a_repeated_module_name_as_ambiguous(self):
+        lines = ["# module libA 0x10 0x20", "# module libB 0x1 0x2", "# module liba 0x9 0x9", "not a header"]
+        self.assertEqual(symbolize_samples.read_headers(lines), {"liba": False, "libb": (1, 2)})
+
+    def test_window_subtracts_counters_and_keeps_the_later_headers(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.headers = {"liba": (1, 2)}
+        later.stacks = collections.Counter({"s": 5})
+        earlier.stacks = collections.Counter({"s": 2})
+        result = symbolize_samples.window(later, earlier)
+        self.assertEqual(result.stacks, collections.Counter({"s": 3}))
+        self.assertEqual(result.headers, {"liba": (1, 2)})
+
+    def test_validate_window_needs_module_records_in_both_captures(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.self_counts = collections.Counter({("libA", 4): 1})
+        earlier.self_counts = collections.Counter({("libA", 4): 1})
+        with self.assertRaisesRegex(ValueError, "needs module records in both captures"):
+            symbolize_samples.validate_window(later, earlier)
+        earlier.headers = {"liba": (1, 2)}
+        later.headers = {"liba": (1, 3)}
+        with self.assertRaisesRegex(ValueError, "module identity differs"):
+            symbolize_samples.validate_window(later, earlier)
+
+    def test_validate_window_refuses_counters_that_decrease(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        earlier.stacks = collections.Counter({"s": 5})
+        later.stacks = collections.Counter({"s": 3})
+        with self.assertRaisesRegex(ValueError, "cumulative sample counters decreased"):
+            symbolize_samples.validate_window(later, earlier)
+        later.stacks = collections.Counter({"s": 7})
+        symbolize_samples.validate_window(later, earlier)
+class SampleFileLoadTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "samples.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_load_reads_collapsed_stacks_and_their_format(self):
+        samples = symbolize_samples.load(self.write("main;work 3\nmain;idle 1\n"))
+        self.assertEqual(samples.stacks, collections.Counter({"main;work": 3, "main;idle": 1}))
+        self.assertEqual(samples.capture_format, "collapsed")
+
+    def test_load_refuses_collapsed_and_address_records_in_one_capture(self):
+        path = self.write("main;work 3\nlibA 0x10 2 3\n")
+        with self.assertRaisesRegex(ValueError, "cannot mix collapsed-stack and address records"):
+            symbolize_samples.load(path)
+
+    def test_load_reads_address_records_and_refuses_a_non_hex_offset(self):
+        samples = symbolize_samples.load(self.write("# module libA 0x10 0x20\nlibA 0x10 2 5\n"))
+        self.assertEqual(samples.self_counts[("libA", "0x10")], 2)
+        self.assertEqual(samples.inclusive[("libA", "0x10")], 5)
+        self.assertEqual(samples.headers, {"liba": (0x10, 0x20)})
+        with self.assertRaisesRegex(ValueError, "hexadecimal offset"):
+            symbolize_samples.load(self.write("libA 10 2 5\n"))
+
+    def test_load_refuses_a_thread_filter_without_thread_headings(self):
+        with self.assertRaisesRegex(ValueError, "thread filtering requires thread headings"):
+            symbolize_samples.load(self.write("libA 0x10 2 5\n"), thread="1")
 
 
 if __name__ == "__main__":

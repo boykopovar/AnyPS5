@@ -367,23 +367,25 @@ void TestMp3ParseFrame() {
     Require(sceAjmDecMp3ParseFrame(forbiddenBitrate, 4, 0, &frame) == invalidParameter);
     const std::uint8_t reservedSampleRate[4] = {0xFF, 0xFB, 0x1C, 0xC4};
     Require(sceAjmDecMp3ParseFrame(reservedSampleRate, 4, 0, &frame) == invalidParameter);
-    const std::uint8_t mpeg25Above64Kbps[4] = {0xFF, 0xE3, 0x98, 0xC0};
-    Require(sceAjmDecMp3ParseFrame(mpeg25Above64Kbps, 4, 0, &frame) == invalidParameter);
+    const std::uint8_t mpeg25Above64Kbps[4] = {0xFF, 0xE3, 0x90, 0x00};
+    Require(ParsesTo(mpeg25Above64Kbps, 4, 0x20a, 2, 576, 80000, 11025));
+    const std::uint8_t mpeg25At64Kbps[4] = {0xFF, 0xE3, 0x80, 0x00};
+    Require(ParsesTo(mpeg25At64Kbps, 4, 0x1a1, 2, 576, 64000, 11025));
+    for (const std::uint8_t index : {10u, 14u}) {
+        const std::uint8_t header[4] = {0xFF, 0xE3, static_cast<std::uint8_t>(index << 4u), 0x00};
+        Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 0, &frame) == invalidParameter);
+    }
     for (const std::uint8_t layer : {0u, 2u, 3u}) {
         const std::uint8_t header[4] = {0xFF, static_cast<std::uint8_t>(0xF9u | (layer << 1u)), 0x90, 0x04};
-        if (layer == 0) {
+        for (const int parseOfl : {0, 1}) {
             std::memset(&frame, 0xA5, sizeof(frame));
             const auto previous = frame;
-            Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 0, &frame) == invalidParameter);
+            Require(sceAjmDecMp3ParseFrame(header, sizeof(header), parseOfl, &frame) == invalidParameter);
             Require(std::memcmp(&frame, &previous, sizeof(frame)) == 0);
-        } else {
-            Require(ParsesTo(header, sizeof(header), 417, 2, 1152, 128000, 44100));
         }
-        std::memset(&frame, 0xA5, sizeof(frame));
-        const auto previous = frame;
-        Require(sceAjmDecMp3ParseFrame(header, sizeof(header), 1, &frame) == invalidParameter);
-        Require(std::memcmp(&frame, &previous, sizeof(frame)) == 0);
     }
+    const std::uint8_t layer3Header[4] = {0xFF, 0xFB, 0x90, 0x04};
+    Require(ParsesTo(layer3Header, sizeof(layer3Header), 417, 2, 1152, 128000, 44100));
 }
 
 const std::uint8_t LAME_MPEG1_STEREO_VBR[] = {
@@ -463,6 +465,27 @@ std::vector<std::uint8_t> ProtectedMp3Frame(std::vector<std::uint8_t> frame, boo
     return frame;
 }
 
+void TestMp3ParseFrameConsoleTags() {
+    for (const char* tag : {"Xing", "Info"}) {
+        std::vector<std::uint8_t> stream(417, 0);
+        const std::uint8_t header[4] = {0xFF, 0xFB, 0x90, 0x04};
+        std::memcpy(stream.data(), header, sizeof(header));
+        std::memcpy(stream.data() + 36, tag, 4);
+        stream[43] = 0x0F;
+        stream[47] = 100;
+        stream[50] = 0xC3;
+        stream[51] = 0x50;
+        Require(OflParsesTo(stream, 417, 100, 0, 0, 0));
+        Require(ParsesTo(stream.data(), 417, 417, 2, 1152, 128000, 44100));
+    }
+    std::vector<std::uint8_t> vbri(417, 0);
+    const std::uint8_t header[4] = {0xFF, 0xFB, 0x90, 0x04};
+    std::memcpy(vbri.data(), header, sizeof(header));
+    std::memcpy(vbri.data() + 36, "VBRI", 4);
+    vbri[48] = 0xC3;
+    vbri[49] = 0x50;
+    Require(OflParsesTo(vbri, 417, 0, 0, 0, 2));
+}
 void TestMp3ParseOfl() {
     const auto stereo = Mp3Frame(LAME_MPEG1_STEREO_VBR, sizeof(LAME_MPEG1_STEREO_VBR), 417);
     Require(OflParsesTo(stereo, 417, 10, 1152 + 576 + 529, 10000, 1));
@@ -1053,13 +1076,20 @@ void TestInstanceContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidInstance = static_cast<int>(0x80930003);
     constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int invalidFlags = static_cast<int>(0x8093000C);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmInstanceCreate(0, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmInstanceCreate(0xffffffffu, 24, 0, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
-    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
+    Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidParameter);
     Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    for (const std::uint64_t flags : {0x180ull, 0x2000ull, 0x4000ull, 1ull << 60}) {
+        Require(sceAjmInstanceCreate(context, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(0, 24, flags, &untouched) == invalidFlags);
+        Require(sceAjmInstanceCreate(context, 24, flags, nullptr) == invalidParameter);
+    }
+    Require(untouched == 0xfeedu);
     errno = 71;
     Require(sceAjmInstanceCreate(context, 24, 0, reinterpret_cast<uint32_t*>(0x10)) == invalidParameter);
     Require(errno == 71);
@@ -2528,6 +2558,52 @@ void TestConsoleRunBufferRa(const char* ajmiLibrary) {
     TestRunSplitBufferRaLayout(reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
 }
 
+void TestBuildersRejectUnmapped(InlineBuffer inlineBuffer, RunBufferRa runBufferRa, ControlBufferRa controlBufferRa, RunSplitBufferRa runSplitBufferRa) {
+    auto* const unmapped = reinterpret_cast<void*>(0x10);
+    const auto* const unmappedList = static_cast<const AjmBuffer*>(unmapped);
+    std::uint8_t data[13]{};
+    std::uint8_t sideband[0x20]{};
+    const AjmBuffer buffers[1] = {{data, sizeof(data)}};
+    std::vector<std::uint8_t> batch(0x80, 0xCC);
+    const auto pristine = batch;
+    const void* address = nullptr;
+    const auto rejects = [&](auto&& build, bool untouched) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        address = nullptr;
+        errno = 71;
+        bool thrown = false;
+        try {
+            build();
+        } catch (const std::runtime_error&) {
+            thrown = true;
+        }
+        Require(thrown && errno == 71 && address == nullptr);
+        if (untouched) Require(batch == pristine);
+    };
+    rejects([&] { inlineBuffer(unmapped, data, sizeof(data), &address); }, true);
+    rejects([&] { inlineBuffer(batch.data(), unmapped, sizeof(data), &address); }, false);
+    rejects([&] { inlineBuffer(batch.data(), data, sizeof(data), static_cast<const void**>(unmapped)); }, false);
+    rejects([&] { runBufferRa(unmapped, 1, 0, data, sizeof(data), data, sizeof(data), sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { controlBufferRa(unmapped, 1, 0, data, sizeof(data), sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(unmapped, 1, 0, buffers, 1, buffers, 1, sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(batch.data(), 1, 0, unmappedList, 1, buffers, 1, sideband, sizeof(sideband), nullptr); }, true);
+    rejects([&] { runSplitBufferRa(batch.data(), 1, 0, buffers, 1, unmappedList, 1, sideband, sizeof(sideband), nullptr); }, true);
+}
+
+void TestConsoleBuildersRejectUnmapped(const char* ajmiLibrary) {
+#ifdef _WIN32
+    const char* nativeLibrary = "libSceAjm.native.prx";
+#else
+    const char* nativeLibrary = nullptr;
+#endif
+    TestBuildersRejectUnmapped(reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer")), sceAjmBatchJobRunBufferRa,
+        sceAjmBatchJobControlBufferRa, sceAjmBatchJobRunSplitBufferRa);
+    TestBuildersRejectUnmapped(reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1")),
+        reinterpret_cast<RunBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunBufferRa_nid_disambig1")),
+        reinterpret_cast<ControlBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobControlBufferRa_nid_disambig1")),
+        reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
+}
+
 int StartBufferRefused(std::uint32_t context, const void* batch, std::size_t size, AjmBatchError& error) {
     std::uint32_t id = 0;
     error = AjmBatchError{};
@@ -2887,6 +2963,80 @@ void TestInlineBufferNullAddress(const char* ajmiLibrary) {
 
 }
 
+struct At9ConsoleWord {
+    std::uint32_t word;
+    bool accepted;
+    std::uint32_t expected[5];
+};
+
+void TestAt9ParseConfigConsoleWords() {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    const At9ConsoleWord words[] = {
+        {0xfe500ff0u, true, {1, 32000, 256, 1024, 512}},
+        {0xfe000ff0u, true, {1, 11025, 64, 256, 512}},
+        {0xfe100ff0u, true, {1, 12000, 64, 256, 512}},
+        {0xfe200ff0u, true, {1, 16000, 128, 512, 512}},
+        {0xfe300ff0u, true, {1, 22050, 128, 512, 512}},
+        {0xfe400ff0u, true, {1, 24000, 128, 512, 512}},
+        {0xfe600ff0u, true, {1, 44100, 256, 1024, 512}},
+        {0xfe700ff0u, true, {1, 48000, 256, 1024, 512}},
+        {0xfe800ff0u, false, {}},
+        {0xfe900ff0u, false, {}},
+        {0xfea00ff0u, false, {}},
+        {0xfeb00ff0u, false, {}},
+        {0xfec00ff0u, false, {}},
+        {0xfed00ff0u, false, {}},
+        {0xfee00ff0u, false, {}},
+        {0xfef00ff0u, false, {}},
+        {0xfe520ff0u, true, {2, 32000, 256, 1024, 512}},
+        {0xfe540ff0u, true, {2, 32000, 256, 1024, 512}},
+        {0xfe560ff0u, true, {6, 32000, 256, 1024, 512}},
+        {0xfe580ff0u, true, {8, 32000, 256, 1024, 512}},
+        {0xfe5a0ff0u, true, {4, 32000, 256, 1024, 512}},
+        {0xfe5c0ff0u, false, {}},
+        {0xfe5e0ff0u, false, {}},
+        {0xfe500010u, true, {1, 32000, 256, 1024, 4}},
+        {0xfe5007f0u, true, {1, 32000, 256, 1024, 256}},
+        {0xfe500fd0u, true, {1, 32000, 256, 1024, 508}},
+        {0xfe5017f0u, true, {1, 32000, 256, 1024, 768}},
+        {0xfe501ff0u, true, {1, 32000, 256, 1024, 1024}},
+        {0xfe503ff0u, true, {1, 32000, 256, 1024, 2048}},
+        {0xfe507ff0u, true, {1, 32000, 256, 1024, 4096}},
+        {0xfe50fff0u, true, {1, 32000, 256, 1024, 8192}},
+        {0xfe500fe0u, true, {1, 32000, 256, 256, 128}},
+        {0xfe500fe8u, false, {}},
+        {0xfe500ff8u, false, {}},
+        {0xfe510ff0u, false, {}},
+        {0xfe500ff7u, false, {}},
+        {0x00500ff0u, false, {}},
+        {0xff500ff0u, false, {}},
+        {0xfe521ff0u, true, {2, 32000, 256, 1024, 1024}},
+        {0xfe541ff0u, true, {2, 32000, 256, 1024, 1024}},
+        {0xfe563ff0u, true, {6, 32000, 256, 1024, 2048}},
+        {0xfe821fe0u, false, {}},
+        {0xfe821fe8u, false, {}},
+        {0xfe821ff8u, false, {}},
+        {0xfeb63fe8u, false, {}},
+        {0xfe8e1fe0u, false, {}},
+        {0xfef21fe0u, false, {}},
+        {0x00000000u, false, {}},
+        {0xffffffffu, false, {}},
+    };
+    for (const auto& entry : words) {
+        const std::uint8_t config[4] = {static_cast<std::uint8_t>(entry.word >> 24), static_cast<std::uint8_t>(entry.word >> 16), static_cast<std::uint8_t>(entry.word >> 8), static_cast<std::uint8_t>(entry.word)};
+        AjmDecAt9ConfigDataInfo info{};
+        std::memset(&info, 0xAA, sizeof(info));
+        const int result = sceAjmDecAt9ParseConfigData(config, &info);
+        if (!entry.accepted) {
+            Require(result == invalidParameter);
+            continue;
+        }
+        Require(result == 0);
+        Require(info.channels == entry.expected[0] && info.sample_rate == entry.expected[1] && info.frame_samples_per_channel == entry.expected[2]);
+        Require(info.superframe_samples_per_channel == entry.expected[3] && info.superframe_size == entry.expected[4]);
+    }
+}
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     constexpr int invalidParameter = static_cast<int>(0x80930005);
@@ -2918,6 +3068,7 @@ int main(int argc, char** argv) {
     std::int64_t runResult = -1;
     Require(sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, &runResult, sizeof(runResult)) == invalidParameter && batchInfo.offset == 0);
     TestMp3ParseFrame();
+    TestMp3ParseFrameConsoleTags();
     TestMp3ParseOfl();
     TestMp3MetadataBounds();
     TestMp3(context);
@@ -2955,6 +3106,7 @@ int main(int argc, char** argv) {
     TestBatchContextOwnership(context);
     TestControlAt9(context);
     TestMultichannelAt9(context);
+    TestAt9ParseConfigConsoleWords();
     TestControlMp3(context);
     TestControlOpus(context);
     TestOpusGaplessReset(context, 960, 0);
@@ -2979,6 +3131,7 @@ int main(int argc, char** argv) {
     TestConsoleHandWrittenJobs(context);
     TestConsoleInlineBuffer(context, argv[1]);
     TestConsoleRunBufferRa(argv[1]);
+    TestConsoleBuildersRejectUnmapped(argv[1]);
     TestConsoleBufferEdges(context);
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);

@@ -23,14 +23,21 @@ EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
+CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+CLOSES = re.compile(rf"(?<![\w-]){CLOSING}:?[ \t]+#(\d+)\b", re.IGNORECASE)
+FIXES = re.compile(rf"(?<![\w-])Fixes:[ \t]*((?:{CLOSING}[ \t]+)?#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)(?:{CLOSING}[ \t]+)?#\d+\b)*)", re.IGNORECASE)
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
+PR_PAGE_SIZE = 100
+MAX_PR_PAGES = 1000
 BASE_REF = "refs/pr/base"
 PROGRESS_EVERY = 100
+PAIR_PROGRESS_EVERY = 1000
 MAX_REPORT_CHARS = 60000
 EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,icase)**/tests/**")
 _REPO_ROOTS = {}
+GIT_CONFIG = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
 
 
 def _repository_root():
@@ -38,7 +45,7 @@ def _repository_root():
     root = _REPO_ROOTS.get(cwd)
     if root is None:
         output = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", *GIT_CONFIG, "rev-parse", "--show-toplevel"],
             cwd=cwd,
             capture_output=True,
             check=True,
@@ -46,7 +53,7 @@ def _repository_root():
         root = Path(output)
         if os.name == "nt" and not root.is_dir():
             relative = subprocess.run(
-                ["git", "rev-parse", "--show-cdup"],
+                ["git", *GIT_CONFIG, "rev-parse", "--show-cdup"],
                 cwd=cwd,
                 capture_output=True,
                 check=True,
@@ -82,7 +89,7 @@ def git(*args):
                 except ValueError:
                     pass
     result = subprocess.run(
-        ["git", "-c", "core.quotePath=false", *args],
+        ["git", "-c", "core.quotePath=false", *GIT_CONFIG, *args],
         cwd=root,
         capture_output=True,
     )
@@ -97,6 +104,38 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name, repository=None):
+    if repository is None:
+        return prs
+    matching = [number for number, pr in prs.items()
+                if pr.get("branch") == name and pr.get("head_repo", "").casefold() == repository.casefold()]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
+def push_head(name):
+    ref = f"refs/heads/{name}"
+    try:
+        rows = git("for-each-ref", "--format=%(refname)%09%(push:remotename)%09%(push:remoteref)", ref)
+        for row in rows.splitlines():
+            fields = row.split("\t")
+            if len(fields) != 3:
+                return name, None
+            local, remote, destination = fields
+            if local != ref or not remote or not destination.startswith("refs/heads/"):
+                continue
+            urls = git("remote", "get-url", "--push", "--all", remote).splitlines()
+            if len(urls) == 1:
+                match = re.fullmatch(r"(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com(?::22)?/)"
+                                     r"([\w.-]+/[\w.-]+?)(?:\.git)?/?", urls[0], re.IGNORECASE)
+                if match:
+                    return destination.removeprefix("refs/heads/"), match[1]
+    except subprocess.CalledProcessError:
+        pass
+    return name, None
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -105,7 +144,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "i/o timeout", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -125,6 +165,19 @@ def depends_on(body):
     body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
+
+
+def fixes(body):
+    body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
+    repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
+    repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)\b(?:[#/?][^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    found = {int(n) for n in CLOSES.findall(body)}
+    for match in FIXES.finditer(body):
+        found.update(int(n) for n in re.findall(r"#(\d+)", match.group(1)))
+    return found
+
 
 def progress(message):
     print(f"pr_overlap: {message}", file=sys.stderr, flush=True)
@@ -189,47 +242,101 @@ def json_pages(out):
     return decode_pages(repair_escapes(out))
 
 
-def open_prs(base):
-    query = urlencode({"state": "open", "base": base, "per_page": 100})
-    url = f"repos/{REPO}/pulls?{query}"
-    head, out = page(f"{url}&page=1")
+class PaginationChanged(ValueError):
+    pass
+
+
+def read_pr_pages(url, number):
+    head, out = page(f"{url}&page={number}")
     pages = json_pages(out)
     if not pages:
         raise ValueError("gh api returned no JSON pages")
-    last = LAST_PAGE.search(head)
-    pushed_past_last = None
-    if last:
-        numbers = range(2, int(last.group(1)) + 1)
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            for out in executor.map(lambda number: page(f"{url}&page={number}")[1], numbers):
-                pages.extend(json_pages(out))
-        pushed_past_last = numbers.stop
-    elif NEXT_LINK.search(head):
-        current_page = 1
+    return head, pages
+
+
+def numbered_pr_page(url, number):
+    head, pages = read_pr_pages(url, number)
+    if len(pages) != 1:
+        raise ValueError(f"gh api returned multiple JSON arrays for pull request page {number}")
+    return head, pages[0]
+
+
+def open_pr_pages(url):
+    head, first = read_pr_pages(url, 1)
+    last_link = LAST_PAGE.search(head)
+    if not last_link and not NEXT_LINK.search(head):
+        return first
+    if len(first) != 1:
+        raise ValueError("gh api returned multiple JSON arrays for pull request page 1")
+    observed = {1: first[0]}
+    if last_link:
+        last = int(last_link.group(1))
+        if not 2 <= last <= MAX_PR_PAGES:
+            raise ValueError("gh api returned an invalid last page link")
+        head, tail = numbered_pr_page(url, last)
+    else:
+        last, tail = 1, first[0]
         while next_link := NEXT_LINK.search(head):
             values = parse_qs(urlsplit(next_link.group(1)).query, keep_blank_values=True).get("page", [])
-            if len(values) != 1 or re.fullmatch(r"[0-9]+", values[0]) is None or int(values[0]) <= current_page:
+            if len(values) != 1 or values[0] != str(last + 1) or last == MAX_PR_PAGES:
                 raise ValueError("gh api returned an invalid next page link")
-            current_page = int(values[0])
-            head, out = page(f"{url}&page={current_page}")
-            fetched = json_pages(out)
-            if not fetched:
-                raise ValueError("gh api returned no JSON pages")
-            pages.extend(fetched)
-        pushed_past_last = current_page + 1
-    if pushed_past_last is not None:
-        while len(pages[-1]) == 100:
-            pages.extend(json_pages(page(f"{url}&page={pushed_past_last}")[1]) or [[]])
-            pushed_past_last += 1
-    pull_requests = [pr for found in pages for pr in found]
+            last += 1
+            head, tail = numbered_pr_page(url, last)
+            observed[last] = tail
+
+    if not 0 < len(tail) <= PR_PAGE_SIZE:
+        raise PaginationChanged(f"unexpected length for last page {last}")
+    descending = [tail]
+    has_next = NEXT_LINK.search(head)
+    if has_next or len(tail) == PR_PAGE_SIZE:
+        extra_head, extra = numbered_pr_page(url, last + 1)
+        if len(extra) >= PR_PAGE_SIZE or NEXT_LINK.search(extra_head) or (extra and last == MAX_PR_PAGES):
+            raise PaginationChanged(f"pull request list grew past page {last + 1}")
+        if has_next and (not extra or len(tail) != PR_PAGE_SIZE):
+            raise PaginationChanged(f"last page {last} disagrees with its next link")
+        if extra:
+            observed[last] = tail
+            descending = [extra]
+            last += 1
+
+    for number in range(last - 1, 0, -1):
+        _, rows = numbered_pr_page(url, number)
+        if not rows or len(rows) > PR_PAGE_SIZE or (last_link and len(rows) != PR_PAGE_SIZE):
+            raise PaginationChanged(f"unexpected length for pull request page {number}")
+        if number in observed and [pr["number"] for pr in rows] != [pr["number"] for pr in observed[number]]:
+            raise PaginationChanged(f"pull request IDs changed on page {number}")
+        descending.append(rows)
+    return reversed(descending)
+
+
+def open_prs(base):
+    query = urlencode({"state": "open", "base": base, "sort": "created", "direction": "asc", "per_page": PR_PAGE_SIZE})
+    url = f"repos/{REPO}/pulls?{query}"
+    for attempt in range(2):
+        try:
+            rows = {}
+            for found in open_pr_pages(url):
+                for pr in found:
+                    number = pr["number"]
+                    if number in rows:
+                        raise PaginationChanged(f"duplicate pull request #{number} in paginated results")
+                    rows[number] = pr
+            break
+        except PaginationChanged as error:
+            if attempt:
+                raise ValueError(f"could not establish pull request pagination consistency after one retry: {error}") from error
+            progress(f"pull request pagination changed ({error}); retrying once")
     prs = {}
-    for pr in pull_requests:
-        prs[pr["number"]] = {
-            "ref": f"refs/pr/{pr['number']}",
+    for number, pr in rows.items():
+        prs[number] = {
+            "ref": f"refs/pr/{number}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
+            **({"head_repo": head_repo["full_name"]} if (head_repo := pr["head"].get("repo")) else {}),
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
+            "fixes": fixes(pr["body"]),
         }
     progress(f"{len(prs)} open pull requests against {base}")
     return prs
@@ -247,21 +354,45 @@ def fetch_heads(base_sha, prs):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
     for start in range(0, len(commits), FETCH_REFS):
-        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
+        batch = commits[start:start + FETCH_REFS]
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
+        except subprocess.CalledProcessError:
+            fetch_each(remote, batch, base_sha, prs)
         progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
 
 
+def fetch_each(remote, batch, base_sha, prs):
+    owners = {}
+    for number, pr in prs.items():
+        owners.setdefault(pr["sha"], []).append(number)
+    for sha in batch:
+        try:
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, sha)
+            continue
+        except subprocess.CalledProcessError:
+            if sha == base_sha or sha not in owners:
+                raise
+        for number in owners[sha]:
+            moved = git("ls-remote", "--exit-code", remote, f"refs/pull/{number}/head").split()[0]
+            if moved == sha:
+                raise ValueError(f"cannot fetch the head {sha} of pull request #{number}")
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, moved)
+            progress(f"pull request #{number} moved from {sha[:10]} to {moved[:10]} during this run; comparing {moved[:10]}")
+            prs[number]["sha"] = moved
+
+
 def merge(*args):
     root = _repository_root()
-    result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
+    result = subprocess.run(["git", "-c", "core.quotePath=false", *GIT_CONFIG, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
     if result.returncode not in (0, 1) or not lines[0]:
         required = (2, 40) if any(arg.startswith("--merge-base") for arg in args) else (2, 38)
-        found = re.match(rb"git version (\d+)\.(\d+)", subprocess.run(["git", "version"], capture_output=True).stdout)
+        found = re.match(rb"git version (\d+)\.(\d+)", subprocess.run(["git", *GIT_CONFIG, "version"], capture_output=True).stdout)
         version = (int(found.group(1)), int(found.group(2))) if found else None
         if version and version < required:
             raise RuntimeError(f"git merge-tree {' '.join(args)} needs git {required[0]}.{required[1]} or newer; "
@@ -297,37 +428,79 @@ def exports(diff, prefix="+"):
     return found
 
 
-def changed_source(diff, prefix):
-    files, current, path = [], [], None
+def unquote_path(path):
+    if path.startswith('"') and path.endswith('"'):
+        return codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return path
+
+
+def changed_hunks(diff, prefix):
+    files, hunks, current, path = [], [], [], None
     in_hunk = False
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
         if line.startswith("diff --git "):
-            if current and path:
-                files.append((path, "\n".join(current)))
+            if current:
+                hunks.append("\n".join(current))
+            if hunks and path:
+                files.append((path, hunks))
             path = line.split(" b/", 1)[1] if " b/" in line else None
-            current = []
+            hunks, current = [], []
             in_hunk = False
         elif line.startswith("@@"):
+            if current:
+                hunks.append("\n".join(current))
+            current = []
             in_hunk = True
         elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
-            path = line[4:]
-            if path.startswith('"') and path.endswith('"'):
-                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            path = unquote_path(line[4:])
             if path == "/dev/null":
                 path = None
             elif path.startswith(("a/", "b/")):
                 path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
-    if current and path:
-        files.append((path, "\n".join(current)))
+    if current:
+        hunks.append("\n".join(current))
+    if hunks and path:
+        files.append((path, hunks))
     return files
+
+
+def changed_source(diff, prefix):
+    return [(path, "\n".join(hunks)) for path, hunks in changed_hunks(diff, prefix)]
 
 
 def library_for_path(path):
     parts = Path(path).parts
     return "/".join(parts[:4]) if len(parts) > 3 and parts[:3] == ("core", "libs", "prx") else ""
+
+
+def production_source(path):
+    path = Path(path)
+    return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
+
+
+def export_diffs(old, new):
+    diff = git("diff", "--find-renames", "-l1000", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    source, in_hunk, relocated = None, False, set()
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
+        if line.startswith("diff --git "):
+            source, in_hunk = None, False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("rename from "):
+            source = unquote_path(line[12:])
+        elif not in_hunk and source is not None and line.startswith("rename to "):
+            destination = unquote_path(line[10:])
+            if library_for_path(source) != library_for_path(destination):
+                relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    identity_diff = diff
+    if relocated:
+        identity_diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                                    *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff, identity_diff
 
 
 def source_exports(text, library=""):
@@ -347,14 +520,15 @@ def source_exports(text, library=""):
 
 def source_changed_exports(diff, prefix):
     found = {}
-    for path, text in changed_source(diff, prefix):
+    for path, hunks in changed_hunks(diff, prefix):
         library = library_for_path(path)
-        for key, names in source_exports(text, library).items():
+        for key, names in source_exports("\n".join(hunks), library).items():
             found.setdefault(key, set()).update(names)
-        file_diff = "\n".join(prefix + line for line in text.splitlines())
-        for name in exports(file_diff, prefix):
-            canonical = nid_names.strip_nid_postfix(name)
-            found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
+        for hunk in hunks:
+            hunk_diff = "\n".join(prefix + line for line in hunk.splitlines())
+            for name in exports(hunk_diff, prefix):
+                canonical = nid_names.strip_nid_postfix(name)
+                found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
     return found
 
 
@@ -386,15 +560,14 @@ def save_export_cache(path, version, files):
 
 
 def base_sources(root, ref):
-    listing = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-z", ref, "--", "core/libs"],
+    listing = subprocess.run(["git", *GIT_CONFIG, "-C", root, "ls-tree", "-r", "-z", ref, "--", "core/libs"],
                              capture_output=True, check=True).stdout.decode("utf-8", errors="replace")
     sources = []
     for entry in filter(None, listing.split("\0")):
         info, name = entry.split("\t", 1)
         mode, kind, blob = info.split()
         path = Path(name)
-        if kind != "blob" or mode == "120000" or path.suffix != ".cpp" or any(
-                part.lower() in {"test", "tests"} for part in path.parts[2:-1]):
+        if kind != "blob" or mode == "120000" or not production_source(path):
             continue
         sources.append((blob, name))
     return sources
@@ -403,7 +576,7 @@ def base_sources(root, ref):
 def blob_texts(root, blobs):
     if not blobs:
         return {}
-    out = subprocess.run(["git", "-C", root, "cat-file", "--batch"], input="".join(f"{blob}\n" for blob in blobs).encode(),
+    out = subprocess.run(["git", *GIT_CONFIG, "-C", root, "cat-file", "--batch"], input="".join(f"{blob}\n" for blob in blobs).encode(),
                          capture_output=True, check=True).stdout
     texts, offset = {}, 0
     for blob in blobs:
@@ -455,10 +628,10 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    diff, identity_diff = export_diffs(old, new)
     pr["exports"] = exports(diff)
-    pr["added_exports"] = source_changed_exports(diff, "+")
-    pr["removed_exports"] = source_changed_exports(diff, "-")
+    pr["added_exports"] = source_changed_exports(identity_diff, "+")
+    pr["removed_exports"] = source_changed_exports(identity_diff, "-")
 
 
 def probe(pr):
@@ -471,8 +644,8 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
-    return files, (exports(diff), source_changed_exports(diff, "+")), existing
+    diff, identity_diff = export_diffs(base, pr["ref"])
+    return files, (exports(diff), source_changed_exports(identity_diff, "+")), existing
 
 
 def related(prs, executor):
@@ -557,12 +730,35 @@ def overlaps(prs, a, b):
             same_exports.update(pa["added_exports"][key])
             same_exports.update(pb["added_exports"][key])
         found["exports"] = same_exports
+        if same_issues := pa.get("fixes", set()) & pb.get("fixes", set()):
+            found["issues"] = same_issues
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
                 found["uncompared"] = uncompared
     return found if any(found.values()) else None
 
+
+
+def compare_all(prs, pairs, jobs):
+    rows = {n: {} for n in prs}
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        try:
+            merging = {}
+            for a, b in pairs:
+                if prs[a].get("author") != prs[b].get("author") and prs[a].get("files", set()) & prs[b].get("files", set()):
+                    merging[a, b] = executor.submit(overlaps, prs, a, b)
+                elif found := overlaps(prs, a, b):
+                    rows[a][b] = rows[b][a] = found
+            for index, ((a, b), future) in enumerate(merging.items(), 1):
+                if found := future.result():
+                    rows[a][b] = rows[b][a] = found
+                if index % PAIR_PROGRESS_EVERY == 0 or index == len(merging):
+                    progress(f"compared {index}/{len(merging)} pull request pairs that change the same files")
+        except BaseException:
+            executor.shutdown(cancel_futures=True)
+            raise
+    return rows
 
 
 def code_span(item):
@@ -595,6 +791,10 @@ def pull(blob, number):
     return f'[PR {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/pull/{number})'
 
 
+def issue(blob, number):
+    return f'[issue {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/issues/{number})'
+
+
 def report(rows, blob, main_exports=None):
     if not rows:
         if not main_exports:
@@ -602,6 +802,7 @@ def report(rows, blob, main_exports=None):
     confirmed = {number: found for number, found in rows.items()
                  if found.get("conflicts") or found.get("exports") or found["added"]}
     uncompared = {number: found["uncompared"] for number, found in rows.items() if found.get("uncompared")}
+    issues = {number: found["issues"] for number, found in rows.items() if found.get("issues")}
     lines = [MARKER]
     if confirmed:
         lines.extend([
@@ -613,8 +814,15 @@ def report(rows, blob, main_exports=None):
         ])
         for number, found in sorted(confirmed.items()):
             lines.append(f'| {pull(blob, number)} | {spans(found.get("conflicts"), blob)} | {cell(found.get("exports"))} | {cell(found["added"])} |')
-    if main_exports:
+    if issues:
         if confirmed:
+            lines.append("")
+        lines.append("Other open pull requests say they fix the same issue, so they may implement the same thing:")
+        lines.append("")
+        for number, numbers in sorted(issues.items()):
+            lines.append(f"- {pull(blob, number)}: " + ", ".join(issue(blob, n) for n in sorted(numbers)))
+    if main_exports:
+        if confirmed or issues:
             lines.append("")
         lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
@@ -627,7 +835,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed or main_exports:
+        if confirmed or issues or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -662,9 +870,12 @@ def truncated(lines):
 
 def write_reports(out, rows, blob, main_exports=None):
     main_exports = main_exports or {}
-    out.mkdir(parents=True, exist_ok=True)
-    for number, found in rows.items():
-        (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        for number, found in rows.items():
+            (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
+    except OSError as error:
+        raise SystemExit(f"pr_overlap: {error}") from None
 
 
 def unverified_overlaps(rows):
@@ -787,7 +998,7 @@ def pull_requests_with(names, prs, jobs):
 
 
 def library_status(ref, library):
-    archive = subprocess.run(["git", "archive", "--format=tar", ref, "--", library], capture_output=True, check=True).stdout
+    archive = subprocess.run(["git", *GIT_CONFIG, "archive", "--format=tar", ref, "--", library], capture_output=True, check=True).stdout
     scanner = importlib.import_module("progress")
     with tempfile.TemporaryDirectory() as root:
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -806,7 +1017,8 @@ def main_status(names, ref):
         aliases = {canonical(item) for item in defined}
         for name in wanted & (aliases | ({nids[nid]} if nid in nids else set())):
             declared[name].setdefault(library, set()).update(aliases | {name})
-    scanned = {library: library_status(ref, library) for libraries in declared.values() for library in libraries if library}
+    libraries = {library for exports in declared.values() for library in exports if library}
+    scanned = {library: library_status(ref, library) for library in sorted(libraries)}
     status = {}
     for name, libraries in declared.items():
         status[name] = {}
@@ -817,7 +1029,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -825,12 +1041,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 
@@ -842,7 +1058,7 @@ def describe_failure(error):
 
 def resolve_branch(name):
     try:
-        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+        return git("rev-parse", "--verify", f"{name}^0").strip()
     except subprocess.CalledProcessError:
         raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
 
@@ -864,9 +1080,12 @@ def main(argv=None):
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
+    parser.add_argument("--head-repo", help="head repository owner/name for --branch with the same branch name; must be the correct fork because its matching pull request is excluded")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
+    if args.head_repo is not None and (not args.branch or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+", args.head_repo) or args.head_repo.split("/", 1)[1] in (".", "..")):
+        parser.error("--head-repo needs --branch and a GitHub owner/name")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     global REPO
@@ -884,16 +1103,14 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            head_branch, head_repo = (args.branch, args.head_repo) if args.head_repo else push_head(args.branch)
+            prs = without_own_pull_request(own(prs, sha), head_branch, head_repo)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)
-        rows = {n: {} for n in prs}
         main_exports = main_export_findings(prs, current_exports)
         pairs = [(0, n) for n in prs if n] if args.branch else combinations(prs, 2)
-        for a, b in pairs:
-            if found := overlaps(prs, a, b):
-                rows[a][b] = rows[b][a] = found
+        rows = compare_all(prs, pairs, args.jobs)
         blob = f'https://github.com/{REPO}/blob/{BASE_REF}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))

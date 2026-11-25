@@ -1,0 +1,3 @@
+# libSceRtc
+## change [sceRtcTickAddTicks through sceRtcTickAddYears]
+- [sceRtcTickAddTicks through sceRtcTickAddYears](../../../core/libs/prx/libSceRtc/Export.cpp) (libSceRtc) - returning `0x80B50002` for unreadable or unwritable non-null tick pointers is a host-safety fallback; a PS5 (firmware 11.60, payload process; a title process may differ) returned `0x80B50002` from `sceRtcTickAddTicks` for a null destination and for a null source, and raised SIGSEGV for the destination `0x1` and for a destination on a read-only page, so there the call faults where this library returns the error code; the other functions of this entry and the other unreadable or unwritable pointers were not run.

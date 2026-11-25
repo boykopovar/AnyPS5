@@ -50,6 +50,29 @@ def excessively_nested_json(test):
             test.fail("the JSON decoder accepts every probed nesting depth")
 
 
+class SharedTargetTests(unittest.TestCase):
+    def test_shared_target_keeps_argument_and_registration_matches_per_test(self):
+        graph = {"closures": {"shared": ["src/engine.cpp"]}, "tests": {
+            name: {"target": "shared", "arguments": [f"data/{name}.txt"],
+                   "registered": [f"{name}/CMakeLists.txt"], "sets": [], "requires": [], "depends": []}
+            for name in ("alpha", "beta")}}
+        cases = [
+            ("src/engine.cpp", {"alpha", "beta"}, "input: src/engine.cpp"),
+            ("src/new.cpp", {"alpha", "beta"}, "directory: src/"),
+            ("data/alpha.txt", {"alpha"}, "input: data/alpha.txt"),
+            ("alpha/CMakeLists.txt", {"alpha"}, "registration: alpha/CMakeLists.txt"),
+            ("data/new.txt", {"alpha", "beta"}, "directory: data/"),
+        ]
+        for path, expected, reason in cases:
+            with self.subTest(path=path):
+                reasons = {}
+                self.assertEqual(select_tests.select(graph, [path]), (expected, []))
+                self.assertEqual(select_tests.select(graph, [path], reasons), (expected, []))
+                self.assertEqual(set(reasons), expected)
+                for entries in reasons.values():
+                    self.assertIn(reason, entries)
+
+
 @unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
 class SelectFixture(unittest.TestCase):
     @classmethod
@@ -119,6 +142,18 @@ class SelectTests(SelectFixture):
                 output, selected = self.select("alpha/alpha.h", changed)
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
+
+class DuplicateGraphKeyTests(unittest.TestCase):
+    def test_rejects_duplicate_graph_object_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            for content in ('{"tests":{},"tests":{},"closures":{}}',
+                            '{"tests":{},"closures":{},"closures":{}}'):
+                with self.subTest(content=content):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate"):
+                        select_tests.load_graph(path)
+
 
 class FixtureSelectionTests(unittest.TestCase):
     def test_changed_setup_selects_all_consumers_and_their_other_setups(self):
@@ -245,7 +280,66 @@ class SelectBuildTests(SelectFixture):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+class TargetsTests(SelectFixture):
+    def targets(self, regex):
+        return self.tool("targets", self.build, regex).splitlines()
+
+    def test_targets_are_the_executables_the_matching_tests_and_their_fixtures_run(self):
+        self.assertEqual([Path(target).stem for target in self.targets("^alpha")], ["alpha_tests"])
+        self.assertEqual([Path(target).stem for target in self.targets("^beta")], ["beta_tests", "fixture_prepare_tests"])
+        self.assertEqual([Path(target).stem for target in self.targets("^beta$")], ["beta_tests", "fixture_prepare_tests"])
+        self.assertEqual(self.targets("^script$"), [])
+
+    def test_building_the_targets_builds_only_those_executables(self):
+        subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+        try:
+            subprocess.run(["ninja", "-C", str(self.build), *self.targets("^alpha_data$")], check=True, capture_output=True)
+            built = {path.stem for path in self.build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
+            self.assertEqual(built, {"alpha_tests"})
+        finally:
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
+    def test_a_regular_expression_without_tests_is_an_error(self):
+        result = subprocess.run([sys.executable, str(TOOL), "targets", str(self.build), "^nothing$"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no test matches ^nothing$", result.stderr)
+
+    def test_a_definition_names_the_executable_a_script_test_runs(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            cmake.write_text(original + "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DFIXTURE=$<TARGET_FILE:alpha_tests>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            self.assertEqual([Path(target).stem for target in self.targets("^alpha_run$")], ["alpha_tests"])
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+
+
 class SelectArgumentTests(SelectFixture):
+    def test_cmake_env_wrapper_uses_its_test_executable(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        configure = ["cmake", "-S", str(self.source), "-B", str(self.build)]
+        try:
+            cmake.write_text(original + '\nadd_test(NAME alpha_env COMMAND ${CMAKE_COMMAND} -E env '
+                             '--unset=SELECTOR_MODE SELECTOR-CHECK=1 -- "$<TARGET_FILE:alpha_tests>")\n'
+                             'add_test(NAME alpha_env_relative COMMAND ${CMAKE_COMMAND} -E env '
+                             '"./$<TARGET_FILE_NAME:alpha_tests>" WORKING_DIRECTORY "$<TARGET_FILE_DIR:alpha_tests>")\n',
+                             encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+            relative = subprocess.run(["ctest", "--test-dir", str(self.build), "-R", "^alpha_env_relative$",
+                                       "--no-tests=error", "--output-on-failure"], capture_output=True, text=True)
+            self.assertEqual(relative.returncode, 0, relative.stdout + relative.stderr)
+            graph = self.build / "env-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"beta", "beta_setup", "script"})
+            self.assertEqual(self.select("alpha/alpha.h", graph=graph)[1], {"alpha", "alpha_data", "alpha_env", "alpha_env_relative", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+
     def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
         cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
         original = cmake.read_text(encoding="utf-8")
@@ -568,13 +662,38 @@ class BuildErrorTests(unittest.TestCase):
         self.assertIn("CMAKE_CACHEFILE_DIR", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "needs CMake and Ninja")
+    def test_copied_build_cache_cannot_change_the_original_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.20)\nproject(copy NONE)\n", encoding="utf-8")
+            original, copied = root / "original build", root / "copied build"
+            subprocess.run(["cmake", "-S", str(source), "-B", str(original), "-G", "Ninja"],
+                           check=True, capture_output=True)
+            copied.mkdir()
+            shutil.copyfile(original / "CMakeCache.txt", copied / "CMakeCache.txt")
+            saved = {"select.ninja": b"include build.ninja\nbuild selected: phony\n", "select.tests": b"0,0,0,1\n"}
+            for name, contents in saved.items():
+                (original / name).write_bytes(contents)
+            result = self.run_tool("select", copied, root / "missing.json", root / "changed.txt")
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("cache belongs to", result.stderr)
+            self.assertIn(os.path.normcase(str(original)), os.path.normcase(result.stderr))
+            self.assertNotIn("Traceback", result.stderr)
+            for name, contents in saved.items():
+                self.assertEqual((original / name).read_bytes(), contents)
+                self.assertFalse((copied / name).exists())
+
     def test_cache_with_utf8_bom_is_read(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
-            cache.write_text("\ufeffCMAKE_CACHEFILE_DIR:INTERNAL=C:/work/build\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
+            cache.write_text(f"\ufeffCMAKE_CACHEFILE_DIR:INTERNAL={directory}\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
             with mock.patch.object(select_tests.Build, "run", return_value="Build file encoding: UTF-8"):
                 build = select_tests.Build(directory)
-                self.assertEqual(build.path, os.path.normpath("C:/work/build"))
+                self.assertEqual(build.path, os.path.normpath(directory))
                 self.assertEqual(build.source, os.path.normpath("C:/work/source"))
 
     def test_explain_accepts_utf8_bom_in_graph_and_changed(self):
@@ -759,6 +878,66 @@ class ChunkTests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout), batch)
 
 
+@unittest.skipUnless(shutil.which("ctest"), "needs ctest")
+class CTestIndexFileTests(unittest.TestCase):
+    def test_full_ctest_fails_without_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "CTestTestfile.cmake").touch()
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertIn("No tests were found", result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_ctest_fails_if_saved_indices_match_no_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(available "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,2\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertIn("No tests were found", result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_empty_selection_can_succeed_with_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(should_not_run "{Path(sys.executable).as_posix()}" -c "raise SystemExit(1)")\n',
+                encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            count = 8000
+            (root / "CTestTestfile.cmake").write_text(
+                "".join(f'add_test(test_{i} "{Path(sys.executable).as_posix()}" --version)\n'
+                        for i in range(1, count + 2)), encoding="utf-8")
+            (root / "select.tests").write_text(
+                "0,0,0," + ",".join(map(str, range(1, count + 1))), encoding="utf-8-sig")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"Total Tests: {count}", result.stdout)
+            self.assertNotIn(f"test_{count + 1}", result.stdout)
+
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            build.source = str(root)
+            graph = {"tests": {f"test_{i}": {} for i in range(1, count + 2)}}
+            picked = set(graph["tests"]) - {f"test_{count + 1}"}
+            with mock.patch.object(build, "leaves", return_value=[]), \
+                    mock.patch.object(build, "outputs", return_value=[]):
+                run, targets, total = select_tests.plan(build, graph, picked)
+            self.assertEqual(run, list(range(1, count + 1)))
+            self.assertEqual(targets, [])
+            self.assertEqual(total, count + 1)
+
+
 class PlanTests(unittest.TestCase):
     def test_unresolved_selected_command_keeps_unselected_build_targets(self):
         build = mock.Mock()
@@ -780,6 +959,23 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(leaves, [])
         self.assertEqual(count, 1)
         build.tests.assert_called_once_with()
+
+    def test_selection_of_only_disabled_tests_runs_nothing_and_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(off "{Path(sys.executable).as_posix()}" --version)\n'
+                'set_tests_properties(off PROPERTIES DISABLED TRUE)\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            build.source = str(root)
+            with mock.patch.object(build, "leaves", return_value=[]):
+                run, targets, total = select_tests.plan(build, {"tests": {"off": {}}}, {"off"})
+            self.assertEqual((run, targets, total), ([], [], 1))
+            (root / "select.tests").write_text(select_tests.CTEST_INDEX_PREFIX + "\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class MissingCommandTests(unittest.TestCase):
@@ -805,8 +1001,9 @@ class MissingCommandTests(unittest.TestCase):
             listed[4]["command"] = [helper]
             build = object.__new__(select_tests.Build)
             build.path = str(root)
-            with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps({"tests": listed}))):
+            with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps({"tests": listed}))) as run:
                 _, recovered = build.tests()
+            self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
             commands = {test["name"]: test.get("command") for test in recovered}
             self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
                                         "ambiguous": None, "existing": [helper], "stale": None})

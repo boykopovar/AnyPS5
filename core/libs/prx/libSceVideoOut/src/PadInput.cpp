@@ -89,8 +89,9 @@ PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
+static_assert(PAD_MAX_CONTROLLERS == Pad::ControllerAssignmentSlots, "controller assignment must cover every pad slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(configuration)), appliedMapping(mappings.Snapshot()), keyboardMouse(*appliedMapping), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
+PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(configuration)), appliedMapping(mappings.Snapshot()), keyboardMouse(*appliedMapping), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(PadScriptActive_nid_postfix() ? Port0Presence::Mode::Default : Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
     static_cast<void>(Pad::RumblePausesOnFocusLoss());
     identifyMode = Pad::IdentifyModeFromEnvironment();
@@ -128,19 +129,30 @@ void PadInput::openController(int deviceIndex) {
     for (int i = 0; i < PAD_MAX_CONTROLLERS; ++i) {
         if (slots[i].controller != nullptr && slots[i].instanceId == instanceId) return;
     }
-    int slot = -1;
+    std::array<bool, Pad::ControllerAssignmentSlots> occupied{};
+    bool hasFreeSlot = false;
     for (int i = 0; i < PAD_MAX_CONTROLLERS; ++i) {
-        if (slots[i].controller == nullptr) {
-            slot = i;
-            break;
-        }
+        occupied[static_cast<std::size_t>(i)] = slots[i].controller != nullptr;
+        hasFreeSlot = hasFreeSlot || !occupied[static_cast<std::size_t>(i)];
     }
-    if (slot == -1) return;
+    if (!hasFreeSlot) return;
     SDL_GameController* gc = SDL_GameControllerOpen(deviceIndex);
     if (gc == nullptr) {
         APS5_LOG_ERR("Pad: could not open game controller %d: %s", deviceIndex, SDL_GetError());
         return;
     }
+    const char* controllerSerial = SDL_GameControllerGetSerial(gc);
+    const std::string serial = controllerSerial != nullptr ? controllerSerial : "";
+    const char* logSerial = std::getenv("ANYPS5_PAD_LOG_CONTROLLER_SERIAL");
+    if (logSerial != nullptr && std::strcmp(logSerial, "1") == 0) {
+        APS5_LOG_OUT("Pad: SDL controller %d serial: %s", deviceIndex, serial.empty() ? "<unavailable>" : serial.c_str());
+    }
+    const int slot = controllerAssignment.SelectSlot(serial, occupied);
+    if (slot < 0) {
+        SDL_GameControllerClose(gc);
+        return;
+    }
+    controllerAssignment.Connect(slot, serial);
     slots[slot].controller = gc;
     slots[slot].instanceId = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
     slots[slot].state = {};
@@ -285,6 +297,7 @@ void PadInput::closeController(int slot) {
     closeStatus(slot);
     if (slot == 0) closeHaptics();
     if (slots[slot].controller == nullptr) return;
+    controllerAssignment.Disconnect(slot);
     SDL_GameControllerClose(slots[slot].controller);
     slots[slot].controller = nullptr;
     slots[slot].instanceId = -1;
@@ -399,15 +412,16 @@ void PadInput::applyOutput() {
     }
 }
 
-void PadInput::applyMappingSnapshot() {
+bool PadInput::applyMappingSnapshot() {
     auto snapshot = mappings.Snapshot();
-    if (snapshot == appliedMapping) return;
+    if (snapshot == appliedMapping) return false;
     appliedMapping = snapshot;
     keyboardMouse.Replace(*snapshot);
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) slots[slot].state = sampleController(slot);
     }
     static_cast<void>(keyboardMouse.PadChordRequests(slots[0].state.buttons));
+    return true;
 }
 
 void PadInput::reloadInputMapping() {
@@ -510,7 +524,7 @@ PadInputState PadInput::sampleController(int slot) const {
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
-    applyMappingSnapshot();
+    if (applyMappingSnapshot()) publish(window.FrameNumber(), 0);
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -534,7 +548,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
             if (slots[slot].controller != nullptr && slots[slot].instanceId == which) {
                 slots[slot].state = sampleController(slot);
-                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)) dispatchPadChords(window);
+                const bool trigger = event.type == SDL_CONTROLLERAXISMOTION &&
+                    (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP || trigger)) dispatchPadChords(window);
                 publish(window.FrameNumber(), slot);
                 return;
             }
@@ -595,7 +611,7 @@ void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocu
 }
 
 void PadInput::Update(const DisplayWindow& window) {
-    applyMappingSnapshot();
+    const bool mappingChanged = applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;
@@ -629,7 +645,7 @@ void PadInput::Update(const DisplayWindow& window) {
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
     const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
     const bool captureChanged = std::exchange(padCaptured, captured) != captured;
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged || mappingChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {

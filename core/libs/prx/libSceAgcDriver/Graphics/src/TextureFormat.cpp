@@ -121,7 +121,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 31 || guestFormat == 34 || guestFormat == 35 || guestFormat == 36 || guestFormat == 37 || guestFormat == 38 || guestFormat == 41 || guestFormat == 42 || guestFormat == 43 || guestFormat == 44 || guestFormat == 45 || guestFormat == 48 || guestFormat == 49 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 31 || guestFormat == 34 || guestFormat == 35 || guestFormat == 36 || guestFormat == 37 || guestFormat == 38 || guestFormat == 41 || guestFormat == 42 || guestFormat == 43 || guestFormat == 44 || guestFormat == 45 || guestFormat == 48 || guestFormat == 49 || guestFormat == 131 ? 20 : guestFormat;
 }
 
 std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];

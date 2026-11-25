@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Fragment shader interlock pipelines]
+
+- [Fragment shader interlock pipelines](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Pipeline.cpp) (libSceAgcDriver): a pipeline whose fragment shader declares an interlock capability is never built from graphics pipeline libraries and never takes the dynamic color write mask, on every driver: it is compiled whole at the draw with no fast link, and draws that differ only in the write mask do not share it. Either one gives RADV's fragment shader a PS epilog, and on GFX11 the shader jumps to it without waiting for its stores ([mesa#16653](https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16653)), so the next overlapping wave reads the old value: `agc_driver_pixel_interlock` failed 108 of 120 loaded fast-link runs (Mesa 26.2.5, RX 7900 GRE) and 175 of 200 runs with the dynamic mask (26.2.6, RX 7600). Unmeasured: a Mesa with the fix, the fast link on Intel and MoltenVK, the dynamic mask outside RADV. NVIDIA and AMD's Windows driver kept the fast link's ordering.

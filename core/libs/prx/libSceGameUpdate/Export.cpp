@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static constexpr int SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED = static_cast<int>(0x80412801);
 static constexpr int SCE_GAME_UPDATE_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80412802);
@@ -125,7 +126,9 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
     }
     localResult.found = false;
     localResult.addcont_found = false;
-    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    const GuestArena::HostWrite guard(result, sizeof(localResult));
+    const bool copied = guard.Open() && GuestWritable_nid_no_patch(result, sizeof(localResult)) &&
+        GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
     errno = savedErrno;
     if (!copied) return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     return 0;
@@ -171,8 +174,13 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
             return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
         }
     }
-    constexpr bool found = false;
+    NpUnifiedEntitlementLabel localLabel{};
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localLabel, entitlementLabel, sizeof(localLabel))) {
+        errno = savedErrno;
+        return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+    }
+    constexpr bool found = false;
     const bool copied = GuestCopyOut_nid_no_patch(&info->found, &found, sizeof(found));
     errno = savedErrno;
     return copied ? 0 : SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
