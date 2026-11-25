@@ -131,7 +131,9 @@ void RequestMetrics() {
     Require(Equals(Request(3, 10 * 64, 40 * 64, 0, 0), 8, 8, 16777, 16777, 512, -128, 640, 640), "cell request keeps the smaller scale");
     Require(Equals(Request(4, 0x8000, 0, 0, 0), 16, 16, 32768, 32768, 960, -256, 1216, 1280), "scales request copies the given scale to the missing axis");
     Require(Equals(Request(4, 0, 0x8000, 0, 0), 16, 16, 32768, 32768, 960, -256, 1216, 1280), "scales request copies the given height scale to the missing axis");
-    Require(Equals(Request(0, -16 * 64, 8 * 64, 0, 0), 65520, 8, -32768, 16384, 512, -128, 576, -1280), "negative widths keep their sign and truncate the ppem");
+    const auto negativePpemBoundary = Request(4, -1056, 0, 0, 0);
+    Require(negativePpemBoundary.x_ppem == 0 && negativePpemBoundary.y_ppem == 0, "negative ppem rounding truncates toward zero");
+    Require(Equals(Request(0, -16 * 64, 8 * 64, 0, 0), 65521, 8, -32768, 16384, 512, -128, 576, -1280), "negative widths keep their sign and truncate the ppem");
     const auto resolvedNegative = Request(0, -12 * 64, 12 * 64, 96, 96);
     Require(resolvedNegative.x_scale == -32736 && resolvedNegative.y_scale == 32768, "negative resolved sizes truncate before scaling");
     if constexpr (sizeof(FT_Long) == sizeof(std::int32_t)) {

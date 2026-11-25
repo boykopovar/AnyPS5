@@ -248,8 +248,8 @@ std::int32_t RequestMetrics(GuestFaceRec* face, const GuestSizeRequestRec* reque
         if (scaledWidth > std::numeric_limits<FT_Long>::max() - 32 || scaledHeight > std::numeric_limits<FT_Long>::max() - 32) {
             throw std::invalid_argument(std::string(function) + ": ppem rounding overflow");
         }
-        scaledWidth = (scaledWidth + 32) >> 6;
-        scaledHeight = (scaledHeight + 32) >> 6;
+        scaledWidth = (scaledWidth + 32) / 64;
+        scaledHeight = (scaledHeight + 32) / 64;
         if (scaledWidth > std::numeric_limits<FT_UShort>::max() || scaledHeight > std::numeric_limits<FT_UShort>::max()) {
             error = FT_Err_Invalid_Pixel_Size;
             goto Store;
