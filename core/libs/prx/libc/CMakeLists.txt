@@ -253,6 +253,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxPlainMutex.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStreambuf.cpp
 )
 
 find_package(Git QUIET)
