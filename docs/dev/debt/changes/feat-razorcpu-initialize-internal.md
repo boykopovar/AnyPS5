@@ -1,0 +1,9 @@
+# libSceRazorCpu
+
+## change [sceRazorCpuInitializeInternal]
+
+- [sceRazorCpuInitializeInternal](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - verified against firmware `13.60.00.07` `libSceRazorCpu.sprx` (`0xa110`): takes `(void* context)`, returns `0x80580001` when already initialized and `0x80580004` on null or unreadable context, and sets the initialized flag when the optional callback pointer at `+0x48` is null. Calling with a non-null callback at `+0x48` still throws because capture storage, thread-local state, and capture-controller registration remain unimplemented. Not measured on a console.
+
+## change [sceRazorCpuFiberLogNameChange, sceRazorCpuFiberSwitch, sceRazorCpuGetDataTagStorageSize, sceRazorCpuGpuMarkerSync, sceRazorCpuInitializeGpuMarkerContext, sceRazorCpuSetPushMarkerCallback, sceRazorCpuSetPushMarkerStaticCallback, sceRazorCpuSetPopMarkerCallback, sceRazorCpuStartCaptureInternal, sceRazorCpuStopCaptureInternal, sceRazorCpuWorkloadSubmit, sceRazorCpuWorkloadRunBegin, sceRazorCpuWorkloadRunEnd]
+
+- [sceRazorCpuFiberLogNameChange, sceRazorCpuFiberSwitch, sceRazorCpuGetDataTagStorageSize, sceRazorCpuGpuMarkerSync, sceRazorCpuInitializeGpuMarkerContext, sceRazorCpuSetPushMarkerCallback, sceRazorCpuSetPushMarkerStaticCallback, sceRazorCpuSetPopMarkerCallback, sceRazorCpuStartCaptureInternal, sceRazorCpuStopCaptureInternal, sceRazorCpuWorkloadSubmit, sceRazorCpuWorkloadRunBegin, sceRazorCpuWorkloadRunEnd](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - once initialized, `GetDataTagStorageSize` returns `96 * tagCount`, `InitDataTags` zeroes `>= 96` bytes (`0x80580004`/`0x80580005` on bad input), `FlushOccurred` writes `0`, and `Start/StopCaptureInternal` return `0x8058000c` per 13.60 disassembly; markers and capture queues remain unimplemented, not console-measured.
