@@ -350,7 +350,11 @@ struct DecoderHeader {
 
 bool DecoderHasRoom(const DecoderHeader& dec, std::size_t size) {
     if (!dec.bufferData || !dec.bufferPosition) return false;
-    std::size_t remaining = (dec.bufferData + dec.bufferSize >= dec.bufferPosition) ? static_cast<std::size_t>((dec.bufferData + dec.bufferSize) - dec.bufferPosition) : 0;
+    auto data = reinterpret_cast<std::uintptr_t>(dec.bufferData);
+    auto position = reinterpret_cast<std::uintptr_t>(dec.bufferPosition);
+    std::uintptr_t end;
+    if (__builtin_add_overflow(data, dec.bufferSize, &end) || position < data) return false;
+    std::size_t remaining = end >= position ? static_cast<std::size_t>(end - position) : 0;
     return size <= remaining;
 }
 

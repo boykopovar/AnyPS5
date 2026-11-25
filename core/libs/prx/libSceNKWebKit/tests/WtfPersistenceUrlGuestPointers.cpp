@@ -280,6 +280,12 @@ static void TestDecoder() {
     Require(std::memcmp(decoderPage, decoderBytes.data(), sizeof(Decoder)) == 0);
     UnmapPages(decoderPage, 1);
 
+    Decoder overflowing{data, SIZE_MAX, data, payloadHash};
+    Require(!_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(&overflowing, 0));
+    Require(!_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(&overflowing, 1));
+    Decoder beforeData{data, encoder.size, data - 1, payloadHash};
+    Require(!_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(&beforeData, 1));
+
     Decoder decoder{data, encoder.size, data + payloadSize, payloadHash};
     Require(_ZN3WTF11Persistence7Decoder14verifyChecksumEv(&decoder));
     Require(decoder.bufferPosition == data + encoder.size);
