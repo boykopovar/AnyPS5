@@ -15,6 +15,11 @@ void APS5_VABI FT_Add_Default_ModulesForward_nid_no_patch(FreeType::GuestLibrary
 }
 APS5_EXPORT("pSgOzwkzx4Y", FT_Add_Default_ModulesForward_nid_no_patch);
 
+int APS5_VABI FT_Attach_FileForward_nid_no_patch(FreeType::GuestFaceRec* face, const char* filePath) {
+    return FT_Attach_File_nid_postfix(face, filePath);
+}
+APS5_EXPORT("21vkVuOP2lk", FT_Attach_FileForward_nid_no_patch);
+
 int APS5_VABI FT_Bitmap_ConvertForward_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestBitmap* source, FreeType::GuestBitmap* target, std::int32_t alignment) {
     return FT_Bitmap_Convert_nid_postfix(library, source, target, alignment);
 }
@@ -129,6 +134,11 @@ void* APS5_VABI FT_Get_ModuleForward_nid_no_patch(FreeType::GuestLibrary* librar
     return FT_Get_Module_nid_postfix(library, moduleName);
 }
 APS5_EXPORT("swrIPzOxcmM", FT_Get_ModuleForward_nid_no_patch);
+
+int APS5_VABI FT_Get_Multi_MasterForward_nid_no_patch(FreeType::GuestFaceRec* face, void* master) {
+    return FT_Get_Multi_Master_nid_postfix(face, master);
+}
+APS5_EXPORT("pORpGtdlfqQ", FT_Get_Multi_MasterForward_nid_no_patch);
 
 std::uint64_t APS5_VABI FT_Get_Next_CharForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint32_t* glyphIndex) {
     return FT_Get_Next_Char_nid_postfix(face, charcode, glyphIndex);

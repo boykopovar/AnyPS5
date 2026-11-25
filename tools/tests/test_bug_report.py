@@ -234,6 +234,16 @@ class BundleTests(unittest.TestCase):
             self.bundle()
         self.assertFalse((self.root / "bundle.zip").exists())
 
+    def test_failed_bundle_write_can_be_retried(self):
+        out = self.root / "bundle.zip"
+        with patch.object(zipfile.ZipFile, "writestr", side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                self.bundle()
+        self.assertFalse(out.exists())
+        _, names = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+
     def test_existing_bundle_is_not_overwritten(self):
         (self.root / "bundle.zip").write_bytes(b"keep")
         with self.assertRaises(FileExistsError):
@@ -271,6 +281,48 @@ class MainTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = bug_report.main(argv)
         return code, out.getvalue(), err.getvalue()
+
+    def test_preview_matches_archive_members_and_uncompressed_sizes(self):
+        self.report.write_text(json.dumps({"game": {"titleId": "PPSA00001", "name": "Mon titre"},
+                                           "path": "/home/ana/title.elf"}), encoding="utf-8")
+        ini = self.root / "controls.ini"
+        ini.write_text("Cross = KEY:F\n", encoding="utf-8")
+        (self.root / "anyps5-input.PPSA00001.ini").write_text("# cinéma on serverfestivo\nCross = KEY:G\n", encoding="utf-8")
+        target = self.root / "serverfestivo-ana.zip"
+        arguments = ["--report", str(self.report), "--log", str(self.log), "--input-config", str(ini), "--out", str(target)]
+        with patch.dict(os.environ, {"APS5_SETTINGS_TEST": "/home/ana/192.0.2.1"}, clear=True):
+            code, preview, err = self.run_main([*arguments, "--preview"])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(err, "")
+            self.assertFalse(target.exists())
+            code, _, err = self.run_main(arguments)
+            self.assertEqual(code, 0, err)
+            archive = target.read_bytes()
+            code, second, err = self.run_main([*arguments, "--preview"])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(second, preview)
+            self.assertEqual(target.read_bytes(), archive)
+        with zipfile.ZipFile(target) as bundle:
+            entries = {info.filename: info.file_size for info in bundle.infolist()}
+        self.assertEqual(set(entries), {"README.txt", "anyps5-input-profile.ini", "anyps5-input.ini", "anyps5-report.json",
+                                        "anyps5-settings.txt", "anyps5.log", "host.txt"})
+        self.assertEqual(preview.splitlines(), [f"{name} ({size} bytes)" for name, size in sorted(entries.items())])
+        for private in (*self.identity.values(), "192.0.2.1", "Mon titre", "cinéma"):
+            self.assertNotIn(private, preview)
+
+    def test_preview_failure_does_not_echo_private_input_names_or_keys(self):
+        invalid = self.root / "serverfestivo-ana.json"
+        invalid.write_text('{"serverfestivo": 1, "serverfestivo": 2}', encoding="utf-8")
+        target = self.root / "bundle.zip"
+        for report in (invalid, self.root / "ana-missing.json"):
+            with self.subTest(report=report.name):
+                code, out, err = self.run_main(["--report", str(report), "--out", str(target), "--preview"])
+                self.assertEqual(code, 1)
+                self.assertEqual(out, "")
+                self.assertIn("could not prepare the preview", err)
+                for private in self.identity.values():
+                    self.assertNotIn(private, err)
+                self.assertFalse(target.exists())
 
     def test_hostname_case_is_redacted_in_network_paths(self):
         self.log.write_text(

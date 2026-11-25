@@ -264,6 +264,12 @@ def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    image = bytearray(build_dylib(growing, [], signed=True))
+    struct.pack_into("<I", image, 16, struct.unpack_from("<I", image, 16)[0] - 1)
+    original = bytes(image)
+    result, path = patch(patcher, directory, "hidden-code-signature.dylib", original)
+    assert result.returncode != 0 and "load command count" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == original
     check_linkedit_bounds(patcher, directory)
     check_chained_fixups_bounds(patcher, directory)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))

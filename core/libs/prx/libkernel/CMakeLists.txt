@@ -1,5 +1,6 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.Mapper.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
@@ -34,6 +35,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPoolExport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Mutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxMutexForwards.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxThreadForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
@@ -173,6 +175,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_resident_fmem_export PROPERTIES ENVIRONMENT_MODIFICATION "${residentFmemUnpatchedPath}")
         set_tests_properties(guest_kernel_resident_fmem_export_patched PROPERTIES ENVIRONMENT_MODIFICATION "${residentFmemPatchedPath}")
     endif()
+    add_test_executable(guest_kernel_soc_power_sensor_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocPowerSensorBounds.cpp)
+    target_include_directories(guest_kernel_soc_power_sensor_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_soc_power_sensor_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_soc_power_sensor_bounds_tests)
+    add_test(NAME guest_kernel_soc_power_sensor_bounds COMMAND guest_kernel_soc_power_sensor_bounds_tests)
+    set_tests_properties(guest_kernel_soc_power_sensor_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_soc_power_sensor_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_apr_read_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprRead.cpp)
     target_include_directories(guest_apr_read_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_apr_read_tests PRIVATE libkernel libc)
@@ -193,6 +205,16 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_apr_archive_tests ${LIBS_INCLUDE_DIR}/tests/GuestAprArchive.cpp)
+    target_include_directories(guest_apr_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_apr_archive_tests PRIVATE libkernel libc zarchive)
+    configure_windows_unwind(guest_apr_archive_tests)
+    add_test(NAME guest_apr_archive COMMAND guest_apr_archive_tests)
+    set_tests_properties(guest_apr_archive PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_apr_archive PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_library(guest_exec_host SHARED ${LIBS_INCLUDE_DIR}/tests/GuestExecHost.cpp)
     target_include_directories(guest_exec_host PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exec_host PRIVATE libkernel libkernel_sys libc libSceAgcDriver)
@@ -2142,6 +2164,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_clock_timer_nanosleep_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockTimerNanosleepBounds.cpp)
+    target_include_directories(guest_clock_timer_nanosleep_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_timer_nanosleep_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_timer_nanosleep_bounds_tests)
+    add_test(NAME guest_clock_timer_nanosleep_bounds COMMAND guest_clock_timer_nanosleep_bounds_tests)
+    set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)
     target_include_directories(guest_getrlimit_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_getrlimit_tests PRIVATE libkernel libc)
@@ -3459,8 +3491,12 @@ if(BUILD_TESTING)
     endfunction()
     add_host_performance_process_test(exit "begin called.release ran at exit" exit)
     add_host_performance_process_test(exit_without_handlers "begin called.release ran at exit" exit-without-handlers)
-    add_host_performance_process_test(refused "begin called" refused)
-    set_tests_properties(host_performance_process_refused PROPERTIES FAIL_REGULAR_EXPRESSION "release ran")
+    add_test(NAME host_performance_process_refused COMMAND host_performance_process_tests refused)
+    set_tests_properties(host_performance_process_refused PROPERTIES TIMEOUT 20 FAIL_REGULAR_EXPRESSION "release ran")
+    if(WIN32)
+        set_tests_properties(host_performance_process_refused PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_host_performance_process_test(off "off left the backend alone" off)
     set_tests_properties(host_performance_process_off PROPERTIES FAIL_REGULAR_EXPRESSION "begin called")
     add_host_performance_process_test(twice "second session refused" twice)
@@ -3520,3 +3556,27 @@ list(SORT libkernelTestFragments)
 foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_kernel_cpumode_prio_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelCpumodePrioBounds.cpp)
+    target_include_directories(guest_kernel_cpumode_prio_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_cpumode_prio_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_cpumode_prio_bounds_tests)
+    add_test(NAME guest_kernel_cpumode_prio_bounds COMMAND guest_kernel_cpumode_prio_bounds_tests)
+    set_tests_properties(guest_kernel_cpumode_prio_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_cpumode_prio_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
+    add_test_executable(guest_kernel_sockname_truncation_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocknameTruncationBounds.cpp)
+    target_include_directories(guest_kernel_sockname_truncation_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_sockname_truncation_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sockname_truncation_bounds_tests)
+    add_test(NAME guest_kernel_sockname_truncation_bounds COMMAND guest_kernel_sockname_truncation_bounds_tests)
+    set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sockname_truncation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
