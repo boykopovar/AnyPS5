@@ -1,9 +1,5 @@
 # libSceIcu
 
-## change [ICU numbering system exports]
-
-- [ICU numbering systems](../../../core/libs/prx/libSceIcu/NumberingSystem.cpp) have unmeasured console ABI and ICU data-version equivalence. The six `unumsys_*` calls use pinned ICU 78.1 [unumsys.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/i18n/unumsys.cpp) and packaged locale/numbering-system resources; names/NIDs alone do not establish console signatures. Null locale selects the configured guest default. A null system name and unusable guest memory throw. Foreign/stale handles throw. Native objects free on close; distinct token identities, including guest enumeration callback tables, remain until process teardown. Returned strings follow native lifetime and must not race close or cursor movement. Cleanup/reconfiguration require no live handles or concurrent ICU use. Closes when: console signatures, data and behavior are compared.
-
 ## change [Enumeration dispatch]
 
 - [Enumeration dispatch](../../../core/libs/prx/libSceIcu/Enumeration.cpp) is unverified on a console. `uenum_close`, `uenum_count`, `uenum_next` and `uenum_unext`, which firmware 13.42 exports ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), follow ICU 78.1 [uenum.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uenum.cpp) over the 56-byte `UEnumeration` of [uenumimp.h](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uenumimp.h), calling its callbacks with the guest ABI. `uprv_free` is the guest `free`, as ICU's default allocator is `free` and 13.42 exports no `u_setMemoryFunctions`. Native-backed numbering enumerations use guest-ABI callbacks that release native ownership without passing native storage to guest free. A null or unreadable status with a nonnull enumeration throws where ICU dereferences it. Closes when: compared with the console.
