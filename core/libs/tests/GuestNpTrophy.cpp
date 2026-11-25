@@ -152,7 +152,13 @@ int main() {
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, unregisteredIcon, &unregisteredSize) == NotRegistered, "trophy icon before registration");
     Require(sceNpTrophyGetGroupInfo(context, handle, -1, &groupDetails, nullptr) == NotRegistered, "group info before registration");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, &trophyDetails, nullptr) == NotRegistered, "trophy info before registration");
+    Require(sceNpTrophyShowTrophyList(context, handle) == NotRegistered, "trophy list before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
+    Require(sceNpTrophyShowTrophyList(context, handle) == 0, "trophy list of a registered context");
+    Require(sceNpTrophyShowTrophyList(context + 100, handle) == InvalidContext, "trophy list of an unknown context");
+    Require(sceNpTrophyShowTrophyList(context, handle + 100) == InvalidHandle, "trophy list through an unknown handle");
+    Require(sceNpTrophyShowTrophyList(context + 100, handle + 100) == InvalidContext, "trophy list checks the context before the handle");
+    Require(sceNpTrophyShowTrophyList(-1, handle) == InvalidContext && sceNpTrophyShowTrophyList(context, -1) == InvalidHandle, "trophy list with the invalid ids");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
     errno = 71;
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(0x10), &count) == InvalidArgument, "unwritable flags rejected");
@@ -221,6 +227,12 @@ int main() {
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
     errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, nullptr, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unwritable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable trophy icon size pointer");
+    errno = 71;
     Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
     Require(errno == 71, "errno preserved across unmapped game details");
     errno = 71;
@@ -251,6 +263,8 @@ int main() {
     Require(sceNpTrophyGetGameIcon(context, handle, icon, &size) == Abort, "game icon through an aborted handle");
     Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == Abort, "unlock through an aborted handle");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == Abort, "register through an aborted handle");
+    Require(sceNpTrophyShowTrophyList(context, handle) == Abort, "trophy list through an aborted handle");
+    Require(sceNpTrophyShowTrophyList(context, live) == 0, "trophy list through the other handle");
     Require(sceNpTrophyAbortHandle(handle) == 0, "abort the handle again");
     Require(sceNpTrophyGetTrophyUnlockState(context, live, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0, "the other handle still works");
     Require(sceNpTrophyDestroyHandle(live) == 0, "destroy the second handle");
@@ -258,6 +272,7 @@ int main() {
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
     Require(sceNpTrophyAbortHandle(handle) == InvalidHandle, "abort a destroyed handle");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
+    Require(sceNpTrophyShowTrophyList(context, handle) == InvalidContext, "trophy list of a destroyed context");
 
     TestPackageBounds();
 

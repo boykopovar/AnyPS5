@@ -38,6 +38,17 @@ static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     return true;
 }
 
+static bool ReadCharmapEncoding(FreeType::GuestFaceRec* face, std::int32_t& encoding, bool& hasCharmap) {
+    FreeType::GuestCharMapRec* charmap = nullptr;
+    if (!CopyGuestIn(&charmap, &face->charmap, sizeof(charmap))) return false;
+    hasCharmap = (charmap != nullptr);
+    if (!hasCharmap) {
+        encoding = 0;
+        return true;
+    }
+    return CopyGuestIn(&encoding, &charmap->encoding, sizeof(encoding));
+}
+
 extern "C" {
 
 FcConfig* APS5_VABI FcConfigGetCurrent() {
@@ -52,7 +63,8 @@ FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern*, FcObjectSet*) {
 
 FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int, FcPattern* pattern, FcResult* result) {
     if (!sets || !pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
@@ -64,7 +76,7 @@ FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern*, int kind) {
 }
 
 int APS5_VABI FcInit() {
-    NotImplemented_nid_no_patch(__func__);
+    return FcInitBringUptoDate();
 }
 
 int APS5_VABI FcInitBringUptoDate() {
@@ -77,7 +89,8 @@ int APS5_VABI FcFontRenderPrepare() {
 
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result) {
     if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
@@ -97,7 +110,8 @@ uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSe
 
 FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool, FcCharSet**, FcResult* result) {
     if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
@@ -130,12 +144,15 @@ FcCharSet* APS5_VABI FcCharSetCreate() {
 
 std::uint32_t APS5_VABI FcFreeTypeCharIndex(FreeType::GuestFaceRec* face, std::uint32_t character) {
     if (!face) return 0;
+    std::int32_t current = 0;
+    bool hasCharmap = false;
+    if (!ReadCharmapEncoding(face, current, hasCharmap)) return 0;
     constexpr std::array encodings{FT_ENCODING_UNICODE, FT_ENCODING_MS_SYMBOL};
-    const auto current = face->charmap ? face->charmap->encoding : 0;
-    const std::size_t initial = current == encodings[1] ? 1 : 0;
+    const std::size_t initial = (hasCharmap && current == encodings[1]) ? 1 : 0;
     for (std::size_t offset = 0; offset < encodings.size(); ++offset) {
         const auto encoding = encodings[(initial + offset) % encodings.size()];
-        if ((!face->charmap || face->charmap->encoding != encoding) &&
+        if (!ReadCharmapEncoding(face, current, hasCharmap)) return 0;
+        if ((!hasCharmap || current != encoding) &&
             FT_Select_Charmap_nid_postfix(face, encoding) != 0) continue;
         if (const auto glyph = FT_Get_Char_Index_nid_postfix(face, character)) return glyph;
         if (character < 0x100 && encoding == FT_ENCODING_MS_SYMBOL) {

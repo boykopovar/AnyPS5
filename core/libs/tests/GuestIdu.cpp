@@ -101,6 +101,11 @@ int main() {
         Require(sceIduInstallPkg(nullptr, nullptr) == invalidArgument);
         Require(sceIduInstallPkg(any.data(), any.data()) == notInitialized);
 
+        Require(sceIduGetPkgInstallStatus(nullptr, any.data(), 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, nullptr, 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, any.data(), 0x21F) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, any.data(), 0x221) == invalidArgument);
+
         Require(sceIduGetTitleList(nullptr, 1) == invalidArgument);
         Require(sceIduGetTitleList(nullptr, -1) == invalidArgument);
         Require(sceIduGetTitleList(any.data(), 0) == invalidArgument);

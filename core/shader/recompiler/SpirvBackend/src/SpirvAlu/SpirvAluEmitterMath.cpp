@@ -151,12 +151,12 @@ std::uint32_t EmitExt(SpirvEmitterState& state, std::uint32_t type, std::uint32_
 namespace {
 
 std::uint32_t ExactMul(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
-    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {lhs, rhs, ConstantF32(state, 0x80000000u)});
+    if (state.fusedExactArithmetic) return Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {lhs, rhs, ConstantF32(state, 0x80000000u)}));
     return Exact(state, Binary(state, spv::OpFMul, TypeF32(state), lhs, rhs));
 }
 
 std::uint32_t ExactSub(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs) {
-    if (state.fusedExactArithmetic) return EmitExt(state, TypeF32(state), GLSLstd450Fma, {ConstantF32(state, 0xbf800000u), rhs, lhs});
+    if (state.fusedExactArithmetic) return Exact(state, EmitExt(state, TypeF32(state), GLSLstd450Fma, {ConstantF32(state, 0xbf800000u), rhs, lhs}));
     return Exact(state, Binary(state, spv::OpFSub, TypeF32(state), lhs, rhs));
 }
 
@@ -1249,8 +1249,41 @@ std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0,
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);
 }
 
-std::uint32_t EmitFPSaturate32(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), arg0);
+std::uint32_t EmitFPSaturate32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto uncast = [](const IrValue* value) {
+        value = value->Resolve();
+        while (value->Flags<std::uint64_t>() == 0u && (value->Opcode() == IrOpcode::BitCastU32F32 || value->Opcode() == IrOpcode::BitCastF32U32)) value = value->Argument(0)->Resolve();
+        return value;
+    };
+    const auto* source = uncast(inst.Argument(0));
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::FPMax32) {
+        for (std::uint32_t index = 0u; index < 2u; ++index) {
+            const auto* zero = source->Argument(index)->Resolve();
+            if (zero->HasImmediate() && zero->Type() == IrType::F32 && std::bit_cast<std::uint32_t>(zero->ImmediateF32()) == 0u) {
+                source = uncast(source->Argument(1u - index));
+                break;
+            }
+        }
+    }
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::SelectU32) {
+        const auto* test = source->Argument(0)->Resolve();
+        const auto* sign = source->Argument(1)->Resolve();
+        const auto* original = source->Argument(2)->Resolve();
+        const auto masked = [&](const IrValue* value, std::uint32_t mask) {
+            return value->Flags<std::uint64_t>() == 0u && value->Opcode() == IrOpcode::BitwiseAnd32 &&
+                ((uncast(value->Argument(0)) == uncast(original) && IsU32(value->Argument(1), mask)) || (uncast(value->Argument(1)) == uncast(original) && IsU32(value->Argument(0), mask)));
+        };
+        if (test->Flags<std::uint64_t>() == 0u && test->Opcode() == IrOpcode::IEqual32 && masked(sign, 0x80000000u) &&
+            ((IsU32(test->Argument(0), 0u) && masked(test->Argument(1)->Resolve(), 0x7f800000u)) || (IsU32(test->Argument(1), 0u) && masked(test->Argument(0)->Resolve(), 0x7f800000u)))) {
+            const auto bits = ctx.Def(original);
+            const auto range = Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 0x00800000u));
+            const auto positive = Binary(state, spv::OpULessThanEqual, TypeBool(state), range, ConstantU32(state, 0x7f000000u));
+            const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
+            return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));
+        }
+    }
+    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), ctx.Arg(inst, 0));
     const auto positive = Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 1u)), ConstantU32(state, 0x7f800000u));
     const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
     return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));
@@ -1867,8 +1900,10 @@ std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
         const auto address = ctx.ShuffleInHalf(inst, 1, from);
         const auto active = ctx.ShuffleInHalf(inst, 2, from);
         const auto target = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u)), ConstantU32(state, 31u));
-        const auto hit = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, Binary(state, spv::OpIEqual, TypeBool(state), target, own));
-        result = Select(state, TypeU32(state), hit, value, result);
+        const auto activeMask = Select(state, TypeU32(state), active, ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto targetMask = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), target, own), ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto hit = Binary(state, spv::OpBitwiseAnd, TypeU32(state), activeMask, targetMask);
+        result = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), value, hit), Binary(state, spv::OpBitwiseAnd, TypeU32(state), result, Unary(state, spv::OpNot, TypeU32(state), hit)));
     }
     return result;
 }
@@ -2117,17 +2152,17 @@ std::uint32_t EmitFPUnordGreaterThanEqual32(SpirvEmitterState& state, std::uint3
 }
 
 std::uint32_t EmitFPAdd32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0x3f800000u), arg0, arg1);
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0x3f800000u), arg0, arg1));
     return Exact(state, EmitNative<spv::OpFAdd, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPSub32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0xbf800000u), arg1, arg0);
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, ConstantF32(state, 0xbf800000u), arg1, arg0));
     return Exact(state, EmitNative<spv::OpFSub, IrType::F32>(state, arg0, arg1));
 }
 
 std::uint32_t EmitFPMul32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    if (state.fusedExactArithmetic) return EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, ConstantF32(state, 0x80000000u));
+    if (state.fusedExactArithmetic) return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, ConstantF32(state, 0x80000000u)));
     return Exact(state, EmitNative<spv::OpFMul, IrType::F32>(state, arg0, arg1));
 }
 
@@ -2206,11 +2241,11 @@ static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::ui
     const auto pair = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, state.module.Type(spv::OpTypeVector, f16, 2u), pair, half, state.module.Constant(spv::OpConstant, f16, 0u));
     const auto bits = Unary(state, spv::OpBitcast, u32, pair);
-    if (state.float16NarrowNans) return bits;
     const auto source = Unary(state, spv::OpBitcast, u32, value);
+    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
+    if (state.float16NarrowNans) return Binary(state, spv::OpBitwiseOr, u32, sign, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffu)));
     const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, source, ConstantU32(state, 0x7fffffffu));
     if (nanPayloadUnused) return Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), ConstantU32(state, 0x7e00u), bits);
-    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
     const auto payload = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, magnitude, ConstantU32(state, 0x7fffffu)), ConstantU32(state, 13u));
     const auto nan = Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, 0x7e00u), payload);
     const auto result = Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), nan, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffu)));

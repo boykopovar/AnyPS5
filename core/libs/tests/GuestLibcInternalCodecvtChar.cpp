@@ -1,9 +1,19 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -21,11 +31,34 @@ void Require(bool condition, const char* message) {
     std::abort();
 }
 
+void* g_lastFreed = nullptr;
+std::size_t g_freeCount = 0;
+#ifdef _WIN32
+HMODULE g_library = nullptr;
+#else
+void* g_library = nullptr;
+#endif
+
+template<typename TFunction>
+TFunction ResolveExport(const char* symbol) {
+#ifdef _WIN32
+    auto* address = reinterpret_cast<void*>(GetProcAddress(g_library, symbol));
+#else
+    void* address = dlsym(g_library, symbol);
+#endif
+    Require(address != nullptr, "missing exported symbol");
+    return reinterpret_cast<TFunction>(address);
+}
+
 void APS5_VABI Destroy(GuestLocale::Facet*) {}
 void APS5_VABI Retain(GuestLocale::Facet*) {}
 GuestLocale::Facet* APS5_VABI Release(GuestLocale::Facet*) { return nullptr; }
 void* APS5_VABI TestHeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
-void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
+void APS5_VABI TestHeapFree(void* pointer) {
+    g_lastFreed = pointer;
+    ++g_freeCount;
+    std::free(pointer);
+}
 void* APS5_VABI TestHeapCalloc(std::size_t count, std::size_t bytes) { return std::calloc(count, bytes); }
 void* APS5_VABI TestHeapReallocate(void* pointer, std::size_t bytes) { return std::realloc(pointer, bytes); }
 void* APS5_VABI TestHeapAlign(std::size_t, std::size_t bytes) { return std::malloc(bytes); }
@@ -144,6 +177,34 @@ void CheckUnshift(Unshift unshift, GuestLocale::Facet* facet) {
     Require(target[0] == 'a' && target[1] == 'b' && target[2] == 'c' && target[3] == 'd', "unshift writes nothing");
 }
 
+template<typename TCall>
+void RequireRejected(TCall call, const char* message) {
+    *__error_nid_postfix() = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        Require(*__error_nid_postfix() == 71, message);
+        return;
+    }
+    Require(false, message);
+}
+
+void CheckGuestPointers(Conversion convert, Unshift unshift) {
+    const char source[] = "codecvt";
+    char target[4] = {};
+    const char* next1 = nullptr;
+    char* next2 = nullptr;
+    std::uint64_t state = kStateSentinel;
+    auto** unmappedNext1 = reinterpret_cast<const char**>(std::uintptr_t{0x10});
+    auto** unmappedNext2 = reinterpret_cast<char**>(std::uintptr_t{0x10});
+    RequireRejected([&] { convert(nullptr, &state, source, source + 7, unmappedNext1, target, target + 4, &next2); }, "a conversion rejects an unwritable next1");
+    Require(next2 == nullptr, "a rejected next1 leaves next2 alone");
+    RequireRejected([&] { convert(nullptr, &state, source, source + 7, &next1, target, target + 4, unmappedNext2); }, "a conversion rejects an unwritable next2");
+    Require(next1 == nullptr, "a rejected next2 leaves next1 alone");
+    RequireRejected([&] { unshift(nullptr, &state, target, target + 4, unmappedNext2); }, "unshift rejects an unwritable next2");
+    Require(state == kStateSentinel, "rejected calls leave the state alone");
+}
+
 void CheckLength(Length length, GuestLocale::Facet* facet) {
     const char source[16] = {};
     std::uint64_t state = kStateSentinel;
@@ -163,6 +224,8 @@ void CheckVirtuals() {
     CheckConversion(_ZNKSt7codecvtIcc9_MbstatetE5do_inERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, nullptr, "do_in returns noconv");
     CheckConversion(_ZNKSt7codecvtIcc9_MbstatetE6do_outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, nullptr, "do_out returns noconv");
     CheckUnshift(_ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix, nullptr);
+    CheckGuestPointers(_ZNKSt7codecvtIcc9_MbstatetE5do_inERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, _ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix);
+    CheckGuestPointers(_ZNKSt7codecvtIcc9_MbstatetE6do_outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, _ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix);
     CheckLength(sceLibcInternalCodecvtCharDoLength_nid_no_patch, nullptr);
 }
 
@@ -214,15 +277,101 @@ void CheckDispatch() {
     Require(g_calls.in == 1 && g_calls.out == 1 && g_calls.unshift == 1, "each member calls only its own virtual");
 }
 
+using RefsCtor = void (APS5_VABI*)(GuestLocale::Facet*, std::size_t);
+using LocinfoCtor = void (APS5_VABI*)(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*, std::size_t);
+using DeletingDtor = void (APS5_VABI*)(GuestLocale::Facet*);
+
+void VerifyConstructedFacet(GuestLocale::Facet* facet, std::size_t refs) {
+    const auto* expectedVtable = reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[2]);
+    Require(facet->vtable == expectedVtable, "constructor installs the codecvt<char, char> vtable");
+    Require(facet->references == static_cast<std::uint32_t>(refs), "constructor stores the low 32 bits of refs");
+    Require(facet->reserved == static_cast<std::uint32_t>(static_cast<std::uint64_t>(refs) >> 32), "constructor stores the high 32 bits of refs");
+    const auto* vtable = reinterpret_cast<const GuestLocale::CodecvtVtable*>(facet->vtable);
+    Require(vtable->alwaysNoconv(facet), "constructed facet reports always_noconv");
+    CheckConversion(vtable->in, facet, "constructed facet do_in returns noconv");
+    CheckConversion(vtable->out, facet, "constructed facet do_out returns noconv");
+    CheckUnshift(vtable->unshift, facet);
+    CheckLength(vtable->length, facet);
+    CheckMembers(facet);
 }
 
-int main() {
+void CheckConstructorsAndDestructor(bool hasLibrary) {
+    const std::size_t largeRefs = (std::size_t{0x12345678u} << 32) | 7u;
+    const GuestLocale::LocinfoStorage locinfo{};
+
+    for (const RefsCtor ctor : {_ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix, _ZNSt7codecvtIcc9_MbstatetEC2Em_nid_postfix}) {
+        GuestLocale::Facet facet{};
+        ctor(&facet, largeRefs);
+        VerifyConstructedFacet(&facet, largeRefs);
+        RequireRejected([&] { ctor(nullptr, 0); }, "refs ctor rejects null self");
+    }
+
+    for (const LocinfoCtor ctor : {_ZNSt7codecvtIcc9_MbstatetEC1ERKSt8_Locinfom_nid_postfix, _ZNSt7codecvtIcc9_MbstatetEC2ERKSt8_Locinfom_nid_postfix}) {
+        GuestLocale::Facet facet{};
+        ctor(&facet, &locinfo, largeRefs);
+        VerifyConstructedFacet(&facet, largeRefs);
+        RequireRejected([&] { ctor(nullptr, &locinfo, 0); }, "locinfo ctor rejects null self");
+        RequireRejected([&] { ctor(&facet, nullptr, 0); }, "locinfo ctor rejects null _Locinfo");
+    }
+
+    {
+        auto* heapFacet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        _ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix(heapFacet, 1);
+        const std::size_t beforeFrees = g_freeCount;
+        g_lastFreed = nullptr;
+        _ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix(heapFacet);
+        Require(g_freeCount == beforeFrees + 1 && g_lastFreed == heapFacet, "D0 deleting destructor frees the facet");
+        RequireRejected([] { _ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix(nullptr); }, "D0 rejects null self");
+    }
+
+    if (hasLibrary) {
+        const auto nidC1Refs = ResolveExport<RefsCtor>("_ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix");
+        const auto nidC2Refs = ResolveExport<RefsCtor>("_ZNSt7codecvtIcc9_MbstatetEC2Em_nid_postfix");
+        const auto nidC1Loc = ResolveExport<LocinfoCtor>("_ZNSt7codecvtIcc9_MbstatetEC1ERKSt8_Locinfom_nid_postfix");
+        const auto nidC2Loc = ResolveExport<LocinfoCtor>("_ZNSt7codecvtIcc9_MbstatetEC2ERKSt8_Locinfom_nid_postfix");
+        const auto nidD0 = ResolveExport<DeletingDtor>("_ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix");
+
+        for (const RefsCtor ctor : {nidC1Refs, nidC2Refs}) {
+            auto* heapFacet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+            ctor(heapFacet, 3);
+            VerifyConstructedFacet(heapFacet, 3);
+            const std::size_t beforeFrees = g_freeCount;
+            g_lastFreed = nullptr;
+            nidD0(heapFacet);
+            Require(g_freeCount == beforeFrees + 1 && g_lastFreed == heapFacet, "NID D0 frees NID-constructed facet");
+        }
+
+        for (const LocinfoCtor ctor : {nidC1Loc, nidC2Loc}) {
+            GuestLocale::Facet facet{};
+            ctor(&facet, &locinfo, 5);
+            VerifyConstructedFacet(&facet, 5);
+        }
+    }
+}
+
+}
+
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
+    bool hasLibrary = false;
+    if (argc >= 2) {
+#ifdef _WIN32
+        g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
+#else
+        g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+#endif
+        Require(g_library != nullptr, "load libSceLibcInternal");
+        hasLibrary = true;
+    }
     RegisterHeap();
     CheckVirtuals();
     GuestLocale::Facet facet{&g_internalVtable.facet, 0, 0};
     CheckMembers(&facet);
     CheckLibcFacet();
     CheckDispatch();
+    CheckConstructorsAndDestructor(hasLibrary);
     std::puts("libc internal codecvt char passed");
     return 0;
 }

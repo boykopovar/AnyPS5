@@ -337,6 +337,26 @@ void mouseLookReject() {
     require(rejects("MouseStickTarget = Left\nMouseStickTarget = Right\n"), "a mouse stick target given twice is rejected");
 }
 
+void toggleActionsParse() {
+    useConfig("ToggleActions = R2, L1 ; sticky\nR2 = KEY:Z\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto expected = static_cast<std::uint32_t>(Pad::PadButton::R2) | static_cast<std::uint32_t>(Pad::PadButton::L1);
+    require(configuration.toggleButtons == expected, "ToggleActions lists the pad buttons it names");
+    useConfig("toggleactions = square\n");
+    require(Pad::LoadInputMapping().toggleButtons == static_cast<std::uint32_t>(Pad::PadButton::Square), "ToggleActions is read case-insensitively");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().toggleButtons == 0, "no ToggleActions line leaves every action held");
+}
+
+void toggleActionsReject() {
+    require(rejects("ToggleActions = LeftStickUp\n"), "ToggleActions refuses a stick direction");
+    require(rejects("ToggleActions = ToggleMouse\n"), "ToggleActions refuses an emulator action");
+    require(rejects("ToggleActions = Fly\n"), "ToggleActions refuses an unknown action");
+    require(rejects("ToggleActions =\n"), "an empty ToggleActions is rejected");
+    require(rejects("ToggleActions = R2,,L1\n"), "an empty entry in ToggleActions is rejected");
+    require(rejects("ToggleActions = R2\nToggleActions = L1\n"), "ToggleActions given twice is rejected");
+}
+
 void nonAsciiPaths() {
     const std::u8string name = u8"anyps5-input-\u00fc-\u65e5\u672c-" + std::u8string(root.filename().u8string());
     const auto directory = root / std::filesystem::path(name);
@@ -732,6 +752,8 @@ int main() try {
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();
+    toggleActionsParse();
+    toggleActionsReject();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();

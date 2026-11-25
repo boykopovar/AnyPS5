@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -670,8 +671,14 @@ int APS5_VABI sceGnmDeleteEqEvent(KernelEqueue eq, std::uint64_t id) {
 }
 
 int APS5_VABI sceGnmGetEqEventType(const KernelEvent* ev) {
-    if (!ev || ev->filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
-    return static_cast<int>(ev->ident);
+    if (!ev) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    KernelEvent local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, ev, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(std::string(__func__) + ": unreadable event");
+    if (local.filter != EvfiltGraphicsCore) throw std::runtime_error(std::string(__func__) + ": not a graphics event");
+    return static_cast<int>(local.ident);
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize_nid_disambig1(void) {
@@ -688,6 +695,25 @@ bool APS5_VABI sceGnmIsUserPaEnabled() {
 
 bool APS5_VABI sceGnmDriverCaptureInProgress() {
     return false;
+}
+
+int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
+    if (name == 0 || !stream) return 3;
+    const std::uint32_t value = 1;
+    if (!GuestCopyOut_nid_no_patch(stream, &value, sizeof(value))) return 3;
+    return 0;
+}
+
+int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
+    if (!workload) return 3;
+    const std::uint64_t value = stream < 0x10 ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(workload, &value, sizeof(value))) return 3;
+    return stream < 0x10 ? 0 : 1;
+}
+
+int APS5_VABI sceGnmEndWorkload_nid_disambig1(std::uint64_t workload) {
+    if (workload == 0) return 2;
+    return ((workload >> 56) & 0xff) > 0xf ? 2 : 0;
 }
 
 int APS5_VABI sceGnmDriverTriggerCapture() {
@@ -846,9 +872,9 @@ int APS5_VABI sceGnmDestroyWorkloadStream_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t, std::uint32_t, std::uint64_t) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t) {
+    if (vqueueId == 0) return 0;
+    return sceGnmDingDong(vqueueId, nextOffsetDw);
 }
 
 int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void) {
@@ -916,14 +942,13 @@ int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg) {
+    return sceGnmSubmitAndFlipCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes, handle, index, flipMode, flipArg);
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
+    return sceGnmSubmitCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes);
 }
 
 }

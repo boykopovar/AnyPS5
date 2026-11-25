@@ -15,6 +15,7 @@
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
 static constexpr int NOT_MATCH = static_cast<int>(0x80550609);
+static constexpr int INVALID_NP_ID = static_cast<int>(0x80550605);
 static constexpr int COND_TIMEDOUT = static_cast<int>(0x8055800B);
 static constexpr int MUTEX_BUSY = static_cast<int>(0x8055800F);
 
@@ -66,6 +67,8 @@ static int testIds() {
 
     NpIdFull low = npIdWithTag("kestrel_77", 0x00347370);
     NpIdFull high = low;
+    low.reserved[0] = 1;
+    high.reserved[0] = 1;
     high.reserved[7] = 1;
     std::int32_t order = 5;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, nullptr) == INVALID_ARGUMENT, "a null order was accepted");
@@ -73,15 +76,26 @@ static int testIds() {
     ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, nullptr) == INVALID_ARGUMENT, "all null arguments were accepted");
+    errno = 71;
+    ok &= expect(sceNpCmpNpIdInOrder(reinterpret_cast<const NpIdFull*>(0x10), &high, &order) == INVALID_ARGUMENT, "an unmapped first NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, reinterpret_cast<const NpIdFull*>(0x10), &order) == INVALID_ARGUMENT, "an unmapped second NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, &high, reinterpret_cast<std::int32_t*>(0x10)) == INVALID_ARGUMENT, "an unmapped order was accepted");
+    ok &= expect(errno == 71, "errno was not preserved");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "reserved bytes did not order the NpIds");
     ok &= expect(sceNpCmpNpIdInOrder(&high, &low, &order) == 0 && order == 1, "the reverse order is not 1");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &low, &order) == 0 && order == 0, "an NpId is not equal to itself");
+    {
+        const NpIdFull unflagged = npIdWithTag("kestrel_77", 0x00347370);
+        order = 5;
+        ok &= expect(sceNpCmpNpIdInOrder(&unflagged, &low, &order) == INVALID_NP_ID && order == 5, "an uncanonicalized first NpId was ordered");
+        ok &= expect(sceNpCmpNpIdInOrder(&low, &unflagged, &order) == INVALID_NP_ID && order == 5, "an uncanonicalized second NpId was ordered");
+    }
     high = low;
     high.opt[0] = 9;
-    high.reserved[0] = 0;
-    low.reserved[0] = 200;
+    high.reserved[7] = 0;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "opt did not take precedence over reserved");
-    const NpIdFull heronId = npIdWithTag("heron-4", 0);
+    NpIdFull heronId = npIdWithTag("heron-4", 0);
+    heronId.reserved[0] = 1;
     ok &= expect(sceNpCmpNpIdInOrder(&heronId, &low, &order) == 0 && order == -1, "the handle did not take precedence");
 
     const NpIdFull none = npIdWithTag("heron-4", 0);
@@ -90,6 +104,9 @@ static int testIds() {
     const NpIdFull ps4 = npIdWithTag("heron-4", 0x00347370);
     const NpIdFull other = npIdWithTag("heron-4", 0x00357370);
     ok &= expect(sceNpGetPlatformType(nullptr) == INVALID_ARGUMENT, "a null NpId has a platform");
+    errno = 71;
+    ok &= expect(sceNpGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId has a platform");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId");
     ok &= expect(sceNpGetPlatformType(&none) == 0, "an untagged NpId is not platform 0");
     ok &= expect(sceNpGetPlatformType(&ps3) == 1, "the ps3 tag is not platform 1");
     ok &= expect(sceNpGetPlatformType(&vita) == 2, "the psp2 tag is not platform 2");
@@ -345,6 +362,15 @@ static int testClock() {
 
     ok &= expect(std::memcmp(version, "00.82\0\0\0", 8) == 0, "the nav SDK version is not 00.82 padded with zeros");
     ok &= expect(version[8] == 'x', "the nav SDK version was written past 8 bytes");
+
+    std::uint32_t sdkVersion = 0;
+    sceNpGetSdkVersionUInt(&sdkVersion);
+    ok &= expect((sdkVersion >> 16) == 0x0100, "the numeric SDK version is not 1.00");
+    errno = 71;
+    sceNpGetSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetNavSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetSdkVersionUInt(reinterpret_cast<std::uint32_t*>(0x10));
+    ok &= expect(errno == 71, "an unwritable version output changed errno");
     return ok ? 0 : 1;
 }
 

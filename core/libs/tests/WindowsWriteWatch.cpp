@@ -1034,6 +1034,35 @@ void CheckKnownZeroShared() {
     Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
 }
 
+void CheckKnownZeroMarks() {
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* unwatched = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* resident = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(memory && unwatched && section && resident, "cannot allocate known zero marks test memory");
+    const auto before = mappings.KnownZeroMarks();
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto committed = mappings.KnownZeroMarks();
+    Require(committed > before, "a watched commit did not advance the known zero marks");
+    mappings.ForgetKnownZero(reinterpret_cast<std::uintptr_t>(memory), Bytes);
+    Require(KnownZeroPages(memory, Bytes).empty(), "a forgotten range stayed known zero");
+    mappings.Commit(unwatched, Bytes, PAGE_READWRITE, Bytes, false);
+    Require(mappings.KnownZeroMarks() == committed, "forgetting or an unwatched commit advanced the known zero marks");
+    mappings.ForgetSection(section);
+    mappings.Map(resident, Large, section, 0, PAGE_READWRITE, true, true);
+    Require(mappings.KnownZeroMarks() > committed, "a fresh resident run did not advance the known zero marks");
+    mappings.Reset(resident, Large);
+    mappings.ForgetSection(section);
+    mappings.Reset(unwatched, Bytes);
+    mappings.Reset(memory, Bytes);
+    VirtualFree(resident, 0, MEM_RELEASE);
+    VirtualFree(unwatched, 0, MEM_RELEASE);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
@@ -1073,6 +1102,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroResident();
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
+        CheckKnownZeroMarks();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -184,6 +184,8 @@ std::unordered_set<std::string> ReadExportList(const std::string& path) {
         const auto end = text.find('\n', start);
         if (end == start) throw std::runtime_error("empty name in export list: " + path);
         auto name = text.substr(start, end - start);
+        if (!name.empty() && name.back() == '\r') name.pop_back();
+        if (name.empty()) throw std::runtime_error("empty name in export list: " + path);
         if (!result.insert(name).second) throw std::runtime_error("duplicate name in export list: " + name);
         start = end + 1;
     }

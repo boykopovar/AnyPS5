@@ -1,12 +1,23 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
 #include <source_location>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 using Comparator = int (APS5_VABI *)(const void*, const void*);
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
@@ -116,5 +127,68 @@ int main() {
         try { lsearch_nid_postfix(&key, &scratch, &huge, sizeof(Record), Compare); }
         catch (const std::overflow_error&) { caught = true; }
         Require(caught && calls == 0 && huge == std::numeric_limits<std::size_t>::max());
+    }
+
+    {
+        std::array<Record, 6> table = records;
+        const auto untouched = table;
+        std::size_t nel = table.size();
+        calls = 0;
+        Require(lfind_nid_postfix(&key, table.data(), &nel, 0, Compare) == nullptr && nel == table.size());
+        Require(lfind_nid_postfix(nullptr, nullptr, &nel, 0, nullptr) == nullptr && nel == table.size());
+        Require(lsearch_nid_postfix(&key, table.data(), &nel, 0, Compare) == table.data() && nel == table.size() + 1);
+        Require(lsearch_nid_postfix(nullptr, table.data(), &nel, 0, nullptr) == table.data() && nel == table.size() + 2);
+        Require(lsearch_nid_postfix(nullptr, nullptr, &nel, 0, nullptr) == nullptr && nel == table.size() + 3);
+        std::size_t empty = 0;
+        Require(lsearch_nid_postfix(&key, table.data(), &empty, 0, Compare) == table.data() && empty == 1);
+        std::size_t huge = std::numeric_limits<std::size_t>::max();
+        Require(lfind_nid_postfix(&key, table.data(), &huge, 0, Compare) == nullptr && huge == std::numeric_limits<std::size_t>::max());
+        Require(lsearch_nid_postfix(&key, table.data(), &huge, 0, Compare) == table.data() && huge == 0);
+        Require(calls == 0 && std::memcmp(table.data(), untouched.data(), sizeof(table)) == 0);
+    }
+
+    {
+#ifdef _WIN32
+        const std::size_t pageSize = 4096;
+        void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr);
+#else
+        const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+        void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+#endif
+        const std::size_t three = 3;
+        std::memcpy(page, &three, sizeof(three));
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+        Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+        auto* readOnlyCount = static_cast<std::size_t*>(page);
+        auto* unmappedCount = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+        auto rejectsKeepingErrno = [](auto call) {
+            errno = 71;
+            bool caught = false;
+            try { call(); }
+            catch (const std::invalid_argument&) { caught = true; }
+            return caught && errno == 71;
+        };
+        std::array<Record, 4> table{{{1, "one"}, {3, "three"}, {5, "five"}, {}}};
+        const auto saved = table;
+        int present = 3;
+        int absent = 4;
+        calls = 0;
+        Require(rejectsKeepingErrno([&] { lfind_nid_postfix(&present, table.data(), unmappedCount, sizeof(Record), Compare); }) && calls == 0);
+        Require(rejectsKeepingErrno([&] { lsearch_nid_postfix(&present, table.data(), unmappedCount, sizeof(Record), Compare); }) && calls == 0);
+        Require(lfind_nid_postfix(&present, table.data(), readOnlyCount, sizeof(Record), Compare) == &table[1]);
+        Require(lsearch_nid_postfix(&present, table.data(), readOnlyCount, sizeof(Record), Compare) == &table[1]);
+        Require(rejectsKeepingErrno([&] { lsearch_nid_postfix(&absent, table.data(), readOnlyCount, sizeof(Record), Compare); }));
+        Require(*readOnlyCount == 3 && std::memcmp(table.data(), saved.data(), sizeof(table)) == 0);
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, pageSize);
+#endif
     }
 }

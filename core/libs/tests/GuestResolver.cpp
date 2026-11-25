@@ -187,6 +187,16 @@ int main() {
     Require(getaddrinfo_nid_postfix("127.0.0.1", "1", &hints, &result) == 3 && !result);
     hints.flags = 12;
     Require(getaddrinfo_nid_postfix("invalid-numeric-address", "1", &hints, &result) == 8 && !result);
+#ifdef __linux__
+    hints.family = 2;
+    Require(getaddrinfo_nid_postfix("::1", "80", &hints, &result) == 8 && !result);
+    hints.family = 28;
+    Require(getaddrinfo_nid_postfix("127.0.0.1", "80", &hints, &result) == 8 && !result);
+    hints.family = 0;
+#endif
+    result = reinterpret_cast<GuestResolver::AddressInfo*>(1);
+    Require(getaddrinfo_nid_postfix("127.0.0.1", "1", reinterpret_cast<const GuestResolver::AddressInfo*>(0x10), &result) == 4 && !result);
+    Require(getaddrinfo_nid_postfix("127.0.0.1", "1", &hints, reinterpret_cast<GuestResolver::AddressInfo**>(0x10)) == 4);
     freeaddrinfo_nid_postfix(nullptr);
 
 }
