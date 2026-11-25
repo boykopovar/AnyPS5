@@ -350,6 +350,10 @@ thread_local std::uint32_t importsHeld = 0;
 class ImportsMutex {
 public:
     void lock() noexcept {
+        if (importsLockOrderChecked && MapImportGate::LeafLockHeld()) {
+            std::fprintf(stderr, "[lock] ASSERT: the host imports mutex is taken while this thread holds the live or pending storage image mutex\n");
+            std::abort();
+        }
         mutex.lock();
         if (importsLockOrderChecked) ++importsHeld;
     }
@@ -406,6 +410,9 @@ struct HostImports {
     // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
     std::vector<RefreshedRange> refreshedRanges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> loggedChanges;
+    std::vector<const HostImport*> loggedImports;
+    GuestAllocations::Mapped loggedMapped;
     std::uint64_t refreshedWindow = 0;
     std::set<std::uint64_t> pendingImports;
     std::map<std::uint64_t, GrowthRun> growth;
@@ -616,6 +623,22 @@ struct RetiredImport {
 std::uint64_t pinnedTotal(const HostImports& state) {
     return state.liveBytes + retiredPinnedBytes.load(std::memory_order_acquire);
 }
+
+class UntrappedImport {
+public:
+    UntrappedImport(std::uint64_t base, std::uint64_t bytes) : pointer(reinterpret_cast<const void*>(base)), size(static_cast<std::size_t>(bytes)), held(GuestWriteWatch::GuestWriteWatchBeginUntrappedAccess_nid_postfix(pointer, size)) {}
+    ~UntrappedImport() {
+        if (held) GuestWriteWatch::GuestWriteWatchEndUntrappedAccess_nid_postfix(pointer, size);
+    }
+    UntrappedImport(const UntrappedImport&) = delete;
+    UntrappedImport& operator=(const UntrappedImport&) = delete;
+    bool Held() const { return held; }
+
+private:
+    const void* pointer;
+    std::size_t size;
+    bool held;
+};
 
 bool holdsRangeOver(const HostImport& entry, std::uint64_t begin, std::uint64_t end) {
     const auto over = [&](const std::shared_ptr<const GuestAllocations::Range>& range) { return range != nullptr && range->address < end && begin < range->address + range->bytes; };
@@ -1225,6 +1248,13 @@ constexpr std::uint64_t writeWatchBlockBytes = 0x10000;
 #ifdef _WIN32
 constexpr std::uint64_t settleBlockBytes = writeWatchBlockBytes;
 constexpr std::uint64_t settlePageBytes = 0x1000;
+std::uint64_t PrivateSettleFloorBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* text = std::getenv("APS5_SETTLE_FLOOR_KIB");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) << 10u : settleBlockBytes + 1;
+    }();
+    return bytes;
+}
 constexpr auto settlePollPeriod = std::chrono::microseconds(100);
 std::atomic<bool> deferredSettles{std::getenv("APS5_NO_DEFERRED_SETTLES") == nullptr};
 #endif
@@ -1386,7 +1416,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
         for (const auto base : batch.bases) state.pendingSettles.erase(base);
         batch.bases.clear();
         dropWantedSettles(state);
-        std::fprintf(stderr, "[gpu] settling host imports under %llu KiB without waiting failed at %s (%d); they stay compared\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), step, static_cast<int>(result));
+        std::fprintf(stderr, "[gpu] settling host imports under %llu KiB without waiting failed at %s (%d); they stay compared\n", static_cast<unsigned long long>(PrivateSettleFloorBytes() >> 10u), step, static_cast<int>(result));
     };
     if (const char* step = prepareSettleBatch(context, deviceSettle, batch, result)) return fail(step);
     if ((result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &batch.fence)) != VK_SUCCESS) return fail("vkResetFences (settle batch)");
@@ -1643,7 +1673,7 @@ struct ImportWatching {
 ImportWatching importWatching(const Context& context, HostImports& state, bool alias, bool writable, std::uint64_t bytes) {
     decideImportWatch(context, state);
 #ifdef _WIN32
-    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= settleFloorBytes;
+    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= PrivateSettleFloorBytes();
     const bool watched = alias || !state.unwatchImports || settled;
     return {settled, watched, watched};
 #else
@@ -2531,6 +2561,8 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         ++state.budgetRefusals;
         return nullptr;
     }
+    const UntrappedImport untrapped(base, bytes);
+    if (!untrapped.Held()) return nullptr;
     if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
@@ -2990,6 +3022,91 @@ const HostImport* importAccess(const Context& context, HostImports& state, std::
 // Whether the imports need reconciling before a lookup: the registry changed since the last walk.
 bool importsStale(const Context& context, const HostImports& state) {
     return state.device != context.device || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration;
+}
+
+bool refreshedFromLoggedChanges(const Context& context, HostImports& state) {
+    const auto window = importWindow.load(std::memory_order_relaxed);
+    if (state.device != context.device || window == 0 || window != state.refreshedWindow) return false;
+    auto& spans = state.loggedChanges;
+    spans.clear();
+    std::uint64_t current = 0;
+    if (!GuestAllocations::GuestAllocationsChangesSince_nid_no_patch(state.refreshedGeneration, spans, current)) return false;
+    std::sort(spans.begin(), spans.end());
+    std::size_t merged = 0;
+    for (const auto& span : spans) {
+        if (merged != 0 && span.first <= spans[merged - 1].second) spans[merged - 1].second = std::max(spans[merged - 1].second, span.second);
+        else spans[merged++] = span;
+    }
+    spans.resize(merged);
+    const auto touched = [&](std::uint64_t base, std::uint64_t bytes) {
+        const auto low = base / window * window;
+        const auto high = std::max(low + window, base + bytes);
+        const auto found = std::upper_bound(spans.begin(), spans.end(), low, [](std::uint64_t value, const auto& span) { return value < span.second; });
+        return found != spans.end() && found->first < high;
+    };
+    for (const auto& [key, failure] : state.failed) {
+        if (touched(failure.base, failure.bytes)) return false;
+    }
+    for (const auto& [key, failure] : state.failedJoins) {
+        if (touched(failure.base, failure.bytes)) return false;
+    }
+    for (const auto& [key, failure] : state.failedBlocks) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [key, refusal] : state.refusals) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [key, refusal] : state.evictingRefusals) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [begin, run] : state.growth) {
+        if (touched(begin, run.end - begin)) return false;
+    }
+    for (const auto& [base, end] : state.sparseRunEnds) {
+        if (touched(base, 1)) return false;
+    }
+    for (const auto& [base, joins] : state.sparseRunJoins) {
+        if (touched(base, 1)) return false;
+    }
+    auto& checked = state.loggedImports;
+    checked.clear();
+    std::uint64_t unchecked = 0;
+    for (const auto& [begin, end] : spans) {
+        auto it = state.imports.lower_bound(std::max(begin / window * window, unchecked));
+        if (it != state.imports.begin() && std::prev(it)->first >= unchecked && std::prev(it)->first + std::prev(it)->second.bytes > begin) --it;
+        for (; it != state.imports.end() && it->first / window * window < end; ++it) checked.push_back(&it->second);
+        unchecked = it == state.imports.end() ? std::numeric_limits<std::uint64_t>::max() : it->first;
+    }
+    const auto walked = checked.size();
+    for (const auto base : state.pendingImports) {
+        const auto seen = std::lower_bound(checked.begin(), checked.begin() + walked, base, [](const HostImport* entry, std::uint64_t value) { return entry->base < value; });
+        if (seen != checked.begin() + walked && (*seen)->base == base) continue;
+        if (const auto found = state.imports.find(base); found != state.imports.end()) checked.push_back(&found->second);
+    }
+    auto& mapped = state.loggedMapped;
+    mapped.clear();
+    for (const auto* entry : checked) {
+        for (const auto& range : entry->ranges) mapped.emplace_back(range);
+    }
+    const auto local = mapped.empty() ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(mapped);
+    mapped.clear();
+    for (const auto* entry : checked) {
+        if (!sameRange(*entry, local)) return false;
+    }
+    const auto alignment = context.hostImportAlignment;
+    for (const auto* entry : checked) {
+        if (entry->unwatched) GuestMemory::Unwatch(entry->base, entry->bytes);
+        if (entry->joined) continue;
+        const auto desired = desiredRun(local, entry->base, alignment);
+        if (!desired || desired->first > entry->base || entry->base + entry->bytes > desired->second || peekImport(state, desired->first, desired->second) != nullptr) continue;
+        auto& run = growthAt(state, desired->first, desired->second)->second;
+        if (run.blocked == GrowthBlock::Failed) run.blocked = GrowthBlock::Untried;
+    }
+    resetGrowthFloor(state);
+    state.refreshedGeneration = current;
+    state.gateRefusals.clear();
+    state.pendingImports.clear();
+    return true;
 }
 
 // The mirror registry: by range base. The map is protected by `mutex` (findMirror runs in a build's
@@ -4165,7 +4282,7 @@ void reportMirrors() {
 #ifdef _WIN32
     auto& imports = Imports();
     std::lock_guard importsLock(imports.mutex);
-    if (imports.settlesSubmitted != 0 || imports.settlesWaited != 0 || !imports.settles.empty()) AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted, %llu back in the write watch, %llu kept compared under a storage image, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), static_cast<unsigned long long>(imports.settlesSubmitted), static_cast<unsigned long long>(imports.settlesRewatched), static_cast<unsigned long long>(imports.settlesKeptCompared), static_cast<unsigned long long>(imports.settlesParked), static_cast<unsigned long long>(imports.settleUnmapWaits), imports.settles.size(), static_cast<unsigned long long>(imports.settlesWaited));
+    if (imports.settlesSubmitted != 0 || imports.settlesWaited != 0 || !imports.settles.empty()) AgcDriver::ProfilePrint_nid_no_patch("[buffers] host imports under %llu KiB: %llu settle reads submitted, %llu back in the write watch, %llu kept compared under a storage image, %llu retired during their read (%llu unmaps waited for it), %zu pending; %llu larger imports settled inside their window\n", static_cast<unsigned long long>(PrivateSettleFloorBytes() >> 10u), static_cast<unsigned long long>(imports.settlesSubmitted), static_cast<unsigned long long>(imports.settlesRewatched), static_cast<unsigned long long>(imports.settlesKeptCompared), static_cast<unsigned long long>(imports.settlesParked), static_cast<unsigned long long>(imports.settleUnmapWaits), imports.settles.size(), static_cast<unsigned long long>(imports.settlesWaited));
 #endif
 }
 
@@ -4216,6 +4333,41 @@ SnapshotStats& Snapshots() {
     return stats;
 }
 
+bool retireImportsOver(HostImports& imports, std::uint64_t address, std::uint64_t end) {
+    GuestAllocations::Lease lease;
+    bool leased = false;
+    bool retired = false;
+    for (;;) {
+        bool needed = false;
+        {
+            std::lock_guard importsLock(imports.mutex);
+            for (auto it = imports.imports.begin(); it != imports.imports.end();) {
+                if (!holdsRangeOver(it->second, address, end)) {
+                    ++it;
+                    continue;
+                }
+                if (!leased && RetireShadowReadsRegistered(it->second)) {
+                    needed = true;
+                    break;
+                }
+                const auto next = std::next(it);
+                retireImport(imports.device, imports, it, lease, false);
+                it = next;
+                retired = true;
+            }
+        }
+        if (!needed) break;
+        lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+        leased = true;
+    }
+    if (leased || retired) {
+        auto& state = Leases();
+        std::lock_guard lock(state.mutex);
+        ++(leased ? state.stats.retireSnapshots : state.stats.retireSnapshotsSkipped);
+    }
+    return retired;
+}
+
 bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
     const auto start = std::chrono::steady_clock::now();
     bool synced = false;
@@ -4263,20 +4415,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
         if (releaseParkedImports(imports, address, end)) retiredImport = true;
-        const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
-        {
-            std::lock_guard importsLock(imports.mutex);
-            for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                if (!holdsRangeOver(it->second, address, end)) {
-                    ++it;
-                    continue;
-                }
-                const auto next = std::next(it);
-                retireImport(imports.device, imports, it, lease, false);
-                it = next;
-                retiredImport = true;
-            }
-        }
+        if (retireImportsOver(imports, address, end)) retiredImport = true;
 #ifdef _WIN32
         if (releaseSettleRetired(imports, address, end)) retiredImport = true;
 #endif
@@ -4329,20 +4468,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
                 synced = true;
                 drained = true;
             }
-            const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
-            {
-                std::lock_guard importsLock(imports.mutex);
-                for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                    if (!holdsRangeOver(it->second, address, end)) {
-                        ++it;
-                        continue;
-                    }
-                    const auto next = std::next(it);
-                    retireImport(imports.device, imports, it, lease, false);
-                    it = next;
-                    retiredImport = true;
-                }
-            }
+            if (retireImportsOver(imports, address, end)) retiredImport = true;
             if (retiredImport && recorder != nullptr && !recorder->Idle()) {
                 Recorder::CountSync(4);
                 recorder->Sync();
@@ -4420,7 +4546,7 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes) {
     const auto& stats = state.stats;
     const auto table = BdaResources::TableCacheCounters();
     const auto& snapshots = Snapshots();
-    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu by builds that store through addresses; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; BDA table cache %llu hits / %llu misses (%zu tables held); snapshot compares: %llu skipped (live-backed region), %llu made\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.writing), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(table.hits), static_cast<unsigned long long>(table.misses), table.held, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)));
+    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu by builds that store through addresses; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; BDA table cache %llu hits / %llu misses (%zu tables held); snapshot compares: %llu skipped (live-backed region), %llu made; retire registry snapshots: %llu taken, %llu skipped (no live shadow unit)\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.writing), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(table.hits), static_cast<unsigned long long>(table.misses), table.held, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(stats.retireSnapshots), static_cast<unsigned long long>(stats.retireSnapshotsSkipped));
 }
 
 void FinishLeaseWork() {
@@ -5057,7 +5183,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     settleUnwatchedImports(context, state);
 #endif
     // A hit is only valid while the registry has not changed since the imports were reconciled.
-    if (!importsStale(context, state)) {
+    if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
         if (recentImportsEnabled()) {
             if (const auto* entry = recentImport(state, address, address + bytes)) {
                 entry->lastUse = ++state.useCounter;
@@ -5092,6 +5218,29 @@ bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::si
     if (importsStale(context, state)) return false;
     const auto* entry = peekImport(state, address, address + bytes);
     return entry != nullptr && entry->dmaBuf;
+}
+
+const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    ensurePinWaiter();
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+#ifdef _WIN32
+    settleUnwatchedImports(context, state);
+#endif
+    const auto end = address + bytes;
+    if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
+        if (const auto* entry = findImport(state, address, end)) {
+            entry->lastUse = ++state.useCounter;
+            return entry;
+        }
+    }
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    refreshImports(context, state, lease);
+    if (const auto* entry = importAccess(context, state, address, end, lease, ImportRequester::Access)) return entry;
+    if (!joinedCovers(lease, address, end)) return nullptr;
+    const auto* entry = importJoined(context, state, address, end, lease, true);
+    return entry != nullptr && entry->base <= address && entry->base + entry->bytes >= end ? entry : nullptr;
 }
 
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -5313,6 +5462,23 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     // Imports of a replaced device are not this device's; a stale registry only means an import
     // may be dropped at the next reconcile, which the binding path handles.
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
+}
+
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || page == 0 || (page & (page - 1)) != 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address - page) return false;
+    const auto first = address & ~(page - 1);
+    const auto last = (address + bytes + page - 1) & ~(page - 1);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device || peekImport(state, address, address + bytes) == nullptr) return false;
+    auto it = state.imports.upper_bound(first);
+    if (it != state.imports.begin()) --it;
+    for (; it != state.imports.end() && it->first < last; ++it) {
+        const auto& entry = it->second;
+        if (entry.base + entry.bytes <= first) continue;
+        if (!entry.dmaBuf && !context.readTrapsOverHostPointerImports) return false;
+    }
+    return true;
 }
 
 bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -8401,7 +8567,7 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     std::lock_guard lock(state.mutex);
     // An import whose registered range changed must not be reused: reconcile first, as an upload
     // does (the walk only runs when the registry changed since the last one).
-    if (reconcile && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) static_cast<void>(refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix()));
+    if (reconcile && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration && !refreshedFromLoggedChanges(context, state)) static_cast<void>(refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix()));
     auto found = state.imports.upper_bound(address);
     if (found == state.imports.begin()) return 0;
     --found;
@@ -8452,7 +8618,7 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     if (state.device != proof.device) return false;
-    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
+    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration && !refreshedFromLoggedChanges(context, state)) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
 }
 

@@ -177,9 +177,8 @@ int APS5_VABI __sys_set_uevt_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix(int s) {
+    return GuestSocketClose_nid_no_patch(s);
 }
 
 int APS5_VABI __sys_test_debug_rwmem_nid_disambig1_nid_postfix() {

@@ -935,13 +935,13 @@ jobs:
       - name: Run the video output tests
         if: github.event_name != 'pull_request'
         shell: cmd
-        run: ctest --test-dir build -R video_out --output-on-failure --timeout 120 --parallel 4 --output-log video_out.log --output-junit video_out.xml
+        run: ctest --test-dir build -R video_out --no-tests=error --output-on-failure --timeout 120 --parallel 4 --output-log video_out.log --output-junit video_out.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           ANYPS5_NO_SHADER_CACHE: 1
       - name: Check the video output skips
         if: github.event_name != 'pull_request'
-        run: python tools/check_skips.py build/video_out.xml --job windows
+        run: python tools/check_skips.py build/video_out.xml --job windows --require-tests
       - name: Upload the video output test report
         if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v5
@@ -972,6 +972,9 @@ jobs:
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ github.sha }}
+      - name: Report compiler cache statistics
+        if: ${{ !cancelled() }}
+        run: ccache --show-stats
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

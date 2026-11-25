@@ -25,7 +25,6 @@ public:
     SizeValue fixedLayoutSize{ 0.0, 0.0 };
     std::uint32_t paginationMode = 0;
     bool paginationBehavesLikeColumns = false;
-    bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
     bool isPinnedToLeftSide = true;
@@ -52,6 +51,20 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::vector<std::string> loadedSubresourceDomains;
+    bool userMediaStateCleared = false;
+    bool wheelEventTestMonitorCleared = false;
+    bool pointerLockAllowed = false;
+    bool isTerminated = false;
+    std::int32_t processIdentifier = 1000;
+    std::vector<Retained<Object>> relatedPages;
+    Retained<Object> websitePolicies;
+    std::uint32_t layoutMilestones = 0;
+    std::uint32_t mockCameraOrientation = 0;
+    float mediaVolume = 1.0f;
+    std::uint32_t mutedState = 0;
+    bool mayStartMediaWhenInWindow = true;
+    std::uint32_t mediaState = 0;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -132,6 +145,15 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
+std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+    std::uint32_t processModel = 0;
+    bool usesNetworkProcess = true;
+    bool diskCacheSpeculativeValidationEnabled = false;
+    bool canHandleHTTPSServerTrustEvaluation = true;
+    Retained<String> customWebContentServiceBundleIdentifier;
+    std::uint32_t terminatedNetworkProcessesCount = 0;
+mutable Retained<IconDatabase> iconDatabase;
+    std::optional<std::u16string> iconDatabasePath;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

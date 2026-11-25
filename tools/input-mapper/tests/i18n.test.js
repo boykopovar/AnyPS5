@@ -8,7 +8,7 @@ import {parseIni, serialize} from '../validation.js';
 test('every selectable language supplies the primary interface and English fallbacks are complete', () => {
     assert.equal(locales[0].code, 'ar-EG');
     assert.equal(new Set(locales.map(item => item.code)).size, locales.length);
-    const required = ['controls', 'configuration', 'help', 'settings', 'language', 'close', 'intro', 'search', 'import', 'reset', 'select', 'add', 'capture', 'remove', 'download', 'copy', 'backControls', 'helpIntro', 'configIntro'];
+    const required = ['controls', 'configuration', 'help', 'settings', 'language', 'close', 'intro', 'search', 'import', 'reset', 'select', 'add', 'capture', 'remove', 'download', 'copy', 'backControls', 'helpIntro', 'configIntro', 'controllerButtons', 'noOverride'];
     for (let index = 0; index < 6; index++) required.push(`group${index}`);
     for (let index = 0; index < 4; index++) required.push(`faq${index}Question`, `faq${index}Answer`);
     for (const [key, message] of Object.entries(messages.en)) {

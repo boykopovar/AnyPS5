@@ -118,6 +118,7 @@ bool APS5_VABI JSValueIsDate(JSContextRef ctx, JSValueRef value) {
 bool APS5_VABI JSValueIsEqual(JSContextRef ctx, JSValueRef a, JSValueRef b, JSValueRef* exception) {
     if (!ctx || (a && !a->alive) || (b && !b->alive)) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     const int res = JS_IsEqual(mutCtx->qctx, ValueOrNull(a), ValueOrNull(b));
     if (res < 0) {
         CapturePendingException(mutCtx, exception);
@@ -136,6 +137,7 @@ bool APS5_VABI JSValueIsStrictEqual(JSContextRef ctx, JSValueRef a, JSValueRef b
 bool APS5_VABI JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value, JSObjectRef constructor, JSValueRef* exception) {
     if (!ctx || !constructor || (value && !value->alive) || !constructor->alive) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     const CallbackObjectData* data = mutCtx->group->FindCallbackData(constructor);
     if (!data && !JS_IsFunction(mutCtx->qctx, constructor->qval)) return false;
     if (data && data->jsClass && !data->isDirectFunction && !data->isDirectConstructor) {
@@ -210,6 +212,7 @@ JSValueRef APS5_VABI JSValueMakeFromJSONString(JSContextRef ctx, JSStringRef str
 JSStringRef APS5_VABI JSValueCreateJSONString(JSContextRef ctx, JSValueRef value, unsigned indent, JSValueRef* exception) {
     if (!ctx || (value && !value->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValue space = JS_NewInt32(mutCtx->qctx, static_cast<std::int32_t>(std::min(indent, 10u)));
     JSValue strVal = JS_JSONStringify(mutCtx->qctx, ValueOrNull(value), JS_UNDEFINED, space);
     JS_FreeValue(mutCtx->qctx, space);
@@ -235,6 +238,7 @@ bool APS5_VABI JSValueToBoolean(JSContextRef ctx, JSValueRef value) {
 double APS5_VABI JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef* exception) {
     if (!ctx || (value && !value->alive)) return std::numeric_limits<double>::quiet_NaN();
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     double num = std::numeric_limits<double>::quiet_NaN();
     if (JS_ToFloat64(mutCtx->qctx, &num, ValueOrNull(value)) < 0) {
         CapturePendingException(mutCtx, exception);
@@ -246,6 +250,7 @@ double APS5_VABI JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef*
 JSStringRef APS5_VABI JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JSValueRef* exception) {
     if (!ctx || (value && !value->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    VmEntryScope vmScope(mutCtx->group);
     JSValue strVal = JS_ToString(mutCtx->qctx, ValueOrNull(value));
     if (JS_IsException(strVal)) {
         CapturePendingException(mutCtx, exception);
