@@ -2,7 +2,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/libc.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -30,11 +29,9 @@ bool EqualName(std::string_view text, std::string_view name) {
 }
 
 std::string ReadGuestText(const char* text, const char* caller) {
-    const int savedErrno = errno;
     std::string copied;
     int error = CopyGuestString_nid_no_patch(text, 65536, copied);
     if (error == 63) error = CopyGuestString_nid_no_patch(text, 1u << 20, copied);
-    errno = savedErrno;
     if (error != 0) NotImplemented_nid_no_patch(caller);
     return copied;
 }
