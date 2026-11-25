@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <array>
-#include <cerrno>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -44,9 +43,7 @@ int APS5_VABI sceEditMp4GetStatus(const void* handle, void* status) {
 int APS5_VABI sceEditMp4Initialize(const void* param, void* handle) {
     if (param == nullptr || handle == nullptr) return ErrorNullArgument;
     std::uint64_t first = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&first, param, sizeof(first));
-    errno = savedErrno;
     if (!copied || first == 0) return ErrorInvalidParam;
     NotImplemented_nid_no_patch(__func__);
 }
@@ -58,9 +55,7 @@ void APS5_VABI sceEditMp4InitializeParam(void* param) {
     const std::uint32_t at18 = 700;
     std::memcpy(initial.data() + 0x10, &at10, sizeof(at10));
     std::memcpy(initial.data() + 0x18, &at18, sizeof(at18));
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(param, initial.data(), initial.size());
-    errno = savedErrno;
 }
 
 std::uint64_t APS5_VABI sceEditMp4QueryMemSize() {
