@@ -186,6 +186,14 @@ struct GuardedPages {
     }
 };
 
+GuardedPages* protectPages = nullptr;
+
+int APS5_VABI FlipReadOnlyWrite(Bio*, const char*, int size) {
+    ++methodCalls;
+    if (protectPages) protectPages->SetPage(1, true, false);
+    return size;
+}
+
 void CheckBioGuestPointers() {
     GuardedPages pages;
     const std::size_t page = pages.pageSize;
@@ -426,6 +434,143 @@ void CheckBioGuestPointers() {
         ExpectRuntimeError([&] { BIO_write_nid_postfix(&swapBio, "efgh", 4); });
         Require(alternateMethodCalls == 0 && swapBio.bytesWritten == 4);
         swappedMethod = nullptr;
+    }
+
+    {
+        Bio* memBio = BIO_new_nid_postfix(memMethod);
+        Require(memBio != nullptr && memBio->data != nullptr);
+        void* realMemData = memBio->data;
+        const BioBuffer sampleBuffer{4, reinterpret_cast<char*>(pages.base), 16};
+        for (const bool secondReadable : {true, false}) {
+            pages.SetPage(0, true, true);
+            pages.SetPage(1, true, true);
+            auto* straddleBuffer = reinterpret_cast<BioBuffer*>(pages.base + page - 8);
+            std::memcpy(straddleBuffer, &sampleBuffer, sizeof(sampleBuffer));
+            std::array<unsigned char, 8> prefix{};
+            std::memcpy(prefix.data(), straddleBuffer, 8);
+            pages.SetPage(1, secondReadable, false);
+            memBio->data = straddleBuffer;
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(memBio, 2, 0, nullptr); });
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(memBio, 10, 0, nullptr); });
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(memBio, 1, 0, nullptr); });
+            ExpectRuntimeError([&] { BIO_write_nid_postfix(memBio, "a", 1); });
+            ExpectRuntimeError([&] { memMethod->read(memBio, readOut, 4); });
+            ExpectRuntimeError([&] { memMethod->gets(memBio, readOut, 4); });
+            Require(std::memcmp(straddleBuffer, prefix.data(), 8) == 0);
+        }
+
+        for (const bool secondReadable : {true, false}) {
+            pages.SetPage(0, true, true);
+            pages.SetPage(1, true, true);
+            auto* straddleBytes = reinterpret_cast<char*>(pages.base + page - 4);
+            std::memcpy(straddleBytes, "ABCD1234", 8);
+            BioBuffer dataStraddle{4, straddleBytes, 16};
+            pages.SetPage(1, secondReadable, false);
+            memBio->data = &dataStraddle;
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(memBio, 1, 0, nullptr); });
+            Require(std::memcmp(straddleBytes, "ABCD", 4) == 0 && dataStraddle.length == 4);
+        }
+
+        memBio->data = realMemData;
+        pages.SetPage(0, true, false);
+        pages.SetPage(1, false, false);
+        Require(BIO_free_nid_postfix(memBio) == 1 && allocations == 0);
+    }
+
+    {
+        Bio* memBio = BIO_new_nid_postfix(memMethod);
+        Require(memBio != nullptr);
+        Require(BIO_write_nid_postfix(memBio, "hello", 5) == 5);
+        char* currentData = nullptr;
+        Require(BIO_ctrl_nid_postfix(memBio, 3, 0, &currentData) == 5 && currentData != nullptr);
+        Require(BIO_write_nid_postfix(memBio, currentData + 1, 3) == 3);
+        Require(BIO_ctrl_nid_postfix(memBio, 3, 0, &currentData) == 8);
+        Require(std::memcmp(currentData, "helloell", 8) == 0);
+        ExpectRuntimeError([&] { BIO_write_nid_postfix(memBio, reinterpret_cast<const char*>(noAccess), 64); });
+        char* afterFail = nullptr;
+        Require(BIO_ctrl_nid_postfix(memBio, 3, 0, &afterFail) == 8 && std::memcmp(afterFail, "helloell", 8) == 0);
+        Require(BIO_free_nid_postfix(memBio) == 1 && allocations == 0);
+    }
+
+    {
+        Bio* badSslBio = BIO_new_nid_postfix(sslMethod);
+        Require(badSslBio != nullptr && badSslBio->data != nullptr);
+        void* realSslData = badSslBio->data;
+        std::array<unsigned char, 48> validSslBytes{};
+        std::memcpy(validSslBytes.data(), realSslData, validSslBytes.size());
+
+        pages.SetPage(0, true, true);
+        std::memcpy(pages.base + 1536, validSslBytes.data(), validSslBytes.size());
+        pages.SetPage(0, true, false);
+        pages.SetPage(1, false, false);
+        for (void* badData : {static_cast<void*>(noAccess), static_cast<void*>(pages.base + 1536)}) {
+            badSslBio->data = badData;
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(badSslBio, 8, 0, nullptr); });
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(badSslBio, 9, 0, nullptr); });
+            ExpectRuntimeError([&] { sslMethod->callbackControl(badSslBio, 14, DummyInfo); });
+            ExpectRuntimeError([&] { sslMethod->destroy(badSslBio); });
+        }
+
+        for (const bool secondReadable : {true, false}) {
+            pages.SetPage(0, true, true);
+            pages.SetPage(1, true, true);
+            auto* straddleState = pages.base + page - 16;
+            std::memcpy(straddleState, validSslBytes.data(), validSslBytes.size());
+            pages.SetPage(1, secondReadable, false);
+            badSslBio->data = straddleState;
+            ExpectRuntimeError([&] { BIO_ctrl_nid_postfix(badSslBio, 8, 0, nullptr); });
+            ExpectRuntimeError([&] { sslMethod->callbackControl(badSslBio, 14, DummyInfo); });
+            ExpectRuntimeError([&] { sslMethod->destroy(badSslBio); });
+            Require(std::memcmp(straddleState, validSslBytes.data(), 16) == 0);
+        }
+
+        badSslBio->data = realSslData;
+        pages.SetPage(0, true, false);
+        pages.SetPage(1, false, false);
+        Require(BIO_free_nid_postfix(badSslBio) == 1 && allocations == 0);
+    }
+
+    {
+        pages.SetPage(0, true, true);
+        pages.SetPage(1, true, true);
+        auto* toctouBio = reinterpret_cast<Bio*>(pages.base + page - 16);
+        std::memcpy(toctouBio, &validBio, sizeof(validBio));
+        const BioMethod flipMethod{0x7f, "flip", FlipReadOnlyWrite, nullptr, StubPuts, nullptr, StubControl, nullptr, StubDestroy, StubCallbackControl};
+        toctouBio->method = &flipMethod;
+        protectPages = &pages;
+        methodCalls = 0;
+        errno = E2BIG;
+        bool threwToctou = false;
+        try {
+            BIO_write_nid_postfix(toctouBio, "abc", 3);
+        } catch (const std::runtime_error&) {
+            threwToctou = true;
+        }
+        protectPages = nullptr;
+        Require(threwToctou && errno == E2BIG && methodCalls == 1 && toctouBio->bytesWritten == 0);
+        pages.SetPage(0, true, false);
+        pages.SetPage(1, false, false);
+    }
+
+    {
+        ExpectRuntimeError([&] { BIO_new_mem_buf_nid_postfix(noAccess, -1); });
+        ExpectRuntimeError([&] { BIO_new_mem_buf_nid_postfix(unmapped, -1); });
+        pages.SetPage(0, true, true);
+        pages.SetPage(1, true, true);
+        auto* straddleText = reinterpret_cast<char*>(pages.base + page - 4);
+        std::memcpy(straddleText, "abcd", 4);
+        pages.SetPage(1, false, false);
+        ExpectRuntimeError([&] { BIO_new_mem_buf_nid_postfix(straddleText, -1); });
+        Require(allocations == 0);
+
+        pages.SetPage(0, true, false);
+        Bio* roMem = BIO_new_mem_buf_nid_postfix("hello", -1);
+        Require(roMem != nullptr && BIO_ctrl_nid_postfix(roMem, 10, 0, nullptr) == 5);
+        Require(memMethod->read(roMem, readOut, 2) == 2 && std::memcmp(readOut, "he", 2) == 0);
+        Require(BIO_ctrl_nid_postfix(roMem, 10, 0, nullptr) == 3);
+        Require(BIO_ctrl_nid_postfix(roMem, 1, 0, nullptr) == 1);
+        Require(BIO_ctrl_nid_postfix(roMem, 10, 0, nullptr) == 5);
+        Require(BIO_free_nid_postfix(roMem) == 1 && allocations == 0);
     }
 }
 
