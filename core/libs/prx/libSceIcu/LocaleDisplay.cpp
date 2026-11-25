@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 #include "unicode/uloc.h"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -17,32 +16,24 @@ namespace {
 std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
     if (!status) throw std::invalid_argument(std::string(caller) + ": invalid argument");
     std::int32_t value = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&value, status, sizeof(value));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(caller) + ": unreadable status");
     return value;
 }
 
 void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
     if (outgoing == incoming) return;
-    const int savedErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
-    errno = savedErrno;
     if (!writable) throw std::invalid_argument(std::string(caller) + ": unwritable status");
 }
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
