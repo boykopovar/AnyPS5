@@ -26,7 +26,6 @@
 #endif
 #endif
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -482,9 +481,7 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
     if (cache.interfaceFound) found = cache.interfaceValue;
     return cache.interfaceFound;
 #else
-    const int savedErrno = errno;
     const bool queried = QueryHostIpv4Interface(found);
-    errno = savedErrno;
     return queried;
 #endif
 }
@@ -1130,9 +1127,7 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
         }
     }
     if (hasCached) {
-        const int copyErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(info, &cached, sizeof(cached));
-        errno = copyErrno;
         return copied ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
     }
     const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
