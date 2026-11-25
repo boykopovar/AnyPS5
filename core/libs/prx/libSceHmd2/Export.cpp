@@ -11,7 +11,6 @@
 #include "SceTypes.hpp"
 
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
@@ -94,19 +93,15 @@ std::int32_t BeforeInitialize(std::int32_t answer, const char* name) {
 }
 
 bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
-    const auto preserved = errno;
     const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = preserved;
     return ok;
 }
 
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
-    const int savedErrno = errno;
     if (!info) return Hmd2::ParameterNull;
     Hmd2::DeviceInformation localInfo{};
     if (!initialized) {
         const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-        errno = savedErrno;
         if (!copied) return Hmd2::ParameterNull;
         return Hmd2::NotInitialized;
     }
@@ -118,7 +113,6 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
     localInfo.latency120Hz = 4160;
     localInfo.virtualImageDistance = 2.0f;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
     if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
@@ -139,9 +133,7 @@ int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
         const std::uint64_t timestamp = now + index * step;
         std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, bytes, localBytes.size());
-    errno = savedErrno;
     if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
@@ -160,9 +152,7 @@ std::int32_t APS5_VABI sceHmd2GetFieldOfView(std::int32_t handle, Hmd2::FieldOfV
     if (!fieldOfView) return Hmd2::ParameterNull;
     if (handle == 0 || handle != openHandle) return Hmd2::InvalidHandle;
     if (!initialized) return Hmd2::NotInitialized;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(fieldOfView, &DefaultFieldOfView, sizeof(DefaultFieldOfView));
-    errno = savedErrno;
     if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
@@ -233,9 +223,7 @@ std::int32_t APS5_VABI sceHmd2GetFieldOfViewWithoutHandle(Hmd2::FieldOfView* fie
     std::lock_guard lock(stateMutex);
     if (!fieldOfView) return Hmd2::ParameterNull;
     if (!initialized) return Hmd2::NotInitialized;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(fieldOfView, &DefaultFieldOfView, sizeof(DefaultFieldOfView));
-    errno = savedErrno;
     if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
@@ -322,9 +310,7 @@ int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializePa
     if (reprojectionState != nullptr) return Hmd2::ReprojectionAlreadyInitialized;
     if (parameter == nullptr) return Hmd2::ParameterNull;
     Hmd2::ReprojectionInitializeParameter localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam));
-    errno = savedErrno;
     if (!copied || localParam.workMemory == nullptr || localParam.displayMemory == nullptr) {
         return Hmd2::ParameterNull;
     }
