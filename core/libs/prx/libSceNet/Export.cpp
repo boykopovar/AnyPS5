@@ -1990,16 +1990,18 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
     }
     const std::uint32_t nameBytes = header.name ?
         std::min<std::uint32_t>(header.name_length, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
-    const GuestArena::HostWrite nameOutput(nameBytes == 0 ? nullptr : header.name, nameBytes);
-    if (!nameOutput.Open()) {
+    if (nameBytes != 0) {
+        const GuestArena::HostWrite nameOutput(header.name, nameBytes);
+        if (!nameOutput.Open()) {
 #ifdef _WIN32
-        if ((flags & NET_MSG_DONTWAIT) != 0 || socket.native->nonblock.load()) {
-            char probe{};
-            if (::recvfrom(socket.native->value, &probe, sizeof(probe), MSG_PEEK, nullptr, nullptr) < 0 &&
-                WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EAGAIN);
-        }
+            if ((flags & NET_MSG_DONTWAIT) != 0 || socket.native->nonblock.load()) {
+                char probe{};
+                if (::recvfrom(socket.native->value, &probe, sizeof(probe), MSG_PEEK, nullptr, nullptr) < 0 &&
+                    WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EAGAIN);
+            }
 #endif
-        return fail(NET_EFAULT);
+            return fail(NET_EFAULT);
+        }
     }
     const bool datagram = socket.type != NET_SOCK_STREAM;
 #if defined(_WIN32) || defined(__APPLE__)
@@ -2008,7 +2010,7 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
         header.flags = 0;
         if (header.name) header.name_length = 0;
         header.control_length = 0;
-        *msg = header;
+        if (!GuestCopyOut_nid_no_patch(msg, &header, sizeof(header))) return fail(NET_EFAULT);
         return 0;
     }
 #endif
@@ -2044,7 +2046,7 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
     for (const auto& entry : vectors) {
         if (offset >= static_cast<std::size_t>(received)) break;
         const auto count = std::min<std::size_t>(entry.length, static_cast<std::size_t>(received) - offset);
-        std::memcpy(entry.base, buffer.data() + offset, count);
+        if (!GuestCopyOut_nid_no_patch(entry.base, buffer.data() + offset, count)) return fail(NET_EFAULT);
         offset += count;
     }
     if (header.name) {
@@ -2053,7 +2055,7 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
         else if (!GuestCopyOut_nid_no_patch(header.name, bytes.data(), header.name_length)) return fail(NET_EFAULT);
     }
     header.control_length = 0;
-    *msg = header;
+    if (!GuestCopyOut_nid_no_patch(msg, &header, sizeof(header))) return fail(NET_EFAULT);
     return received;
 }
 
