@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceCdlgUtilServer/include/InventoryExports.hpp"
 #include "prx/libSceCdlgUtilServer/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -16,9 +15,7 @@ constexpr int kServerResult80B8000E = static_cast<int>(0x80B8000Eu);
 bool HasServerImplementation(const void* self, const char* function) {
     if (self == nullptr) throw std::invalid_argument(std::string(function) + ": null object");
     std::uint64_t implementation = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&implementation, static_cast<const unsigned char*>(self) + 0x8, sizeof(implementation));
-    errno = savedErrno;
     if (!copied)
         throw std::invalid_argument(std::string(function) + ": unreadable object");
     return implementation != 0;
@@ -164,9 +161,7 @@ APS5_EXPORT("VrN0lR+BJyc", libSceCdlgUtilServerUnknown_VrN0lR_plus_BJyc_nid_no_p
 int APS5_VABI libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch(const void* self) {
     if (self == nullptr) throw std::invalid_argument("W4zcizD4i3I: null object");
     unsigned char value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, static_cast<const unsigned char*>(self) + 0x10, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("W4zcizD4i3I: unreadable object");
     return value;
 }
