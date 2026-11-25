@@ -60,6 +60,19 @@ static HANDLE OpenNativeHandle(const std::filesystem::path& p, int nativeFlags, 
     }
     return INVALID_HANDLE_VALUE;
 }
+static void DeleteCreatedFile(HANDLE handle) {
+    const HANDLE deleter = File::WindowsPermissions::Reopen(handle, DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES);
+    if (deleter == INVALID_HANDLE_VALUE) return;
+    FILE_BASIC_INFO basic{};
+    if (GetFileInformationByHandleEx(deleter, FileBasicInfo, &basic, sizeof(basic)) && (basic.FileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+        basic.FileAttributes &= ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY);
+        if (basic.FileAttributes == 0) basic.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        SetFileInformationByHandle(deleter, FileBasicInfo, &basic, sizeof(basic));
+    }
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    SetFileInformationByHandle(deleter, FileDispositionInfo, &disposition, sizeof(disposition));
+    CloseHandle(deleter);
+}
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
     const DWORD desired = access == _O_RDONLY ? GENERIC_READ : access == _O_WRONLY ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
@@ -75,8 +88,8 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     }
     if (created || kept) {
         if (const DWORD error = File::WindowsPermissions::Store(handle, created ? requested : *kept); error != ERROR_SUCCESS) {
+            if (created) DeleteCreatedFile(handle);
             CloseHandle(handle);
-            if (created) ::DeleteFileW(p.c_str());
             errno = WindowsOpenError_nid_no_patch(error);
             return -1;
         }
