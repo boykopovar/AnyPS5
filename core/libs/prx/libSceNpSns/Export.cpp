@@ -139,7 +139,7 @@ int MapFacebookError(int err) {
 int MapYouTubeError(int err) {
     if (err >= 0) return err;
     if (err == kErrAborted || err == kErrFbAborted) return kErrYtAborted;
-    if (err == kErrIdNotFound) return kErrYtInvalidArg;
+    if (err == kErrIdNotFound || err == kErrInvalidArg || err == kErrInvalidSize) return kErrYtInvalidArg;
     if (err == kErrFbNoConsent || err == kErrIpmiNoConsent) return kErrYtNoConsent;
     if (err == kErrIpmiBase) return kErrYtUnknown;
     if (err == kErrIpmiAlt) return kErrYtRefreshToken;
@@ -147,11 +147,27 @@ int MapYouTubeError(int err) {
     return err;
 }
 
-int ValidateRequestForUse(int reqId) {
+int AbortRequestForOwner(int reqId, RequestOwner expectedOwner, bool matchAnyOwner) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (reqId == 0) return kErrInvalidArg;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    for (auto& entry : g_requests) {
+        if (entry.id == reqId) {
+            if (!matchAnyOwner && entry.owner != expectedOwner) return kErrIdNotFound;
+            entry.aborted = true;
+            return 0;
+        }
+        if (entry.id > reqId) break;
+    }
+    return kErrIdNotFound;
+}
+
+int ValidateRequestForUse(int reqId, RequestOwner expectedOwner = RequestOwner::Internal, bool matchAnyOwner = true) {
     if (reqId == 0) return kErrIdNotFound;
     std::lock_guard<std::mutex> lock(g_requestMutex);
     for (const auto& entry : g_requests) {
         if (entry.id == reqId) {
+            if (!matchAnyOwner && entry.owner != expectedOwner) return kErrIdNotFound;
             if (entry.inProgress) return kErrInvalidArg;
             if (entry.aborted) return kErrAborted;
             return 0;
@@ -179,17 +195,7 @@ int APS5_VABI sceNpSnsIntDeleteRequest(int reqId) {
 }
 
 int APS5_VABI sceNpSnsIntAbortRequest(int reqId) {
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    if (reqId == 0) return kErrInvalidArg;
-    std::lock_guard<std::mutex> lock(g_requestMutex);
-    for (auto& entry : g_requests) {
-        if (entry.id == reqId) {
-            entry.aborted = true;
-            return 0;
-        }
-        if (entry.id > reqId) break;
-    }
-    return kErrIdNotFound;
+    return AbortRequestForOwner(reqId, RequestOwner::Internal, true);
 }
 
 int APS5_VABI sceNpSnsIntFbGetTitleInfo(const void* arg1, const void* arg2, void* outInfo) {
@@ -287,7 +293,7 @@ int APS5_VABI sceNpSnsIntFbGetGameAccessTokenAllowed(int reqId, int userId, cons
 }
 
 int APS5_VABI sceNpSnsFacebookAbortRequest(int reqId) {
-    return MapFacebookError(sceNpSnsIntAbortRequest(reqId));
+    return MapFacebookError(AbortRequestForOwner(reqId, RequestOwner::Internal, true));
 }
 
 int APS5_VABI sceNpSnsTwitchCreateRequest(void) {
@@ -299,7 +305,7 @@ int APS5_VABI sceNpSnsTwitchDeleteRequest(int reqId) {
 }
 
 int APS5_VABI sceNpSnsTwitchAbortRequest(int reqId) {
-    const int ret = sceNpSnsIntAbortRequest(reqId);
+    const int ret = AbortRequestForOwner(reqId, RequestOwner::Twitch, false);
     return ret < 0 ? ret : 0;
 }
 
@@ -312,7 +318,7 @@ int APS5_VABI sceNpSnsTwitchGetAccessToken(int reqId, const void* param, void* o
     if (paramSize != kTwitchParamSize) return kErrInvalidSize;
     if (!GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size())) return kErrInvalidArg;
     if (!IsZeroRange(localParam.data(), kTwitchReservedOffset, kTwitchReservedSize)) return kErrInvalidArg;
-    const int reqStatus = ValidateRequestForUse(reqId);
+    const int reqStatus = ValidateRequestForUse(reqId, RequestOwner::Twitch, false);
     if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -329,8 +335,7 @@ int APS5_VABI sceNpSnsYouTubeDeleteRequest(int reqId) {
 }
 
 int APS5_VABI sceNpSnsYouTubeAbortRequest(int reqId) {
-    const int ret = sceNpSnsIntAbortRequest(reqId);
-    if (ret >= 0) return ret;
+    const int ret = AbortRequestForOwner(reqId, RequestOwner::YouTube, false);
     return MapYouTubeError(ret);
 }
 
@@ -339,12 +344,12 @@ int APS5_VABI sceNpSnsYouTubeGetAccessToken(int reqId, const void* param, void* 
     if (param == nullptr || outToken == nullptr) return kErrYtInvalidArg;
     std::uint64_t paramSize = 0;
     if (!GuestCopyIn_nid_no_patch(&paramSize, param, sizeof(paramSize))) return kErrYtInvalidArg;
-    if (paramSize != kYouTubeParamSize) return kErrInvalidSize;
+    if (paramSize != kYouTubeParamSize) return MapYouTubeError(kErrInvalidSize);
     std::vector<std::uint8_t> localParam(kYouTubeParamSize);
     if (!GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size())) return kErrYtInvalidArg;
     if (!IsZeroRange(localParam.data(), kYouTubeReservedOffset, kYouTubeReservedSize)) return kErrYtInvalidArg;
     if (localParam[kYouTubeRequiredStrOffset] == 0) return kErrYtInvalidArg;
-    const int reqStatus = ValidateRequestForUse(reqId);
+    const int reqStatus = ValidateRequestForUse(reqId, RequestOwner::YouTube, false);
     if (reqStatus < 0) return MapYouTubeError(reqStatus);
     NotImplemented_nid_no_patch(__func__);
     return 0;

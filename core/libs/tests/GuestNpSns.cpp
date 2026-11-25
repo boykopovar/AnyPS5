@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -127,7 +128,7 @@ void TestYouTube() {
     Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], nullptr, token.data()) == kErrYtInvalidArg);
     Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], param.data(), nullptr) == kErrYtInvalidArg);
     Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], reinterpret_cast<const void*>(0x10), token.data()) == kErrYtInvalidArg);
-    Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], param.data(), token.data()) == kErrInvalidSize);
+    Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], param.data(), token.data()) == kErrYtInvalidArg);
 
     const std::uint64_t validSize = 0xc30;
     std::memcpy(param.data(), &validSize, sizeof(validSize));
@@ -140,7 +141,7 @@ void TestYouTube() {
     Require(sceNpSnsYouTubeGetAccessToken(0, param.data(), token.data()) == kErrYtInvalidArg);
     Require(sceNpSnsYouTubeAbortRequest(ytIds[0]) == 0);
     Require(sceNpSnsYouTubeGetAccessToken(ytIds[0], param.data(), token.data()) == kErrYtAborted);
-    Require(sceNpSnsYouTubeAbortRequest(0) == kErrInvalidArg);
+    Require(sceNpSnsYouTubeAbortRequest(0) == kErrYtInvalidArg);
     Require(sceNpSnsYouTubeAbortRequest(0x60009999) == kErrYtInvalidArg);
 
     for (int id : ytIds) {
@@ -151,12 +152,49 @@ void TestYouTube() {
 
 void TestCrossServiceOwnershipAndConcurrency() {
     const int intId = sceNpSnsIntCreateRequest();
+    const int twitchId = sceNpSnsTwitchCreateRequest();
     const int ytId = sceNpSnsYouTubeCreateRequest();
-    Require(intId >= 0x60000001 && ytId >= 0x60000001);
+    Require(intId >= 0x60000001 && twitchId >= 0x60000001 && ytId >= 0x60000001);
     Require(sceNpSnsTwitchDeleteRequest(intId) == kErrIdNotFound);
     Require(sceNpSnsTwitchDeleteRequest(ytId) == kErrIdNotFound);
     Require(sceNpSnsYouTubeDeleteRequest(intId) == kErrYtInvalidArg);
+    Require(sceNpSnsYouTubeDeleteRequest(twitchId) == kErrYtInvalidArg);
+
+    Require(sceNpSnsTwitchAbortRequest(intId) == kErrIdNotFound);
+    Require(sceNpSnsTwitchAbortRequest(ytId) == kErrIdNotFound);
+    Require(sceNpSnsYouTubeAbortRequest(intId) == kErrYtInvalidArg);
+    Require(sceNpSnsYouTubeAbortRequest(twitchId) == kErrYtInvalidArg);
+
+    std::array<std::uint8_t, 0x30> twitchParam{};
+    const std::uint64_t twitchSize = 0x30;
+    std::memcpy(twitchParam.data(), &twitchSize, sizeof(twitchSize));
+    std::vector<std::uint8_t> ytParam(0xc30, 0);
+    const std::uint64_t ytSize = 0xc30;
+    std::memcpy(ytParam.data(), &ytSize, sizeof(ytSize));
+    ytParam[0x0c] = 'a';
+    std::array<std::uint8_t, 0x80> token{};
+
+    Require(sceNpSnsTwitchGetAccessToken(ytId, twitchParam.data(), token.data()) == kErrIdNotFound);
+    Require(sceNpSnsYouTubeGetAccessToken(twitchId, ytParam.data(), token.data()) == kErrYtInvalidArg);
+
+    bool twitchUnaborted = false;
+    try {
+        sceNpSnsTwitchGetAccessToken(twitchId, twitchParam.data(), token.data());
+    } catch (const std::runtime_error&) {
+        twitchUnaborted = true;
+    }
+    Require(twitchUnaborted);
+
+    bool ytUnaborted = false;
+    try {
+        sceNpSnsYouTubeGetAccessToken(ytId, ytParam.data(), token.data());
+    } catch (const std::runtime_error&) {
+        ytUnaborted = true;
+    }
+    Require(ytUnaborted);
+
     Require(sceNpSnsYouTubeDeleteRequest(ytId) == 0);
+    Require(sceNpSnsTwitchDeleteRequest(twitchId) == 0);
     Require(sceNpSnsIntDeleteRequest(intId) == 0);
 
     std::vector<int> twitchIds;
