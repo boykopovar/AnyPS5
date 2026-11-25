@@ -53,6 +53,8 @@ def validate(summary):
                 raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
             if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
                 raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
+            if not summary["trace_dropped"] and (thread.get("events_lost", 0) or thread.get("totals_full", False)):
+                raise ValueError(f"trace_dropped_threads.{name} disagrees with trace_dropped")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
