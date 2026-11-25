@@ -118,7 +118,6 @@
 
 #include <atomic>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -217,9 +216,7 @@ Jsc::WtfAbi::StringImpl** APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv(Jsc::Wt
     auto* characters = static_cast<unsigned char*>(storage.get()) + charactersOffset;
     auto* string = new (storage.get()) StringImpl{2u, 36u, characters, Jsc::WtfAbi::StringImplFlag8Bit};
     std::memcpy(characters, text.data(), 36u);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(result, &string, sizeof(string));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("WTF::createCanonicalUUIDString: invalid return storage");
     storage.release();
     return result;
