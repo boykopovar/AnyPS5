@@ -33,7 +33,6 @@
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -113,10 +112,8 @@ extern "C" {
 
 WebCore::Region APS5_VABI _ZN7WebCore19approximateAsRegionERKNS_11RoundedRectEj(
     const WebCore::RoundedRect& roundedRect, unsigned stepLength) {
-    const int savedErrno = errno;
     WebCore::RoundedRect source{};
     const bool copied = GuestCopyIn_nid_no_patch(&source, &roundedRect, sizeof(source));
-    errno = savedErrno;
     if (!copied) {
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
