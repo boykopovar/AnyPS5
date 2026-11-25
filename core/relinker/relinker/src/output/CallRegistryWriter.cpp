@@ -5,7 +5,7 @@
 
 namespace Relinker {
 
-static std::string _jsonString(const std::string& s) {
+std::string EncodeJsonString(std::string_view s, std::string_view context) {
     std::string out;
     out.reserve(s.size() + 2);
     out.push_back('"');
@@ -42,20 +42,20 @@ static std::string _jsonString(const std::string& s) {
             codepoint = c & 0x07;
             minimum = 0x10000;
         } else {
-            throw RelinkerException("Invalid UTF-8 lead byte in call registry string");
+            throw RelinkerException("Invalid UTF-8 lead byte in " + std::string(context));
         }
         if (count > s.size() - (i + 1)) {
-            throw RelinkerException("Truncated UTF-8 sequence in call registry string");
+            throw RelinkerException("Truncated UTF-8 sequence in " + std::string(context));
         }
         for (unsigned index = 0; index < count; ++index) {
             const auto byte = static_cast<unsigned char>(s[i + 1 + index]);
             if ((byte & 0xC0) != 0x80) {
-                throw RelinkerException("Invalid UTF-8 continuation byte in call registry string");
+                throw RelinkerException("Invalid UTF-8 continuation byte in " + std::string(context));
             }
             codepoint = (codepoint << 6) | (byte & 0x3F);
         }
         if (codepoint < minimum || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
-            throw RelinkerException("Invalid UTF-8 codepoint in call registry string");
+            throw RelinkerException("Invalid UTF-8 codepoint in " + std::string(context));
         }
         out.push_back(static_cast<char>(c));
         out.append(s, i + 1, count);
@@ -63,6 +63,10 @@ static std::string _jsonString(const std::string& s) {
     }
     out.push_back('"');
     return out;
+}
+
+static std::string _jsonString(std::string_view value) {
+    return EncodeJsonString(value, "call registry string");
 }
 
 static std::string _hexOffset(FileByteOffset v) {

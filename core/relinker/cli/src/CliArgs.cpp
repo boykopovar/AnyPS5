@@ -32,6 +32,7 @@ const char* Usage() {
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
            "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
+           "  --dry-run-json                 Like --dry-run, but print the plan as JSON.\n"
            "\n"
            "Layout:\n"
            "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
@@ -72,7 +73,7 @@ const char* Usage() {
 namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
-    "--dry-run",
+    "--dry-run", "--dry-run-json",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--to-avx", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "--function-symbol-roots", "unused-filter=",
     "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches",
@@ -214,8 +215,9 @@ Args ParseArgs(int argc, char* argv[]) {
             args.omitUnavailableDependencies = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
-        } else if (arg == "--dry-run") {
+        } else if (arg == "--dry-run" || arg == "--dry-run-json") {
             args.dryRun = true;
+            args.dryRunJson = args.dryRunJson || arg == "--dry-run-json";
         } else if (arg == "--windows-diagnostics") {
             args.windowsDiagnostics = true;
         } else if (arg == "--windows-gui") {
@@ -230,7 +232,8 @@ Args ParseArgs(int argc, char* argv[]) {
     }
 
     const bool verifying = !args.verifyPatchesPath.empty();
-    if (args.dryRun && args.autorun) throw std::runtime_error("--dry-run conflicts with --autorun");
+    if (args.dryRun && args.autorun)
+        throw std::runtime_error(args.dryRunJson ? "--dry-run-json conflicts with --autorun" : "--dry-run conflicts with --autorun");
     if (args.verifyOutput && !verifying) throw std::runtime_error("--verify-output requires --verify-patches");
     if (!args.patchesPath.empty() && args.noPatches) throw std::runtime_error("--patches conflicts with --no-patches");
     if (verifying) {

@@ -78,6 +78,13 @@ relinker [options] <input.elf> <output>
 
 An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`. No empty standard directory is needed. Without an explicit module directory, the standard-directory requirement remains.
 
+Use `--dry-run-json` in place of `--dry-run` for scripts. A successful conversion plan writes one UTF-8 JSON object to stdout. Progress and warnings go to stderr. Conversion failures keep the dry-run exit code and leave stdout empty.
+
+- `schemaVersion` is `1`. Check it before reading other fields.
+- `target` is `linux`, `windows` or `macos`.
+- `convertedExecutables` and `convertedModules` count the converted executables and shared guest modules. `externalPrxReferences` counts the main executable's external PRX references.
+- `outputs` lists the same planned files in the same order as the text dry run. Each entry has an absolute `path` in the host's path syntax and a `kind` of `executable`, `module`, `registry`, `needed-libraries`, `patch-manifest`, `desktop-icon`, `desktop-entry`, `windows-diagnostics` or `other` for an additional output type.
+
 ### Needed modules that were not converted
 
 A module the executable needs but that is not converted is looked for under the module parent directory, outside the module directories. A file counts as a match if it is a SELF container or an `ET_SCE_DYNAMIC` ELF whose name matches, up to the `.prx`, `.sprx`, `.suprx` or `.debug_prx` suffix. Case is ignored with `--windows`, as in the guest module match.

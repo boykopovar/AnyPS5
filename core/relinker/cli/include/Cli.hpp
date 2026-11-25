@@ -27,6 +27,7 @@ struct Args {
     bool omitUnavailableDependencies = false;
     bool autorun = false;
     bool dryRun = false;
+    bool dryRunJson = false;
     bool windowsDiagnostics = false;
     bool windowsGui = false;
     std::optional<std::uint64_t> windowsFixedBase;
