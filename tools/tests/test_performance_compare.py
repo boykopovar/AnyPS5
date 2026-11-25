@@ -93,6 +93,14 @@ class WorkerComparisonTests(unittest.TestCase):
 
 
 class PerformanceCompareTests(unittest.TestCase):
+    def test_markdown_distinguishes_missing_context_from_literal_null(self):
+        with_title = dict(SUMMARY, title="null")
+        for before, after, row in (
+                (SUMMARY, with_title, "| title | <em>not recorded</em> | null |"),
+                (with_title, SUMMARY, "| title | null | <em>not recorded</em> |")):
+            with self.subTest(row=row):
+                self.assertIn(row, performance_compare.markdown(performance_compare.compare(before, after)).splitlines())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -424,6 +432,13 @@ class PerformanceCompareTests(unittest.TestCase):
         result = self.run_process()
         self.assertEqual(result.returncode, 2)
         self.assertIn("avant-\u00e9.jsonl:1:", result.stderr)
+
+    def test_invalid_utf8_identifies_the_summary_file(self):
+        self.write(self.before, self.baseline)
+        self.after.write_bytes(b"\xff")
+        result = self.run_cli("--json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(self.after.name, result.stderr)
 
     def test_bom_summary_loads(self):
         self.before.write_text(json.dumps(self.baseline) + "\n", encoding="utf-8-sig")

@@ -101,6 +101,7 @@ struct OpaqueJSContextGroup {
     JSValue weakRefDerefFunc = JS_UNDEFINED;
     JSClassID callbackObjectClassId = 0;
     JSClassID callbackCallableClassId = 0;
+    JSClassID dateConstructorClassId = 0;
     JSAtom toStringTagAtom = JS_ATOM_NULL;
     JSAtom toPrimitiveAtom = JS_ATOM_NULL;
     JSAtom hasInstanceAtom = JS_ATOM_NULL;
@@ -122,6 +123,7 @@ struct OpaqueJSContextGroup {
     bool hasTimeLimit = false;
     double timeLimitSeconds = 0.0;
     std::chrono::steady_clock::time_point deadline{};
+    double cpuDeadlineSeconds = 0.0;
     bool deadlineArmed = false;
     int vmEntryDepth = 0;
     JSShouldTerminateCallback terminateCallback = nullptr;
@@ -253,12 +255,14 @@ GuestJSString* AtomToJsString(JSContext* qctx, JSAtom atom);
 std::string AtomToUtf8(JSContext* qctx, JSAtom atom);
 
 void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception);
+void InstallDateConstructor(OpaqueJSContextGroup* group, JSContext* qctx);
 void SetExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal);
 void RegisterCallbackClasses(OpaqueJSContextGroup* group);
 void DefineToPrimitive(OpaqueJSContext* ctx, JSValueConst target, bool forGlobalObject);
 void RunClassInitialize(OpaqueJSContext* ctx, OpaqueJSValue* objHandle, OpaqueJSClass* jsClass);
 void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
+void DefineConsoleObject(OpaqueJSContext* ctx, JSValueConst global);
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
 
