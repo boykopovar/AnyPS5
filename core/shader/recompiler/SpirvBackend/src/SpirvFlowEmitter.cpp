@@ -218,10 +218,27 @@ bool EndsProgram(const IrProgram& program, std::uint32_t id) {
     return true;
 }
 
-bool ReachesBarrierWithoutLoopBefore(const IrProgram& program, std::uint32_t start, std::uint32_t stop) {
+bool LeavesAvoiding(const IrProgram& program, std::uint32_t start, std::uint32_t stop, std::uint32_t avoid) {
     std::vector<std::uint32_t> pending{start};
     std::unordered_set<std::uint32_t> visited;
-    bool barrier = false;
+    while (!pending.empty()) {
+        const auto id = pending.back();
+        pending.pop_back();
+        if (id == avoid || !visited.insert(id).second) continue;
+        if (id == stop || id == InvalidControlFlowId) return true;
+        const Terminator& term = BlockInfoFor(program, TargetBlock(program, id))->terminator;
+        if (term.kind != TerminatorKind::Branch && term.kind != TerminatorKind::ConditionalBranch && term.indirectTargets.empty()) return true;
+        if (term.kind == TerminatorKind::Branch || term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.trueBlock);
+        if (term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.falseBlock);
+        pending.insert(pending.end(), term.indirectTargets.begin(), term.indirectTargets.end());
+    }
+    return false;
+}
+
+bool EveryPathMeetsBarriersBefore(const IrProgram& program, std::uint32_t start, std::uint32_t stop) {
+    std::vector<std::uint32_t> pending{start};
+    std::unordered_set<std::uint32_t> visited;
+    std::vector<std::uint32_t> barriers;
     while (!pending.empty()) {
         const auto id = pending.back();
         pending.pop_back();
@@ -230,20 +247,24 @@ bool ReachesBarrierWithoutLoopBefore(const IrProgram& program, std::uint32_t sta
         const Terminator& term = BlockInfoFor(program, block)->terminator;
         if (term.loopHeader) return false;
         for (const IrValue* instruction : block->Instructions()) {
-            if (instruction->Opcode() == IrOpcode::Barrier) barrier = true;
+            if (instruction->Opcode() == IrOpcode::Barrier) {
+                barriers.push_back(id);
+                break;
+            }
         }
         if (term.kind == TerminatorKind::Branch || term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.trueBlock);
         if (term.kind == TerminatorKind::ConditionalBranch) pending.push_back(term.falseBlock);
         pending.insert(pending.end(), term.indirectTargets.begin(), term.indirectTargets.end());
     }
-    return barrier;
+    if (barriers.empty()) return false;
+    return std::none_of(barriers.begin(), barriers.end(), [&](std::uint32_t barrier) { return LeavesAvoiding(program, start, stop, barrier); });
 }
 
 bool KeepsEndedWave(const IrProgram& program, const Terminator& term) {
     if (term.kind != TerminatorKind::ConditionalBranch || term.loopHeader || term.mergeBlock == InvalidControlFlowId || term.trueBlock == term.falseBlock) return false;
     const bool trueEnds = term.trueBlock == term.mergeBlock;
     if (trueEnds == (term.falseBlock == term.mergeBlock) || !EndsProgram(program, term.mergeBlock)) return false;
-    return ReachesBarrierWithoutLoopBefore(program, trueEnds ? term.falseBlock : term.trueBlock, term.mergeBlock);
+    return EveryPathMeetsBarriersBefore(program, trueEnds ? term.falseBlock : term.trueBlock, term.mergeBlock);
 }
 
 void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& program, const BlockInfo& info) {

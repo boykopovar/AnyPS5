@@ -351,7 +351,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         const auto threads = std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
         state.endedWavesStay = threads > program.WaveSize() && EndedWavesMayStay(program);
     }
-    if (state.endedWavesStay) state.endedWaveVariable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeBool(state)), spv::StorageClassPrivate, ConstantBool(state, false));
+    if (state.endedWavesStay) {
+        state.endedWaveVariable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeBool(state)), spv::StorageClassPrivate, ConstantBool(state, false));
+        state.module.AddName(state.endedWaveVariable, "ended_wave");
+    }
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

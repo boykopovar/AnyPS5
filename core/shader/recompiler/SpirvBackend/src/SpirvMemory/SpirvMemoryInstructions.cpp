@@ -1697,7 +1697,12 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             };
             const auto guard = static_cast<std::uint32_t>(found - guarded.begin());
             const auto flag = load(ConstantU32(state, resources.srtGuardOffset + guard));
-            const auto poisoned = Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u));
+            auto poisoned = Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u));
+            if (state.endedWavesStay) {
+                const auto ended = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, TypeBool(state), ended, state.endedWaveVariable);
+                poisoned = Binary(state, spv::OpLogicalAnd, TypeBool(state), poisoned, Unary(state, spv::OpLogicalNot, TypeBool(state), ended));
+            }
             const auto records = resources.srtGuardOffset + static_cast<std::uint32_t>(guarded.size());
             if (records + 3u * guarded.size() >= (1u << BdaAbi::SrtGuardStageShift)) {
                 ctx.Fail(inst, "has more guarded SRT records than the fault buffer's guard word can name");
