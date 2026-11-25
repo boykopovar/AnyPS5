@@ -7,7 +7,6 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,7 +21,6 @@ constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
 bool CopyGuestCString(const char* source, std::string& destination) {
     if (!source) return false;
     destination.clear();
-    const int savedErrno = errno;
     constexpr std::size_t kMinPageSize = 4096;
     std::array<char, kMinPageSize> chunk{};
     std::uintptr_t address = reinterpret_cast<std::uintptr_t>(source);
@@ -34,12 +32,10 @@ bool CopyGuestCString(const char* source, std::string& destination) {
             const void* nul = std::memchr(chunk.data(), '\0', chunkBytes);
             if (nul != nullptr) {
                 destination.append(chunk.data(), static_cast<std::size_t>(static_cast<const char*>(nul) - chunk.data()));
-                errno = savedErrno;
                 return true;
             }
             destination.append(chunk.data(), chunkBytes);
             if (remaining < chunkBytes) {
-                errno = savedErrno;
                 return false;
             }
             address += chunkBytes;
@@ -48,16 +44,13 @@ bool CopyGuestCString(const char* source, std::string& destination) {
         for (;;) {
             char ch = '\0';
             if (!GuestCopyIn_nid_no_patch(&ch, reinterpret_cast<const void*>(address), 1)) {
-                errno = savedErrno;
                 return false;
             }
             if (ch == '\0') {
-                errno = savedErrno;
                 return true;
             }
             destination.push_back(ch);
             if (address == std::numeric_limits<std::uintptr_t>::max()) {
-                errno = savedErrno;
                 return false;
             }
             ++address;
@@ -119,9 +112,7 @@ int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId) {
         std::memcpy(local.handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
         std::memcpy(local.opt, opt.data(), std::min<std::size_t>(opt.size(), sizeof(local.opt)));
         local.reserved[0] = 0x01;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(npId, &local, sizeof(local));
-        errno = savedErrno;
         if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     }
     return 0;
