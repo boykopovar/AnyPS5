@@ -679,6 +679,11 @@ void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* c
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 const void* APS5_VABI WKContextGetIconDatabase(const void* contextRef);
 void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* iconDatabasePathRef);
+std::int32_t APS5_VABI WKContextGetNetworkProcessIdentifier(const void* contextRef);
+void APS5_VABI WKContextSetPrivilegedNetworkBandwidth(const void* contextRef, std::uint32_t bandwidth);
+void APS5_VABI WKContextSetWebSecurityFilter(const void* contextRef, const void* filterRef);
+const void* APS5_VABI WKContextGetWebSecurityFilter(const void* contextRef);
+void APS5_VABI WKContextSetDownloadClient(const void* contextRef, const void* clientRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);

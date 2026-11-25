@@ -679,10 +679,6 @@ int APS5_VABI _ZN7WebCore11DisplayList18FillCompositedRectD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetWebSecurityFilter() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21resolveCharacterRangeERKNS_11SimpleRangeENS_14CharacterRangeEt() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3426,10 +3422,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_Q1zMBRuiOZE_nid_no_patch() {
 }
 APS5_EXPORT("Q1zMBRuiOZE", libSceNKWebKitLegacyUnknown_Q1zMBRuiOZE_nid_no_patch);
 
-int APS5_VABI WKContextSetWebSecurityFilter() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_Q5SxpvFCi2s_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4644,10 +4636,6 @@ int APS5_VABI _ZNK7WebCore5Range17absoluteTextRectsERN3WTF6VectorINS_7IntRectELm
 }
 
 int APS5_VABI _ZNK7WebCore14SecurityOrigin10canRequestERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetPrivilegedNetworkBandwidth() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7121,10 +7109,6 @@ int APS5_VABI _ZN7WebCore15makeSimpleRangeERKNS_20VisiblePositionRangeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetNetworkProcessIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_uNaCeoknjtQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7987,10 +7971,6 @@ int APS5_VABI _ZNK7WebCore17MouseRelatedEvent1yEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI WKContextSetDownloadClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN9Inspector23CanvasBackendDispatcher6createERNS_17BackendDispatcherEPNS_30CanvasBackendDispatcherHandlerE() {
     NotImplemented_nid_no_patch(__func__);
