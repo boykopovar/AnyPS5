@@ -70,6 +70,16 @@ struct Bundle {
         const auto* expected = ResourceOracleKey(native);
         Require(bool(actual) == bool(expected), "resource key nullability matches native");
         if (actual) Require(std::string_view(actual) == expected, "resource key text matches native");
+        for (const auto get : {ures_getLocale_nid_postfix, ures_getLocaleInternal_nid_postfix}) {
+            for (const std::int32_t incoming : {0, -128, 7}) {
+                auto status = incoming;
+                auto nativeStatus = incoming;
+                const auto* name = get(guest, &status);
+                const auto* nativeName = ResourceOracleLocale(native, &nativeStatus);
+                Require(status == nativeStatus && bool(name) == bool(nativeName), "owned locale status and presence match native");
+                if (name) Require(std::string_view(name) == nativeName, "owned locale name matches native");
+            }
+        }
     }
 };
 
@@ -169,6 +179,7 @@ void Utf8Conversion(std::string_view mode) {
 
 void Interoperability() {
     Bundle locale("en_US", false);
+    locale.Metadata();
     Require(bool(ures_hasNext_nid_postfix(locale.guest)) == (ResourceOracleSize(locale.native) > 0),
             "owned locale bundle exposes its initial iterator state");
     Bundle root;
@@ -205,6 +216,12 @@ void Interoperability() {
     Require(!ures_getUTF8String_nid_postfix(closed, nullptr, nullptr, 0, &status) && status == 17,
             "incoming error precedes closed bundle lookup");
     Refuses([&] { ures_hasNext_nid_postfix(closed); });
+    for (const auto get : {ures_getLocale_nid_postfix, ures_getLocaleInternal_nid_postfix}) {
+        auto incoming = 7;
+        Require(!get(closed, &incoming) && incoming == 7, "incoming error precedes closed locale lookup");
+        incoming = 0;
+        Refuses([&] { get(closed, &incoming); });
+    }
     status = 0;
     Refuses([&] { ures_getUTF8String_nid_postfix(closed, nullptr, nullptr, 0, &status); });
     Refuses([&] { ures_getUTF8StringByKey_nid_postfix(closed, "greeting", nullptr, nullptr, 0, &status); });

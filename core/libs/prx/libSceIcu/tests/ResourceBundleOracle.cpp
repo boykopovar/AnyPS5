@@ -33,6 +33,12 @@ void* ResourceOracleChild(const void* handle, const char* key, std::int32_t inde
 std::int32_t ResourceOracleSize(const void* handle) { return ures_getSize(static_cast<const UResourceBundle*>(handle)); }
 std::int32_t ResourceOracleType(const void* handle) { return ures_getType(static_cast<const UResourceBundle*>(handle)); }
 const char* ResourceOracleKey(const void* handle) { return ures_getKey(static_cast<const UResourceBundle*>(handle)); }
+const char* ResourceOracleLocale(const void* handle, std::int32_t* status) {
+    auto error = static_cast<UErrorCode>(*status);
+    const auto* locale = ures_getLocale(static_cast<const UResourceBundle*>(handle), &error);
+    *status = error;
+    return locale;
+}
 const char16_t* ResourceOracleString(const void* handle, std::int32_t mode, const char* key, std::int32_t index, std::int32_t* length, std::int32_t* status) {
     auto error = status ? static_cast<UErrorCode>(*status) : U_ZERO_ERROR;
     const auto* source = static_cast<const UResourceBundle*>(handle);

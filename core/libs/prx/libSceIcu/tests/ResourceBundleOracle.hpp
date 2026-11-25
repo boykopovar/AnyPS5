@@ -10,6 +10,7 @@ void* ResourceOracleChild(const void*, const char*, std::int32_t, bool, void*, s
 std::int32_t ResourceOracleSize(const void*);
 std::int32_t ResourceOracleType(const void*);
 const char* ResourceOracleKey(const void*);
+const char* ResourceOracleLocale(const void*, std::int32_t*);
 const char16_t* ResourceOracleString(const void*, std::int32_t, const char*, std::int32_t, std::int32_t*, std::int32_t*);
 const char* ResourceOracleUtf8(const void*, std::int32_t, const char*, char*, std::int32_t*, bool, std::int32_t*);
 std::int32_t ResourceOracleInt(const void*, std::int32_t*);
