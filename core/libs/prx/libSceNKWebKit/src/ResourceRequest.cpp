@@ -836,6 +836,69 @@ void CopyVector(TVector& target, const TVector& source) {
     target.size = source.size;
 }
 
+void ReleaseRequestStorage(ResourceRequestBase& request) {
+    auto& headers = HeaderFields(request);
+    auto& fallback = request.responseContentDispositionEncodingFallbackArray;
+    ValidateVector(headers.common);
+    ValidateVector(headers.uncommon);
+    ValidateVector(fallback);
+    NKWebKit::WtfAbi::Release(request.url.impl);
+    NKWebKit::WtfAbi::Release(request.firstPartyForCookies.impl);
+    NKWebKit::WtfAbi::Release(request.httpMethod.impl);
+    NKWebKit::WtfAbi::Release(request.initiatorIdentifier.impl);
+    NKWebKit::WtfAbi::Release(request.cachePartition.impl);
+    request.url = {};
+    request.firstPartyForCookies = {};
+    request.httpMethod.impl = nullptr;
+    request.initiatorIdentifier.impl = nullptr;
+    request.cachePartition.impl = nullptr;
+    ReleaseHeaderMap(headers);
+    auto* entries = static_cast<String*>(fallback.buffer);
+    for (unsigned index = 0; index < fallback.size; ++index) entries[index].~String();
+    _ZN3WTF8fastFreeEPv(fallback.buffer);
+    fallback = {};
+    if (auto* body = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody)) body->deref();
+    request.httpBody = nullptr;
+}
+
+void AssignRequest(ResourceRequestBase& target, const ResourceRequestBase& source) {
+    if (&target == &source) return;
+    const auto& sourceHeaders = HeaderFields(source);
+    ValidateCopySource(sourceHeaders.common);
+    ValidateCopySource(sourceHeaders.uncommon);
+    ValidateCopySource(source.responseContentDispositionEncodingFallbackArray);
+    ResourceRequestBase copy{};
+    Assign(copy.url, source.url);
+    Assign(copy.firstPartyForCookies, source.firstPartyForCookies);
+    copy.timeoutInterval = source.timeoutInterval;
+    Assign(copy.httpMethod, source.httpMethod);
+    auto& copyHeaders = HeaderFields(copy);
+    CopyVector<NKWebKit::HttpAbi::CommonHeader>(copyHeaders.common, sourceHeaders.common);
+    CopyVector<NKWebKit::HttpAbi::UncommonHeader>(copyHeaders.uncommon, sourceHeaders.uncommon);
+    CopyVector<String>(copy.responseContentDispositionEncodingFallbackArray, source.responseContentDispositionEncodingFallbackArray);
+    copy.cachePolicy = source.cachePolicy;
+    copy.sameSiteDisposition = source.sameSiteDisposition;
+    copy.priority = source.priority;
+    copy.requester = source.requester;
+    copy.isTopSite = source.isTopSite;
+    copy.allowCookies = source.allowCookies;
+    copy.isAppInitiated = source.isAppInitiated;
+    copy.privacyProxyFailClosedForUnreachableNonMainHosts = source.privacyProxyFailClosedForUnreachableNonMainHosts;
+    copy.useAdvancedPrivacyProtections = source.useAdvancedPrivacyProtections;
+    Assign(copy.initiatorIdentifier, source.initiatorIdentifier);
+    Assign(copy.cachePartition, source.cachePartition);
+    copy.httpBody = source.httpBody;
+    if (copy.httpBody) static_cast<NKWebKit::WebCoreAbi::FormData*>(copy.httpBody)->ref();
+    copy.inspectorInitiatorNodeIdentifier = source.inspectorInitiatorNodeIdentifier;
+    copy.resourceRequestUpdated = source.resourceRequestUpdated;
+    copy.platformRequestUpdated = source.platformRequestUpdated;
+    copy.resourceRequestBodyUpdated = source.resourceRequestBodyUpdated;
+    copy.platformRequestBodyUpdated = source.platformRequestBodyUpdated;
+    copy.hiddenFromInspector = source.hiddenFromInspector;
+    ReleaseRequestStorage(target);
+    target = copy;
+}
+
 LegacyResourceRequestBase CopyRequest(const LegacyResourceRequestBase& source) {
     const auto& sourceHeaders = HeaderFields(source);
     ValidateCopySource(sourceHeaders.common);
@@ -938,4 +1001,28 @@ extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::Authorization);
     _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::ProxyAuthorization);
     return request;
+}
+
+extern "C" void APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(
+    ResourceRequestBase* self, const ResourceRequestBase* delegateProvidedRequest) {
+    auto& request = Checked(self);
+    const auto& delegate = Checked(delegateProvidedRequest);
+    UpdateResourceRequest(request);
+    UpdateResourceRequestBody(request);
+    const auto oldPriority = request.priority;
+    auto* oldHTTPBody = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
+    if (oldHTTPBody) oldHTTPBody->ref();
+    const bool oldHiddenFromInspector = request.hiddenFromInspector;
+    const auto oldRequester = request.requester;
+    const String oldInitiatorIdentifier(request.initiatorIdentifier);
+    const auto oldInspectorInitiatorNodeIdentifier = request.inspectorInitiatorNodeIdentifier;
+
+    AssignRequest(request, delegate);
+
+    _ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE(&request, oldPriority);
+    SetHTTPBody(request, oldHTTPBody);
+    request.hiddenFromInspector = oldHiddenFromInspector;
+    request.requester = oldRequester;
+    Assign(request.initiatorIdentifier, oldInitiatorIdentifier);
+    if (oldInspectorInitiatorNodeIdentifier) request.inspectorInitiatorNodeIdentifier = oldInspectorInitiatorNodeIdentifier;
 }

@@ -66,5 +66,7 @@ const NKWebKit::WebCoreAbi::HTTPHeaderMap& APS5_VABI _ZNK7WebCore19ResourceReque
 NKWebKit::WebCoreAbi::FormDataRefPtr APS5_VABI _ZNK7WebCore19ResourceRequestBase8httpBodyEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9hasUploadEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
+void APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(
+    NKWebKit::WebCoreAbi::ResourceRequestBase* self, const NKWebKit::WebCoreAbi::ResourceRequestBase* delegateProvidedRequest);
 
 }

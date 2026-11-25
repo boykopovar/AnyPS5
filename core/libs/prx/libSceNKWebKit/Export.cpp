@@ -15278,10 +15278,6 @@ int APS5_VABI _ZN7WebCore15RenderBlockFlow30findClosestTextAtAbsolutePointERKNS_
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15StringTruncator12leftTruncateERKN3WTF6StringEfRKNS_11FontCascadeERfbf() {
     NotImplemented_nid_no_patch(__func__);
 }
