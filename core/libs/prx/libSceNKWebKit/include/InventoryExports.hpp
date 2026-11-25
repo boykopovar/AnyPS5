@@ -4482,7 +4482,6 @@ int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE();
 int APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv();
-int APS5_VABI _ZNK3WTF9MediaTime8toStringEv();
 int APS5_VABI _ZNK7WebCore10FileHandlecvbEv();
 int APS5_VABI _ZNK7WebCore10FontRanges16fontForCharacterEi();
 int APS5_VABI _ZNK7WebCore10FontRanges17fontForFirstRangeEv();

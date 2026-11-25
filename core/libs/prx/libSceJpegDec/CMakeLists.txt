@@ -75,6 +75,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_jpeg_dec_input_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecInputControl.cpp)
     target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/src)
     target_link_libraries(guest_jpeg_dec_input_control_tests PRIVATE libSceJpegDec decoder_jpeg libc)
     configure_windows_unwind(guest_jpeg_dec_input_control_tests)
     target_compile_definitions(guest_jpeg_dec_input_control_tests PRIVATE
