@@ -34,6 +34,7 @@
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
 #include "ULocale.hpp"
+#include "ULocaleBuilder.hpp"
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
 #include "Normalizer2Accessors.hpp"

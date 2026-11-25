@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -57,6 +58,53 @@ void CheckLocaleObject() {
     }
 }
 
+void CheckLocaleQueries() {
+    std::int32_t error = 0;
+    ULocale* locale = ulocale_openForLanguageTag_nid_postfix("sr-Latn-RS-u-ca-gregory", -1, &error);
+    if (!locale || error != 0 || std::strcmp(ulocale_getLocaleID_nid_postfix(locale), "sr_Latn_RS@ca=gregory") != 0 ||
+        std::strcmp(ulocale_getBaseName_nid_postfix(locale), "sr_Latn_RS") != 0 ||
+        std::strcmp(ulocale_getLanguage_nid_postfix(locale), "sr") != 0 ||
+        std::strcmp(ulocale_getScript_nid_postfix(locale), "Latn") != 0 ||
+        std::strcmp(ulocale_getRegion_nid_postfix(locale), "RS") != 0 ||
+        std::strcmp(ulocale_getVariant_nid_postfix(locale), "") != 0) {
+        std::fputs("locale query components differ\n", stderr);
+        std::abort();
+    }
+    char value[32] = {};
+    if (ulocale_getKeywordValue_nid_postfix(locale, "ca", -1, value, 32, &error) != 7 ||
+        error != 0 || std::strcmp(value, "gregory") != 0) {
+        std::fputs("locale keyword value differs\n", stderr);
+        std::abort();
+    }
+    if (ulocale_getUnicodeKeywordValue_nid_postfix(locale, "ca", 2, value, 32, &error) != 7 ||
+        error != 0 || std::strcmp(value, "gregory") != 0) {
+        std::fputs("locale Unicode keyword value differs\n", stderr);
+        std::abort();
+    }
+    UEnumeration* keywords = ulocale_getKeywords_nid_postfix(locale, &error);
+    std::int32_t length = 0;
+    const char* keyword = uenum_next_nid_postfix(keywords, &length, &error);
+    if (!keyword || length != 2 || std::string(keyword, static_cast<std::size_t>(length)) != "ca" ||
+        uenum_next_nid_postfix(keywords, &length, &error) != nullptr || error != 0) {
+        std::fputs("locale keyword enumeration differs\n", stderr);
+        std::abort();
+    }
+    uenum_close_nid_postfix(keywords);
+    keywords = ulocale_getUnicodeKeywords_nid_postfix(locale, &error);
+    keyword = uenum_next_nid_postfix(keywords, &length, &error);
+    if (!keyword || length != 2 || std::string(keyword, static_cast<std::size_t>(length)) != "ca" ||
+        uenum_next_nid_postfix(keywords, &length, &error) != nullptr || error != 0) {
+        std::fputs("locale Unicode keyword enumeration differs\n", stderr);
+        std::abort();
+    }
+    uenum_close_nid_postfix(keywords);
+    ulocale_close_nid_postfix(locale);
+    if (!ulocbld_open_nid_postfix()) {
+        std::fputs("locale builder allocation failed\n", stderr);
+        std::abort();
+    }
+}
+
 }
 
 int main() {
@@ -86,5 +134,6 @@ int main() {
 
     CheckNullThrows();
     CheckLocaleObject();
+    CheckLocaleQueries();
     std::puts("ICU locale keyword tests passed");
 }
