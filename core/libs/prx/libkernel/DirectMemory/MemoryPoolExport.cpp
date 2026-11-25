@@ -1,6 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <exception>
@@ -66,10 +65,8 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
  (void)flags;
  if (!entries || num_entries < 0) return SCE_KERNEL_ERROR_EINVAL;
  if (num_entries_out != nullptr) {
-  const int savedErrno = errno;
   int initial = 0;
   const bool writable = GuestCopyOut_nid_no_patch(num_entries_out, &initial, sizeof(initial));
-  errno = savedErrno;
   if (!writable) return SCE_KERNEL_ERROR_EFAULT;
  }
  int done = 0;
@@ -77,9 +74,7 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
  for (; done < num_entries; ++done) {
   KernelMemoryPoolBatchEntry e;
   {
-   const int savedErrno = errno;
    const bool read = GuestCopyIn_nid_no_patch(&e, entries + done, sizeof(e));
-   errno = savedErrno;
    if (!read) {
     ret = SCE_KERNEL_ERROR_EFAULT;
     break;
