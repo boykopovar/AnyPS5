@@ -385,8 +385,7 @@ std::uint32_t CompiledSdk() {
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
     if (lookupFailed.load(std::memory_order_relaxed)) return sdk;
     try {
-        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
+        sdk = ApplicationCompiledSdkVersion();
     } catch (const std::runtime_error&) {
         lookupFailed.store(true, std::memory_order_relaxed);
     }
@@ -2346,7 +2345,7 @@ double ParseDecimal(std::string_view text) {
 
 class Parser {
 public:
-    Parser(const char* text, std::size_t size) : text(text), end(text + size) {}
+    Parser(const char* text, std::size_t size) : text(text), remaining(size) {}
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
     bool Parse(Node& out) { return value(out); }
@@ -2357,7 +2356,10 @@ private:
     static constexpr std::size_t MaxNestingDepth = 512;
 
     const char* text = nullptr;
-    const char* end = nullptr;
+    std::size_t remaining = 0;
+    char buffer[256]{};
+    std::size_t buffered = 0;
+    std::size_t cursor = 0;
     ParserReadCallback read = nullptr;
     void* context = nullptr;
     std::size_t depth = 0;
@@ -2370,11 +2372,19 @@ private:
             char character = 0;
             readError = read(character, context);
             current = readError < 0 ? -1 : static_cast<unsigned char>(character);
-        } else if (text == end) {
+        } else if (cursor < buffered) {
+            current = static_cast<unsigned char>(buffer[cursor++]);
+        } else if (remaining == 0) {
             readError = JsonErrorParse;
             current = -1;
         } else {
-            current = static_cast<unsigned char>(*text++);
+            const std::size_t count = std::min(sizeof(buffer), remaining);
+            if (!GuestCopyIn_nid_no_patch(buffer, text, count)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            text += count;
+            remaining -= count;
+            buffered = count;
+            cursor = 1;
+            current = static_cast<unsigned char>(buffer[0]);
         }
         return current;
     }
@@ -2574,6 +2584,41 @@ private:
         }
     }
 };
+
+void ValidateGuestParserTarget(Value* out, const char* function) {
+    static_cast<void>(LoadGuest<Value>(out, function));
+    if (!GuestWritable_nid_no_patch(out, sizeof(Value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestParserRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestParserBytes(const char* text, std::size_t size, const char* function) {
+    if (reinterpret_cast<std::uintptr_t>(text) > std::numeric_limits<std::uintptr_t>::max() - size)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    for (std::size_t offset = 0; offset < size;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t step = std::min(sizeof(chunk) - address % sizeof(chunk), size - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, step)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+void CopyGuestParserPath(const Value* out, const char* path, std::string& copy, const char* function) {
+    std::size_t length = 0;
+    if (!path || !GuestTextLength(path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (length == std::numeric_limits<std::size_t>::max() ||
+        GuestParserRangesOverlap(out, sizeof(Value), path, length + 1))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    copy.resize(length);
+    if (length && !GuestCopyIn_nid_no_patch(copy.data(), path, length)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
 
 int ParseValue(Value* out, Parser& parser) {
     AllocationOperation operation;
@@ -3214,18 +3259,25 @@ void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Str
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
+    ValidateGuestParserTarget(out, __func__);
     Parser parser(read, context);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size) {
+    ValidateGuestParserTarget(out, __func__);
     if (size == 0) return JsonErrorParse;
     if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
+    ValidateGuestParserBytes(text, size, __func__);
+    if (GuestParserRangesOverlap(out, sizeof(Value), text, size)) NotImplemented_nid_no_patch(__func__);
     Parser parser(text, size);
     return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* path) {
+    ValidateGuestParserTarget(out, __func__);
+    std::string guestPath;
+    CopyGuestParserPath(out, path, guestPath, __func__);
     AllocationContext allocation;
     {
         auto& state = State();
@@ -3236,7 +3288,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
     if (!allocation.fileBufferSize) return static_cast<int>(0x80848105);
     FileReader reader{allocation};
     reader.buffer = Allocate(allocation, allocation.fileBufferSize);
-    if (reader.buffer) reader.descriptor = sceKernelOpen(path, 0, 0555);
+    if (reader.buffer) reader.descriptor = sceKernelOpen(guestPath.c_str(), 0, 0555);
     Parser parser(FileReader::Read, &reader);
     return ParseValue(out, parser);
 }

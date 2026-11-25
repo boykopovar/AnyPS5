@@ -411,11 +411,22 @@ public:
         bool readTargets = false;
         std::uint32_t targetSlot = 0;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+        std::uint32_t listTargets = 0;
+        std::int32_t listed = -1;
+        std::uint32_t lanesPerGroup = 0;
+        std::vector<std::uint64_t> selectTargets;
+        bool selectBegin = false;
     };
     void SetSplitSlice(const std::optional<SplitSlice>& slice);
     std::span<const std::uint32_t> SplitTargets();
+    static constexpr std::uint32_t SplitSelectMaxTargets = 64u;
 
 private:
+    static constexpr std::uint32_t SplitSelectTargetWords = 4u;
+    static constexpr std::uint32_t SplitSelectCountWords = SplitSelectTargetWords + 2u * SplitSelectMaxTargets;
+    static constexpr std::uint32_t SplitSelectArgumentWords = SplitSelectCountWords + SplitSelectMaxTargets + 4u;
+    static constexpr std::uint32_t SplitSelectWords = SplitSelectArgumentWords + 4u * (SplitSelectMaxTargets + 1u);
+    void recordSplitSelect(const Graphics::Context& context, VkCommandBuffer commands, VkDescriptorSet stateSet, const SplitSlice& slice, std::uint64_t listBase);
     std::optional<SplitSlice> splitSlice;
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;
