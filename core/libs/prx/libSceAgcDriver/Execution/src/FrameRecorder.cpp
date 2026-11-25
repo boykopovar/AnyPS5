@@ -138,13 +138,18 @@ std::uint64_t contentHash(std::span<const std::byte> bytes) {
 
 FrameRecorder* FrameRecorder::Active() {
     static FrameRecorder* const recorder = []() -> FrameRecorder* {
+#ifdef _WIN32
+        const wchar_t* directory = _wgetenv(L"APS5_FRAME_CAPTURE");
+        const wchar_t* trigger = _wgetenv(L"APS5_FRAME_CAPTURE_TRIGGER");
+#else
         const char* directory = std::getenv("APS5_FRAME_CAPTURE");
-        if (directory == nullptr || *directory == '\0') return nullptr;
         const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+#endif
+        if (directory == nullptr || *directory == 0) return nullptr;
         const auto atBoundary = readNumber(std::getenv("APS5_FRAME_CAPTURE_AT_FLIP"), 0);
         const auto frames = readNumber(std::getenv("APS5_FRAME_CAPTURE_FRAMES"), DefaultFrames);
         if (frames == 0) throw std::runtime_error("frame capture: APS5_FRAME_CAPTURE_FRAMES must be at least 1");
-        return new FrameRecorder(directory, trigger != nullptr ? trigger : "", atBoundary, frames);
+        return new FrameRecorder(directory, trigger != nullptr ? std::filesystem::path(trigger) : std::filesystem::path(), atBoundary, frames);
     }();
     return recorder;
 }

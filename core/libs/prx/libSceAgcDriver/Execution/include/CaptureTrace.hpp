@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -16,9 +17,13 @@
 
 namespace AgcDriver {
 
-inline const char* CaptureTracePath() {
+inline std::filesystem::path CaptureTracePath() {
+#ifdef _WIN32
+    const wchar_t* configuredPath = _wgetenv(L"APS5_CAPTURE_TRACE_PATH");
+#else
     const char* configuredPath = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    if (configuredPath != nullptr && configuredPath[0] != '\0') return configuredPath;
+#endif
+    if (configuredPath != nullptr && configuredPath[0] != 0) return configuredPath;
     return "capture-trace.log";
 }
 
@@ -114,10 +119,14 @@ private:
     }
 
     CaptureTrace() {
-        const char* path = CaptureTracePath();
+        const auto path = CaptureTracePath();
         output.open(path, std::ios::binary);
         if (!output.is_open()) {
-            std::fprintf(stderr, "Capture trace open failed for %s\n", path);
+            try {
+                std::fprintf(stderr, "Capture trace open failed for %s\n", path.string().c_str());
+            } catch (...) {
+                std::fputs("Capture trace open failed\n", stderr);
+            }
             return;
         }
         active = true;

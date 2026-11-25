@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 #include <exception>
 #include <fstream>
 #include <initializer_list>
@@ -133,7 +134,7 @@ std::vector<std::uint32_t> DrawPacket(std::uintptr_t color, const std::uint32_t*
     return commands;
 }
 
-std::string ReadTraceFile(const char* path) {
+std::string ReadTraceFile(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) return {};
     std::ostringstream buffer;
@@ -141,7 +142,7 @@ std::string ReadTraceFile(const char* path) {
     return buffer.str();
 }
 
-bool WaitForTraceRecord(const char* path, const std::string& record) {
+bool WaitForTraceRecord(const std::filesystem::path& path, const std::string& record) {
     for (int attempt = 0; attempt < 200; ++attempt) {
         if (ReadTraceFile(path).find(record) != std::string::npos) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -180,7 +181,7 @@ void SubmitDraw(std::uintptr_t color, const std::uint32_t* vertex, const std::ui
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission was not accepted");
 }
 
-void FailingShaderDecodeRecordsTheDraw(const char* tracePath, bool correlationExpected = true) {
+void FailingShaderDecodeRecordsTheDraw(const std::filesystem::path& tracePath, bool correlationExpected = true) {
     ColorBuffer color;
     Registered(VertexHeader, FailingVertexCode.data(), FailingVertexCode.size() * sizeof(std::uint32_t), 2);
     Registered(PixelHeader, PixelCode.data(), PixelCode.size() * sizeof(std::uint32_t), 1);
@@ -226,7 +227,7 @@ void FailingShaderDecodeRecordsTheDraw(const char* tracePath, bool correlationEx
     Require(trace.find("unsupported SOP1 opcode 2") != std::string::npos, "the trace lost the shader-decoder reason");
 }
 
-void FailingShaderMaterializationRecordsTheDraw(const char* tracePath, bool correlationExpected = true) {
+void FailingShaderMaterializationRecordsTheDraw(const std::filesystem::path& tracePath, bool correlationExpected = true) {
     ColorBuffer color;
     Registered(VertexHeader, RequestFailureVertexCode.data(), RequestFailureVertexCode.size() * sizeof(std::uint32_t), 2);
     Registered(PixelHeader, PixelCode.data(), PixelCode.size() * sizeof(std::uint32_t), 1);
@@ -278,7 +279,7 @@ void FailingShaderMaterializationRecordsTheDraw(const char* tracePath, bool corr
     Require(trace.find("unsupported dynamic s_setpc_b64") != std::string::npos, "the draw-shader-request-failed record lost the shader-request reason");
 }
 
-void SuccessfulDrawEmitsNoFailureRecord(const char* tracePath) {
+void SuccessfulDrawEmitsNoFailureRecord(const std::filesystem::path& tracePath) {
     ColorBuffer color;
     Registered(VertexHeader, ValidVertexCode.data(), ValidVertexCode.size() * sizeof(std::uint32_t), 2);
     Registered(PixelHeader, PixelCode.data(), PixelCode.size() * sizeof(std::uint32_t), 1);
@@ -305,7 +306,7 @@ void SuccessfulDrawEmitsNoFailureRecord(const char* tracePath) {
     Require(completedTrace.find("draw-shader-request-failed") == std::string::npos, "a successful draw emitted a draw-shader-request-failed record");
 }
 
-void DisabledCorrelationTraceLeavesDrawBehaviorUnchanged(const char* tracePath) {
+void DisabledCorrelationTraceLeavesDrawBehaviorUnchanged(const std::filesystem::path& tracePath) {
     ColorBuffer color;
     Registered(VertexHeader, ValidVertexCode.data(), ValidVertexCode.size() * sizeof(std::uint32_t), 2);
     Registered(PixelHeader, PixelCode.data(), PixelCode.size() * sizeof(std::uint32_t), 1);
@@ -325,9 +326,14 @@ void DisabledCorrelationTraceLeavesDrawBehaviorUnchanged(const char* tracePath) 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "request-failure";
     const bool expectFailure = mode != "successful-draw" && mode != "disabled-correlation";
-    const char* tracePath = std::getenv("APS5_CAPTURE_TRACE_PATH");
+#ifdef _WIN32
+    const wchar_t* configuredTrace = _wgetenv(L"APS5_CAPTURE_TRACE_PATH");
+#else
+    const char* configuredTrace = std::getenv("APS5_CAPTURE_TRACE_PATH");
+#endif
     try {
-        if (!tracePath || tracePath[0] == '\0') throw std::runtime_error("this case requires a non-empty APS5_CAPTURE_TRACE_PATH");
+        if (!configuredTrace || configuredTrace[0] == 0) throw std::runtime_error("this case requires a non-empty APS5_CAPTURE_TRACE_PATH");
+        const std::filesystem::path tracePath(configuredTrace);
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (mode == "request-failure") FailingShaderDecodeRecordsTheDraw(tracePath);

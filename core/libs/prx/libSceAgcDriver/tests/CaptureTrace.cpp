@@ -46,12 +46,17 @@ void RemoveEnvironmentVariable(const char* name) {
 #endif
 }
 
-bool FileExists(const char* path) {
+bool FileExists(const std::filesystem::path& path) {
     std::error_code error;
     return std::filesystem::exists(path, error) && !error;
 }
 
-std::string ReadFile(const char* path) {
+void RemoveFile(const std::filesystem::path& path) {
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     Check(stream.is_open(), "the trace file was not created at the expected path");
     std::ostringstream buffer;
@@ -59,7 +64,7 @@ std::string ReadFile(const char* path) {
     return buffer.str();
 }
 
-bool WaitForRecord(const char* path, const std::string& record) {
+bool WaitForRecord(const std::filesystem::path& path, const std::string& record) {
     for (int attempt = 0; attempt < 100; ++attempt) {
         if (FileExists(path) && ReadFile(path).find(record) != std::string::npos) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -67,50 +72,91 @@ bool WaitForRecord(const char* path, const std::string& record) {
     return false;
 }
 
-const char* RequiredPathVariable() {
+std::filesystem::path RequiredPathVariable() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"APS5_CAPTURE_TRACE_PATH");
+#else
     const char* configured = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    Check(configured != nullptr && configured[0] != '\0',
+#endif
+    Check(configured != nullptr && configured[0] != 0,
           "this case requires a non-empty APS5_CAPTURE_TRACE_PATH");
     return configured;
 }
 
 void PathDefault() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Check(AgcDriver::CaptureTracePath() == "capture-trace.log",
           "an absent APS5_CAPTURE_TRACE_PATH must select capture-trace.log");
 }
 
 void PathEmpty() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"APS5_CAPTURE_TRACE_PATH");
+#else
     const char* configured = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    Check(configured != nullptr && configured[0] == '\0',
+#endif
+    Check(configured != nullptr && configured[0] == 0,
           "this case requires an empty APS5_CAPTURE_TRACE_PATH");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Check(AgcDriver::CaptureTracePath() == "capture-trace.log",
           "an empty APS5_CAPTURE_TRACE_PATH must select capture-trace.log");
 }
 
 void PathExplicit() {
-    const char* configured = RequiredPathVariable();
-    Check(std::string(AgcDriver::CaptureTracePath()) == std::string(configured),
+    const auto configured = RequiredPathVariable();
+    Check(AgcDriver::CaptureTracePath() == configured,
           "a non-empty APS5_CAPTURE_TRACE_PATH must be selected verbatim");
 }
 
 void ExplicitWrites() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     AgcDriver::CaptureTrace::Log("capture-trace-explicit label=%d", 7);
     Check(WaitForRecord(configured, "capture-trace-explicit label=7"),
           "the configured trace path did not receive the capture record");
-    std::remove(configured);
+    RemoveFile(configured);
 }
 
+#ifdef _WIN32
+std::filesystem::path UnpairedSurrogatePath(const std::filesystem::path& directory) {
+    const auto path = directory / std::wstring{L't', L'r', L'a', L'c', L'e', L'-', wchar_t(0xD800), L'.', L'l', L'o', L'g'};
+    Check(_wputenv_s(L"APS5_CAPTURE_TRACE_PATH", path.c_str()) == 0, "cannot set APS5_CAPTURE_TRACE_PATH");
+    return path;
+}
+
+void UnpairedSurrogateWrites() {
+    const auto configured = UnpairedSurrogatePath(std::filesystem::current_path());
+    RemoveFile(configured);
+    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    AgcDriver::CaptureTrace::Log("capture-trace-surrogate label=%d", 5);
+    Check(WaitForRecord(configured, "capture-trace-surrogate label=5"),
+          "a native path with an unpaired surrogate did not receive the capture record");
+    RemoveFile(configured);
+}
+
+void UnpairedSurrogateOpenFailure() {
+    const auto configured = UnpairedSurrogatePath(std::filesystem::current_path() / "missing");
+    Check(!FileExists(configured.parent_path()), "the trace path parent must not exist");
+    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    bool threw = false;
+    try {
+        AgcDriver::CaptureTrace::Log("capture-trace-surrogate-failure label=%d", 6);
+    } catch (const std::exception& error) {
+        threw = true;
+        std::cerr << "unexpected exception: " << error.what() << '\n';
+    }
+    Check(!threw, "an unopenable native trace path must not throw from Log");
+    Check(!FileExists(configured), "an unopenable native trace path must not create the requested file");
+}
+#endif
+
 void StopUnused() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     AgcDriver::CaptureTrace::Stop();
     Check(!FileExists(configured), "stopping an unused trace must not create its file or worker");
 }
 
 void StopDrains() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     AgcDriver::CaptureTrace::Log("stop-record before");
     std::vector<std::thread> callers;
     for (unsigned i = 0; i < 4; ++i) callers.emplace_back([] { AgcDriver::CaptureTrace::Stop(); });
@@ -125,7 +171,7 @@ void StopDrains() {
 
 #ifdef _WIN32
 void DllShutdown(const char* modulePath) {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     HMODULE module = LoadLibraryA(modulePath);
     Check(module != nullptr, "the capture trace DLL could not be loaded");
     const auto record = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceRecord"));
@@ -150,7 +196,7 @@ void DllShutdown(const char* modulePath) {
 void DefaultWrites() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Check(AgcDriver::CaptureTracePath() == "capture-trace.log",
           "an absent APS5_CAPTURE_TRACE_PATH must keep the default path");
     AgcDriver::CaptureTrace::Log("capture-trace-default label=%d", 5);
     Check(WaitForRecord("capture-trace.log", "capture-trace-default label=5"),
@@ -159,7 +205,7 @@ void DefaultWrites() {
 }
 
 void OpenFailure() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     Check(!FileExists(configured), "the configured trace path must not already exist");
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     bool threw = false;
@@ -176,7 +222,7 @@ void OpenFailure() {
 }
 
 void BestEffortOverflow() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     const std::string oversized(4096, 'x');
     bool threw = false;
@@ -186,11 +232,11 @@ void BestEffortOverflow() {
         threw = true;
     }
     Check(!threw, "best-effort capture logging must not propagate formatting failures");
-    std::remove(configured);
+    RemoveFile(configured);
 }
 
 void FormatOverflow() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     const std::string oversized(4096, 'x');
     AgcDriver::CaptureTrace::Log("capture-trace-format payload=%s", oversized.c_str());
     Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
@@ -200,7 +246,7 @@ void FormatOverflow() {
           "capture tracing did not recover after an oversized record");
     Check(ReadFile(configured).find("capture-trace-format payload=") == std::string::npos,
           "the trace contains a truncated oversized record");
-    std::remove(configured);
+    RemoveFile(configured);
 }
 
 void PrefixMatching() {
@@ -232,7 +278,7 @@ void PrefixMatching() {
 }
 
 void PrefixWrites() {
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     const std::string oversized(4096, 'x');
     AgcDriver::CaptureTrace::Log("draw payload=%s", oversized.c_str());
     AgcDriver::CaptureTrace::Log("upload image=%x", 42);
@@ -258,7 +304,7 @@ void PrefixWrites() {
         fields >> sequence;
         Check(sequence == ++expected, "excluded records must not create sequence holes");
     }
-    std::remove(configured);
+    RemoveFile(configured);
 }
 
 class PausedTraceBuffer final : public std::streambuf {
@@ -337,7 +383,7 @@ void Disabled() {
 void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumulative) {
     constexpr std::size_t Capacity = 16u * 1024u * 1024u;
     constexpr std::size_t Producers = 4;
-    const char* configured = RequiredPathVariable();
+    const auto configured = RequiredPathVariable();
     PausedTraceBuffer sink;
     std::exception_ptr failure;
     std::size_t initialItems = 0;
@@ -488,7 +534,7 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
     Check(recovered == (shutdownOnly ? 0u : rounds), "the trace lost or duplicated its recovery records");
     Check(markers == rounds && summaries == 1, "the trace did not report each loss marker and one shutdown total");
     Check(sequence == initialItems + recovered + rounds + 1, "the trace contains an unexpected number of records");
-    std::remove(configured);
+    RemoveFile(configured);
 }
 
 int main(int argc, char** argv) {
@@ -503,6 +549,8 @@ int main(int argc, char** argv) {
         else if (mode == "stop-drains") StopDrains();
 #ifdef _WIN32
         else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+        else if (mode == "unpaired-surrogate-writes") UnpairedSurrogateWrites();
+        else if (mode == "unpaired-surrogate-open-failure") UnpairedSurrogateOpenFailure();
 #endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();
