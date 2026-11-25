@@ -187,6 +187,7 @@ class RelinkerEligibilityTests(unittest.TestCase):
         helper = "tools/select_tests.py"
         for files, expected in (
             ((mapper, "tools/input-mapper/tests/app.test.js"), False),
+            ((mapper, "docs/user/INPUT_MAPPING.md"), False),
             ((mapper, helper), True),
             (({"filename": mapper, "previous_filename": helper},), True),
         ):

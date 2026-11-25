@@ -124,20 +124,20 @@ jobs:
                 workflowJobs.add('*');
               }
             };
-            const select = (paths, all) => {
+            const select = (changedPaths, all) => {
+              const paths = changedPaths.filter((path) => !path.startsWith('tools/input-mapper/'));
               const touches = (...prefixes) => all ||
                 paths.some((path) => prefixes.some((prefix) => prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix));
               const edits = (job) => ['*', '', 'eligibility', job].some((name) => workflowJobs.has(name));
-              const relinkerTool = paths.some((path) => path.startsWith('tools/') && !path.startsWith('tools/input-mapper/'));
               return {
-                relinker: edits('relinker') || edits('relinker-asan') || relinkerTool || touches(
+                relinker: edits('relinker') || edits('relinker-asan') || touches(
                   'core/relinker/', libc, 'core/libs/prx/libkernel/AppMetadata/', 'core/libs/tests/ParamJsonParser.cpp',
                   'core/libs/prx/libkernel/DirectMemory/DirectMemory.hpp', 'core/libs/prx/libkernel/KernelErrors.hpp',
                   'core/libs/nid/src/NidCompute.cpp', 'core/libs/nid/src/Sha1.cpp',
                   'core/libs/nid/include/nid/NidCompute.hpp', 'core/libs/nid/include/nid/Sha1.hpp',
                   'core/libs/prx/libScePad/tests/InputCommandFile.cpp', 'core/libs/prx/libScePad/include/InputCommandFile.hpp',
                   'core/shader/recompiler/', '.github/pull_request_template.md', '.github/workflows/pr-overlap.yml',
-                  'cmake/', 'CMakeLists.txt'
+                  'tools/', 'cmake/', 'CMakeLists.txt'
                 ),
                 registerContext: edits('register-context') ||
                   touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
