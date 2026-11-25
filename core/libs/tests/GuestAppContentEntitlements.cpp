@@ -13,7 +13,10 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <utility>
 #include "ProcessParametersFixture.hpp"
+#include "prx/libSceNpEntitlementAccess/EntitlementsIni.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
@@ -27,6 +30,105 @@ static void SetEntitlements(const std::filesystem::path& file) {
     Require(_wputenv_s(L"ANYPS5_ENTITLEMENTS", file.wstring().c_str()) == 0);
 #else
     Require(::setenv("ANYPS5_ENTITLEMENTS", file.c_str(), 1) == 0);
+#endif
+}
+
+struct EntitlementsTestGuard {
+    std::filesystem::path root;
+#ifdef _WIN32
+    bool hadEnv{false};
+    std::wstring prevEnv;
+#else
+    bool hadEnv{false};
+    std::string prevEnv;
+#endif
+
+    explicit EntitlementsTestGuard(std::filesystem::path dir) : root(std::move(dir)) {
+#ifdef _WIN32
+        if (const auto* existing = ::_wgetenv(L"ANYPS5_ENTITLEMENTS")) {
+            hadEnv = true;
+            prevEnv = existing;
+        }
+#else
+        if (const auto* existing = std::getenv("ANYPS5_ENTITLEMENTS")) {
+            hadEnv = true;
+            prevEnv = existing;
+        }
+#endif
+    }
+
+    ~EntitlementsTestGuard() {
+#ifdef _WIN32
+        if (hadEnv) {
+            ::_wputenv_s(L"ANYPS5_ENTITLEMENTS", prevEnv.c_str());
+        } else {
+            ::_wputenv_s(L"ANYPS5_ENTITLEMENTS", L"");
+        }
+#else
+        if (hadEnv) {
+            ::setenv("ANYPS5_ENTITLEMENTS", prevEnv.c_str(), 1);
+        } else {
+            ::unsetenv("ANYPS5_ENTITLEMENTS");
+        }
+#endif
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+};
+
+static void WriteBinaryFile(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream out(path, std::ios::binary);
+    Require(static_cast<bool>(out));
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+    out.close();
+    Require(static_cast<bool>(out));
+}
+
+static void CheckEntitlementsIni() {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5_entitlements_test_" + std::to_string(stamp));
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    Require(std::filesystem::create_directories(root));
+    EntitlementsTestGuard guard(root);
+
+    const auto emptyLabelFile = root / "empty_label.ini";
+    WriteBinaryFile(emptyLabelFile, "=addcont0\n");
+    SetEntitlements(emptyLabelFile);
+    bool threwEmptyLabel = false;
+    try {
+        (void)AnyPS5::Entitlements::ParseEntries();
+    } catch (const std::runtime_error&) {
+        threwEmptyLabel = true;
+    }
+    Require(threwEmptyLabel);
+
+    const auto dirPath = root / "dir_target";
+    Require(std::filesystem::create_directories(dirPath));
+    SetEntitlements(dirPath);
+    bool threwDirectory = false;
+    try {
+        (void)AnyPS5::Entitlements::ParseEntries();
+    } catch (const std::runtime_error&) {
+        threwDirectory = true;
+    }
+    Require(threwDirectory);
+
+    const auto bomFile = root / "bom.ini";
+    WriteBinaryFile(bomFile, "\xEF\xBB\xBF" "DLC0000000000001=addcont0\n");
+    SetEntitlements(bomFile);
+    const auto entries = AnyPS5::Entitlements::ParseEntries();
+    Require(entries.size() == 1);
+    Require(entries[0].label == "DLC0000000000001");
+    Require(entries[0].target == "addcont0");
+
+#ifndef _WIN32
+    Require(::setenv("ANYPS5_ENTITLEMENTS", "", 1) == 0);
+    const auto defaultPath = AnyPS5::Entitlements::EntitlementsPath();
+    const auto emptyEnvEntries = AnyPS5::Entitlements::ParseEntries();
+    if (!std::filesystem::exists(defaultPath, ec)) {
+        Require(emptyEnvEntries.empty());
+    }
 #endif
 }
 
@@ -164,5 +266,7 @@ int main() {
 
     std::filesystem::current_path(original);
     std::filesystem::remove_all(root);
+
+    CheckEntitlementsIni();
     return 0;
 }

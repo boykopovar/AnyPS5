@@ -1,7 +1,10 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -11,6 +14,9 @@ constexpr std::int32_t Success = 0;
 constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t StringNotTerminated = -124;
+constexpr std::uint32_t ExcludeSpecialI = 1;
+constexpr std::uint32_t EditsNoReset = 0x2000;
+constexpr std::uint32_t OmitUnchangedText = 0x4000;
 
 void Expect(bool condition, const char* what) {
     if (condition) return;
@@ -89,6 +95,157 @@ void TestMapping() {
     ExpectThrow<std::invalid_argument>([&] { u_strFoldCase_nid_postfix(folded, 8, u"I", 1, 0, nullptr); }, "u_strFoldCase null error");
 }
 
+using LocaleMapper = std::int32_t (*)(const char*, std::uint32_t, const char16_t*, std::int32_t, char16_t*, std::int32_t, void*, std::int32_t*);
+
+std::int32_t ToLower(const char* locale, std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination,
+                     std::int32_t capacity, void* edits, std::int32_t* error) {
+    return _ZN6icu_687CaseMap7toLowerEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(locale, options, source, length, destination,
+                                                                                        capacity, edits, error);
+}
+
+std::int32_t ToUpper(const char* locale, std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination,
+                     std::int32_t capacity, void* edits, std::int32_t* error) {
+    return _ZN6icu_687CaseMap7toUpperEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(locale, options, source, length, destination,
+                                                                                        capacity, edits, error);
+}
+
+std::int32_t Fold(const char*, std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination,
+                  std::int32_t capacity, void* edits, std::int32_t* error) {
+    return _ZN6icu_687CaseMap4foldEjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(options, source, length, destination, capacity, edits,
+                                                                                  error);
+}
+
+constexpr LocaleMapper Mappers[] = {ToLower, ToUpper, Fold};
+
+void ExpectCaseMap(LocaleMapper map, const char* locale, std::uint32_t options, const std::u16string& source, std::int32_t length,
+                   const std::u16string& expected, const char* what) {
+    char16_t buffer[32];
+    std::fill(std::begin(buffer), std::end(buffer), u'ꪪ');
+    std::int32_t error = Success;
+    const auto result = map(locale, options, source.data(), length, buffer, 32, nullptr, &error);
+    ExpectInt(error, Success, what);
+    ExpectInt(result, static_cast<std::int64_t>(expected.size()), what);
+    Expect(std::u16string(buffer, result) == expected && buffer[result] == 0 && buffer[result + 1] == u'ꪪ', what);
+}
+
+void ExpectCall(LocaleMapper map, const char16_t* source, std::int32_t length, char16_t* destination, std::int32_t capacity, void* edits,
+                std::int32_t errorIn, std::int64_t result, std::int32_t errorOut, const char* what) {
+    std::int32_t error = errorIn;
+    ExpectInt(map("", 0, source, length, destination, capacity, edits, &error), result, what);
+    ExpectInt(error, errorOut, what);
+}
+
+template <typename Function>
+void ExpectNotImplemented(Function function, const char* what) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    ExpectThrow<std::runtime_error>(function, what);
+    ExpectInt(static_cast<std::int64_t>(NotImplementedCalls_nid_no_patch() - before), 1, what);
+}
+
+void TestCaseMapResults() {
+    ExpectCaseMap(ToLower, "tr", 0, u"Iİ", -1, u"ıi", "CaseMap::toLower(tr)");
+    ExpectCaseMap(ToLower, "tr_TR", 0, u"I", -1, u"ı", "CaseMap::toLower(tr_TR)");
+    ExpectCaseMap(ToLower, "en", 0, u"Iİ", -1, u"ii̇", "CaseMap::toLower(en)");
+    ExpectCaseMap(ToUpper, "az", 0, u"i", -1, u"İ", "CaseMap::toUpper(az)");
+    ExpectCaseMap(ToLower, "lt", 0, u"Ì", -1, u"i̇̀", "CaseMap::toLower(lt)");
+    ExpectCaseMap(ToUpper, "el", 0, u"ά", -1, u"Α", "CaseMap::toUpper(el)");
+    ExpectCaseMap(ToUpper, "", 0, u"ά", -1, u"Ά", "CaseMap::toUpper(root)");
+    ExpectCaseMap(ToUpper, "hy", 0, u"և", -1, u"ԵՎ", "CaseMap::toUpper(hy)");
+    ExpectCaseMap(ToUpper, "x-garbage", 0, u"և", -1, u"ԵՒ", "CaseMap::toUpper(unknown locale)");
+    ExpectCaseMap(ToLower, "", 0, u"ΣAΣ", -1, u"σaς", "CaseMap::toLower(final sigma)");
+    ExpectCaseMap(ToUpper, "", 0, u"straße", -1, u"STRASSE", "CaseMap::toUpper(sharp s)");
+    ExpectCaseMap(ToLower, "", 0, std::u16string(u"A\0B", 3), 3, std::u16string(u"a\0b", 3), "CaseMap::toLower(embedded NUL)");
+    ExpectCaseMap(ToLower, "", 0, u"A", 0, u"", "CaseMap::toLower(empty)");
+    ExpectCaseMap(ToUpper, "", OmitUnchangedText, u"aBc", -1, u"AC", "CaseMap::toUpper(omit unchanged text)");
+    ExpectCaseMap(ToUpper, "", 0x80000000u, u"aBc", -1, u"ABC", "CaseMap::toUpper(unknown option)");
+    ExpectCaseMap(Fold, "tr", 0, u"ßİ", -1, u"ssi̇", "CaseMap::fold");
+    ExpectCaseMap(Fold, "", ExcludeSpecialI, u"Iİ", -1, u"ıi", "CaseMap::fold(exclude special I)");
+    const std::u16string surrogates{char16_t(0xdc00), u'A', char16_t(0xd800), char16_t(0xd800), char16_t(0xdc00), u'A', char16_t(0xdbff)};
+    const std::u16string foldedSurrogates{char16_t(0xdc00), u'a', char16_t(0xd800), char16_t(0xd800), char16_t(0xdc00), u'a', char16_t(0xdbff)};
+    ExpectCaseMap(Fold, "", 0, surrogates, -1, foldedSurrogates, "CaseMap::fold(unpaired surrogates)");
+    ExpectCaseMap(Fold, "", 0, u"\U00010400", -1, u"\U00010428", "CaseMap::fold(supplementary)");
+
+    std::int32_t error = Success;
+    uloc_setDefault_nid_postfix("tr", &error);
+    ExpectCaseMap(ToUpper, nullptr, 0, u"i", -1, u"İ", "CaseMap::toUpper(default tr)");
+    ExpectCaseMap(ToLower, "", 0, u"I", -1, u"i", "CaseMap::toLower(empty locale under a tr default)");
+    uloc_setDefault_nid_postfix("lt", &error);
+    ExpectCaseMap(ToLower, nullptr, 0, u"Ì", -1, u"i̇̀", "CaseMap::toLower(default lt)");
+    ExpectInt(error, Success, "uloc_setDefault");
+}
+
+void TestCaseMapBuffers() {
+    char16_t buffer[8];
+    for (auto map : Mappers) {
+        ExpectCall(map, u"aB", -1, nullptr, 0, nullptr, Success, 2, BufferOverflow, "CaseMap preflight");
+        ExpectCall(map, u"aB", -1, buffer, 1, nullptr, Success, 2, BufferOverflow, "CaseMap short buffer");
+        ExpectCall(map, u"aB", -1, buffer, 2, nullptr, Success, 2, StringNotTerminated, "CaseMap exact capacity");
+        ExpectCall(map, u"aB", -1, buffer, 3, nullptr, StringNotTerminated, 2, Success, "CaseMap clears a warning");
+        ExpectCall(map, u"aB", -1, buffer, -1, nullptr, Success, 0, IllegalArgument, "CaseMap negative capacity");
+        ExpectCall(map, u"aB", -1, nullptr, 4, nullptr, Success, 0, IllegalArgument, "CaseMap null destination");
+        ExpectCall(map, nullptr, -1, buffer, 4, nullptr, Success, 0, IllegalArgument, "CaseMap null source");
+        ExpectCall(map, u"aB", -2, buffer, 4, nullptr, Success, 0, IllegalArgument, "CaseMap length below -1");
+        buffer[0] = u'x';
+        ExpectCall(map, u"aB", -1, buffer, 4, nullptr, BufferOverflow, 0, BufferOverflow, "CaseMap failed input");
+        ExpectCall(map, u"aB", -1, buffer, 4, nullptr, IllegalArgument, 0, IllegalArgument, "CaseMap failed input");
+        Expect(buffer[0] == u'x', "CaseMap failed input writes nothing");
+        ExpectThrow<std::invalid_argument>([&] { map("", 0, u"a", -1, buffer, 4, nullptr, nullptr); }, "CaseMap null error");
+    }
+    ExpectCall(ToUpper, u"straße", -1, buffer, 3, nullptr, Success, 7, BufferOverflow, "CaseMap::toUpper growth overflow");
+    ExpectCall(ToUpper, u"straße", -1, buffer, 7, nullptr, Success, 7, StringNotTerminated, "CaseMap::toUpper growth exact");
+}
+
+void TestCaseMapOverlap() {
+    for (auto map : Mappers) {
+        char16_t text[8] = u"abcd";
+        ExpectCall(map, text, -1, text, 8, nullptr, Success, 0, IllegalArgument, "CaseMap in place");
+        ExpectCall(map, text + 2, 2, text, 3, nullptr, Success, 0, IllegalArgument, "CaseMap destination reaches the source");
+        ExpectCall(map, text, 2, text + 1, 2, nullptr, Success, 0, IllegalArgument, "CaseMap destination inside the source");
+        ExpectCall(map, text, -1, text + 3, 2, nullptr, Success, 0, IllegalArgument, "CaseMap destination inside the terminated source");
+        Expect(std::u16string(text) == u"abcd", "CaseMap overlap writes nothing");
+    }
+    char16_t text[8] = u"abcd";
+    ExpectCall(ToUpper, text + 2, 2, text, 2, nullptr, Success, 2, StringNotTerminated, "CaseMap destination before the source");
+    ExpectCall(ToUpper, text, 2, text + 2, 2, nullptr, Success, 2, StringNotTerminated, "CaseMap destination after the source");
+    Expect(std::u16string(text) == u"CDCD", "CaseMap adjacent buffers");
+}
+
+void TestCaseMapEdits() {
+    alignas(8) unsigned char edits[128] = {};
+    char16_t buffer[8] = {};
+    char16_t text[8] = u"abcd";
+    for (auto map : Mappers) {
+        ExpectCall(map, u"aB", -1, buffer, 4, edits, BufferOverflow, 0, BufferOverflow, "CaseMap edits with failed input");
+        ExpectCall(map, u"aB", -1, buffer, -1, edits, Success, 0, IllegalArgument, "CaseMap edits with negative capacity");
+        ExpectCall(map, u"aB", -1, nullptr, 4, edits, Success, 0, IllegalArgument, "CaseMap edits with null destination");
+        ExpectCall(map, nullptr, 0, buffer, 4, edits, Success, 0, IllegalArgument, "CaseMap edits with null source");
+        ExpectCall(map, u"aB", -2, buffer, 4, edits, Success, 0, IllegalArgument, "CaseMap edits with length below -1");
+        ExpectCall(map, text, -1, text + 3, 2, edits, Success, 0, IllegalArgument, "CaseMap edits with overlap");
+        ExpectCall(map, text, 2, text + 1, 2, edits, Success, 0, IllegalArgument, "CaseMap edits with overlap");
+        ExpectNotImplemented([&] {
+            std::int32_t error = Success;
+            map("", 0, u"aB", -1, buffer, 4, edits, &error);
+        }, "CaseMap edits");
+        ExpectNotImplemented([&] {
+            std::int32_t error = Success;
+            map("", EditsNoReset, u"aB", -1, buffer, 4, edits, &error);
+        }, "CaseMap edits without reset");
+        ExpectNotImplemented([&] {
+            std::int32_t error = StringNotTerminated;
+            map("", 0, u"aB", 2, nullptr, 0, edits, &error);
+        }, "CaseMap edits preflight");
+        ExpectNotImplemented([&] {
+            std::int32_t error = Success;
+            map("", 0, text + 2, 2, text, 2, edits, &error);
+        }, "CaseMap edits with adjacent buffers");
+        ExpectNotImplemented([&] {
+            std::int32_t error = Success;
+            map("", 0, text, -1, text + 4, 2, edits, &error);
+        }, "CaseMap edits after the terminated source");
+    }
+    Expect(std::u16string(text) == u"abcd" && edits[0] == 0, "CaseMap edits write nothing");
+}
+
 void TestComparison() {
     ExpectInt(u_strcasecmp_nid_postfix(u"HELLO", u"hello", 0), 0, "u_strcasecmp equal");
     Expect(u_strcasecmp_nid_postfix(u"a", u"B", 0) < 0, "u_strcasecmp less");
@@ -131,6 +288,10 @@ void TestComparison() {
 
 int main() {
     TestMapping();
+    TestCaseMapResults();
+    TestCaseMapBuffers();
+    TestCaseMapOverlap();
+    TestCaseMapEdits();
     TestComparison();
     std::puts("ICU case mapping tests passed");
 }
