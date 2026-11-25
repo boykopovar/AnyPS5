@@ -439,7 +439,7 @@ void verifySpecializedModuleRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "specialized module release: the module caches kept the words of a module no result uses");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "specialized module release: the module caches kept the words of a module no result uses, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(pixel);
     require(again.specializationId == specializationId, "specialized module release: a module built again from its key got another specialization ID");
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
@@ -487,7 +487,7 @@ void verifyLayerSpecializationRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "layer module release: the metadata retained unused SPIR-V words, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(request);
     require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
     require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
@@ -12296,15 +12296,27 @@ void verifyFmaskImageMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
-    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 163u, 165u}) {
+    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 162u, 163u, 164u, 165u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         const auto expanded = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
-        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
+        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format did not select the FMASK expansion mode");
     }
     require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
     descriptor.dwords[1] = 159u << 20u;
     descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
+    descriptor.dwords[6] = 0u;
+    for (const auto format : {161u, 162u, 164u, 166u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        descriptor.dwords[3] = 0x91800005u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
+    }
+    descriptor.dwords[3] = (descriptor.dwords[3] & ~0xfffu) | 0xfacu;
+    for (const auto format : {162u, 164u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        const auto wide = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+        require(modes[wide].conversionFormat == FmaskExpansion && modes[wide].dimension == RdnaImageDimension::Dim2D, "a 16-sample FMASK identity view did not select the FMASK expansion mode");
+    }
     descriptor.dwords[1] = 166u << 20u;
     descriptor.dwords[6] = 1u << 21u;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without readable metadata");
@@ -12870,6 +12882,32 @@ void verifyPixelQuadPermReads() {
     }
     const auto shifted = compile(rowShift, true);
     require(declares(shifted, spv::OpGroupNonUniformShuffle) && !declares(shifted, spv::OpGroupNonUniformQuadBroadcast), "a pixel row shift read went through quad operations");
+    const auto broadcastLanes = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::vector<std::uint32_t> indices;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad perm: truncated SPIR-V instruction");
+            const auto opcode = words[cursor] & 0xffffu;
+            if (opcode == static_cast<std::uint32_t>(spv::OpConstant) && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (opcode == static_cast<std::uint32_t>(spv::OpGroupNonUniformQuadBroadcast)) indices.push_back(words[cursor + 5]);
+            cursor += count;
+        }
+        std::vector<std::uint32_t> lanes;
+        for (const auto index : indices) {
+            const auto constant = constants.find(index);
+            require(constant != constants.end(), "quad perm: a broadcast lane is not a 32-bit constant");
+            lanes.push_back(constant->second);
+        }
+        return lanes;
+    };
+    constexpr std::array<std::uint32_t, 6> uniformQuadPerm{0xbefe0ac1u, 0x7e0202fau, 0xff005500u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    const auto swapLanes = broadcastLanes(compile(quadPerm, true));
+    require(!swapLanes.empty() && swapLanes.size() % 4u == 0u, "a quad_perm that reads different lanes did not broadcast every lane of the quad");
+    for (std::size_t index = 0; index < swapLanes.size(); ++index) require(swapLanes[index] == index % 4u, "a quad_perm that reads different lanes did not broadcast every lane of the quad in order");
+    const auto uniformLanes = broadcastLanes(compile(uniformQuadPerm, true));
+    require(uniformLanes.size() * 4u == swapLanes.size() && std::ranges::all_of(uniformLanes, [](std::uint32_t lane) { return lane == 1u; }), "a quad_perm whose four lanes read lane 1 did not read it with one broadcast per read");
 }
 
 void verifyCubeDepthCompareMode() {
@@ -13612,6 +13650,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--base-formatted-read-extent") {
             verifyBaseFormattedReadExtent();
             std::cout << "Base formatted read extents preserve static and runtime SRT proofs across cached materialization\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-module-release") {
+            verifySpecializedModuleRelease();
+            std::cout << "A specialized module is released with its last result, or kept and served again, as APS5_KEEP_SPECIALIZED_MIB says\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {

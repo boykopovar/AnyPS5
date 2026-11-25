@@ -127,7 +127,6 @@ FontTextCharacter* TextCharacters(FontStringData* data) {
 }
 
 bool IsRightToLeftLetter(std::uint32_t code) {
-    if ((code >= 0x0660u && code <= 0x0669u) || (code >= 0x06F0u && code <= 0x06F9u)) return false;
     return (code >= 0x0590u && code <= 0x08FFu) || (code >= 0xFB1Du && code <= 0xFDFFu) || (code >= 0xFE70u && code <= 0xFEFFu) ||
            (code >= 0x10800u && code <= 0x10FFFu) || (code >= 0x1E800u && code <= 0x1EFFFu);
 }
@@ -150,6 +149,7 @@ std::uint32_t DefaultStringForm(const std::vector<FontTextCharacter>& characters
             continue;
         }
         if (isolateDepth != 0) continue;
+        if ((code >= 0x0660u && code <= 0x066Cu) || (code >= 0x06F0u && code <= 0x06F9u)) continue;
         if (code == 0x200Eu) return WRITING_FORM_HORIZONTAL_LTR;
         if (code == 0x200Fu || IsRightToLeftLetter(code)) return WRITING_FORM_HORIZONTAL_RTL;
         if (!IsDirectionNeutral(code)) return WRITING_FORM_HORIZONTAL_LTR;

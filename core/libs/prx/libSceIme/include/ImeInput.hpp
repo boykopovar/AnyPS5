@@ -23,9 +23,11 @@ struct ImeHostInput {
     char text[32] = {};
     std::int32_t start = 0;
     std::int32_t length = 0;
+    bool moveToLineBoundary = false;
 };
 
 extern "C" void ImePublishInput_nid_postfix(const ImeHostInput& input);
+extern "C" void ImePublishPreedit_nid_postfix(const char* utf8, std::size_t size, std::int32_t start, std::int32_t length);
 extern "C" void ImePublishPaste_nid_postfix(const char* utf8, std::size_t size);
 extern "C" bool ImeCapturesKeyboard_nid_postfix();
 

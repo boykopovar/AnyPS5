@@ -243,6 +243,19 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(report["metrics_ms"]["frame_ms.p50"]["change"], 0)
         self.assertEqual(report["candidate"], self.candidate)
 
+    def test_thread_loss_cannot_disagree_with_the_aggregate_flag(self):
+        self.write(self.before, self.baseline)
+        for details in ({"events_lost": 3}, {"totals_full": True}):
+            self.candidate.update(trace_dropped=False, trace_dropped_threads={"worker": details})
+            self.write(self.after, self.candidate)
+            for args in ((), ("--json",)):
+                with self.subTest(details=details, args=args):
+                    result = self.run_process(*args)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("after.jsonl:2: trace_dropped_threads.worker disagrees with trace_dropped",
+                                  result.stderr)
+
     def test_legacy_trace_loss_warning_is_preserved_without_thread_details(self):
         for dropped in (False, True):
             with self.subTest(dropped=dropped):
@@ -344,6 +357,18 @@ class PerformanceCompareTests(unittest.TestCase):
                 self.assertIsInstance(raised.exception.__cause__, ValueError)
                 self.assertEqual(self.before.read_bytes(), original)
 
+    def test_nonfinite_metadata_reports_the_summary_line_in_both_output_modes(self):
+        self.write(self.after, self.candidate)
+        for token in ("NaN", "Infinity", "-Infinity", "1e309", "-1e309"):
+            record = json.dumps(self.baseline)[:-1] + ', "extra": {"measurements": [' + token + "]}}"
+            self.before.write_text("\n" + record + "\n", encoding="utf-8")
+            for args in ((), ("--json",)):
+                with self.subTest(token=token, args=args):
+                    result = self.run_process(*args)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"{self.before}:2: summary contains a non-finite JSON number", result.stderr)
+
     def test_percentage_overflow_is_an_error(self):
         self.baseline["gpu_busy_ms_per_present"] = 1e-308
         self.candidate["gpu_busy_ms_per_present"] = 1e308
@@ -432,6 +457,13 @@ class PerformanceCompareTests(unittest.TestCase):
         result = self.run_process()
         self.assertEqual(result.returncode, 2)
         self.assertIn("avant-\u00e9.jsonl:1:", result.stderr)
+
+    def test_invalid_utf8_identifies_the_summary_file(self):
+        self.write(self.before, self.baseline)
+        self.after.write_bytes(b"\xff")
+        result = self.run_cli("--json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(self.after.name, result.stderr)
 
     def test_bom_summary_loads(self):
         self.before.write_text(json.dumps(self.baseline) + "\n", encoding="utf-8-sig")
