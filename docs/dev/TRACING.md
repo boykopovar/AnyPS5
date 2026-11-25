@@ -69,6 +69,18 @@ from the saved log.
 | `APS5_TRACE_UPLOAD` | Reasons storage-image data is uploaded again. |
 | `APS5_TRACE_BARRIERS` | Set to a positive integer to print that many skipped barrier decisions and their ranges. |
 
+## Windows sampling windows
+
+To isolate a period of a run, save two snapshots of the cumulative sample file from the same running process.
+Use the later snapshot as input and supply the earlier one with `--since`.
+
+```sh
+python tools/symbolize_samples.py later.collapsed.txt --libs path/to/runtime --since earlier.collapsed.txt --require-matching-window
+```
+
+`--require-matching-window` requires matching module records in both snapshots and rejects decreasing sample counters.
+Take both snapshots from the same process because these checks cannot establish that the snapshots came from one run.
+
 ## Performance captures
 
 See [Build](BUILD.md#performance-trace) for the trace format, summary fields and capture limits.
