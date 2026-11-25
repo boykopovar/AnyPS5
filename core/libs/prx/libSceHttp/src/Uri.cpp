@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -421,9 +420,7 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
     const size_t size = poolSize(parts);
     if (write && prepare < size) return ERROR_OUT_OF_MEMORY;
     if (require) {
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(require, &size, sizeof(size));
-        errno = savedErrno;
         if (!written) return ERROR_INVALID_VALUE;
     }
     if (!write) return 0;
@@ -434,9 +431,7 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
         strings[i] = next;
         std::string segment(fields[i].data(), fields[i].size());
         segment.push_back('\0');
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(next, segment.data(), segment.size());
-        errno = savedErrno;
         if (!written) return ERROR_INVALID_VALUE;
         next += spaces[i] + 1;
     }
