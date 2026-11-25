@@ -1,7 +1,6 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -18,16 +17,12 @@
 namespace {
 
 bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
@@ -305,9 +300,7 @@ int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
     PositionAndForm localForm{};
     localForm.width = 1920;
     localForm.height = 1080;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidAddress;
     return 0;
 }
@@ -319,12 +312,10 @@ int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint
     if (width == nullptr || height == nullptr) return ErrorInvalidAddress;
     uint32_t savedWidth{};
     uint32_t heightProbe{};
-    const int savedErrno = errno;
     const bool readWidth = GuestCopyIn_nid_no_patch(&savedWidth, width, sizeof(savedWidth));
     const bool readHeight = readWidth && GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe));
     (void)heightProbe;
     if (!readHeight) {
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
     const GuestArena::HostWrite widthGuard(width, sizeof(defaultWidth));
@@ -332,20 +323,16 @@ int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint
     if (!widthGuard.Open() || !heightGuard.Open() ||
         !GuestWritable_nid_no_patch(width, sizeof(defaultWidth)) ||
         !GuestWritable_nid_no_patch(height, sizeof(defaultHeight))) {
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
     const bool wroteWidth = GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth));
     if (!wroteWidth) {
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
     if (!GuestCopyOut_nid_no_patch(height, &defaultHeight, sizeof(defaultHeight))) {
         GuestCopyOut_nid_no_patch(width, &savedWidth, sizeof(savedWidth));
-        errno = savedErrno;
         return ErrorInvalidAddress;
     }
-    errno = savedErrno;
     return 0;
 }
 
