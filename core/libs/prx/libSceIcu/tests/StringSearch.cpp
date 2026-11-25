@@ -166,6 +166,18 @@ void Run() {
     std::int32_t status = 0;
     Require(usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "root", nullptr, &status) != nullptr);
     Require(status <= 0);
+    status = 0;
+    auto* iterator = static_cast<UBreakIterator*>(ubrk_open(0, "en", u"bananas", 7, &status));
+    Require(iterator != nullptr);
+    auto* restricted = usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", iterator, &status);
+    Require(restricted != nullptr);
+    ubrk_close(iterator);
+    status = 0;
+    Require(usearch_next_nid_postfix(restricted, &status) == 1);
+    status = 0;
+    RequireThrows([&] {
+        usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", reinterpret_cast<UBreakIterator*>(0x10), &status);
+    });
     for (const auto length : {0, -2}) {
         status = 0;
         Require(usearch_open_nid_postfix(u"ana", length, u"bananas", 7, "en", nullptr, &status) == nullptr);
@@ -187,12 +199,13 @@ void Run() {
     GuestPointers(pattern, text);
 
     status = 0;
-    auto* iterator = ubrk_open(0, "en", u"old", 3, &status);
-    Require(iterator != nullptr && status <= 0);
-    auto* restricted = usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", static_cast<UBreakIterator*>(iterator), &status);
-    Require(restricted != nullptr && status <= 0);
-    Require(ubrk_last(iterator) == 3);
-    ubrk_close(iterator);
+    auto* cleanupIterator = ubrk_open(0, "en", u"old", 3, &status);
+    Require(cleanupIterator != nullptr && status <= 0);
+    auto* cleanupSearch =
+        usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", static_cast<UBreakIterator*>(cleanupIterator), &status);
+    Require(cleanupSearch != nullptr && status <= 0);
+    Require(ubrk_last(cleanupIterator) == 3);
+    ubrk_close(cleanupIterator);
     status = 0;
     auto* fallbackIterator = ubrk_open(0, "zz_ZZ", u"bananas", 7, &status);
     Require(fallbackIterator != nullptr && status < 0);
