@@ -1394,6 +1394,7 @@ char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, si
 unsigned long long APS5_VABI _Stoull_nid_postfix(const char* str, char** endptr, int base);
 size_t APS5_VABI wcslen_nid_postfix(const char16_t* s);
 size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen);
+size_t APS5_VABI wcsnlen_nid_postfix(const char16_t* s, size_t maxlen);
 int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2);
 int APS5_VABI wcsncmp_nid_postfix(const char16_t* s1, const char16_t* s2, size_t n);
 char16_t* APS5_VABI wcscpy_nid_postfix(char16_t* dest, const char16_t* src);

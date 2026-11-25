@@ -1,0 +1,8 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_wcsnlen_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcWcsnlen.cpp)
+    target_include_directories(guest_libc_wcsnlen_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_wcsnlen_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_wcsnlen_tests)
+    add_test(NAME guest_libc_wcsnlen COMMAND guest_libc_wcsnlen_tests)
+    set_tests_properties(guest_libc_wcsnlen PROPERTIES TIMEOUT 20)
+endif()

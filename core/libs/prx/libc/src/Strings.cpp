@@ -1030,6 +1030,11 @@ size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen) {
     return length;
 }
 
+size_t APS5_VABI wcsnlen_nid_postfix(const char16_t* s, size_t maxlen) {
+    if (!s) throw std::invalid_argument("wcsnlen: null string");
+    return wcsnlen_s_nid_postfix(s, maxlen);
+}
+
 int APS5_VABI wcscmp_nid_postfix(const char16_t* s1, const char16_t* s2) {
 #if defined(__SSE2__)
     const size_t equal = EqualUnits<true>(s1, s2, SIZE_MAX);
