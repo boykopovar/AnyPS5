@@ -184,10 +184,7 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
  int64_t physical = 0;
  const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, &physical);
  if (ret != 0) return ret;
- const int savedErrno = errno;
- const bool copied = GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical));
- errno = savedErrno;
- if (!copied) {
+ if (!GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) {
   DirectMemoryFree(physical, len);
   return SCE_KERNEL_ERROR_EFAULT;
  }
