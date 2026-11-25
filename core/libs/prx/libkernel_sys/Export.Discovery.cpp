@@ -14,9 +14,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 
@@ -30,23 +28,17 @@ int SceResult(int error) {
 
 bool LoadAttr(const PthreadAttr* attr, PthreadAttr& value) {
     if (!attr) return false;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, attr, sizeof(value));
-    errno = savedErrno;
     return copied && value;
 }
 
 bool CopyInBytes(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOutBytes(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
@@ -244,14 +236,12 @@ int APS5_VABI pthread_get_specificarray_np_nid_postfix(PthreadKey key, int total
     for (int i = 0; i < total; ++i) {
         values[i] = scePthreadGetspecific(key + i);
     }
-    const int savedErrno = errno;
     bool writable = false;
     {
         const GuestArena::HostWrite guard(array, bytes);
         writable = guard.Open() && GuestWritable_nid_no_patch(array, bytes);
     }
     const bool copied = writable && CopyOutBytes(array, values, bytes);
-    errno = savedErrno;
     if (!copied) return GuestEfault;
     return 0;
 }
@@ -848,9 +838,7 @@ int APS5_VABI sceKernelGetKnobs(void) {
 int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq) {
     if (!kq) return SCE_KERNEL_ERROR_EINVAL;
     const int descriptor = static_cast<int>(static_cast<std::uint32_t>(eq));
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(kq, &descriptor, sizeof(descriptor));
-    errno = savedErrno;
     return written ? 0 : SCE_KERNEL_ERROR_EINVAL;
 }
 
