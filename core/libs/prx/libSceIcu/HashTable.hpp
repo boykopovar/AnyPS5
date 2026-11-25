@@ -16,15 +16,15 @@ struct UHashElement {
 using UHashFunction = std::int32_t (APS5_VABI*)(UHashTok);
 using UKeyComparator = std::int8_t (APS5_VABI*)(UHashTok, UHashTok);
 using UValueComparator = UKeyComparator;
-using UObjectDeleter = void (APS5_VABI*)(void*);
+using GuestUObjectDeleter = void (APS5_VABI*)(void*);
 
 struct UHashtable {
     UHashElement* elements;
     UHashFunction keyHasher;
     UKeyComparator keyComparator;
     UValueComparator valueComparator;
-    UObjectDeleter keyDeleter;
-    UObjectDeleter valueDeleter;
+    GuestUObjectDeleter keyDeleter;
+    GuestUObjectDeleter valueDeleter;
     std::int32_t count;
     std::int32_t length;
     std::int32_t highWaterMark;
@@ -54,8 +54,8 @@ void APS5_VABI uhash_close_nid_postfix(UHashtable*);
 UHashFunction APS5_VABI uhash_setKeyHasher_nid_postfix(UHashtable*, UHashFunction);
 UKeyComparator APS5_VABI uhash_setKeyComparator_nid_postfix(UHashtable*, UKeyComparator);
 UValueComparator APS5_VABI uhash_setValueComparator_nid_postfix(UHashtable*, UValueComparator);
-UObjectDeleter APS5_VABI uhash_setKeyDeleter_nid_postfix(UHashtable*, UObjectDeleter);
-UObjectDeleter APS5_VABI uhash_setValueDeleter_nid_postfix(UHashtable*, UObjectDeleter);
+GuestUObjectDeleter APS5_VABI uhash_setKeyDeleter_nid_postfix(UHashtable*, GuestUObjectDeleter);
+GuestUObjectDeleter APS5_VABI uhash_setValueDeleter_nid_postfix(UHashtable*, GuestUObjectDeleter);
 void APS5_VABI uhash_setResizePolicy_nid_postfix(UHashtable*, std::int32_t);
 std::int32_t APS5_VABI uhash_count_nid_postfix(const UHashtable*);
 void* APS5_VABI uhash_get_nid_postfix(const UHashtable*, const void*);

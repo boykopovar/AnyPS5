@@ -323,14 +323,14 @@ UValueComparator APS5_VABI uhash_setValueComparator_nid_postfix(UHashtable* hash
     return result;
 }
 
-UObjectDeleter APS5_VABI uhash_setKeyDeleter_nid_postfix(UHashtable* hash, UObjectDeleter function) {
-    UObjectDeleter result = Required(hash)->keyDeleter;
+GuestUObjectDeleter APS5_VABI uhash_setKeyDeleter_nid_postfix(UHashtable* hash, GuestUObjectDeleter function) {
+    GuestUObjectDeleter result = Required(hash)->keyDeleter;
     hash->keyDeleter = function;
     return result;
 }
 
-UObjectDeleter APS5_VABI uhash_setValueDeleter_nid_postfix(UHashtable* hash, UObjectDeleter function) {
-    UObjectDeleter result = Required(hash)->valueDeleter;
+GuestUObjectDeleter APS5_VABI uhash_setValueDeleter_nid_postfix(UHashtable* hash, GuestUObjectDeleter function) {
+    GuestUObjectDeleter result = Required(hash)->valueDeleter;
     hash->valueDeleter = function;
     return result;
 }
