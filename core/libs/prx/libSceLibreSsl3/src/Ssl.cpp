@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -66,9 +65,7 @@ int SetVersionBound(const LibreSsl3SslMethod& method, std::uint16_t version, boo
 
 template <typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
     return ok;
 }
 
