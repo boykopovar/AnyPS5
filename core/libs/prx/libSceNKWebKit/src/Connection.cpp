@@ -18,4 +18,12 @@ void APS5_VABI WKConnectionSetConnectionClient(const void* connectionRef, const 
     conn->clientConfigured = (client != nullptr);
 }
 
+const void* APS5_VABI WKBundleGetApplicationConnection(const void* bundleRef) {
+    auto* bundle = NKWebKit::Cast<NKWebKit::Bundle>(bundleRef, __func__);
+    if (!bundle->applicationConnection) {
+        bundle->applicationConnection = NKWebKit::Make<NKWebKit::Connection>();
+    }
+    return NKWebKit::ToRef(bundle->applicationConnection);
+}
+
 }

@@ -188,6 +188,7 @@ public:
     ~Bundle() override;
 
     OpaqueJSContext* context = nullptr;
+    mutable Retained<Connection> applicationConnection;
     std::size_t javaScriptObjectsCount = 0;
     std::uint32_t memoryReleaseCount = 0;
     bool historyClearedForTesting = false;

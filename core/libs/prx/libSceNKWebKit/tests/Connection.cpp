@@ -51,6 +51,18 @@ int main() {
     RequireInvalidArgument([&] { WKConnectionPostMessage(nullptr, nameRef, bodyRef); });
     RequireInvalidArgument([&] { WKConnectionSetConnectionClient(nullptr, &dummyClient); });
 
+    auto bundle = NKWebKit::Make<NKWebKit::Bundle>();
+    const void* bundleRef = NKWebKit::ToRef(bundle);
+    const void* appConn = WKBundleGetApplicationConnection(bundleRef);
+    Require(appConn != nullptr);
+    Require(WKGetTypeID(appConn) == WKConnectionGetTypeID());
+    Require(WKBundleGetApplicationConnection(bundleRef) == appConn);
+
+    RequireInvalidArgument([] { WKBundleGetApplicationConnection(nullptr); });
+    RequireInvalidArgument([&] { WKBundleGetApplicationConnection(connRef); });
+
+    WKRelease(bundleRef);
+
     WKRelease(bodyRef);
     WKRelease(nameRef);
     WKRelease(connRef);

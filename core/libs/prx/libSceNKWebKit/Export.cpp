@@ -8241,10 +8241,6 @@ int APS5_VABI WKBundleGarbageCollectJavaScriptObjects() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleGetApplicationConnection() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions() {

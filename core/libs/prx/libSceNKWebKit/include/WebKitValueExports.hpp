@@ -639,6 +639,7 @@ std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
 void APS5_VABI WKConnectionPostMessage(const void* connectionRef, const void* messageNameRef, const void* messageBodyRef);
 void APS5_VABI WKConnectionSetConnectionClient(const void* connectionRef, const void* client);
+const void* APS5_VABI WKBundleGetApplicationConnection(const void* bundleRef);
 
 void APS5_VABI WKClearMockMediaDevices();
 void APS5_VABI WKRemoveMockMediaDevice(const void* persistentIdRef);
