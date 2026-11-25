@@ -45,6 +45,10 @@ int main() {
     Require(Near(cexpf_nid_postfix(Make(0.0f, pi)), -1.0f, 0.0f));
     Require(Near(csinf_nid_postfix(i), 0.0f, std::sinh(1.0f)));
     Require(Near(clogf_nid_postfix(Make(-1.0f, 0.0f)), 0.0f, pi));
+    const float tiny = std::ldexp(1.0f, -14);
+    const __complex__ float nearUnit = clogf_nid_postfix(Make(1.0f, tiny));
+    Require(std::fabs(__real__ nearUnit - std::ldexp(1.0f, -29)) <= std::ldexp(1.0f, -29) * 1e-3f);
+    Require(std::fabs(__imag__ nearUnit - tiny) <= tiny * 1e-3f);
     Require(Near(cpowf_nid_postfix(Make(2.0f, 0.0f), Make(2.0f, 0.0f)), 4.0f, 0.0f));
     Require(Near(cpowf_nid_postfix(i, Make(2.0f, 0.0f)), -1.0f, 0.0f));
     Require(Near(csqrtf_nid_postfix(Make(-4.0f, -0.0f)), 0.0f, -2.0f));

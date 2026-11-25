@@ -668,8 +668,13 @@ __complex__ float APS5_VABI cexpf_nid_postfix(__complex__ float z) {
 }
 
 __complex__ float APS5_VABI clogf_nid_postfix(__complex__ float z) {
-    const auto result = std::log(std::complex<float>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
+    const float x = __real__ z;
+    const float y = __imag__ z;
+    const float ax = std::fabs(x);
+    const float ay = std::fabs(y);
+    const float excess = (ax - 1.0f) * (ax + 1.0f) + ay * ay;
+    const float real = std::fabs(excess) <= 0.5f ? 0.5f * std::log1p(excess) : std::log(std::hypot(x, y));
+    return MakeComplex(real, std::atan2(y, x));
 }
 
 __complex__ float APS5_VABI csinf_nid_postfix(__complex__ float z) {
