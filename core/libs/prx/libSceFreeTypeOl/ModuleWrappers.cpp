@@ -85,7 +85,6 @@ FREETYPEOL_STUB("LonHHN98tMI", sceFreeTypeOlAddModule)
 #include <freetype/internal/ftobjs.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -478,14 +477,11 @@ void APS5_VABI sceFreeTypeOlFree_nid_postfix(GuestMemoryRec* memory, void** bloc
     if (!memory || !block) return;
     GuestMemoryRec guestMemory{};
     void* guestBlock = nullptr;
-    const int savedErrno = errno;
     const bool copiedMemory = GuestCopyIn_nid_no_patch(&guestMemory, memory, sizeof(guestMemory));
     const bool copiedBlock = GuestCopyIn_nid_no_patch(&guestBlock, block, sizeof(guestBlock));
-    errno = savedErrno;
     if (!copiedMemory || !guestMemory.free || !copiedBlock || !guestBlock) return;
     void* cleared = nullptr;
     const bool clearedBlock = GuestCopyOut_nid_no_patch(block, &cleared, sizeof(cleared));
-    errno = savedErrno;
     if (!clearedBlock) return;
     guestMemory.free(memory, guestBlock);
 }
@@ -554,9 +550,7 @@ APS5_EXPORT("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix);
 int APS5_VABI sceFreeTypeOlFtaSupportModules_nid_postfix(void* library) {
     if (!library) return 0x21;
     FT_Library host = nullptr;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&host, &static_cast<GuestLibrary*>(library)->host, sizeof(host));
-    errno = savedErrno;
     if (!copied || !host) return 0x21;
     FT_Add_Default_Modules(host);
     return 0;
@@ -567,14 +561,11 @@ APS5_EXPORT("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules_nid_postfix);
 void APS5_VABI sceFreeTypeOlDoneGlyphSlot_nid_postfix(GuestGlyphSlotRec* slot) {
     if (!slot) return;
     void* internal = nullptr;
-    const int savedErrno = errno;
     const bool copiedInternal = GuestCopyIn_nid_no_patch(&internal, &slot->internal, sizeof(internal));
-    errno = savedErrno;
     if (!copiedInternal || !internal) return;
     auto* owner = static_cast<GuestFace*>(internal);
     FT_Face ownerHost = nullptr;
     const bool copiedHost = GuestCopyIn_nid_no_patch(&ownerHost, &owner->host, sizeof(ownerHost));
-    errno = savedErrno;
     if (!copiedHost || slot != &owner->slot || !ownerHost) return;
     if (ownerHost->glyph) FT_Done_GlyphSlot(ownerHost->glyph);
 }
