@@ -269,8 +269,9 @@ char PlusSign(bool positive, std::uint32_t flags) {
 }
 
 template <typename Parse>
-int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* saturated) {
+int ParseInteger(const char* str, std::size_t* parsedLength, int base, Parse parse, bool* saturated) {
     char* end = nullptr;
+    if (RejectIntegerBase_nid_no_patch(str, &end, base, false)) return NP_ERROR_OUT_OF_RANGE;
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
@@ -574,7 +575,7 @@ int APS5_VABI sceNpInt64ToStr(char* buf, std::size_t size, std::int64_t value, s
 int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, std::size_t* parsedLength) {
     long long parsed = 0;
     bool saturated = false;
-    const int result = ParseInteger(str, parsedLength, [&](const char* s, char** end) {
+    const int result = ParseInteger(str, parsedLength, base, [&](const char* s, char** end) {
         parsed = std::strtoll(s, end, base);
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
@@ -588,7 +589,7 @@ int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, st
 int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, std::size_t* parsedLength) {
     long long parsed = 0;
     bool saturated = false;
-    const int result = ParseInteger(str, parsedLength, [&](const char* s, char** end) {
+    const int result = ParseInteger(str, parsedLength, base, [&](const char* s, char** end) {
         parsed = std::strtoll(s, end, base);
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
@@ -601,7 +602,7 @@ int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, st
 int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, std::size_t* parsedLength) {
     unsigned long long parsed = 0;
     bool saturated = false;
-    const int result = ParseInteger(str, parsedLength, [&](const char* s, char** end) {
+    const int result = ParseInteger(str, parsedLength, base, [&](const char* s, char** end) {
         parsed = std::strtoull(s, end, base);
         saturated = parsed == ULLONG_MAX;
     }, &saturated);
@@ -615,7 +616,7 @@ int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, 
 int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, std::size_t* parsedLength) {
     unsigned long long parsed = 0;
     bool saturated = false;
-    const int result = ParseInteger(str, parsedLength, [&](const char* s, char** end) {
+    const int result = ParseInteger(str, parsedLength, base, [&](const char* s, char** end) {
         parsed = std::strtoull(s, end, base);
         saturated = parsed == ULLONG_MAX;
     }, &saturated);

@@ -1790,6 +1790,36 @@ void TestNumbers() {
     Require(sceNpStrToUInt32("4294967295", &unsigned32, 10, nullptr) == 0 && unsigned32 == UINT32_MAX, "the 32-bit maximum parses");
     Require(sceNpStrToUInt32("4294967296", &unsigned32, 10, nullptr) == NpOutOfRange, "32-bit unsigned overflow is an error");
     std::uint64_t unsigned64 = 0;
+    const int invalidBases[] = {std::numeric_limits<int>::min(), -1, 1, 37, std::numeric_limits<int>::max()};
+    for (const int invalidBase : invalidBases) {
+        value32 = 71;
+        std::size_t invalidParsed = 99;
+        errno = 71;
+        Require(sceNpStrToInt32("12", &value32, invalidBase, &invalidParsed) == NpOutOfRange && value32 == 71 &&
+                invalidParsed == 99 && errno == 71,
+            "signed 32-bit parsing rejects unsupported bases without touching outputs or errno");
+
+        value64 = 71;
+        invalidParsed = 99;
+        errno = 71;
+        Require(sceNpStrToInt64("12", &value64, invalidBase, &invalidParsed) == NpOutOfRange && value64 == 71 &&
+                invalidParsed == 99 && errno == 71,
+            "signed 64-bit parsing rejects unsupported bases without touching outputs or errno");
+
+        unsigned32 = 71;
+        invalidParsed = 99;
+        errno = 71;
+        Require(sceNpStrToUInt32("12", &unsigned32, invalidBase, &invalidParsed) == NpOutOfRange && unsigned32 == 71 &&
+                invalidParsed == 99 && errno == 71,
+            "unsigned 32-bit parsing rejects unsupported bases without touching outputs or errno");
+
+        unsigned64 = 71;
+        invalidParsed = 99;
+        errno = 71;
+        Require(sceNpStrToUInt64("12", &unsigned64, invalidBase, &invalidParsed) == NpOutOfRange && unsigned64 == 71 &&
+                invalidParsed == 99 && errno == 71,
+            "unsigned 64-bit parsing rejects unsupported bases without touching outputs or errno");
+    }
     errno = 71;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
     errno = ERANGE;
