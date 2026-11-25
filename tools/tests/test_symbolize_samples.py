@@ -1832,6 +1832,8 @@ class SampleFileLoadTests(unittest.TestCase):
             ("thread {value} samples 0", "thread ID", 32),
             ("thread 1 samples {value}", "thread sample count", 64),
             ("main;work {value}", "stack sample count", 64),
+            ("A 0x10 {value} 1", "address self sample count", 64),
+            ("A 0x10 1 {value}", "address inclusive sample count", 64),
         )
         for template, field, bits in fields:
             for value in (1 << bits, 10**400):
@@ -1849,6 +1851,7 @@ class SampleFileLoadTests(unittest.TestCase):
         self.assertEqual(samples.headers["a"], (2**32 - 1, 2**32 - 1))
         self.assertEqual(samples.total["threads"], 2**64 - 1)
         self.assertEqual(samples.self_counts[("A", "0xffffffffffffffff")], 2**64 - 1)
+        self.assertEqual(samples.inclusive[("A", "0xffffffffffffffff")], 2**64 - 1)
 
     def test_load_reads_collapsed_stacks_and_their_format(self):
         samples = symbolize_samples.load(self.write("main;work 3\nmain;idle 1\n"))

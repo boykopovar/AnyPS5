@@ -390,9 +390,11 @@ def load(path, thread=None):
             record_format("address", number)
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
+            self_count = unsigned_field(fields[2], 10, 64, "address self sample count", location)
+            inclusive_count = unsigned_field(fields[3], 10, 64, "address inclusive sample count", location)
             if thread is None or current == thread:
-                samples.self_counts[(fields[0], fields[1])] += int(fields[2])
-                samples.inclusive[(fields[0], fields[1])] += int(fields[3])
+                samples.self_counts[(fields[0], fields[1])] += self_count
+                samples.inclusive[(fields[0], fields[1])] += inclusive_count
             continue
         frames, _, count = line.rpartition(" ")
         if not frames or not is_ascii_digits(count):
