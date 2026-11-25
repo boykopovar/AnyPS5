@@ -83,6 +83,7 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
 bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
+void LastRecordIndicesSorted(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
