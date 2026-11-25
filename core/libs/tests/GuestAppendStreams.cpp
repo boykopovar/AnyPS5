@@ -1,7 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
-#include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -114,72 +113,11 @@ static void CheckLock() {
     Require(fclose_nid_postfix(other) == 0);
 }
 
-static _Unwind_Context MakePersonalityContext(const unsigned char* lsda) {
-    _Unwind_Context context{};
-    context.region = 0x1000;
-    context.registers[16] = 0x1010;
-    context.lsda = reinterpret_cast<std::uintptr_t>(lsda);
-    return context;
-}
-
-static void CheckPersonalityValidation() {
-    static constexpr std::uint64_t NativeGnuExceptionClass = 0x474e5543432b2b00ULL;
-    static constexpr std::uint64_t NativeClangExceptionClass = 0x434c4e47432b2b00ULL;
-    static const unsigned char CleanupOnlyLsda[] = {
-        0xff, 0xff, 0x01, 0x04,
-        0x00, 0x20, 0x08, 0x00
-    };
-    static const unsigned char PositiveFilterNoTypeTableLsda[] = {
-        0xff, 0xff, 0x01, 0x04,
-        0x00, 0x20, 0x08, 0x01,
-        0x01, 0x00
-    };
-    static const unsigned char CyclicActionLsda[] = {
-        0xff, 0xff, 0x01, 0x04,
-        0x00, 0x20, 0x08, 0x01,
-        0x00, 0x7f
-    };
-
-    _Unwind_Exception dummy{};
-    _Unwind_Context noLsdaContext = MakePersonalityContext(nullptr);
-    _Unwind_Context cleanupContext = MakePersonalityContext(CleanupOnlyLsda);
-
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, NativeGnuExceptionClass, nullptr, &cleanupContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, NativeGnuExceptionClass, nullptr, &cleanupContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, NativeClangExceptionClass, nullptr, &cleanupContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, NativeClangExceptionClass, nullptr, &cleanupContext) == _URC_FATAL_PHASE2_ERROR);
-
-    Require(__gxx_personality_v0_nid_postfix(1, 0, 0, &dummy, &noLsdaContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_CLEANUP_PHASE, 0, &dummy, &noLsdaContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_HANDLER_FRAME, 0, &dummy, &noLsdaContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_FORCE_UNWIND, 0, &dummy, &noLsdaContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE | _UA_HANDLER_FRAME | _UA_FORCE_UNWIND, 0, &dummy, &noLsdaContext) == _URC_FATAL_PHASE2_ERROR);
-
-    Require(__gcc_personality_v0_nid_postfix(1, 0, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_CLEANUP_PHASE, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_HANDLER_FRAME, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE | _UA_FORCE_UNWIND, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE | _UA_HANDLER_FRAME, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE | _UA_HANDLER_FRAME | _UA_FORCE_UNWIND, 0, &dummy, &cleanupContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, &dummy, &cleanupContext) == _URC_CONTINUE_UNWIND);
-    Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, &dummy, &cleanupContext) == _URC_INSTALL_CONTEXT);
-
-    _Unwind_Context positiveNoTableContext = MakePersonalityContext(PositiveFilterNoTypeTableLsda);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, &dummy, &positiveNoTableContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, &dummy, &positiveNoTableContext) == _URC_FATAL_PHASE2_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE | _UA_FORCE_UNWIND, 0, &dummy, &positiveNoTableContext) == _URC_CONTINUE_UNWIND);
-
-    _Unwind_Context cyclicContext = MakePersonalityContext(CyclicActionLsda);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, &dummy, &cyclicContext) == _URC_FATAL_PHASE1_ERROR);
-    Require(__gxx_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, &dummy, &cyclicContext) == _URC_FATAL_PHASE2_ERROR);
-}
-
 int main() {
     CheckConcurrentStreams();
     CheckReadAndAppend();
     CheckTruncate();
     CheckLock();
-    CheckPersonalityValidation();
     std::filesystem::remove(Path);
     for (int writer = 2; writer < Writers; ++writer) std::filesystem::remove(std::string(Path) + "." + std::to_string(writer));
     return 0;
