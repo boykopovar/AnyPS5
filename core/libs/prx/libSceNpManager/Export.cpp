@@ -2,7 +2,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -43,9 +42,7 @@ static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 static std::atomic<int> g_nextRequest{1};
 
 static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
-    const auto preserved = errno;
     const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = preserved;
     return ok;
 }
 
@@ -450,14 +447,11 @@ int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language) {
 int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* status) {
     if (!onlineId || !status) return SCE_NP_ERROR_INVALID_ARGUMENT;
     NpOnlineId localOnlineId{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&localOnlineId, onlineId, sizeof(localOnlineId))) {
-        errno = savedErrno;
         return SCE_NP_ERROR_INVALID_ARGUMENT;
     }
     const uint32_t presence = NP_GAME_PRESENCE_STATUS_OFFLINE;
     const bool copied = GuestCopyOut_nid_no_patch(status, &presence, sizeof(presence));
-    errno = savedErrno;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -754,9 +748,7 @@ int APS5_VABI sceNpManagerIntGetAuthorizationCodeWithPsnoUri(int reqId, int user
     if (size < 1 || size > 0x801) return SCE_NP_ERROR_INVALID_SIZE;
     if (mode != 0 && mode != 3 && mode != 5) return SCE_NP_ERROR_INVALID_PLATFORM_TYPE;
     std::string copiedUri;
-    const int savedErrno = errno;
     const int copyResult = CopyGuestString_nid_no_patch(uri, 0x2000, copiedUri);
-    errno = savedErrno;
     if (copyResult == 63 || copyResult == 12) return SCE_NP_ERROR_OUT_OF_MEMORY;
     if (copyResult != 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
@@ -1048,9 +1040,7 @@ int APS5_VABI sceNpNotifyPlusFeature(const void* param) {
 int APS5_VABI sceNpGetAccountId(const NpOnlineId* online_id, uint64_t* account_id) {
     if (!online_id || !account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     NpOnlineId localId{};
-    const auto preserved = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localId, online_id, sizeof(localId));
-    errno = preserved;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
