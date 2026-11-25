@@ -204,6 +204,13 @@ class AnalysisTests(unittest.TestCase):
         text = "[gpu] storage image 0x1 destroyed with GPU results pending\n" * 2
         self.assertEqual(title_run.warning_counts(text)["destroyed with GPU results pending"], 2)
 
+    def test_first_error_reports_a_libcxxabi_termination(self):
+        text = ("[debug:0] [HUI] program blur built in 5 ms\n"
+                "libc++abi: terminating due to uncaught exception of type AgcDriver::VulkanUnavailable: Vulkan loader: Failed loading libvulkan.1.dylib\n")
+        self.assertEqual(title_run.first_error(text), "libc++abi: terminating due to uncaught exception of type AgcDriver::VulkanUnavailable: Vulkan loader: Failed loading libvulkan.1.dylib")
+        self.assertEqual(title_run.first_error("libc++abi: terminating\n"), "libc++abi: terminating")
+        self.assertEqual(title_run.first_error("libc++abi: warning\nall fine\n"), "")
+
     def test_first_error_reports_a_module_that_did_not_load(self):
         text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
         self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
