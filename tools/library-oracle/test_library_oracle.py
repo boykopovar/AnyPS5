@@ -136,6 +136,15 @@ class KnownTests(unittest.TestCase):
             library_oracle.write_known(path, known, {}, set())
             self.assertEqual(library_oracle.load_known(path), known)
 
+    def test_known_directory_is_rejected_before_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(library_oracle, "fetch", side_effect=AssertionError("fetch called")):
+                with self.assertRaises(SystemExit) as raised:
+                    library_oracle.main(["rtc", "--known", directory, "--replay", "unused"])
+            self.assertIn(directory, str(raised.exception))
+            self.assertIn("cannot read known findings", str(raised.exception))
+
+
     def test_the_committed_known_file_parses(self):
         known = library_oracle.load_known(library_oracle.HERE / "known.tsv")
         self.assertTrue(known)

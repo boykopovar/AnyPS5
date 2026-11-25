@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import os
+import stat
 import subprocess
 import sys
 import urllib.request
@@ -48,9 +49,19 @@ def fetch(family, cache, opener=urllib.request.urlopen):
 
 def load_known(path):
     known = {}
-    if not path.is_file():
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
         return known
-    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+    except OSError as error:
+        raise SystemExit(f"{path}: cannot read known findings: {error}") from error
+    if not stat.S_ISREG(mode):
+        raise SystemExit(f"{path}: cannot read known findings: expected a regular file")
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise SystemExit(f"{path}: cannot read known findings: {error}") from error
+    for number, line in enumerate(lines, 1):
         if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
