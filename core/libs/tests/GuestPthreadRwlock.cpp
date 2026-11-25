@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
@@ -24,10 +25,12 @@ static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_EAGAIN = 35;
 static constexpr int GUEST_ETIMEDOUT = 60;
 static constexpr int GUEST_REALTIME_CLOCK = 0;
 static constexpr int PROCESS_PRIVATE = 0;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000;
+static constexpr int URWLOCK_MAX_READERS = 0x1fffffff;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -542,7 +545,57 @@ static void CheckSceTryLocks() {
     Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
 }
 
+static void CheckReaderLimit() {
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, nullptr, "reader limit") == SCE_OK && lock != nullptr);
+    lock->_readers.store(URWLOCK_MAX_READERS);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(scePthreadRwlockRdlock(&lock) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(scePthreadRwlockTimedrdlock(&lock, 0) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(scePthreadRwlockTimedrdlock(&lock, 5000000) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EAGAIN);
+    Require(pthread_rwlock_rdlock_nid_postfix(&lock) == GUEST_EAGAIN);
+    Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&lock, 0) == GUEST_EAGAIN);
+    const KernelTimespec deadline = After(5000);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&lock, &deadline) == GUEST_EAGAIN);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&lock, nullptr) == GUEST_EAGAIN);
+    const KernelTimespec invalid{deadline.tv_sec, NANOS_PER_SECOND};
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&lock, &invalid) == GUEST_EINVAL);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    lock->_waitingWriters = 1;
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS);
+    lock->_waitingWriters = 0;
+    lock->_readers.store(URWLOCK_MAX_READERS - 1);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EAGAIN);
+    lock->_waitingWriters = 1;
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EAGAIN);
+    Require(scePthreadRwlockRdlock(&lock) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS);
+    lock->_waitingWriters = 0;
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS - 1);
+    Require(pthread_rwlock_rdlock_nid_postfix(&lock) == 0);
+    Require(lock->_readers.load() == URWLOCK_MAX_READERS);
+    Require(pthread_rwlock_unlock_nid_postfix(&lock) == 0);
+    lock->_readers.store(0);
+    Require(scePthreadRwlockRdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTimedrdlock(&lock, 0) == SCE_OK);
+    Require(lock->_readers.load() == 2);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
+}
+
 int main() {
+    CheckReaderLimit();
     CheckBadPointers();
     CheckSceAttrLifecycle();
     CheckSceTryLocks();

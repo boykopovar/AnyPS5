@@ -16,6 +16,8 @@ static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
 static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EFAULT = 0x8002000E;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
+static constexpr int SCE_KERNEL_ERROR_EAGAIN = 0x80020023;
+static constexpr int URWLOCK_MAX_READERS = 0x1fffffff;
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
@@ -56,6 +58,7 @@ static bool WriterMayEnter(const PthreadRwlockPrivate* lock) {
 }
 
 static int EnterRead(PthreadRwlockPrivate* lock) {
+    if (lock->_readers.load(std::memory_order_acquire) >= URWLOCK_MAX_READERS) return SCE_KERNEL_ERROR_EAGAIN;
     lock->_readers.fetch_add(1, std::memory_order_release);
     ++readLocksHeld;
     return SCE_OK;
