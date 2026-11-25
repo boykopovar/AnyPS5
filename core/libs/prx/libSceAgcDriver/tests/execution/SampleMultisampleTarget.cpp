@@ -2478,7 +2478,7 @@ void BufferPublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
     Require(movedBindings == 1u, "the moved dispatch does not have one read-only buffer");
     check([&] { dispatch(movedProgram); }, false, FillOnes);
     const auto afterMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
-    Require(afterMoves.moved == beforeMoves.moved + 1u, "the moved native buffer rebuilt instead of reusing its template");
+    Require(afterMoves.moved == beforeMoves.moved + 1u, "the moved native buffer rebuilt instead of reusing its template (checked=" + std::to_string(afterMoves.checked - beforeMoves.checked) + ", exact=" + std::to_string(afterMoves.exact - beforeMoves.exact) + ", moved=" + std::to_string(afterMoves.moved - beforeMoves.moved) + ", refused=" + std::to_string(afterMoves.refused - beforeMoves.refused) + ", filtered=" + std::to_string(afterMoves.filtered - beforeMoves.filtered) + ", rebuilt=" + std::to_string(afterMoves.rebuilt - beforeMoves.rebuilt) + ", served=" + std::to_string(afterMoves.served - beforeMoves.served) + ", in-place=" + std::to_string(afterMoves.inPlace - beforeMoves.inPlace) + ")");
     Require(Refused(block.Address(), Threads * 4u, "the unused original dispatch buffer"), "the moved dispatch consumed or retired its unused original range");
     RequireNoMultisampleTarget(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), "after moved dispatch publication");
     std::puts("native moved dispatch: current source published and unused old guard retained");
