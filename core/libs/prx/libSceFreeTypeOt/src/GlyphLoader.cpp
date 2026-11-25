@@ -45,9 +45,20 @@ void Free(GuestMemoryRec* memory, T*& block) {
 }
 
 template <typename T>
-bool Renew(GuestMemoryRec* memory, T*& block, std::int64_t current, std::int64_t count, std::int32_t& error) {
-    block = static_cast<T*>(ft_mem_realloc_nid_postfix(memory, sizeof(T), current, count, block, &error));
-    return error != 0;
+T* Allocate(GuestMemoryRec* memory, std::int64_t count, std::int32_t& error) {
+    if (error) return nullptr;
+    return static_cast<T*>(ft_mem_alloc_nid_postfix(memory, count * static_cast<std::int64_t>(sizeof(T)), &error));
+}
+
+template <typename T>
+void Copy(T* target, const T* source, std::int64_t count) {
+    if (count > 0) std::memcpy(target, source, static_cast<std::size_t>(count) * sizeof(T));
+}
+
+template <typename T>
+void Replace(GuestMemoryRec* memory, T*& block, T* replacement) {
+    ft_mem_free_nid_postfix(memory, block);
+    block = replacement;
 }
 
 void AdjustPoints(GuestGlyphLoaderRec* loader) {
@@ -114,7 +125,9 @@ void APS5_VABI FT_GlyphLoader_Done_nid_postfix(GuestGlyphLoaderRec* loader) {
 std::int32_t APS5_VABI FT_GlyphLoader_CreateExtra_nid_postfix(GuestGlyphLoaderRec* loader) {
     Require(loader, __func__);
     std::int32_t error = 0;
-    if (!Renew(loader->memory, loader->base.extra_points, 0, 2 * static_cast<std::int64_t>(loader->max_points), error)) {
+    GuestVector* extra = Allocate<GuestVector>(loader->memory, 2 * static_cast<std::int64_t>(loader->max_points), error);
+    if (!error) {
+        Replace(loader->memory, loader->base.extra_points, extra);
         loader->use_extra = 1;
         loader->base.extra_points2 = loader->base.extra_points + loader->max_points;
         AdjustPoints(loader);
@@ -128,38 +141,48 @@ std::int32_t APS5_VABI FT_GlyphLoader_CheckPoints_nid_postfix(GuestGlyphLoaderRe
     std::int32_t error = 0;
     GuestOutline& base = loader->base.outline;
     const GuestOutline& current = loader->current.outline;
-    bool adjust = false;
 
     const std::int64_t points = Required(Count(base.n_points) + Count(current.n_points), n_points);
     const std::int64_t contours = Required(Count(base.n_contours) + Count(current.n_contours), n_contours);
     const std::int64_t pointsMax = points > loader->max_points ? PadCeil(points, 8) : 0;
     const std::int64_t contoursMax = contours > loader->max_contours ? PadCeil(contours, 4) : 0;
     if (pointsMax > OutlinePointsMax || contoursMax > OutlineContoursMax) return ArrayTooLarge;
+    if (!pointsMax && !contoursMax) return 0;
+
+    const std::int64_t oldPoints = loader->max_points;
+    const bool extraTables = pointsMax && loader->use_extra;
+    GuestVector* newPoints = pointsMax ? Allocate<GuestVector>(memory, pointsMax, error) : nullptr;
+    unsigned char* newTags = pointsMax ? Allocate<unsigned char>(memory, pointsMax, error) : nullptr;
+    GuestVector* newExtra = extraTables ? Allocate<GuestVector>(memory, 2 * pointsMax, error) : nullptr;
+    std::uint16_t* newContours = contoursMax ? Allocate<std::uint16_t>(memory, contoursMax, error) : nullptr;
+    if (error) {
+        ft_mem_free_nid_postfix(memory, newPoints);
+        ft_mem_free_nid_postfix(memory, newTags);
+        ft_mem_free_nid_postfix(memory, newExtra);
+        ft_mem_free_nid_postfix(memory, newContours);
+        return error;
+    }
 
     if (pointsMax) {
-        const std::uint32_t oldMax = loader->max_points;
-        const auto newMax = static_cast<std::uint32_t>(pointsMax);
-        if (Renew(memory, base.points, oldMax, newMax, error) || Renew(memory, base.tags, oldMax, newMax, error)) return error;
-        if (loader->use_extra) {
-            if (Renew(memory, loader->base.extra_points, 2 * static_cast<std::int64_t>(oldMax), 2 * static_cast<std::int64_t>(newMax), error)) {
-                return error;
-            }
-            std::memmove(loader->base.extra_points + newMax, loader->base.extra_points + oldMax, oldMax * sizeof(GuestVector));
-            loader->base.extra_points2 = loader->base.extra_points + newMax;
+        Copy(newPoints, base.points, oldPoints);
+        Copy(newTags, base.tags, oldPoints);
+        Replace(memory, base.points, newPoints);
+        Replace(memory, base.tags, newTags);
+        if (extraTables) {
+            Copy(newExtra, loader->base.extra_points, oldPoints);
+            Copy(newExtra + pointsMax, loader->base.extra_points2, oldPoints);
+            Replace(memory, loader->base.extra_points, newExtra);
+            loader->base.extra_points2 = newExtra + pointsMax;
         }
-        adjust = true;
-        loader->max_points = newMax;
+        loader->max_points = static_cast<std::uint32_t>(pointsMax);
     }
-
     if (contoursMax) {
-        const auto newMax = static_cast<std::uint32_t>(contoursMax);
-        if (Renew(memory, base.contours, loader->max_contours, newMax, error)) return error;
-        adjust = true;
-        loader->max_contours = newMax;
+        Copy(newContours, base.contours, loader->max_contours);
+        Replace(memory, base.contours, newContours);
+        loader->max_contours = static_cast<std::uint32_t>(contoursMax);
     }
-
-    if (adjust) AdjustPoints(loader);
-    return error;
+    AdjustPoints(loader);
+    return 0;
 }
 
 std::int32_t APS5_VABI FT_GlyphLoader_CheckSubGlyphs_nid_postfix(GuestGlyphLoaderRec* loader, std::uint32_t n_subs) {
@@ -211,12 +234,12 @@ std::int32_t APS5_VABI FT_GlyphLoader_CopyPoints_nid_postfix(GuestGlyphLoaderRec
     if (!error) {
         GuestOutline& out = target->base.outline;
         const GuestOutline& in = source->base.outline;
-        std::memcpy(out.points, in.points, numPoints * sizeof(GuestVector));
-        std::memcpy(out.tags, in.tags, numPoints);
-        std::memcpy(out.contours, in.contours, numContours * sizeof(std::uint16_t));
+        std::memmove(out.points, in.points, numPoints * sizeof(GuestVector));
+        std::memmove(out.tags, in.tags, numPoints);
+        std::memmove(out.contours, in.contours, numContours * sizeof(std::uint16_t));
         if (target->use_extra && source->use_extra) {
-            std::memcpy(target->base.extra_points, source->base.extra_points, numPoints * sizeof(GuestVector));
-            std::memcpy(target->base.extra_points2, source->base.extra_points2, numPoints * sizeof(GuestVector));
+            std::memmove(target->base.extra_points, source->base.extra_points, numPoints * sizeof(GuestVector));
+            std::memmove(target->base.extra_points2, source->base.extra_points2, numPoints * sizeof(GuestVector));
         }
         out.n_points = static_cast<std::uint16_t>(numPoints);
         out.n_contours = static_cast<std::uint16_t>(numContours);

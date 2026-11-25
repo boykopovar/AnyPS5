@@ -17,6 +17,9 @@ struct Recorder {
     int allocs = 0;
     int frees = 0;
     int reallocs = 0;
+    int calls = 0;
+    int failCall = 0;
+    int live = 0;
     std::int64_t lastSize = 0;
     std::int64_t lastCurrent = 0;
     std::int64_t lastNew = 0;
@@ -31,7 +34,8 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     auto* recorder = Owner(memory);
     ++recorder->allocs;
     recorder->lastSize = size;
-    if (recorder->fail) return nullptr;
+    if (recorder->fail || ++recorder->calls == recorder->failCall) return nullptr;
+    ++recorder->live;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
     return block;
@@ -39,6 +43,7 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
 
 void APS5_VABI RecordFree(GuestMemoryRec* memory, void* block) {
     ++Owner(memory)->frees;
+    --Owner(memory)->live;
     std::free(block);
 }
 
@@ -47,7 +52,7 @@ void* APS5_VABI RecordRealloc(GuestMemoryRec* memory, std::int64_t current, std:
     ++recorder->reallocs;
     recorder->lastCurrent = current;
     recorder->lastNew = size;
-    if (recorder->fail) return nullptr;
+    if (recorder->fail || ++recorder->calls == recorder->failCall) return nullptr;
     auto* resized = static_cast<unsigned char*>(std::realloc(block, static_cast<std::size_t>(size)));
     if (size > current) std::memset(resized + current, 0xAA, static_cast<std::size_t>(size - current));
     return resized;
@@ -138,7 +143,7 @@ void PointsAndContours() {
     Require(loader->base.outline.n_points == 8 && loader->base.outline.n_contours == 3 && loader->base.outline.contours[2] == 7, "Add offsets new contour ends by the base point count");
 
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 1, 0) == 0 && loader->max_points == 16 && loader->max_contours == 4, "CheckPoints grows points by padding the total to 8");
-    Require(recorder.lastCurrent == 8 && recorder.lastNew == 16, "CheckPoints resizes tags from the old to the new maximum");
+    Require(recorder.lastSize == 16 && recorder.live == 4, "CheckPoints replaces points and tags with 16-entry tables and frees the old ones");
     Require(loader->base.outline.points[4].x == 40 && loader->base.outline.points[4].y == 41 && loader->base.outline.tags[4] == 1, "CheckPoints keeps existing points and tags");
     Require(loader->current.outline.points == loader->base.outline.points + 8, "CheckPoints readjusts the current points after growing");
 
@@ -175,7 +180,7 @@ void PointsAndContours() {
     Require(loader->max_points == maxPoints && loader->base.outline.points, "Rewind keeps the tables");
 
     FT_GlyphLoader_Done_nid_postfix(loader);
-    Require(recorder.frees == 4, "Done frees points, tags, contours and the record");
+    Require(recorder.live == 0, "Done frees points, tags, contours and the record");
 }
 
 void ExtraPoints() {
@@ -218,6 +223,103 @@ void ExtraPoints() {
     Require(recorder.frees == recorder.allocs, "every allocation is freed");
 }
 
+struct Snapshot {
+    GuestVector* points;
+    unsigned char* tags;
+    std::uint16_t* contours;
+    GuestVector* extra;
+    GuestVector* extra2;
+    std::uint32_t maxPoints;
+    std::uint32_t maxContours;
+    int live;
+};
+
+Snapshot Take(const GuestGlyphLoaderRec* loader, const Recorder& recorder) {
+    const auto& base = loader->base;
+    return {base.outline.points, base.outline.tags, base.outline.contours, base.extra_points, base.extra_points2, loader->max_points, loader->max_contours, recorder.live};
+}
+
+void RequireUnchanged(const GuestGlyphLoaderRec* loader, const Recorder& recorder, const Snapshot& before, const char* message) {
+    const auto& base = loader->base;
+    const auto& current = loader->current;
+    Require(base.outline.points == before.points && base.outline.tags == before.tags && base.outline.contours == before.contours, message);
+    Require(base.extra_points == before.extra && base.extra_points2 == before.extra2, message);
+    Require(loader->max_points == before.maxPoints && loader->max_contours == before.maxContours && recorder.live == before.live, message);
+    Require(current.outline.points == base.outline.points + 5 && current.outline.tags == base.outline.tags + 5 && current.outline.contours == base.outline.contours + 2, message);
+    Require(!loader->use_extra || (current.extra_points == base.extra_points + 5 && current.extra_points2 == base.extra_points2 + 5), message);
+    Require(base.outline.points[4].x == 40 && base.outline.tags[4] == 1 && base.outline.contours[1] == 4, message);
+    Require(!loader->use_extra || (base.extra_points[4].x == 50 && base.extra_points2[4].x == 60), message);
+}
+
+void PartialFailures() {
+    Recorder recorder;
+    Reset(recorder);
+    GuestGlyphLoaderRec* loader = Create(recorder);
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 5, 2) == 0 && loader->max_points == 8 && loader->max_contours == 4, "CheckPoints sets 8 points and 4 contours");
+    loader->base.outline.n_points = 5;
+    loader->base.outline.n_contours = 2;
+    loader->base.outline.points[4] = {40, 41};
+    loader->base.outline.tags[4] = 1;
+    loader->base.outline.contours[1] = 4;
+    FT_GlyphLoader_Prepare_nid_postfix(loader);
+
+    const char* const outline[] = {"a failed points table leaves the loader unchanged", "a failed tags table frees the new points and leaves the loader unchanged",
+                                   "a failed contours table frees the new points and tags and leaves the loader unchanged"};
+    for (int call = 1; call <= 3; ++call) {
+        const Snapshot before = Take(loader, recorder);
+        recorder.calls = 0;
+        recorder.failCall = call;
+        Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 4, 3) == 0x40, "a failed table reports Out_Of_Memory");
+        recorder.failCall = 0;
+        RequireUnchanged(loader, recorder, before, outline[call - 1]);
+    }
+
+    Require(FT_GlyphLoader_CreateExtra_nid_postfix(loader) == 0 && loader->base.extra_points2 == loader->base.extra_points + 8, "CreateExtra allocates the extra tables");
+    loader->base.extra_points[4] = {50, 51};
+    loader->base.extra_points2[4] = {60, 61};
+    const char* const extra[] = {"a failed extra table frees the new points and tags and leaves the loader unchanged",
+                                 "a failed contours table frees the new extra tables and leaves the loader unchanged"};
+    for (int call = 3; call <= 4; ++call) {
+        const Snapshot before = Take(loader, recorder);
+        recorder.calls = 0;
+        recorder.failCall = call;
+        Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 4, 3) == 0x40, "a failed extra or contours table reports Out_Of_Memory");
+        recorder.failCall = 0;
+        RequireUnchanged(loader, recorder, before, extra[call - 3]);
+    }
+
+    const Snapshot extraBefore = Take(loader, recorder);
+    recorder.calls = 0;
+    recorder.failCall = 1;
+    Require(FT_GlyphLoader_CreateExtra_nid_postfix(loader) == 0x40, "a failed CreateExtra reports Out_Of_Memory");
+    recorder.failCall = 0;
+    RequireUnchanged(loader, recorder, extraBefore, "a failed CreateExtra keeps the extra tables");
+    Require(FT_GlyphLoader_CreateExtra_nid_postfix(loader) == 0 && recorder.live == extraBefore.live && Zero(loader->base.extra_points, 16 * sizeof(GuestVector)),
+            "a second CreateExtra replaces the extra tables without leaking them");
+    loader->base.extra_points[4] = {50, 51};
+    loader->base.extra_points2[4] = {60, 61};
+
+    GuestGlyphLoaderRec* target = Create(recorder);
+    const int targetLive = recorder.live;
+    recorder.calls = 0;
+    recorder.failCall = 2;
+    Require(FT_GlyphLoader_CopyPoints_nid_postfix(target, loader) == 0x40, "a failed CopyPoints reports Out_Of_Memory");
+    recorder.failCall = 0;
+    Require(!target->base.outline.points && target->max_points == 0 && target->base.outline.n_points == 0 && recorder.live == targetLive, "a failed CopyPoints leaves the target empty");
+    FT_GlyphLoader_Done_nid_postfix(target);
+
+    Require(FT_GlyphLoader_CopyPoints_nid_postfix(loader, loader) == 0 && loader->base.outline.n_points == 5 && loader->base.outline.points[4].x == 40, "CopyPoints onto itself keeps the outline");
+    Require(loader->max_points == 16 && loader->base.extra_points[4].x == 50 && loader->base.extra_points2[4].x == 60, "CopyPoints onto itself keeps the extra tables");
+
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 12, 3) == 0 && loader->max_points == 24 && loader->max_contours == 8, "CheckPoints succeeds after the failures");
+    Require(loader->base.outline.points[4].x == 40 && loader->base.outline.tags[4] == 1 && loader->base.outline.contours[1] == 4, "CheckPoints keeps points, tags and contours");
+    Require(loader->base.extra_points2 == loader->base.extra_points + 24 && loader->base.extra_points[4].x == 50 && loader->base.extra_points2[4].x == 60, "CheckPoints keeps both extra tables");
+    Require(Zero(loader->base.outline.points + 8, 16 * sizeof(GuestVector)) && Zero(loader->base.extra_points2 + 8, 16 * sizeof(GuestVector)), "CheckPoints zeroes the grown entries");
+    Require(loader->current.outline.points == loader->base.outline.points + 5 && loader->current.extra_points2 == loader->base.extra_points2 + 5, "CheckPoints adjusts the current tables");
+    FT_GlyphLoader_Done_nid_postfix(loader);
+    Require(recorder.live == 0, "Done frees every table once");
+}
+
 void Subglyphs() {
     Recorder recorder;
     Reset(recorder);
@@ -255,6 +357,7 @@ int main() {
     Creation();
     PointsAndContours();
     ExtraPoints();
+    PartialFailures();
     Subglyphs();
     std::puts("Guest FreeType Ot glyph loader tests passed");
     return 0;
