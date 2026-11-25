@@ -430,6 +430,20 @@ test('capture maps physical positions and distinguishes modifiers and keypad', (
     assert.equal(captureKey({code: 'KeyQ', key: 'a'}).value, 'Q');
 });
 
+test('dedicated editing keys capture and round trip as SDL scancodes', () => {
+    const keys = {
+        Again: 'Again', Copy: 'Copy', Cut: 'Cut', Find: 'Find', Open: 'Execute',
+        Paste: 'Paste', Props: 'CrSel', Select: 'Select', Undo: 'Undo'
+    };
+    for (const [code, value] of Object.entries(keys)) {
+        const captured = captureKey({code, key: 'Unidentified'});
+        assert.deepEqual(captured, {value}, code);
+        const text = serialize([binding('Cross', 'KEY', captured.value)]);
+        assert.deepEqual(parseIni(text).entries, [binding('Cross', 'KEY', value)], code);
+    }
+    assert.deepEqual(captureKey({code: 'KeyC', key: 'c', ctrlKey: true}), {value: 'C'});
+});
+
 test('captured media and browser keys round trip through INI bindings', () => {
     const keys = {
         MediaTrackNext: 'AudioNext', MediaTrackPrevious: 'AudioPrev', MediaStop: 'AudioStop',
