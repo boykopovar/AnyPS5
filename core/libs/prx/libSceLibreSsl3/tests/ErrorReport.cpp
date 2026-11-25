@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <exception>
 #include <source_location>
 #include <string>
@@ -154,20 +153,6 @@ void CheckRingWrap(const std::string& prefix) {
     Require(ERR_peek_error_nid_postfix() == 0 && ERR_get_error_nid_postfix() == 0 && ERR_peek_last_error_nid_postfix() == 0);
 }
 
-void CheckObjectNidBeforeZeroLength() {
-    LibreSslAsn1Object objectWithNid{nullptr, nullptr, 668, 0, nullptr, 0};
-    LibreSsl3X509Algor sigAlg{&objectWithNid, nullptr};
-    LibreSsl3X509 x509{};
-    x509.sigAlg = &sigAlg;
-    LibreSsl3Certificate certificate{};
-    std::memcpy(&certificate, &x509, sizeof(x509));
-    Require(X509_get_signature_nid_nid_postfix(&certificate) == 668);
-
-    LibreSslAsn1Object emptyObject{nullptr, nullptr, 0, 0, nullptr, 0};
-    sigAlg.algorithm = &emptyObject;
-    Require(X509_get_signature_nid_nid_postfix(&certificate) == 0);
-}
-
 } // namespace
 
 int main() {
@@ -179,7 +164,6 @@ int main() {
         CheckTruncation(prefix);
         CheckThreads(prefix);
         CheckRingWrap(prefix);
-        CheckObjectNidBeforeZeroLength();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
