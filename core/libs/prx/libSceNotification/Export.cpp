@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -12,9 +11,7 @@ namespace {
 
 bool ReadGuestMessage_nid_no_patch(const std::uint8_t* source, std::size_t capacity, std::string& destination) {
     if (source == nullptr) return false;
-    const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(reinterpret_cast<const char*>(source), capacity + 1, destination);
-    errno = savedErrno;
     return result == 0 && !destination.empty();
 }
 
@@ -42,10 +39,8 @@ int APS5_VABI sceNotificationSendById(int type, std::uint8_t flag, std::uint8_t*
 int APS5_VABI sceNotificationShowPsButtonPersistentBanner(std::uint8_t* jsonParam) {
     std::string banner = "{}";
     if (jsonParam != nullptr) {
-        const int savedErrno = errno;
         std::string text;
         const int result = CopyGuestString_nid_no_patch(reinterpret_cast<const char*>(jsonParam), Notification::MessageCapacity + 1, text);
-        errno = savedErrno;
         if (result != 0) return Notification::InvalidMessage;
         banner = std::move(text);
     }
