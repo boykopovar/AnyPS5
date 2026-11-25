@@ -142,6 +142,9 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementSpellcheckEnabled(const void
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementValueForUser(const void* nodeHandleRef, const void* valueRef);
 bool APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(const void* nodeHandleRef);
 bool APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(const void* nodeHandleRef);
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(const void* nodeHandleRef, std::uint8_t autoFillButtonType);
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(const void* nodeHandleRef);
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
 double APS5_VABI WKBundlePageGetBackingScaleFactor(const void* pageRef);
