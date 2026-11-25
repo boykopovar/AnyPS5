@@ -184,6 +184,28 @@ void TestCopyAndMove() {
     _ZN7WebCore4PathD1Ev(constructed);
 }
 
+void TestAssignEmpty() {
+    OwnedPath destination;
+    const WebCore::FloatPoint move{1.0f, 2.0f};
+    const WebCore::FloatPoint line{3.0f, 4.0f};
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&destination.path, &move);
+    _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(&destination.path, &line);
+    Require(destination.path.m_path != nullptr);
+
+    Path empty{};
+    _ZN7WebCore4PathC1Ev(&empty);
+    _ZN7WebCore4PathaSERKS0_(&destination.path, &empty);
+    Require(destination.path.m_path == nullptr);
+    Require(destination.path.m_elements.buffer == nullptr);
+    Require(destination.path.m_elements.size == 0);
+    Require(destination.path.m_elementsEngaged);
+    Require(_ZNK7WebCore4Path12elementCountEv(&destination.path) == 0);
+    _ZN7WebCore4PathD1Ev(&empty);
+
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&destination.path, &move);
+    Require(_ZNK7WebCore4Path12elementCountEv(&destination.path) == 1);
+}
+
 void TestClear() {
     OwnedPath path;
     const WebCore::FloatPoint move{1.0f, 2.0f};
@@ -273,6 +295,7 @@ int main() {
         TestEmpty();
         TestSegments();
         TestCopyAndMove();
+        TestAssignEmpty();
         TestClear();
         TestEmptyCopyAndClear();
         TestApplyException();
