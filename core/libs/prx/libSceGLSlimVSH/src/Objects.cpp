@@ -51,9 +51,7 @@ void CopyString(const std::string& source, GLsizei size, GLsizei* length, GLchar
         try {
             std::vector<GLchar> local(source.begin(), source.begin() + count);
             local.push_back(0);
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(output, local.data(), local.size());
-            errno = savedErrno;
             if (!copied) { Error_nid_no_patch(0x0501); return; }
         } catch (const std::bad_alloc&) {
             Error_nid_no_patch(0x0505);
@@ -231,17 +229,13 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
     try {
         std::vector<const GLchar*> localStrings(static_cast<std::size_t>(count));
         if (count > 0) {
-            const int savedErrno = errno;
             const bool copied = GuestCopyIn_nid_no_patch(localStrings.data(), strings, localStrings.size() * sizeof(const GLchar*));
-            errno = savedErrno;
             if (!copied) { Error_nid_no_patch(0x0501); return; }
         }
         std::vector<GLint> localLengths;
         if (lengths) {
             localLengths.resize(static_cast<std::size_t>(count));
-            const int savedErrno = errno;
             const bool copied = GuestCopyIn_nid_no_patch(localLengths.data(), lengths, localLengths.size() * sizeof(GLint));
-            errno = savedErrno;
             if (!copied) { Error_nid_no_patch(0x0501); return; }
         }
         std::string source;
@@ -312,9 +306,7 @@ void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GL
         local.push_back(entry.first);
     }
     if (!local.empty()) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(shaders, local.data(), local.size() * sizeof(GLuint));
-        errno = savedErrno;
         if (!copied) { Error_nid_no_patch(0x0501); return; }
     }
     if (count) {
