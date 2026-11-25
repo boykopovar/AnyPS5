@@ -476,15 +476,15 @@ GuestLocale::OutputIterator PutField(GuestLocale::OutputIterator out, GuestLocal
     std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
     const std::int32_t adjust = stream->flags & IosAdjustField;
     if (adjust != IosLeft && adjust != IosInternal) {
-        for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
+        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
     }
-    for (std::size_t index = 0; !out.failed && index < prefix; ++index) PutCharacter(out, text[index]);
+    for (std::size_t index = 0; index < prefix; ++index) PutCharacter(out, text[index]);
     if (adjust == IosInternal) {
-        for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
+        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
     }
-    for (std::size_t index = prefix; !out.failed && index < text.size(); ++index) PutCharacter(out, text[index]);
+    for (std::size_t index = prefix; index < text.size(); ++index) PutCharacter(out, text[index]);
     stream->width = 0;
-    for (; !out.failed && fillCount != 0; --fillCount) PutCharacter(out, fill);
+    for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
     return out;
 }
 
@@ -500,9 +500,12 @@ GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLoc
 
 GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
     const std::size_t sign = SignPrefix(digits, count);
-    const std::size_t prefix = sign + (HexPrefix(digits, sign, count) ? 2 : 0);
+    const std::size_t prefix = sign != 0 ? sign : HexPrefix(digits, 0, count) ? 2 : 0;
     const bool hex = (stream->flags & IosHexFloat) == IosHexFloat;
-    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
+    const char lowerExp = hex ? 'p' : 'e';
+    const char upperExp = hex ? 'P' : 'E';
+    std::size_t exponent = 0;
+    while (exponent < count && digits[exponent] != lowerExp && digits[exponent] != upperExp) ++exponent;
     char widenedPoint = localeconv_nid_postfix()->decimal_point[0];
     if (count != 0) {
         if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) {
@@ -519,7 +522,7 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
         offset = pointOffset;
         text[pointOffset] = Punctuation(punct).decimalPoint(AsNumpunct(punct));
     }
-    const char lead = digits[prefix];
+    const char lead = prefix < count ? digits[prefix] : '\0';
     if (lead != 'I' && lead != 'N' && lead != 'i' && lead != 'n') InsertSeparators(text, grouping, separator, offset, prefix);
     return PutField(out, stream, fill, text, prefix);
 }

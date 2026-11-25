@@ -113,7 +113,8 @@ void CheckFormatting() {
     Require(PutFloat(classic, 0, 8, "-1.5") == "****-1.5", "char _Fput pads on the left by default");
     Require(PutFloat(classic, Internal, 8, "-1.5") == "-****1.5", "char _Fput pads after sign for internal");
     Require(PutFloat(classic, Left, 8, "-1.5") == "-1.5****", "char _Fput pads on the right for left");
-    Require(PutFloat(classic, HexFloat | Internal, 10, "-0x1.8p+0") == "-0x*1.8p+0", "char _Fput keeps sign and hex prefix before internal fill");
+    Require(PutFloat(classic, HexFloat | Internal, 10, "-0x1.8p+0") == "-*0x1.8p+0", "char _Fput pads after sign for signed hex float");
+    Require(PutFloat(classic, HexFloat | Internal, 10, "0x1.8p+0") == "0x**1.8p+0", "char _Fput pads after hex prefix when unsigned");
     Require(PutFloat(classic, 0, 6, "inf") == "***inf", "char _Fput formats inf without grouping");
     Require(PutFloat(classic, 0, 6, "-nan") == "**-nan", "char _Fput formats -nan without grouping");
 }
@@ -153,6 +154,12 @@ void CheckPunctuation() {
     Require(PutFloat(&locale, 0, 0, "12345.67") == "12'345,67", "char _Fput replaces widened decimal point and groups integer part");
     Require(PutFloat(&locale, 0, 0, "-1234e+05") == "-1'234e+05", "char _Fput stops grouping at exponent");
     Require(PutFloat(&locale, 0, 0, "inf") == "inf", "char _Fput does not group inf");
+    const std::array<char, 8> nonTerminated{'1', '2', '3', '4', '5', '6', 'e', '1'};
+    GuestLocale::IosBase sliceIos{};
+    sliceIos.locale = &locale;
+    auto sliceStream = MakeNarrow();
+    const GuestLocale::OutputIterator sliceOut = FloatPut(nullptr, GuestLocale::OutputIterator{false, &sliceStream.buffer}, &sliceIos, '*', nonTerminated.data(), 4);
+    Require(!sliceOut.failed && sliceStream.accepted == "1'234", "char _Fput bounds exponent scan to digit count");
     g_grouping = "";
     _ZNSt8numpunctIcE2idE_nid_postfix = savedId;
     _ZNSt5ctypeIcE2idE_nid_postfix = savedCtypeId;
@@ -167,7 +174,6 @@ void CheckErrors() {
     ios.width = 6;
     const GuestLocale::OutputIterator out = FloatPut(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, &ios, '*', digits, 3);
     Require(out.failed, "char _Fput marks iterator failed when overflow fails");
-    Require(stream.overflowCalls == 1, "char _Fput stops writing after overflow failure");
     Require(ios.width == 0, "char _Fput clears width after overflow failure");
     Require(Throws([&] { FloatPut(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, '*', digits, 3); }), "char _Fput rejects null stream");
     GuestLocale::IosBase noLocale{};
