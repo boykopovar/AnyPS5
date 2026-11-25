@@ -711,8 +711,49 @@ int APS5_VABI scePadDeviceOpen(std::uint64_t deviceId, std::int32_t type, std::i
 }
 
 int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(data, sizeof(*data))) {
+        errno = savedErrno;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno;
+    if (!Pad::IsInitialized()) {
+        PadData localData;
+        WriteDefaultData(&localData);
+        const int copyErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+            errno = copyErrno;
+            return PAD_ERROR_INVALID_ARG;
+        }
+        errno = copyErrno;
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
+    if (port >= PAD_MAX_CONTROLLERS) return PAD_ERROR_INVALID_ARG;
+
+    PadData localData;
+    try {
+        localData = Pad::ReadState(port);
+    } catch (const std::invalid_argument&) {
+        const PadData empty{};
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty));
+        errno = copyErrno;
+        return PAD_ERROR_INVALID_ARG;
+    } catch (const std::exception&) {
+        const PadData empty{};
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty));
+        errno = copyErrno;
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
+    const int savedErrno2 = errno;
+    if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        errno = savedErrno2;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno2;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {

@@ -98,7 +98,7 @@ def arguments_of(text, position, line):
                 raise SplitError(f"line {line + 1}: unterminated bracket argument")
             value = text[position + len(bracket[0]):close]
             line += value.count("\n")
-            arguments.append(value)
+            arguments.append(value.removeprefix("\n"))
             position = close + len(bracket[0])
             continue
         if character == "#":

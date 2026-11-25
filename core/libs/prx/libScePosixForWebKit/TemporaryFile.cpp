@@ -50,7 +50,18 @@ int Failure(int error) {
     return -1;
 }
 
-int TemporaryFile(char* pattern, int flags, int suffixLength = 0) {
+bool NextName(char* pattern, std::size_t start, std::size_t length, const std::string& initial) {
+    auto position = start;
+    for (; position < length; ++position) {
+        const auto index = std::strchr(Characters, pattern[position]) - Characters;
+        pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
+        if (pattern[position] != initial[position - start]) break;
+    }
+    return position != length;
+}
+
+template <typename Attempt>
+int CreateFromTemplate(char* pattern, int suffixLength, Attempt attempt) {
     if (!pattern) return Failure(14);
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
@@ -77,33 +88,35 @@ int TemporaryFile(char* pattern, int flags, int suffixLength = 0) {
         if ((status.st_mode & 0170000) != 0040000) return Failure(20);
     }
     for (;;) {
-        const int descriptor = open_nid_postfix(pattern, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
-            (flags & ~(SharedLock | ExclusiveLock)), 0600);
-        if (descriptor >= 0) {
-            try {
-                if ((flags & (SharedLock | ExclusiveLock)) &&
-                    flock_nid_postfix(descriptor, (flags & ExclusiveLock) ? 2 : 1) != 0) {
-                    const int error = *__error_nid_postfix();
-                    close_nid_postfix(descriptor);
-                    return Failure(error);
-                }
-            } catch (...) {
-                const int error = *__error_nid_postfix();
-                close_nid_postfix(descriptor);
-                *__error_nid_postfix() = error;
-                throw;
-            }
-            return descriptor;
-        }
+        const int result = attempt(pattern);
+        if (result >= 0) return result;
         if (*__error_nid_postfix() != 17) return -1;
-        auto position = start;
-        for (; position < end; ++position) {
-            const auto index = std::strchr(Characters, pattern[position]) - Characters;
-            pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
-            if (pattern[position] != initial[position - start]) break;
-        }
-        if (position == end) return -1;
+        if (!NextName(pattern, start, end, initial)) return -1;
     }
+}
+
+int OpenExclusive(char* pattern, int flags) {
+    const int descriptor = open_nid_postfix(pattern, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
+        (flags & ~(SharedLock | ExclusiveLock)), 0600);
+    if (descriptor < 0) return -1;
+    try {
+        if ((flags & (SharedLock | ExclusiveLock)) &&
+            flock_nid_postfix(descriptor, (flags & ExclusiveLock) ? 2 : 1) != 0) {
+            const int error = *__error_nid_postfix();
+            close_nid_postfix(descriptor);
+            return Failure(error);
+        }
+    } catch (...) {
+        const int error = *__error_nid_postfix();
+        close_nid_postfix(descriptor);
+        *__error_nid_postfix() = error;
+        throw;
+    }
+    return descriptor;
+}
+
+int TemporaryFile(char* pattern, int flags, int suffixLength = 0) {
+    return CreateFromTemplate(pattern, suffixLength, [flags](char* name) { return OpenExclusive(name, flags); });
 }
 
 }
@@ -114,6 +127,11 @@ extern "C" int APS5_VABI mkstemp_nid_postfix(char* pattern) {
 
 extern "C" int APS5_VABI mkstemps_nid_postfix(char* pattern, int suffixLength) {
     return TemporaryFile(pattern, 0, suffixLength);
+}
+
+extern "C" char* APS5_VABI mkdtemp_nid_postfix(char* pattern) {
+    if (!pattern) throw std::invalid_argument("mkdtemp: null template");
+    return CreateFromTemplate(pattern, 0, [](char* name) { return mkdir_nid_postfix(name, 0700); }) < 0 ? nullptr : pattern;
 }
 
 extern "C" int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags) {

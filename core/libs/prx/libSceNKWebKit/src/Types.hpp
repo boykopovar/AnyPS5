@@ -193,6 +193,17 @@ public:
     bool historyClearedForTesting = false;
     bool resourceLoadStatisticsCleared = false;
     std::uint32_t resourceLoadStatisticsNotifyCount = 0;
+
+    struct OriginAccessEntry {
+        std::string sourceOrigin;
+        std::string destinationProtocol;
+        std::string destinationHost;
+        bool allowDestinationSubdomains = false;
+
+        bool operator==(const OriginAccessEntry&) const = default;
+    };
+
+    std::vector<OriginAccessEntry> originAccessAllowList;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
@@ -238,6 +249,7 @@ public:
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
     Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFillAvailable = false;
     bool htmlInputElementAutoFilled = false;
     bool htmlInputElementAutoFilledAndViewable = false;
     bool htmlInputElementSpellcheckEnabled = true;

@@ -1420,6 +1420,27 @@ static void TestBundleNodeHandle() {
     Require(copiedIframe == iframeContent.Get());
     WKRelease(copiedIframe);
 
+    WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(ref, true);
+    Require(handle->htmlInputElementAutoFillAvailable);
+    WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(ref, false);
+    Require(!handle->htmlInputElementAutoFillAvailable);
+
+    bool threwSetterNull = false;
+    try {
+        WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threwSetterNull = true;
+    }
+    Require(threwSetterNull);
+
+    bool threwSetterWrongType = false;
+    try {
+        WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable(docFrame.Get(), true);
+    } catch (const std::invalid_argument&) {
+        threwSetterWrongType = true;
+    }
+    Require(threwSetterWrongType);
+
     Require(!WKBundleNodeHandleGetHTMLInputElementAutoFilled(ref));
     Require(!WKBundleNodeHandleGetHTMLInputElementAutofilled(ref));
     Require(!WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit(ref));
