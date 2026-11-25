@@ -199,6 +199,8 @@ def main(argv=None):
     unknown = sorted(set(args.families) - set(FAMILIES))
     if unknown:
         parser.error(f"unknown families: {', '.join(unknown)}")
+    if len(args.families) != len(set(args.families)):
+        parser.error("families must not repeat")
     families = args.families or sorted(FAMILIES)
     modules = args.modules or args.build / "core" / "libs" / "libs" / "unpatched"
     binary = args.replay or default_replay(args.build)

@@ -228,6 +228,22 @@ class ModuleTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_duplicate_families_are_rejected_before_fetching_or_replaying(self):
+        with mock.patch.object(library_oracle, "fetch") as fetch, \
+                mock.patch.object(library_oracle, "replay") as replay, \
+                mock.patch.object(library_oracle, "case_ids", return_value=set()), \
+                mock.patch("sys.stdout", new_callable=io.StringIO), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as errors:
+            fetch.return_value = Path("unused")
+            replay.return_value = ({}, "complete")
+            with self.assertRaises(SystemExit) as error:
+                library_oracle.main(["libc", "libc", "--replay", "unused"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("families must not repeat", errors.getvalue())
+        fetch.assert_not_called()
+        replay.assert_not_called()
+
+
     def test_write_known_reports_a_non_ascii_path_as_utf8(self):
         from contextlib import redirect_stdout
         from unittest.mock import patch
