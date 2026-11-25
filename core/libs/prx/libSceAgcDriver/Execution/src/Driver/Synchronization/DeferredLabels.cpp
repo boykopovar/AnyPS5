@@ -67,8 +67,7 @@ bool Driver::labelTryEachPacket() {
 namespace {
 
 const LabelDeadlines& labelDeadlines() {
-    static const LabelDeadlines value = ReadLabelDeadlines(std::getenv("APS5_LABEL_FLUSH_US"), std::getenv("APS5_LABEL_IDLE_FLUSH_US"),
-                                                           std::getenv("APS5_NO_LABEL_IDLE_DEADLINE") != nullptr, LabelBatchSubmit());
+    static const LabelDeadlines value = ReadLabelDeadlines(std::getenv("APS5_LABEL_FLUSH_US"), std::getenv("APS5_LABEL_IDLE_FLUSH_US"), LabelBatchSubmit());
     return value;
 }
 
