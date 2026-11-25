@@ -808,5 +808,32 @@ class WebReleaseValidationTests(unittest.TestCase):
             self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
 
 
+class MetadataRefusalTests(unittest.TestCase):
+    def test_release_metadata_refuses_a_non_object(self):
+        with self.assertRaisesRegex(ValueError, 'must be a JSON object'):
+            build_web.release_metadata([])
+
+    def test_asset_metadata_refuses_a_bad_size_or_digest(self):
+        good = {'name': 'a.zip', 'size': 5, 'browser_download_url': 'https://example.invalid/a.zip', 'digest': 'sha256:' + '0' * 64}
+        with self.assertRaisesRegex(ValueError, 'archive size'):
+            build_web.asset_metadata(dict(good, size=0), 10)
+        with self.assertRaisesRegex(ValueError, 'archive size'):
+            build_web.asset_metadata(dict(good, size=11), 10)
+        with self.assertRaises(ValueError):
+            build_web.asset_metadata(dict(good, digest='md5:abc'), 10)
+class LoadReleaseTests(unittest.TestCase):
+    def test_load_release_parses_json_and_refuses_deep_nesting(self):
+        import io
+        self.assertEqual(build_web.load_release(io.StringIO('{"tag_name": "v1"}')), {'tag_name': 'v1'})
+        deep = '[' * 100000 + ']' * 100000
+        try:
+            json.loads(deep)
+        except RecursionError:
+            with self.assertRaisesRegex(ValueError, 'Invalid release metadata'):
+                build_web.load_release(io.StringIO(deep))
+        else:
+            self.assertNotIsInstance(build_web.load_release(io.StringIO(deep)), dict)
+
+
 if __name__ == "__main__":
     unittest.main()

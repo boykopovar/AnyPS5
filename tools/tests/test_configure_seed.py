@@ -704,5 +704,36 @@ class ChecksParsingTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class SelectionTests(unittest.TestCase):
+    def test_selected_keeps_everything_without_filters_and_matches_includes(self):
+        results = {'APS5_A': 1, 'APS5_B': 2, 'OTHER': 3}
+        self.assertEqual(configure_seed.selected(results, [], []), results)
+        self.assertEqual(configure_seed.selected(results, ['APS5_*'], []), {'APS5_A': 1, 'APS5_B': 2})
+
+    def test_selected_exclude_removes_matches_even_when_included(self):
+        results = {'APS5_A': 1, 'APS5_B': 2}
+        self.assertEqual(configure_seed.selected(results, ['APS5_*'], ['APS5_B']), {'APS5_A': 1})
+class RenderLineTests(unittest.TestCase):
+    def test_render_writes_one_cache_line_per_entry_in_name_order(self):
+        self.assertEqual(configure_seed.render({'APS5_A': ('1', 'doc')}), 'set("APS5_A" "1" CACHE INTERNAL "doc")\n')
+        lines = configure_seed.render({'B': ('2', 'two'), 'A': ('1', 'one')}).splitlines()
+        self.assertTrue(lines[0].startswith('set("A"'))
+        self.assertTrue(lines[1].startswith('set("B"'))
+class WriteSeedTests(unittest.TestCase):
+    def test_write_seed_creates_the_parent_folder_and_the_exact_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'sub' / 'seed.cmake'
+            configure_seed.write_seed(target, 'set(A 1)\n')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'set(A 1)\n')
+
+    def test_write_seed_replaces_content_and_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'seed.cmake'
+            target.write_text('old', encoding='utf-8')
+            configure_seed.write_seed(target, 'new\n')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'new\n')
+            self.assertEqual(list(Path(directory).glob('.configure-seed-*')), [])
+
+
 if __name__ == "__main__":
     unittest.main()

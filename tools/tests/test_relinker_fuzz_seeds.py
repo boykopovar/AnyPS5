@@ -96,5 +96,18 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
             self.assertIn(f"seeds written to {output}", result.stdout.decode("utf-8"))
 
 
+class WithoutArgumentsTests(unittest.TestCase):
+    def test_without_arguments_needs_no_required_positional_parameter(self):
+        def required(a):
+            return a
+        def optional(a=1):
+            return a
+        def variadic(*args):
+            return args
+        self.assertFalse(relinker_fuzz_seeds.without_arguments(required))
+        self.assertTrue(relinker_fuzz_seeds.without_arguments(optional))
+        self.assertTrue(relinker_fuzz_seeds.without_arguments(variadic))
+
+
 if __name__ == "__main__":
     unittest.main()

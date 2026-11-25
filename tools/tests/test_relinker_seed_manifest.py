@@ -53,5 +53,16 @@ class SeedManifestTests(unittest.TestCase):
             self.assertNotIn("Traceback", result.stderr)
 
 
+class DescribeRefusalTests(unittest.TestCase):
+    def test_describe_refuses_a_directory(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('relinker_seed_manifest', TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'not a regular file'):
+                module.describe(Path(directory))
+
+
 if __name__ == "__main__":
     unittest.main()

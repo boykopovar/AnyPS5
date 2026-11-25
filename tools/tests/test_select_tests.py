@@ -1161,5 +1161,26 @@ class GraphClosureTests(unittest.TestCase):
             self.assertEqual(select_tests.load_graph(path), {"tests": {}, "closures": {}})
 
 
+class PathHelperTests(unittest.TestCase):
+    def test_escape_doubles_dollars_and_escapes_colons_and_spaces(self):
+        self.assertEqual(select_tests.escape("a b:c$d"), "a$ b$:c$$d")
+
+    def test_paths_yields_only_absolute_values_including_defines(self):
+        absolute = os.path.abspath(os.path.join(os.sep, "tmp", "x"))
+        self.assertEqual(list(select_tests.paths(["-DX=" + absolute, "rel/x", absolute])), [absolute, absolute])
+
+    def test_relative_returns_a_slash_separated_path_under_the_root(self):
+        root = os.path.abspath(os.path.join(os.sep, "r"))
+        path = os.path.join(root, "a", "b.cpp")
+        self.assertEqual(select_tests.relative(path, root), "a/b.cpp")
+        self.assertEqual(select_tests.relative(path, root + os.sep), "a/b.cpp")
+
+    def test_inside_requires_a_path_below_the_root_with_a_separator(self):
+        root = os.path.abspath(os.path.join(os.sep, "r"))
+        self.assertTrue(select_tests.inside(os.path.join(root, "a"), root))
+        self.assertFalse(select_tests.inside(root, root))
+        self.assertFalse(select_tests.inside(root + "x", root))
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))

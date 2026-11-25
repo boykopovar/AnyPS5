@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import os
 import stat
@@ -580,6 +581,81 @@ class SymlinkLoopTests(unittest.TestCase):
                 self.assertTrue(first.is_symlink())
                 self.assertTrue(second.is_symlink())
             self.assertFalse((root / "code.cpp").exists())
+
+
+class SanitizeIdentifierTests(unittest.TestCase):
+    def test_sanitize_identifier_replaces_and_prefixes(self):
+        import stubgen
+        self.assertEqual(stubgen.sanitize_identifier("a-b.c"), "a_b_c")
+        self.assertEqual(stubgen.sanitize_identifier("1x"), "_1x")
+        self.assertEqual(stubgen.sanitize_identifier("ok_1"), "ok_1")
+        self.assertEqual(stubgen.sanitize_identifier(""), "_")
+
+
+class ModulePrefixTests(unittest.TestCase):
+    def test_module_prefix_drops_lib_before_a_capital(self):
+        import stubgen
+        self.assertEqual(stubgen.module_prefix("libSceFoo"), "sceFoo")
+        self.assertEqual(stubgen.module_prefix("libc"), "libc")
+        self.assertEqual(stubgen.module_prefix("my-lib"), "my_lib")
+
+
+class RuntimeNameTests(unittest.TestCase):
+    def test_is_runtime_name_excludes_sce_exports(self):
+        import stubgen
+        self.assertTrue(stubgen.is_runtime_name("_init"))
+        self.assertTrue(stubgen.is_runtime_name("memcpy"))
+        self.assertFalse(stubgen.is_runtime_name("sceFoo"))
+        self.assertFalse(stubgen.is_runtime_name("SceFoo"))
+
+
+class ValidIdentTests(unittest.TestCase):
+    def test_is_valid_ident_accepts_c_identifiers_only(self):
+        import stubgen
+        self.assertTrue(stubgen.is_valid_ident("a1_"))
+        for name in ("1a", "a-b", ""):
+            self.assertFalse(stubgen.is_valid_ident(name), name)
+class TdTargetTests(unittest.TestCase):
+    def test_td_target_keeps_explicit_path_and_library(self):
+        self.assertEqual(stubgen.td_target("libSceFoo", "x/y.cpp", "libX"), ("x/y.cpp", "libX"))
+
+    def test_td_target_defaults_the_library_to_the_module_name(self):
+        path, library = stubgen.td_target("libSceFoo", "x/y.cpp", None)
+        self.assertEqual((path, library), ("x/y.cpp", "libSceFoo"))
+        path, library = stubgen.td_target("libSceFoo", None, None)
+        self.assertTrue(path.startswith("../../../core/libs/prx/libSceFoo/"))
+        self.assertEqual(library, "libSceFoo")
+
+    def test_resolved_path_returns_a_plain_file_and_follows_one_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "real.txt"
+            target.write_text("x", encoding="utf-8")
+            self.assertEqual(stubgen.resolved_path(target), target.resolve())
+            link = Path(directory) / "link.txt"
+            if hasattr(os, "symlink"):
+                try:
+                    os.symlink(target, link)
+                except OSError:
+                    self.skipTest("symbolic links are not available")
+                self.assertEqual(stubgen.resolved_path(link), target.resolve())
+
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolved_path_refuses_a_symbolic_link_loop_with_eloop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop.txt"
+            os.symlink(loop, loop)
+            with self.assertRaises(OSError) as caught:
+                stubgen.resolved_path(loop)
+            self.assertEqual(caught.exception.errno, errno.ELOOP)
+class WriteOutputsTests(unittest.TestCase):
+    def test_write_outputs_writes_each_file_and_replaces_existing_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / 'a.cpp', root / 'b.cpp'
+            first.write_text('old', encoding='utf-8')
+            stubgen.write_outputs([(first, 'new\n'), (second, 'two\n')])
+            self.assertEqual(first.read_text(encoding='utf-8'), 'new\n')
+            self.assertEqual(second.read_text(encoding='utf-8'), 'two\n')
 
 
 if __name__ == "__main__":

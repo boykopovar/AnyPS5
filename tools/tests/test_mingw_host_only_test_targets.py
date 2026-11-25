@@ -643,5 +643,36 @@ class WindowsPullRequestGateTests(unittest.TestCase):
                 self.assertIn(item, gate)
 
 
+class LinkTextHelperTests(unittest.TestCase):
+    def test_link_command_joins_the_command_fragments(self):
+        target = {"link": {"commandFragments": [{"fragment": "a.o"}, {"fragment": "-lc"}]}}
+        self.assertEqual(build_mingw_host_only_tests.link_command(target), "a.o -lc")
+        self.assertEqual(build_mingw_host_only_tests.link_command({}), "")
+
+    def test_is_libc_link_by_target_name_or_by_libc_in_the_command(self):
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("libc", {}))
+        linked = {"link": {"commandFragments": [{"fragment": "build/libc.prx"}]}}
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("x", linked))
+        self.assertFalse(build_mingw_host_only_tests.is_libc_link("x", {"link": {"commandFragments": [{"fragment": "-lfoo"}]}}))
+
+    def test_object_document_accepts_an_object_and_refuses_other_json(self):
+        self.assertEqual(build_mingw_host_only_tests.object_document({"a": 1}, "p.json", "target"), {"a": 1})
+        with self.assertRaisesRegex(ValueError, "invalid target"):
+            build_mingw_host_only_tests.object_document([1], "p.json", "target")
+
+    def test_source_relative_path_is_posix_inside_the_root_and_none_outside(self):
+        root = Path(os.path.abspath(os.sep + "r"))
+        self.assertEqual(build_mingw_host_only_tests.source_relative_path(root, root / "a" / "b.cpp"), "a/b.cpp")
+        self.assertIsNone(build_mingw_host_only_tests.source_relative_path(root, Path(os.path.abspath(os.sep + "other")) / "x.cpp"))
+
+    def test_is_core_libs_test_source_needs_a_tests_folder_under_core_libs(self):
+        root = Path(os.path.abspath(os.sep + "r"))
+        core_libs = (root / "core" / "libs").resolve()
+        self.assertTrue(build_mingw_host_only_tests.is_core_libs_test_source(
+            root / "core" / "libs" / "libA" / "tests" / "x.cpp", core_libs))
+        self.assertFalse(build_mingw_host_only_tests.is_core_libs_test_source(
+            root / "core" / "libs" / "libA" / "src" / "x.cpp", core_libs))
+
+
 if __name__ == "__main__":
     unittest.main()
