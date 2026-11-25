@@ -91,6 +91,7 @@ int main() {
         GuestBlock large(std::size_t{1} << 20u);
         GuestBlock many(static_cast<std::size_t>(LabelLimitBytes) + 4 * WindowBytes);
         GuestBlock fresh(WindowBytes);
+        GuestBlock five(5 * WindowBytes);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -167,6 +168,29 @@ int main() {
             Require(AgcDriver::Graphics::HostImportCounters().labelBytes == LabelLimitBytes && AgcDriver::Graphics::HostImportCovers(context, many.Address() + 16, 4), "a normal import retired a label window");
             device->WaitIdle();
             for (std::size_t index = 0; index <= room + 1; ++index) Require(many.Word(index * WindowBytes + 16) == 0xc0de0000u + index, "label " + std::to_string(index) + " did not land");
+        }
+        {
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            const auto build = [&] {
+                AgcDriver::Graphics::GuestBufferMemory memory(context);
+                memory.AddReadable(work.Address(), 32);
+                memory.UploadPrepare(false);
+                memory.UploadFinish(false);
+            };
+            build();
+            Require(device->FillBuffer(work.Address(), 4096, pattern), "cannot record work before the replaced label window");
+            const int reason = Store(*device, five.Address() + 2 * WindowBytes + 16, 0xfeedu, 1000);
+            Require(reason == 0 && AgcDriver::Graphics::HostImportCovers(context, five.Address() + 2 * WindowBytes + 16, 4), "the label to be replaced did not import its window (reason " + std::to_string(reason) + ")");
+            device->WaitIdle();
+            build();
+            const auto normalLive = AgcDriver::Graphics::HostImportLiveBytes() - AgcDriver::Graphics::HostImportCounters().labelBytes;
+            const auto budget = normalLive + 4 * WindowBytes;
+            AgcDriver::Graphics::SetHostImportBudget(budget);
+            AgcDriver::Graphics::SetImportRetireCredit(true);
+            (void)device->FillBuffer(five.Address(), five.Bytes(), pattern);
+            AgcDriver::Graphics::SetImportRetireCredit(false);
+            device->WaitIdle();
+            Require(AgcDriver::Graphics::HostImportLiveBytes() - AgcDriver::Graphics::HostImportCounters().labelBytes <= budget, "label bytes were credited to a normal import over the normal budget");
         }
         AgcDriver::Graphics::SetHostImportBudget(0);
         std::puts("label import window tests passed");
