@@ -86,7 +86,6 @@ int APS5_VABI sceNpCommerceDialogInitialize() {
  std::lock_guard<std::mutex> lock(g_mutex);
  if (g_status != COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
  g_status = COMMON_DIALOG_STATUS_INITIALIZED;
- g_userData = 0;
  return 0;
 }
 
@@ -161,7 +160,6 @@ int APS5_VABI sceNpCommerceDialogTerminate() {
  std::lock_guard<std::mutex> lock(g_mutex);
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  g_status = COMMON_DIALOG_STATUS_NONE;
- g_userData = 0;
  return 0;
 }
 

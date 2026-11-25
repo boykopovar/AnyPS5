@@ -212,6 +212,18 @@ void RequireConcurrentLifecycle() {
         0x99aabbccddeeff00ull,
         0x8899aabbccddeeffull,
     };
+    {
+        NpCommerceDialogParam seedParam{};
+        seedParam.base.size = sizeof(seedParam.base);
+        seedParam.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&seedParam)) - 1060003575u;
+        seedParam.size = sizeof(seedParam);
+        seedParam.userId = USER_SERVICE_INITIAL_USER_ID;
+        seedParam.mode = 5;
+        seedParam.argument = 1;
+        seedParam.userData = sentinels[0];
+        Require(sceNpCommerceDialogOpen(&seedParam) == 0);
+    }
+
     constexpr int iterations = 200;
     SyncBarrier startGate(9);
     std::atomic<int> resultChecks{0};
@@ -307,7 +319,7 @@ void RequireConcurrentLifecycle() {
     Require(finalMatched);
     for (const auto value : finalResult.padding) Require(value == 0x33);
     for (const auto value : finalResult.reserved) Require(value == 0);
-    Require(resultChecks.load(std::memory_order_relaxed) >= 0);
+    Require(resultChecks.load(std::memory_order_relaxed) == 2 * iterations);
     Require(sceNpCommerceDialogTerminate() == 0);
     Require(sceNpCommerceDialogGetStatus() == statusNone);
 }
