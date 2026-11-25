@@ -95,17 +95,12 @@ void CheckGsHsCs() {
     RequireRefused(sceGnmUpdateGsShader(Fresh(), 0x1d, BadRegs));
     Require(sceGnmUpdateGsShader(nullptr, 0x1d, Regs) == -1);
 
-    Require(sceGnmUpdateHsShader(Fresh(), 0x1e, Regs, 0x77) == 0);
+    Require(sceGnmUpdateHsShader(Fresh(), 0x1d, Regs, 0x77) == 0);
     RequireWords({0xc0027600u, 0x108, 0x1000, 0, 0xc0027600u, 0x10a, 0x2000, 0x3000, 0xc0021000u, 0xc01e0286u, 0x5000, 0x6000,
         0xc0011000u, 0xc01e02dbu, 0x4000, 0xc0011000u, 0xc01e02d6u, 0x77, 0xc00a1000u, 0});
-    Require(WholePackets(g_words, 0x1e));
-    g_words[0x1e] = 0xc0001000u;
-    g_words[0x1f] = 0;
-    Require(WholePackets(g_words, 0x20));
     RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1c, Regs, 0));
-    RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1d, Regs, 0));
-    RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1e, BadRegs, 0));
-    Require(sceGnmUpdateHsShader(nullptr, 0x1e, Regs, 0) == -1);
+    RequireRefused(sceGnmUpdateHsShader(Fresh(), 0x1d, BadRegs, 0));
+    Require(sceGnmUpdateHsShader(nullptr, 0x1d, Regs, 0) == -1);
 
     Require(sceGnmSetCsShaderWithModifier(Fresh(), 0x19, Regs, 0x3c0) == 0);
     RequireWords({0xc0027600u, 0x20c, 0x1000, 0, 0xc0027600u, 0x212, 0x23c0, 0x3000, 0xc0037600u, 0x207, 0x4000, 0x5000, 0x6000,

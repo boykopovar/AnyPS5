@@ -113,7 +113,7 @@ inline int UpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::
 }
 
 inline int UpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
-    if (!cmdbuf || size < 0x1e || !regs || regs[1] != 0) return CommandFailed;
+    if (!cmdbuf || size <= 0x1c || !regs || regs[1] != 0) return CommandFailed;
     auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x108, regs[0], 0});
     at = EmitPacket(at, OpSetShReg, {0x10a, regs[2], regs[3]});
     at = EmitPacket(at, OpNop, {0xc01e0286u, regs[5], regs[6]});

@@ -778,10 +778,10 @@ int APS5_VABI sceGnmUpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, co
 }
 
 int APS5_VABI sceGnmUpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
-    if (!cmdbuf || size < 0x1e || !regs) return CommandFailed;
+    if (!cmdbuf || size <= 0x1c || !regs) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteSharedCommandBuffer<0x1e>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateHsShader(buf, size, localRegs.data(), lsHsConfig); });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateHsShader(buf, size, localRegs.data(), lsHsConfig); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
