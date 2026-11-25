@@ -516,6 +516,12 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 ## Build inspection tools
 
 - `tools/compile_database_inventory.py <database>` groups the raw records of a saved compilation database without invoking a compiler or build tool.
+  With `--ninja-log <log>`, use the compilation database and `.ninja_log` from the same build directory. The report
+  adds the latest recorded duration to each matched compile output, counts records without an `output` field, and
+  lists log outputs absent from the database. The sum counts each matched output once and measures cumulative
+  compile work. Compiles can overlap and a log can span multiple invocations. Relative log paths use the common
+  directory of the compile commands. Use `--ninja-build-dir <original-build-directory>` when that differs from the
+  original Ninja working directory.
 
 ## Test selection tools
 
