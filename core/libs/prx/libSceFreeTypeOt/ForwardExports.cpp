@@ -281,6 +281,16 @@ int APS5_VABI FT_Outline_CheckForward_nid_no_patch(FreeType::GuestOutline* outli
 }
 APS5_EXPORT("C4a3dGgs+Cc", FT_Outline_CheckForward_nid_no_patch);
 
+int APS5_VABI FT_Outline_CopyForward_nid_no_patch(const FreeType::GuestOutline* source, FreeType::GuestOutline* target) {
+    return FT_Outline_Copy_nid_postfix(source, target);
+}
+APS5_EXPORT("Bhm8Injl0KA", FT_Outline_CopyForward_nid_no_patch);
+
+int APS5_VABI FT_Outline_DecomposeForward_nid_no_patch(FreeType::GuestOutline* outline, const FreeType::GuestOutlineFuncs* functions, void* user) {
+    return FT_Outline_Decompose_nid_postfix(outline, functions, user);
+}
+APS5_EXPORT("++lgV9pRsO4", FT_Outline_DecomposeForward_nid_no_patch);
+
 int APS5_VABI FT_Outline_DoneForward_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline) {
     return FT_Outline_Done_nid_postfix(library, outline);
 }
@@ -290,6 +300,11 @@ void APS5_VABI FT_Outline_Get_CBoxForward_nid_no_patch(const FreeType::GuestOutl
     return FT_Outline_Get_CBox_nid_postfix(outline, box);
 }
 APS5_EXPORT("8ZxmGwESvSQ", FT_Outline_Get_CBoxForward_nid_no_patch);
+
+int APS5_VABI FT_Outline_Get_OrientationForward_nid_no_patch(FreeType::GuestOutline* outline) {
+    return FT_Outline_Get_Orientation_nid_postfix(outline);
+}
+APS5_EXPORT("weVsBCT+TTQ", FT_Outline_Get_OrientationForward_nid_no_patch);
 
 int APS5_VABI FT_Outline_NewForward_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline) {
     return FT_Outline_New_nid_postfix(library, numPoints, numContours, outline);

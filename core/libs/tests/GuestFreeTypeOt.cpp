@@ -707,8 +707,13 @@ int main(int argc, char** argv) {
     Resolve(ot.sin, library, patched, "L1uHkWTazkI", "FT_Sin_nid_postfix");
     Resolve(ot.tan, library, patched, "dojyaLKzKN0", "FT_Tan_nid_postfix");
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");
+#ifdef _WIN32
+    Resolve(ot.orientation, library, patched, "weVsBCT+TTQ", "FT_Outline_Get_OrientationForward_nid_no_patch");
+    Resolve(ot.copy, library, patched, "Bhm8Injl0KA", "FT_Outline_CopyForward_nid_no_patch");
+#else
     Resolve(ot.orientation, library, patched, "weVsBCT+TTQ", "FT_Outline_Get_Orientation_nid_postfix");
     Resolve(ot.copy, library, patched, "Bhm8Injl0KA", "FT_Outline_Copy_nid_postfix");
+#endif
     decltype(&FT_Get_Multi_Master_nid_postfix) multiMaster = nullptr;
 #ifdef _WIN32
     Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_MasterForward_nid_no_patch");
@@ -716,7 +721,11 @@ int main(int argc, char** argv) {
     Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_Master_nid_postfix");
 #endif
     MultiMaster(multiMaster);
+#ifdef _WIN32
+    Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_DecomposeForward_nid_no_patch");
+#else
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
+#endif
     if (forwards) {
         Resolve(strokers.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
         Resolve(strokers.finish, library, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
