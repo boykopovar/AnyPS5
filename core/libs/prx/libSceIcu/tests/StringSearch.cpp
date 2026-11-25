@@ -281,8 +281,9 @@ void PassingStatus(UStringSearch* search, const char16_t* words) {
         for (const auto length : {-1, 8}) {
             RequireThrows([&] { usearch_setText_nid_postfix(search, words, length, &status); });
         }
-        RequireThrows([&] { usearch_setText_nid_postfix(search, Empty, -1, &status); });
-        Require(status == incoming);
+        usearch_setText_nid_postfix(search, Empty, -1, &status);
+        Require(status == IllegalArgument);
+        status = incoming;
 
         for (const auto attribute : {-1, 3, 4, 0x7fffffff}) {
             status = incoming;
@@ -432,6 +433,9 @@ void Run() {
     Require(Icu::StringSearchHost::Next(opened, status) == 2);
     Require(status <= 0);
     Require(usearch_getMatchedLength_nid_postfix(opened) == 3);
+    usearch_setText_nid_postfix(opened, u"banana", -1, &status);
+    Require(status == 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
 }
 
 } // namespace UsearchObject

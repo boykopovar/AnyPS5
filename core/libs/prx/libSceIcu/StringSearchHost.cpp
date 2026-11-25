@@ -106,6 +106,12 @@ void FailNextPatternAllocation() {
     PatternAllocationFailure() = true;
 }
 
+void SetText(void* search, const char16_t* text, std::int32_t textLength, std::int32_t& status) {
+    auto code = static_cast<UErrorCode>(status);
+    usearch_setText(static_cast<UStringSearch*>(search), text, textLength, &code);
+    status = code;
+}
+
 std::int32_t Next(void* search, std::int32_t& status) {
     auto code = static_cast<UErrorCode>(status);
     const auto result = usearch_next(static_cast<UStringSearch*>(search), &code);

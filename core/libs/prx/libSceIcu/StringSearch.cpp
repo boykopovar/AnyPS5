@@ -276,7 +276,18 @@ void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    NotImplemented_nid_no_patch(__func__);
+    auto replacement = CopyUnits(text, textLength, __func__);
+    if (replacement.empty()) {
+        CopyOut(status, Icu::IllegalArgument, __func__);
+        return;
+    }
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetText(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
+    state->text.swap(replacement);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 }
