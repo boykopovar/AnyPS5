@@ -30,19 +30,22 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/charstr.cpp
     ${ICU_SOURCE_DIR}/common/cmemory.cpp
     ${ICU_SOURCE_DIR}/common/cstring.cpp
+    ${ICU_SOURCE_DIR}/common/dictionarydata.cpp
     ${ICU_SOURCE_DIR}/common/edits.cpp
     ${ICU_SOURCE_DIR}/common/emojiprops.cpp
     ${ICU_SOURCE_DIR}/common/filterednormalizer2.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/errorcode.cpp
-    ${ICU_SOURCE_DIR}/common/locavailable.cpp
-    ${ICU_SOURCE_DIR}/common/locmap.cpp
+        ${ICU_SOURCE_DIR}/common/locavailable.cpp
+    ${ICU_SOURCE_DIR}/common/locresdata.cpp
+        ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/parsepos.cpp
     ${ICU_SOURCE_DIR}/common/patternprops.cpp
     ${ICU_SOURCE_DIR}/common/propname.cpp
     ${ICU_SOURCE_DIR}/common/putil.cpp
+    ${ICU_SOURCE_DIR}/common/rbbidata.cpp
     ${ICU_SOURCE_DIR}/common/ruleiter.cpp
     ${ICU_SOURCE_DIR}/common/stringpiece.cpp
     ${ICU_SOURCE_DIR}/common/uarrsort.cpp
@@ -105,6 +108,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/ustrcase.cpp
     ${ICU_SOURCE_DIR}/common/ustring.cpp
     ${ICU_SOURCE_DIR}/common/ustrtrns.cpp
+    ${ICU_SOURCE_DIR}/common/utext.cpp
     ${ICU_SOURCE_DIR}/common/utf_impl.cpp
     ${ICU_SOURCE_DIR}/common/util.cpp
     ${ICU_SOURCE_DIR}/common/utrace.cpp
@@ -117,8 +121,10 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/fixedstring.cpp
     ${ICU_SOURCE_DIR}/common/localebuilder.cpp
     ${ICU_SOURCE_DIR}/common/locid.cpp
+    ${ICU_SOURCE_DIR}/common/locdispnames.cpp
     ${ICU_SOURCE_DIR}/common/loclikely.cpp
     ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
+    ${ICU_SOURCE_DIR}/common/locresdata.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp

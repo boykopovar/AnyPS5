@@ -1,4 +1,8 @@
-#include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/ConverterHelpers.hpp"
+#include "prx/libSceIcu/Invariant.hpp"
+#include "prx/libSceIcu/Version.hpp"
+#include "unicode/ucnv.h"
+#include "unicode/ustring.h"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -316,6 +320,56 @@ void RoundTrip() {
     }
 }
 
+void DefaultEncodingDecode() {
+    ucnv_setDefaultName_nid_postfix("UTF-8");
+    ucnv_setDefaultName("UTF-8");
+    const std::array inputs {"", "word", "\xc3\xa9", "A\xf0\x9f\x98\x80!", "\xe2\x82", "\xff"};
+    for (const char* input : inputs) {
+        std::array<char16_t, 12> expected;
+        expected.fill(u'@');
+        auto actual = expected;
+        Require(u_uastrcpy_nid_postfix(actual.data(), input) == actual.data(), "default decoding returns the destination");
+        u_uastrcpy(expected.data(), input);
+        Require(actual == expected, "unbounded decoding agrees with bundled ICU");
+
+        for (std::int32_t count = 0; count <= 10; ++count) {
+            expected.fill(u'@');
+            actual = expected;
+            Require(u_uastrncpy_nid_postfix(actual.data(), input, count) == actual.data(), "bounded decoding returns the destination");
+            u_uastrncpy(expected.data(), input, count);
+            Require(actual == expected, "bounded decoding matches ICU output and termination");
+        }
+    }
+
+    std::array<char16_t, 8> decoded;
+    decoded.fill(u'@');
+    u_uastrncpy_nid_postfix(decoded.data(), "\xc3\xa9", 2);
+    Require(decoded[0] == u'\u00e9' && decoded[1] == 0 && decoded[2] == u'@',
+            "a two-byte UTF-8 character decodes to one UTF-16 unit with a terminator");
+    decoded.fill(u'@');
+    u_uastrncpy_nid_postfix(decoded.data(), "AB", 2);
+    Require(decoded[0] == u'A' && decoded[1] == u'B' && decoded[2] == u'@', "an exactly full output has no terminator");
+
+    std::string encoded(2047, 'x');
+    encoded += "\xf0\x9f\x98\x80!";
+    std::u16string actual(2052, u'@');
+    auto expected = actual;
+    u_uastrcpy_nid_postfix(actual.data(), encoded.c_str());
+    u_uastrcpy(expected.data(), encoded.c_str());
+    Require(actual == expected && actual[2047] == 0xd83d && actual[2048] == 0xde00,
+            "a supplementary character crossing output chunks matches ICU");
+
+    if constexpr (!U_CHARSET_IS_UTF8) {
+        ucnv_setDefaultName_nid_postfix("ISO-8859-1");
+        ucnv_setDefaultName("ISO-8859-1");
+        decoded.fill(u'@');
+        auto latin1 = decoded;
+        u_uastrncpy_nid_postfix(decoded.data(), "\xe9", 2);
+        u_uastrncpy(latin1.data(), "\xe9", 2);
+        Require(decoded == latin1 && decoded[0] == u'\u00e9', "decoding follows the selected ISO-8859-1 default");
+    }
+}
+
 }
 
 int main() {
@@ -331,5 +385,6 @@ int main() {
     GetVersion();
     UnreadableBuffers();
     RoundTrip();
+    DefaultEncodingDecode();
     return 0;
 }

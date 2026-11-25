@@ -17,20 +17,6 @@ constexpr int AnyFunction = 0xfff;
 constexpr int MessageDigestIsNull = 159;
 constexpr int MaxDigestSize = 64;
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
-    return copied;
-}
-
 template <typename T>
 bool CopyInChunks(std::vector<T>& host, const void* source, std::size_t bytes) {
     constexpr std::size_t Chunk = 64 * 1024;
@@ -38,7 +24,7 @@ bool CopyInChunks(std::vector<T>& host, const void* source, std::size_t bytes) {
     for (std::size_t done = 0; done < bytes;) {
         const std::size_t size = std::min(Chunk, bytes - done);
         host.resize(done + size);
-        if (!CopyIn(host.data() + done, static_cast<const unsigned char*>(source) + done, size)) return false;
+        if (!GuestCopyIn_nid_no_patch(host.data() + done, static_cast<const unsigned char*>(source) + done, size)) return false;
         done += size;
     }
     return true;
@@ -49,7 +35,7 @@ bool PasswordLength(const char* password, int& length) {
     for (std::size_t offset = 0; offset <= static_cast<std::size_t>(INT32_MAX);) {
         const auto address = reinterpret_cast<std::uintptr_t>(password) + offset;
         const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
-        if (!CopyIn(chunk, password + offset, count)) return false;
+        if (!GuestCopyIn_nid_no_patch(chunk, password + offset, count)) return false;
         if (const void* end = std::memchr(chunk, 0, count)) {
             const std::size_t total = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
             if (total > static_cast<std::size_t>(INT32_MAX)) return false;
@@ -126,7 +112,7 @@ extern "C" int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix(const char* password, int
             if (!key.Mac(block.data(), size, nullptr, 0, block.data())) return 0;
             for (std::size_t i = 0; i < part; ++i) derived[i] ^= block[i];
         }
-        if (!CopyOut(output, derived.data(), part)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unwritable output");
+        if (!GuestCopyOut_nid_no_patch(output, derived.data(), part)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unwritable output");
         output += part;
         remaining -= static_cast<int>(part);
     }

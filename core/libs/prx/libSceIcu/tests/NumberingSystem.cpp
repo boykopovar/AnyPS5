@@ -43,6 +43,44 @@ void Run() {
 
 } // namespace UnumsysClose
 
+namespace UnumsysGetName {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&unumsys_getName_nid_postfix), const char* (APS5_VABI*)(const UNumberingSystem*)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto unumsys = reinterpret_cast<const UNumberingSystem*>(storage.data());
+    RequireThrows([&] { unumsys_getName_nid_postfix(unumsys); });
+    RequireThrows([] { unumsys_getName_nid_postfix(nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UnumsysGetName
+
+namespace UnumsysIsAlgorithmic {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&unumsys_isAlgorithmic_nid_postfix), std::int8_t (APS5_VABI*)(const UNumberingSystem*)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto unumsys = reinterpret_cast<const UNumberingSystem*>(storage.data());
+    RequireThrows([&] { unumsys_isAlgorithmic_nid_postfix(unumsys); });
+    RequireThrows([] { unumsys_isAlgorithmic_nid_postfix(nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UnumsysIsAlgorithmic
+
 namespace UnumsysOpen {
 
 using IcuRecoveredTest::Filler;
@@ -122,8 +160,40 @@ void Run() {
 
 } // namespace UnumsysOpenByName
 
+namespace UnumsysOpenAvailableNames {
+
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+
+static_assert(std::is_same_v<decltype(&unumsys_openAvailableNames_nid_postfix), UEnumeration* (APS5_VABI*)(std::int32_t*)>);
+
+void Run() {
+    const std::array<std::int32_t, 7> failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+    const std::array<std::int32_t, 4> passing{0, -128, -124, -1};
+    for (const auto incoming : failing) {
+        std::int32_t status = incoming;
+        Require(unumsys_openAvailableNames_nid_postfix(&status) == nullptr);
+        Require(status == incoming);
+    }
+
+    for (const auto incoming : passing) {
+        std::int32_t status = incoming;
+        auto* names = unumsys_openAvailableNames_nid_postfix(&status);
+        Require(names != nullptr && status == incoming);
+        Require(uenum_count_nid_postfix(names, &status) > 0 && status == incoming);
+        uenum_close_nid_postfix(names);
+    }
+
+    RequireThrows([&] { unumsys_openAvailableNames_nid_postfix(nullptr); });
+}
+
+} // namespace UnumsysOpenAvailableNames
+
 void CheckIcuNumberingSystem() {
     UnumsysClose::Run();
+    UnumsysGetName::Run();
+    UnumsysIsAlgorithmic::Run();
     UnumsysOpen::Run();
+    UnumsysOpenAvailableNames::Run();
     UnumsysOpenByName::Run();
 }
