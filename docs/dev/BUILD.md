@@ -73,7 +73,7 @@ python3 tools/select_tests.py ctest build --output-on-failure
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
 - Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can block or quarantine the executables that the relinker tests create and run, which fails `optional_plt`, `empty_tls`, `windows_address_space`, `windows_bss`, `windows_fixed_base`, `windows_icon`, `loadexec_arguments`, `exec_arguments` and `exec_sys_*_arguments`. CTest sets `TMPDIR`, `TEMP` and `TMP` of the relinker tests to `core/relinker/test-temp` in the build directory, so setting them before running `ctest` does not move these files; add that directory (or the build directory if `relinker.exe` itself is quarantined) to the scanner's exclusions instead.
-- On Windows, Microsoft Defender quarantines some AGC test executables as `Trojan:Win64/ShellCode.MKA!MTB`, because they carry generated machine code: `agc_shader_replay.exe` and a growing number of `tests/agc_*_tests.exe` (33 in one full build on Windows 11, 35 in a full build of a later `main`). The `objcopy` post-step of those targets then fails with `Invalid argument`, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
+- On Windows, Microsoft Defender quarantines `agc_shader_replay.exe` and some `tests/agc_*_tests.exe` (35 of about 950 in a full build on Windows 11) as `Trojan:Win64/ShellCode.MKA!MTB`. The signature matches the instructions GCC emits for `% 65` in `RuntimeAbi::UintStorageImageBinding` (#26777), and only in small executables: `libSceAgcDriver.prx` contains the same instructions and is not flagged. The `objcopy` post-step of those targets then fails with `Invalid argument`, because the executable is already gone, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
 - FFmpeg binaries are downloaded during configuration unless `FFMPEG_PREBUILT_DIR` is set. With the WinLibs CMake, the download fails with status 60 (`SSL peer certificate or SSH remote key was not OK`) unless `SSL_CERT_FILE` names a CA bundle, for example `C:\Program Files\Git\ucrt64\etc\ssl\certs\ca-bundle.crt` from Git for Windows 2.56 and later (`mingw64` instead of `ucrt64` before 2.56), as in CI.
 - Smart App Control (Windows 11) blocks the executables the build and the relinker tests produce, because none of them is signed, and it is not an antivirus setting, so scanner exclusions do not apply to it. The Python relinker tests then fail with `OSError: [WinError 4551] An Application Control policy has blocked this file` when they start `relinker.exe` or a converted program, and CTest reports the native test executables as `Not Run` (`Process not started`). `VerifiedAndReputablePolicyState` under `HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` is 1 while it is on and 0 once it is off. Turn it off under Windows Security > App & browser control > Smart App Control settings before building; only recent Windows updates allow turning it back on afterwards without a reinstall.
 - Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
@@ -107,6 +107,13 @@ also builds `libs` through the `patched_libraries_tests` dependency. Titles load
 files from `build/core/libs/libs`; running a title after a library change without rebuilding `libs`
 therefore tests the previous binaries and can show no effect at all.
 
+To rebuild one patched module, build its `libs_<name>` target, where `<name>` is the output file name
+without its extension: `cmake --build build --target libs_libSceAgcDriver` rebuilds and NID-patches
+`build/core/libs/libs/libSceAgcDriver.prx` and the targets it depends on, without patching the other
+modules. The same applies to the other files `libs` places beside them, such as `libs_mimalloc`.
+Name the target, not the output path: with the Makefile generators, an existing file passed as a
+target counts as up to date, so a stale patched module is not rebuilt.
+
 [Relinker usage and runtime layout](../user/USAGE.md).
 
 `tools/public_headers_manifest.py [--root <dir>]` inventories the inputs of the public header package, with a content hash for each file, without creating an archive. `--root` defaults to the repository that contains the script.
@@ -138,6 +145,12 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -
 ```
 
 The documentation runs the Python tools as `python3`. With the python.org installer for Windows, which provides `python.exe` and the `py` launcher but no `python3.exe`, `python3` resolves to the Microsoft Store alias in `WindowsApps`, which prints `Python was not found` and exits with code 9009 (49 in Git Bash). Installs that provide `python3.exe`, such as the Python Install Manager, are not affected. In that case run these commands with `python` or `py -3`, for example `py -3 tools/check_conventions.py`.
+
+If `windres` reports `preprocessing failed` and Windows prints the first part of the WinLibs installation path as an unrecognized command, `windres` may be splitting the path to its preprocessor at a space. This can occur when WinLibs GCC 15.2.0 r7 is installed in a directory with spaces. With the selected WinLibs `bin` directory first on `PATH`, append the following argument to the CMake configure command.
+
+```powershell
+'-DCMAKE_RC_FLAGS=--preprocessor=gcc.exe --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED'
+```
 
 If the build stops with `fatal error: opening dependency file ...\*.cpp.obj.d: No such file or directory` for a few sources with long names, the path of an object or dependency file under `build` is at or near the 260-character Windows limit. A checkout whose path was 92 characters failed this way with `LongPathsEnabled` set to 1 in the registry; the same tree at `C:\a5` built. Clone the repository to a short path such as `C:\a5` and configure in a new build directory: a CMake build tree stores absolute paths, so moving an existing `build` directory does not help.
 
@@ -515,7 +528,7 @@ Changed-test selection uses the configured CMake target sources. Windows CI repl
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
-- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
+- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything. It prints a JSON object with `added`, `removed` and `changed` lists. Exit status 0 means the recognized checks match, 1 means they differ, and 2 means the command could not read or compare the inputs.
 
 ## Public-header archives
 

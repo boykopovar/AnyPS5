@@ -1,7 +1,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -20,9 +22,13 @@ constexpr int WhichIrq = 4;
 constexpr int WhichJail = 5;
 constexpr int WhichDomain = 6;
 
+constexpr int Eperm = 1;
 constexpr int Esrch = 3;
+constexpr int Edeadlk = 11;
 constexpr int Efault = 14;
 constexpr int Einval = 22;
+
+constexpr std::uint64_t RootMask = 0xffff;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -32,6 +38,77 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 int Error() {
     return *__error_nid_postfix();
+}
+
+std::uint64_t Affinity(int level, int which, std::int64_t id) {
+    std::uint64_t mask[2] = {~0ull, ~0ull};
+    Require(cpuset_getaffinity_nid_postfix(level, which, id, sizeof(mask), mask) == 0 && mask[1] == 0);
+    return mask[0];
+}
+
+bool SetAffinity(int level, int which, std::int64_t id, std::uint64_t value) {
+    const std::uint64_t mask[2] = {value, 0};
+    return cpuset_setaffinity_nid_postfix(level, which, id, sizeof(mask), mask) == 0;
+}
+
+template <typename Call> bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void NumberedSetAffinity() {
+    const std::uint64_t available = sceKernelGetAvailableCpumask();
+    const std::uint64_t lowest = available & (~available + 1);
+    Require(Affinity(LevelCpuset, WhichProcess, -1) == available);
+    for (const int level : {LevelRoot, LevelCpuset, LevelWhich}) {
+        const std::uint64_t own = level == LevelRoot ? RootMask : available;
+        Require(Affinity(level, WhichCpuset, 0) == RootMask);
+        Require(Affinity(level, WhichCpuset, 1) == own);
+        Require(Affinity(level, WhichCpuset, 4294967296LL + 1) == own);
+        Require(Affinity(level, WhichCpuset, -4294967296LL) == RootMask);
+        for (const std::int64_t missing : {std::int64_t{999999}, std::int64_t{4294967295LL}, std::int64_t{-2}}) {
+            std::uint64_t untouched[1] = {0x5a};
+            Require(cpuset_getaffinity_nid_postfix(level, WhichCpuset, missing, 8, untouched) == -1 && Error() == Esrch && untouched[0] == 0x5a);
+            Require(cpuset_getaffinity_nid_postfix(level, WhichCpuset, missing, 8, nullptr) == -1 && Error() == Esrch);
+            Require(!SetAffinity(level, WhichCpuset, missing, available) && Error() == Esrch);
+        }
+        Require(!SetAffinity(level, WhichCpuset, 0, available) && Error() == Eperm);
+        Require(!SetAffinity(level, WhichCpuset, 0, 0) && Error() == Eperm);
+    }
+    Require(!SetAffinity(LevelRoot, WhichCpuset, 1, available) && Error() == Eperm);
+    Require(!SetAffinity(LevelWhich, WhichCpuset, -1, 0) && Error() == Edeadlk);
+    Require(Affinity(LevelCpuset, WhichProcess, -1) == available);
+    Require(SetAffinity(LevelWhich, WhichCpuset, -1, lowest));
+    Require(Affinity(LevelCpuset, WhichProcess, -1) == lowest);
+    Require(Affinity(LevelWhich, WhichCpuset, 1) == lowest);
+    Require(Affinity(LevelWhich, WhichThread, -1) == lowest);
+    Require(SetAffinity(LevelWhich, WhichCpuset, 1, available));
+    Require(Affinity(LevelWhich, WhichCpuset, -1) == available);
+    Require(Affinity(LevelWhich, WhichThread, -1) == available);
+    Require(SetAffinity(LevelCpuset, WhichCpuset, 4294967296LL + 1, lowest));
+    Require(Affinity(LevelCpuset, WhichThread, -1) == lowest);
+    Require(SetAffinity(LevelCpuset, WhichCpuset, -1, available));
+    Require(Affinity(LevelCpuset, WhichProcess, -1) == available);
+}
+
+void VacatedSetAffinity(int current) {
+    const std::uint64_t available = sceKernelGetAvailableCpumask();
+    const std::uint64_t lowest = available & (~available + 1);
+    Require(Affinity(LevelWhich, WhichCpuset, current) == available);
+    Require(Affinity(LevelRoot, WhichCpuset, current) == RootMask);
+    Require(SetAffinity(LevelWhich, WhichCpuset, current, lowest));
+    Require(Affinity(LevelCpuset, WhichProcess, -1) == lowest);
+    Require(SetAffinity(LevelWhich, WhichCpuset, current, available));
+    Require(Affinity(LevelRoot, WhichCpuset, 1) == RootMask);
+    Require(!SetAffinity(LevelRoot, WhichCpuset, 1, available) && Error() == Eperm);
+    Require(Throws([] { Affinity(LevelCpuset, WhichCpuset, 1); }));
+    Require(Throws([] { Affinity(LevelWhich, WhichCpuset, 1); }));
+    Require(Throws([&] { SetAffinity(LevelCpuset, WhichCpuset, 1, available); }));
+    Require(Throws([&] { SetAffinity(LevelWhich, WhichCpuset, 1, available); }));
 }
 
 } // namespace
@@ -44,10 +121,12 @@ int main() {
     int initialSet = -1;
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, &initialSet) == 0);
     Require(initialSet == 1);
+    NumberedSetAffinity();
 
     int set1 = -1;
     Require(cpuset_nid_postfix(&set1) == 0);
     Require(set1 >= 2);
+    VacatedSetAffinity(set1);
 
     int currentSet = -1;
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, &currentSet) == 0);

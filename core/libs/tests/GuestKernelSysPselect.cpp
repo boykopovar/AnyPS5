@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <thread>
 
 namespace {
 
@@ -59,6 +60,18 @@ int caught = 0;
 
 void APS5_VABI Count(int) {
     ++caught;
+}
+
+struct DelayedSender {
+    Pthread target = nullptr;
+    int result = -1;
+};
+
+void* APS5_VABI SendAfterDelay(void* argument) {
+    auto& sender = *static_cast<DelayedSender*>(argument);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    sender.result = pthread_kill_nid_postfix(sender.target, SigUsr1);
+    return nullptr;
 }
 
 void RaiseBlocked(const SignalSet& blocked) {
@@ -130,6 +143,25 @@ int main() {
     }
     Require(signal_nid_postfix(SigUsr1, Count) != reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1)));
     const SignalSet empty{};
+    {
+        Require(sigprocmask_nid_postfix(SigBlock, &blocked, nullptr) == 0);
+        DelayedSender sender{scePthreadSelf()};
+        Pthread signaler = nullptr;
+        Require(scePthreadCreate(&signaler, nullptr, SendAfterDelay, &sender, nullptr) == 0);
+        DescriptorSet read{};
+        read.Add(writer);
+        const DescriptorSet original = read;
+        const Timespec limit{1, 0};
+        const auto start = std::chrono::steady_clock::now();
+        Require(pselect_nid_postfix(writer + 1, read.words.data(), nullptr, nullptr, &limit, &empty) == -1 && Error() == Eintr);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        Require(waited >= std::chrono::milliseconds(20) && waited < std::chrono::milliseconds(500));
+        Require(caught == 1 && read.words == original.words);
+        Require(scePthreadJoin(signaler, nullptr) == 0 && sender.result == 0);
+        Require(Same(CurrentMask(), blocked));
+        Require(sigprocmask_nid_postfix(SigSetmask, &empty, nullptr) == 0);
+        caught = 0;
+    }
     {
         RaiseBlocked(blocked);
         const SignalSet withUsr1 = CurrentMask();
