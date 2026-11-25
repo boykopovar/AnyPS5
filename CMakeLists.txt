@@ -816,6 +816,9 @@ if(BUILD_TESTING)
         add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_web_release.py)
         set_tests_properties(web_release PROPERTIES TIMEOUT 120)
+        add_test(NAME verify_release_assets COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_verify_release_assets.py)
+        set_tests_properties(verify_release_assets PROPERTIES TIMEOUT 30)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_web.py)
         set_tests_properties(web_library_assets PROPERTIES TIMEOUT 20)
