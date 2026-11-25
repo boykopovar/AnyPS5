@@ -2767,7 +2767,7 @@ std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuf
     const auto* args = indirect.args;
     const auto asCompute = MeshDrawRunsAsCompute(context, state);
     const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw, asCompute);
-    Require(!asCompute || indirect.path == IndirectDrawPath::Gpu || indirect.records.size() <= 1u, "a mesh-path indirect draw run as compute needs one resolved record per dispatch");
+    Require(!asCompute || indirect.records.size() <= 1u, "a mesh-path indirect draw run as compute needs one resolved record per dispatch");
     auto arguments = meshArgumentBuffer(context, restartTable);
     if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
         const std::array<std::uint32_t, 8> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal, rules.firstIgnored};
