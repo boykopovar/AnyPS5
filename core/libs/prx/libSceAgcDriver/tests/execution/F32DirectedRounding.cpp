@@ -182,8 +182,8 @@ int main(int argc, char** argv) {
         const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
         const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
         auto target = device->Target();
+        std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
         if (selectedInteger) {
-            std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
             std::erase(capabilities, 10u);
             target.supportedCapabilities = capabilities;
             target.featureDigestSealed = false;
