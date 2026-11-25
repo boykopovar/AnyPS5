@@ -1,112 +1,345 @@
 #include "prx/libSceNpSns/include/Api.hpp"
-#include <cstdint>
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int kErrNotInitialized = static_cast<int>(0x80550002);
+constexpr int kErrInvalidArg = static_cast<int>(0x80550003);
+constexpr int kErrOutOfMemory = static_cast<int>(0x80550005);
+constexpr int kErrInvalidSize = static_cast<int>(0x80550011);
+constexpr int kErrAborted = static_cast<int>(0x80550012);
+constexpr int kErrRequestMax = static_cast<int>(0x80550013);
+constexpr int kErrIdNotFound = static_cast<int>(0x80550014);
+
+constexpr int kErrFbUnknown = static_cast<int>(0x80552601);
+constexpr int kErrFbInvalidArg = static_cast<int>(0x80552602);
+constexpr int kErrFbAborted = static_cast<int>(0x80552606);
+constexpr int kErrFbNoConsent = static_cast<int>(0x80552607);
+
+constexpr int kErrYtUnknown = static_cast<int>(0x80552d01);
+constexpr int kErrYtInvalidArg = static_cast<int>(0x80552d02);
+constexpr int kErrYtRequestMax = static_cast<int>(0x80552d04);
+constexpr int kErrYtAborted = static_cast<int>(0x80552d06);
+constexpr int kErrYtNoConsent = static_cast<int>(0x80552d07);
+constexpr int kErrYtRefreshToken = static_cast<int>(0x80552d0a);
+constexpr int kErrYtUnlinked = static_cast<int>(0x80552d0b);
+
+constexpr int kErrIpmiBase = static_cast<int>(0x80559400);
+constexpr int kErrIpmiAlt = static_cast<int>(0x80559401);
+constexpr int kErrIpmiNoConsent = static_cast<int>(0x80559402);
+constexpr int kErrIpmiUnlinked = static_cast<int>(0x80559403);
+
+constexpr int kReqIdBase = 0x60000000;
+constexpr int kReqIdMax = 0x6fffffff;
+constexpr std::size_t kMaxIntRequests = 32;
+constexpr int kMaxServiceRequests = 16;
+
+constexpr std::uint64_t kTwitchParamSize = 0x30;
+constexpr std::size_t kTwitchReservedOffset = 0x0c;
+constexpr std::size_t kTwitchReservedSize = 0x20;
+
+constexpr std::uint64_t kYouTubeParamSize = 0xc30;
+constexpr std::size_t kYouTubeRequiredStrOffset = 0x0c;
+constexpr std::size_t kYouTubeReservedOffset = 0x0c0c;
+constexpr std::size_t kYouTubeReservedSize = 0x20;
+
+struct RequestEntry {
+    int id = 0;
+    bool aborted = false;
+    bool inProgress = false;
+};
+
+std::atomic<bool> g_initialized{true};
+std::mutex g_requestMutex;
+std::vector<RequestEntry> g_requests;
+std::atomic<int> g_youtubeRequests{0};
+std::atomic<int> g_twitchRequests{0};
+
+bool IsZeroRange(const std::uint8_t* data, std::size_t offset, std::size_t length) {
+    for (std::size_t i = 0; i < length; ++i) {
+        if (data[offset + i] != 0) return false;
+    }
+    return true;
+}
+
+int MapFacebookError(int err) {
+    if (err >= 0) return err;
+    if (err == kErrIpmiBase || err == kErrIpmiAlt || err == kErrIpmiUnlinked) return kErrFbUnknown;
+    if (err == kErrIpmiNoConsent) return kErrFbNoConsent;
+    if (err == kErrAborted) return kErrFbAborted;
+    if (err == kErrIdNotFound) return kErrFbInvalidArg;
+    return err;
+}
+
+int MapYouTubeError(int err) {
+    if (err >= 0) return err;
+    if (err == kErrAborted || err == kErrFbAborted) return kErrYtAborted;
+    if (err == kErrIdNotFound) return kErrYtInvalidArg;
+    if (err == kErrFbNoConsent || err == kErrIpmiNoConsent) return kErrYtNoConsent;
+    if (err == kErrIpmiBase) return kErrYtUnknown;
+    if (err == kErrIpmiAlt) return kErrYtRefreshToken;
+    if (err == kErrIpmiUnlinked) return kErrYtUnlinked;
+    return err;
+}
+
+int ValidateRequestForUse(int reqId) {
+    if (reqId == 0) return kErrIdNotFound;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    for (const auto& entry : g_requests) {
+        if (entry.id == reqId) {
+            if (entry.inProgress) return kErrInvalidArg;
+            if (entry.aborted) return kErrAborted;
+            return 0;
+        }
+    }
+    return kErrIdNotFound;
+}
+
+bool TryWriteZeroFlag(int* outFlag) {
+    if (outFlag == nullptr) return true;
+    const std::int32_t zero = 0;
+    return GuestCopyOut_nid_no_patch(outFlag, &zero, sizeof(zero));
+}
+
+}
+
 extern "C" {
 
-int APS5_VABI sceNpSnsFacebookAbortRequest() {
+int APS5_VABI sceNpSnsIntCreateRequest(void) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    if (g_requests.size() >= kMaxIntRequests) return kErrRequestMax;
+    int candidate = kReqIdBase + 1;
+    for (const auto& entry : g_requests) {
+        if (entry.id == candidate) {
+            if (candidate >= kReqIdMax) return kErrRequestMax;
+            ++candidate;
+        } else if (entry.id > candidate) {
+            break;
+        }
+    }
+    if (candidate > kReqIdMax) return kErrRequestMax;
+    RequestEntry entry;
+    entry.id = candidate;
+    auto it = std::lower_bound(g_requests.begin(), g_requests.end(), candidate,
+        [](const RequestEntry& lhs, int rhs) { return lhs.id < rhs; });
+    g_requests.insert(it, entry);
+    return candidate;
+}
+
+int APS5_VABI sceNpSnsIntDeleteRequest(int reqId) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (reqId == 0) return kErrIdNotFound;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    for (auto it = g_requests.begin(); it != g_requests.end(); ++it) {
+        if (it->id == reqId) {
+            g_requests.erase(it);
+            return 0;
+        }
+        if (it->id > reqId) break;
+    }
+    return kErrIdNotFound;
+}
+
+int APS5_VABI sceNpSnsIntAbortRequest(int reqId) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (reqId == 0) return kErrInvalidArg;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    for (auto& entry : g_requests) {
+        if (entry.id == reqId) {
+            entry.aborted = true;
+            return 0;
+        }
+        if (entry.id > reqId) break;
+    }
+    return kErrIdNotFound;
+}
+
+int APS5_VABI sceNpSnsIntFbGetTitleInfo(const void* arg1, const void* arg2, void* outInfo) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (arg1 == nullptr || arg2 == nullptr || outInfo == nullptr) return kErrInvalidArg;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntAbortRequest() {
+int APS5_VABI sceNpSnsIntLinkedStatus(int reqId, int userId, int serviceType, void* outStatus) {
+    static_cast<void>(userId);
+    static_cast<void>(serviceType);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (outStatus == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntCreateRequest() {
+int APS5_VABI sceNpSnsIntFbGetSystemAccessToken(int reqId, int userId, void* outToken) {
+    static_cast<void>(userId);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (outToken == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntDeleteRequest() {
+int APS5_VABI sceNpSnsIntTwGetSystemAccessToken(int reqId, int userId, void* outToken) {
+    static_cast<void>(userId);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (outToken == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntFbGetGameAccessToken() {
+int APS5_VABI sceNpSnsIntYtGetAccessToken(int reqId, int userId, const char* arg3, const char* arg4, int* outFlag, void* outBuf, void* outToken) {
+    static_cast<void>(userId);
+    static_cast<void>(arg4);
+    static_cast<void>(outBuf);
+    if (!TryWriteZeroFlag(outFlag)) return kErrInvalidArg;
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (arg3 == nullptr || outToken == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntFbGetGameAccessTokenAllowed() {
+int APS5_VABI sceNpSnsIntYtRefreshMasterToken(int reqId, int userId, const void* arg3) {
+    static_cast<void>(userId);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (arg3 == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntFbGetSystemAccessToken() {
+int APS5_VABI sceNpSnsIntUnlink(int reqId, int userId, int serviceType) {
+    static_cast<void>(userId);
+    static_cast<void>(serviceType);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntFbGetTitleInfo() {
+int APS5_VABI sceNpSnsIntFbGetGameAccessToken(int reqId, int userId, const void* arg3, const void* arg4, const void* arg5, int* outFlag, void* outBuf, void* outToken) {
+    static_cast<void>(userId);
+    static_cast<void>(arg3);
+    if (!TryWriteZeroFlag(outFlag)) return kErrInvalidArg;
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (outFlag == nullptr || outToken == nullptr || arg5 == nullptr || arg4 == nullptr || outBuf == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntLinkedStatus() {
+int APS5_VABI sceNpSnsIntFbGetGameAccessTokenAllowed(int reqId, int userId, const void* arg3, const void* arg4, const void* arg5, void* outAllowed) {
+    static_cast<void>(userId);
+    static_cast<void>(arg3);
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (arg4 == nullptr || arg5 == nullptr || outAllowed == nullptr) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntTwGetSystemAccessToken() {
+int APS5_VABI sceNpSnsFacebookAbortRequest(int reqId) {
+    return MapFacebookError(sceNpSnsIntAbortRequest(reqId));
+}
+
+int APS5_VABI sceNpSnsTwitchCreateRequest(void) {
+    int count = g_twitchRequests.load(std::memory_order_acquire);
+    if (count >= kMaxServiceRequests) return kErrRequestMax;
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    const int reqId = sceNpSnsIntCreateRequest();
+    if (reqId > 0) g_twitchRequests.fetch_add(1, std::memory_order_acq_rel);
+    return reqId;
+}
+
+int APS5_VABI sceNpSnsTwitchDeleteRequest(int reqId) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    const int ret = sceNpSnsIntDeleteRequest(reqId);
+    if (ret < 0) return ret;
+    int prev = g_twitchRequests.load(std::memory_order_acquire);
+    while (prev > 0 && !g_twitchRequests.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel)) {}
+    return 0;
+}
+
+int APS5_VABI sceNpSnsTwitchAbortRequest(int reqId) {
+    const int ret = sceNpSnsIntAbortRequest(reqId);
+    return ret < 0 ? ret : 0;
+}
+
+int APS5_VABI sceNpSnsTwitchGetAccessToken(int reqId, const void* param, void* outToken) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (param == nullptr || outToken == nullptr) return kErrInvalidArg;
+    std::array<std::uint8_t, kTwitchParamSize> localParam{};
+    std::uint64_t paramSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&paramSize, param, sizeof(paramSize))) return kErrInvalidArg;
+    if (paramSize != kTwitchParamSize) return kErrInvalidSize;
+    if (!GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size())) return kErrInvalidArg;
+    if (!IsZeroRange(localParam.data(), kTwitchReservedOffset, kTwitchReservedSize)) return kErrInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return reqStatus;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpSnsIntUnlink() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpSnsYouTubeCreateRequest(void) {
+    int count = g_youtubeRequests.load(std::memory_order_acquire);
+    if (count >= kMaxServiceRequests) return kErrYtRequestMax;
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    const int reqId = sceNpSnsIntCreateRequest();
+    if (reqId > 0) {
+        g_youtubeRequests.fetch_add(1, std::memory_order_acq_rel);
+        return reqId;
+    }
+    return MapYouTubeError(reqId);
 }
 
-int APS5_VABI sceNpSnsIntYtGetAccessToken() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpSnsYouTubeDeleteRequest(int reqId) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    const int ret = sceNpSnsIntDeleteRequest(reqId);
+    if (ret >= 0) {
+        int prev = g_youtubeRequests.load(std::memory_order_acquire);
+        while (prev > 0 && !g_youtubeRequests.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel)) {}
+        return ret;
+    }
+    return MapYouTubeError(ret);
 }
 
-int APS5_VABI sceNpSnsIntYtRefreshMasterToken() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpSnsYouTubeAbortRequest(int reqId) {
+    const int ret = sceNpSnsIntAbortRequest(reqId);
+    if (ret >= 0) return ret;
+    return MapYouTubeError(ret);
 }
 
-int APS5_VABI sceNpSnsTwitchAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsTwitchCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsTwitchDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsTwitchGetAccessToken() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsYouTubeAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsYouTubeCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsYouTubeDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSnsYouTubeGetAccessToken() {
+int APS5_VABI sceNpSnsYouTubeGetAccessToken(int reqId, const void* param, void* outToken) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (param == nullptr || outToken == nullptr) return kErrYtInvalidArg;
+    std::uint64_t paramSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&paramSize, param, sizeof(paramSize))) return kErrYtInvalidArg;
+    if (paramSize != kYouTubeParamSize) return kErrInvalidSize;
+    std::vector<std::uint8_t> localParam(kYouTubeParamSize);
+    if (!GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size())) return kErrYtInvalidArg;
+    if (!IsZeroRange(localParam.data(), kYouTubeReservedOffset, kYouTubeReservedSize)) return kErrYtInvalidArg;
+    if (localParam[kYouTubeRequiredStrOffset] == 0) return kErrYtInvalidArg;
+    const int reqStatus = ValidateRequestForUse(reqId);
+    if (reqStatus < 0) return MapYouTubeError(reqStatus);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
