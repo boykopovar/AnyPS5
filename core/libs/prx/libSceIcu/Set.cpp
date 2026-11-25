@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/uchar.h"
+#include "unicode/uset.h"
 #include "unicode/uniset.h"
 #include <array>
 #include <cerrno>
@@ -51,6 +52,27 @@ void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
     if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) NotImplemented_nid_no_patch(caller);
 }
 
+std::int32_t ReadError(std::int32_t* error, const char* caller) {
+    if (!error) APS5_INVALID_ARG_EX;
+    std::int32_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, error, sizeof(value))) NotImplemented_nid_no_patch(caller);
+    return value;
+}
+
+USerializedSet ReadSerialized(const USerializedSet* set, std::vector<std::uint16_t>& storage) {
+    if (!set) APS5_INVALID_ARG_EX;
+    USerializedSet result{};
+    if (!GuestCopyIn_nid_no_patch(&result, set, sizeof(result))) APS5_INVALID_ARG_EX;
+    if (result.length < 0 || result.bmpLength < 0 || result.bmpLength > result.length) APS5_INVALID_ARG_EX;
+    if (result.length > 0) {
+        if (!result.array) APS5_INVALID_ARG_EX;
+        storage.resize(static_cast<std::size_t>(result.length));
+        if (!GuestCopyIn_nid_no_patch(storage.data(), result.array, storage.size() * sizeof(std::uint16_t))) APS5_INVALID_ARG_EX;
+        result.array = storage.data();
+    }
+    return result;
+}
+
 }
 
 const USet* Icu::NativeSet(const USet* set) {
@@ -88,6 +110,13 @@ const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, 
 
 USet* APS5_VABI uset_openEmpty_nid_postfix() {
     return reinterpret_cast<USet*>(new (std::nothrow) GuestSet());
+}
+
+USet* APS5_VABI uset_open_nid_postfix(std::int32_t start, std::int32_t end) {
+    auto* set = new (std::nothrow) GuestSet();
+    if (!set) return nullptr;
+    set->owned.set(start, end);
+    return reinterpret_cast<USet*>(set);
 }
 
 USet* APS5_VABI uset_clone_nid_postfix(const USet* set) {
@@ -146,6 +175,26 @@ void APS5_VABI uset_addString_nid_postfix(USet* set, const char16_t* string, std
 
 void APS5_VABI uset_addAllCodePoints_nid_postfix(USet* set, const char16_t* string, std::int32_t length) {
     uset_addAllCodePoints(NativeSet(set), Text(string, length), length);
+}
+
+void APS5_VABI uset_applyIntPropertyValue_nid_postfix(USet* set, std::int32_t property, std::int32_t value,
+                                                       std::int32_t* error) {
+    const auto incoming = ReadError(error, __func__);
+    if (incoming > 0) return;
+    auto status = static_cast<UErrorCode>(incoming);
+    icu::UnicodeSet::fromUSet(NativeSet(set))->applyIntPropertyValue(static_cast<UProperty>(property), value, status);
+    if (status != incoming) WriteError(error, status, __func__);
+}
+
+void APS5_VABI uset_applyPropertyAlias_nid_postfix(USet* set, const char16_t* property, std::int32_t propertyLength,
+                                                    const char16_t* value, std::int32_t valueLength, std::int32_t* error) {
+    const auto incoming = ReadError(error, __func__);
+    if (incoming > 0) return;
+    auto status = static_cast<UErrorCode>(incoming);
+    icu::UnicodeString propertyName(Text(property, propertyLength), propertyLength);
+    icu::UnicodeString propertyValue(Text(value, valueLength), valueLength);
+    icu::UnicodeSet::fromUSet(NativeSet(set))->applyPropertyAlias(propertyName, propertyValue, status);
+    if (status != incoming) WriteError(error, status, __func__);
 }
 
 void APS5_VABI uset_clear_nid_postfix(USet* set) {
@@ -238,6 +287,94 @@ std::int32_t APS5_VABI uset_spanUTF8_nid_postfix(const USet* set, const char* te
         return 0;
     }
     return uset_spanUTF8(native, text, length, static_cast<USetSpanCondition>(condition));
+}
+
+std::int32_t APS5_VABI uset_spanBackUTF8_nid_postfix(const USet* set, const char* text, std::int32_t length,
+                                                      std::int32_t condition) {
+    const auto* native = Icu::NativeSet(set);
+    if (!text) {
+        if (length != 0) APS5_INVALID_ARG_EX;
+        return 0;
+    }
+    return uset_spanBackUTF8(native, text, length, static_cast<USetSpanCondition>(condition));
+}
+
+std::int32_t APS5_VABI uset_toPattern_nid_postfix(const USet* set, char16_t* result, std::int32_t capacity,
+                                                  std::int8_t escape, std::int32_t* error) {
+    const auto incoming = ReadError(error, __func__);
+    if (incoming > 0) return 0;
+    if (capacity < 0 || (!result && capacity != 0)) APS5_INVALID_ARG_EX;
+    std::vector<char16_t> output(result ? static_cast<std::size_t>(capacity) : 0u);
+    auto status = static_cast<UErrorCode>(incoming);
+    icu::UnicodeString pattern;
+    icu::UnicodeSet::fromUSet(Icu::NativeSet(set))->toPattern(pattern, escape);
+    const auto length = pattern.extract(output.data(), capacity, status);
+    if (result && capacity > 0 && !GuestCopyOut_nid_no_patch(result, output.data(), output.size() * sizeof(char16_t))) APS5_INVALID_ARG_EX;
+    if (status != incoming) WriteError(error, status, __func__);
+    return length;
+}
+
+std::int32_t APS5_VABI uset_serialize_nid_postfix(const USet* set, std::uint16_t* destination, std::int32_t capacity,
+                                                  std::int32_t* error) {
+    const auto incoming = ReadError(error, __func__);
+    if (incoming > 0) return 0;
+    if (capacity < 0 || (!destination && capacity != 0)) APS5_INVALID_ARG_EX;
+    std::vector<std::uint16_t> output(destination ? static_cast<std::size_t>(capacity) : 0u);
+    auto status = static_cast<UErrorCode>(incoming);
+    const auto length = uset_serialize(Icu::NativeSet(set), output.data(), capacity, &status);
+    if (destination && capacity > 0 && !GuestCopyOut_nid_no_patch(destination, output.data(), output.size() * sizeof(std::uint16_t))) APS5_INVALID_ARG_EX;
+    if (status != incoming) WriteError(error, status, __func__);
+    return length;
+}
+
+std::int8_t APS5_VABI uset_getSerializedSet_nid_postfix(USerializedSet* result, const std::uint16_t* source,
+                                                        std::int32_t length) {
+    if (!result) return 0;
+    USerializedSet serialized{};
+    if (!source || length <= 0) {
+        if (!GuestCopyOut_nid_no_patch(result, &serialized, sizeof(serialized))) APS5_INVALID_ARG_EX;
+        return 0;
+    }
+    std::vector<std::uint16_t> copy(static_cast<std::size_t>(length));
+    if (!GuestCopyIn_nid_no_patch(copy.data(), source, copy.size() * sizeof(std::uint16_t))) APS5_INVALID_ARG_EX;
+    const auto valid = uset_getSerializedSet(&serialized, copy.data(), length);
+    if (valid) serialized.array = source + (serialized.array - copy.data());
+    if (!GuestCopyOut_nid_no_patch(result, &serialized, sizeof(serialized))) APS5_INVALID_ARG_EX;
+    return valid;
+}
+
+void APS5_VABI uset_setSerializedToOne_nid_postfix(USerializedSet* result, std::int32_t codePoint) {
+    if (!result) return;
+    USerializedSet serialized{};
+    uset_setSerializedToOne(&serialized, codePoint);
+    serialized.array = result->staticArray;
+    if (!GuestCopyOut_nid_no_patch(result, &serialized, sizeof(serialized))) APS5_INVALID_ARG_EX;
+}
+
+std::int8_t APS5_VABI uset_serializedContains_nid_postfix(const USerializedSet* set, std::int32_t codePoint) {
+    std::vector<std::uint16_t> storage;
+    const auto serialized = ReadSerialized(set, storage);
+    return uset_serializedContains(&serialized, codePoint);
+}
+
+std::int32_t APS5_VABI uset_getSerializedRangeCount_nid_postfix(const USerializedSet* set) {
+    std::vector<std::uint16_t> storage;
+    const auto serialized = ReadSerialized(set, storage);
+    return uset_getSerializedRangeCount(&serialized);
+}
+
+std::int8_t APS5_VABI uset_getSerializedRange_nid_postfix(const USerializedSet* set, std::int32_t index,
+                                                          std::int32_t* start, std::int32_t* end) {
+    std::vector<std::uint16_t> storage;
+    const auto serialized = ReadSerialized(set, storage);
+    std::int32_t first = 0;
+    std::int32_t last = 0;
+    const auto valid = uset_getSerializedRange(&serialized, index, &first, &last);
+    if (valid) {
+        if (!start || !end) APS5_INVALID_ARG_EX;
+        if (!GuestCopyOut_nid_no_patch(start, &first, sizeof(first)) || !GuestCopyOut_nid_no_patch(end, &last, sizeof(last))) APS5_INVALID_ARG_EX;
+    }
+    return valid;
 }
 
 std::int32_t APS5_VABI uset_getItemCount_nid_postfix(const USet* set) {

@@ -21,6 +21,13 @@
 #include <unistd.h>
 #endif
 
+struct USerializedSet {
+    const std::uint16_t* array;
+    std::int32_t bmpLength;
+    std::int32_t length;
+    std::uint16_t staticArray[8];
+};
+
 namespace {
 
 constexpr std::int32_t Success = 0;
@@ -408,6 +415,68 @@ void AdditionalMutations() {
     uset_close_nid_postfix(set);
 }
 
+void PatternsAndSerialization() {
+    static_assert(std::is_same_v<decltype(&uset_open_nid_postfix), USet* (APS5_VABI*)(std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_toPattern_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, char16_t*, std::int32_t, std::int8_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&uset_applyIntPropertyValue_nid_postfix), void (APS5_VABI*)(USet*, std::int32_t, std::int32_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&uset_applyPropertyAlias_nid_postfix), void (APS5_VABI*)(USet*, const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&uset_spanBackUTF8_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, const char*, std::int32_t, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_serialize_nid_postfix), std::int32_t (APS5_VABI*)(const USet*, std::uint16_t*, std::int32_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&uset_getSerializedSet_nid_postfix), std::int8_t (APS5_VABI*)(USerializedSet*, const std::uint16_t*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_setSerializedToOne_nid_postfix), void (APS5_VABI*)(USerializedSet*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_serializedContains_nid_postfix), std::int8_t (APS5_VABI*)(const USerializedSet*, std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&uset_getSerializedRangeCount_nid_postfix), std::int32_t (APS5_VABI*)(const USerializedSet*)>);
+    static_assert(std::is_same_v<decltype(&uset_getSerializedRange_nid_postfix), std::int8_t (APS5_VABI*)(const USerializedSet*, std::int32_t, std::int32_t*, std::int32_t*)>);
+
+    USet* range = uset_open_nid_postfix('a', 'c');
+    Require(range && Items(range) == Ranges{{'a', 'c'}}, "open range");
+    std::int32_t error = Success;
+    const auto patternLength = uset_toPattern_nid_postfix(range, nullptr, 0, 0, &error);
+    Require(patternLength > 0 && error == BufferOverflow, "pattern preflight");
+    std::vector<char16_t> patternText(static_cast<std::size_t>(patternLength) + 1u);
+    error = Success;
+    Require(uset_toPattern_nid_postfix(range, patternText.data(), static_cast<std::int32_t>(patternText.size()), 0, &error) == patternLength &&
+            error == Success, "write pattern");
+    error = Success;
+    uset_applyIntPropertyValue_nid_postfix(range, 0, 1, &error);
+    Require(error == Success && uset_contains_nid_postfix(range, 'A') && !uset_contains_nid_postfix(range, '1'), "apply integer property");
+    error = Success;
+    uset_applyPropertyAlias_nid_postfix(range, u"gc", 2, u"Lu", 2, &error);
+    Require(error == Success && uset_contains_nid_postfix(range, 'A') && !uset_contains_nid_postfix(range, 'a'), "apply property alias");
+    uset_clear_nid_postfix(range);
+    uset_addRange_nid_postfix(range, 'a', 'z');
+    Require(uset_spanBackUTF8_nid_postfix(range, "12abc", 5, 1) == 2, "backward UTF-8 span");
+
+    error = Success;
+    const auto serializedLength = uset_serialize_nid_postfix(range, nullptr, 0, &error);
+    Require(serializedLength > 0 && error == BufferOverflow, "serialize preflight");
+    std::vector<std::uint16_t> serialized(static_cast<std::size_t>(serializedLength));
+    error = Success;
+    Require(uset_serialize_nid_postfix(range, serialized.data(), serializedLength, &error) == serializedLength && error == Success,
+            "serialize set");
+    USerializedSet view{};
+    Require(uset_getSerializedSet_nid_postfix(&view, serialized.data(), serializedLength) && view.array == serialized.data() + 1 &&
+            view.bmpLength == 2 && view.length == 2 && view.array[0] == 'a' && view.array[1] == 'z' + 1, "read serialized set");
+    std::int32_t start = 0, end = 0;
+    Require(uset_serializedContains_nid_postfix(&view, 'm') && !uset_serializedContains_nid_postfix(&view, '1') &&
+            uset_getSerializedRangeCount_nid_postfix(&view) == 1 &&
+            uset_getSerializedRange_nid_postfix(&view, 0, &start, &end) && start == 'a' && end == 'z', "query serialized set");
+    USerializedSet singleton{};
+    uset_setSerializedToOne_nid_postfix(&singleton, 0x1f600);
+    Require(singleton.array == singleton.staticArray && singleton.bmpLength == 0 && singleton.length == 4 &&
+            singleton.staticArray[0] == 1 && singleton.staticArray[1] == 0xf600 && singleton.staticArray[2] == 1 &&
+            singleton.staticArray[3] == 0xf601, "serialized singleton");
+
+    error = Success;
+    Require(Rejects([&] { uset_toPattern_nid_postfix(range, nullptr, 1, 0, &error); }), "null pattern output");
+    Require(Rejects([&] { uset_serialize_nid_postfix(range, nullptr, 1, &error); }), "null serialization output");
+    Require(!uset_getSerializedSet_nid_postfix(nullptr, serialized.data(), serializedLength), "null serialized destination");
+    Require(Rejects([] { uset_serializedContains_nid_postfix(nullptr, 'a'); }), "null serialized query");
+    Require(Rejects([] { uset_getSerializedRangeCount_nid_postfix(nullptr); }), "null serialized range count");
+    uset_setSerializedToOne_nid_postfix(nullptr, 'a');
+    uset_close_nid_postfix(range);
+}
+
 void ItemAccess() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_addRange_nid_postfix(set, 0x41, 0x5a);
@@ -524,6 +593,7 @@ int main() {
     AdditionalOperations();
     AdditionalQueries();
     AdditionalMutations();
+    PatternsAndSerialization();
     ItemAccess();
     InvalidSets();
     Random();
