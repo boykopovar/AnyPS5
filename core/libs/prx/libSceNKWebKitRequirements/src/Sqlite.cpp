@@ -3,7 +3,6 @@
 
 #include <sqlite3.h>
 
-#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <new>
@@ -446,21 +445,15 @@ int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, in
     static_cast<void>(vfs);
     if (!db) return SQLITE_MISUSE;
     sqlite3* localDb = nullptr;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(db, sizeof(localDb));
-    errno = savedErrno;
     if (!writable) return SQLITE_MISUSE;
     const int ready = InitializeGuestVfs();
     if (ready != SQLITE_OK) {
-        const int copyErrno = errno;
         GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
-        errno = copyErrno;
         return ready;
     }
     const int result = sqlite3_open_v2(filename, &localDb, flags, nullptr);
-    const int copyErrno = errno;
     const bool copiedOut = GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
-    errno = copyErrno;
     if (!copiedOut) {
         if (localDb) sqlite3_close(localDb);
         return SQLITE_MISUSE;
