@@ -1,6 +1,5 @@
 #include "prx/libScePlayReady/include/Api.hpp"
 #include <array>
-#include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstddef>
@@ -26,9 +25,7 @@ void InitializeInitParams(void* params) {
     std::array<unsigned char, InitParamsSize> bytes{};
     std::memcpy(bytes.data(), &InitParamsMagic, sizeof(InitParamsMagic));
     std::memcpy(bytes.data() + sizeof(InitParamsMagic), &InitParamsVersion, sizeof(InitParamsVersion));
-    const auto savedErrno = errno;
     GuestCopyOut_nid_no_patch(params, bytes.data(), bytes.size());
-    errno = savedErrno;
 }
 
 } // namespace
@@ -53,9 +50,7 @@ int APS5_VABI sceBufferFree() {
 void APS5_VABI sceBufferInit(void* buffer) {
     if (buffer == nullptr) return;
     const std::array<unsigned char, BufferSize> zeros{};
-    const auto savedErrno = errno;
     GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size());
-    errno = savedErrno;
 }
 
 int APS5_VABI sceBufferRealloc() {
@@ -82,12 +77,9 @@ int APS5_VABI scePlayReadyApiStop() {
 
 int APS5_VABI scePlayReadyApiVersion(uint32_t index, uint64_t* version) {
     if (index >= std::size(ApiVersions) || version == nullptr) return PlayReadyInvalidArgument;
-    const auto savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(version, ApiVersions[index], sizeof(ApiVersions[index]))) {
-        errno = savedErrno;
         return PlayReadyInvalidArgument;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -115,12 +107,9 @@ int APS5_VABI scePlayReadyBufferFree() {
 int APS5_VABI scePlayReadyBufferInit(void* buffer) {
     if (buffer == nullptr) return PlayReadyInvalidArgument;
     const std::array<unsigned char, BufferSize> zeros{};
-    const auto savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size())) {
-        errno = savedErrno;
         return PlayReadyInvalidArgument;
     }
-    errno = savedErrno;
     return 0;
 }
 
