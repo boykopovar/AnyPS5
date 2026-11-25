@@ -175,6 +175,11 @@ int main() {
     Require(sceRazorCpuInitDataTags(storage, 96) == 0);
     for (std::size_t i = 0; i < 96; ++i) Require(storage[i] == 0);
     for (std::size_t i = 96; i < sizeof(storage); ++i) Require(storage[i] == 0x5a);
+    Require(sceRazorCpuGetDataTagStorageSize(2) == 192);
+    std::memset(storage, 0x5a, sizeof(storage));
+    Require(sceRazorCpuInitDataTags(storage, 192) == 0);
+    for (std::size_t i = 0; i < 192; ++i) Require(storage[i] == 0);
+    for (std::size_t i = 192; i < sizeof(storage); ++i) Require(storage[i] == 0x5a);
 
     Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x8058000c));
     Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x8058000c));
