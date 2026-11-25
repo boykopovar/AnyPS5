@@ -75,6 +75,17 @@ class ReplayTests(unittest.TestCase):
 
 
 class KnownTests(unittest.TestCase):
+    def test_write_known_preserves_a_reason_with_embedded_and_trailing_tabs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            row = "a\tdiff\tfirst\tsecond\t\n"
+            path.write_text(row, encoding="utf-8")
+            known = library_oracle.load_known(path)
+            library_oracle.write_known(path, known, {}, set())
+            self.assertEqual(known["a"], ("diff", "first\tsecond\t"))
+            self.assertEqual(path.read_text(encoding="utf-8"), row)
+
+
     def test_classify_separates_new_known_and_now_matching_findings(self):
         known = {"a": ("diff", "#1"), "b": ("crash", "#2"), "c": ("diff", "#3"), "e": ("crash", "#4"), "s": ("skip", "env")}
         findings = {"a": ("diff", "x"), "b": ("diff", "y"), "d": ("hang", "z"), "e": ("hang", "w")}
