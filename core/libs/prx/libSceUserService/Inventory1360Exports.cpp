@@ -1,63 +1,202 @@
 #include "SceTypes.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include "prx/libSceUserService/include/Exports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <mutex>
+#include <string>
+
+namespace {
+
+constexpr std::size_t kPartyGameIconInstallHistoryMaxSize = 0x400;
+
+struct UserSettings1360 {
+    std::uint32_t notificationSettings4{};
+    std::int32_t a11yControllerInitialSetupProgress{};
+    std::int32_t a11yControllerLedBrightness{};
+    std::int32_t accessibilityKeyremapEnableAston{};
+    std::int32_t hmd2CinematicAudioRotation{};
+    std::int32_t hmd2HideCameraImage{};
+    std::int32_t isPersonalizedHrtfEnabled{};
+    std::uint64_t proControllerBtAddress{};
+    std::string partyGameIconInstallHistory;
+};
+
+std::mutex g_settings1360Mutex;
+std::array<UserSettings1360, USER_SERVICE_MAX_USERS> g_userSettings1360{};
+std::int32_t g_hearingAssistUserId = USER_SERVICE_USER_ID_INVALID;
+
+bool IsUserServiceInitialized() {
+    return sceUserServiceRegisterEventCallback(nullptr, nullptr) != USER_SERVICE_ERROR_NOT_INITIALIZED;
+}
+
+int UserSlotIndex(std::int32_t userId) {
+    if (userId >= USER_SERVICE_INITIAL_USER_ID && userId < USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS) {
+        return userId - USER_SERVICE_INITIAL_USER_ID;
+    }
+    return -1;
+}
+
+template <typename FieldPtr, typename ValueType>
+int SetUserSetting32(std::int32_t userId, FieldPtr field, ValueType value) {
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    const int index = UserSlotIndex(userId);
+    if (index < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    std::lock_guard lock(g_settings1360Mutex);
+    g_userSettings1360[index].*field = value;
+    return USER_SERVICE_OK;
+}
+
+}
 
 extern "C" {
 
-int APS5_VABI sceUserServiceGetNotificationSettings_4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceGetNotificationSettings_4_nid_no_patch(std::int32_t userId, std::uint32_t* settings) {
+    if (settings == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    const int index = UserSlotIndex(userId);
+    if (index < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    std::uint32_t value{};
+    {
+        std::lock_guard lock(g_settings1360Mutex);
+        value = g_userSettings1360[index].notificationSettings4;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(settings, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 APS5_EXPORT("yUJo-ds9Rks", sceUserServiceGetNotificationSettings_4_nid_no_patch);
 
-int APS5_VABI sceUserServiceGetPartyGameIconInstallHistory_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceGetPartyGameIconInstallHistory_nid_no_patch(std::int32_t userId, char* history, std::size_t size) {
+    const std::size_t clampedSize = std::min(size, kPartyGameIconInstallHistoryMaxSize);
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    if (history == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int index = UserSlotIndex(userId);
+    if (index < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    if (clampedSize == 0) {
+        return USER_SERVICE_OK;
+    }
+    std::string stored;
+    {
+        std::lock_guard lock(g_settings1360Mutex);
+        stored = g_userSettings1360[index].partyGameIconInstallHistory;
+    }
+    std::array<char, kPartyGameIconInstallHistoryMaxSize> buffer{};
+    const std::size_t copyLen = std::min(stored.size(), clampedSize - 1);
+    if (copyLen > 0) {
+        std::memcpy(buffer.data(), stored.data(), copyLen);
+    }
+    buffer[copyLen] = '\0';
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(history, buffer.data(), copyLen + 1);
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 APS5_EXPORT("2Sr4VoLCSNI", sceUserServiceGetPartyGameIconInstallHistory_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetA11yControllerInitialSetupProgress_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetA11yControllerInitialSetupProgress_nid_no_patch(std::int32_t userId, std::int32_t progress) {
+    return SetUserSetting32(userId, &UserSettings1360::a11yControllerInitialSetupProgress, progress);
 }
 APS5_EXPORT("P+pOA+RRvF8", sceUserServiceSetA11yControllerInitialSetupProgress_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetA11yControllerLedBrightness_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetA11yControllerLedBrightness_nid_no_patch(std::int32_t userId, std::int32_t brightness) {
+    return SetUserSetting32(userId, &UserSettings1360::a11yControllerLedBrightness, brightness);
 }
 APS5_EXPORT("Aspwt4NNVto", sceUserServiceSetA11yControllerLedBrightness_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetAccessibilityKeyremapEnableAston() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetAccessibilityKeyremapEnableAston(std::int32_t userId, std::int32_t enabled) {
+    return SetUserSetting32(userId, &UserSettings1360::accessibilityKeyremapEnableAston, enabled);
 }
 
-int APS5_VABI sceUserServiceSetHmd2CinematicAudioRotation() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetHmd2CinematicAudioRotation(std::int32_t userId, std::int32_t rotation) {
+    return SetUserSetting32(userId, &UserSettings1360::hmd2CinematicAudioRotation, rotation);
 }
 
-int APS5_VABI sceUserServiceSetHmd2HideCameraImage_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetHmd2HideCameraImage_nid_no_patch(std::int32_t userId, std::int32_t hide) {
+    return SetUserSetting32(userId, &UserSettings1360::hmd2HideCameraImage, hide);
 }
 APS5_EXPORT("jNsBCHVryzs", sceUserServiceSetHmd2HideCameraImage_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetIsPersonalizedHrtfEnabled() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetIsPersonalizedHrtfEnabled(std::int32_t userId, std::int32_t enabled) {
+    return SetUserSetting32(userId, &UserSettings1360::isPersonalizedHrtfEnabled, enabled);
 }
 
-int APS5_VABI sceUserServiceSetNotificationSettings_4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetNotificationSettings_4_nid_no_patch(std::int32_t userId, std::uint32_t settings) {
+    return SetUserSetting32(userId, &UserSettings1360::notificationSettings4, settings);
 }
 APS5_EXPORT("9Azht0PAl5Y", sceUserServiceSetNotificationSettings_4_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetPartyGameIconInstallHistory_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetPartyGameIconInstallHistory_nid_no_patch(std::int32_t userId, const char* history) {
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    if (history == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    std::string guestHistory;
+    const int savedErrno = errno;
+    const int copyResult = CopyGuestString_nid_no_patch(history, kPartyGameIconInstallHistoryMaxSize, guestHistory);
+    errno = savedErrno;
+    if (copyResult != 0) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int index = UserSlotIndex(userId);
+    if (index < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    std::lock_guard lock(g_settings1360Mutex);
+    g_userSettings1360[index].partyGameIconInstallHistory = std::move(guestHistory);
+    return USER_SERVICE_OK;
 }
 APS5_EXPORT("i9shhWDcEao", sceUserServiceSetPartyGameIconInstallHistory_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetProControllerBtAddress_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetProControllerBtAddress_nid_no_patch(std::int32_t userId, std::uint64_t btAddress) {
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    const int index = UserSlotIndex(userId);
+    if (index < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    std::lock_guard lock(g_settings1360Mutex);
+    g_userSettings1360[index].proControllerBtAddress = btAddress;
+    return USER_SERVICE_OK;
 }
 APS5_EXPORT("aKx9SVQFoXo", sceUserServiceSetProControllerBtAddress_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetUserWithHearingAssist() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceUserServiceSetUserWithHearingAssist(std::int32_t userId) {
+    if (!IsUserServiceInitialized()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    if (userId != USER_SERVICE_USER_ID_INVALID && UserSlotIndex(userId) < 0) {
+        return USER_SERVICE_ERROR_UNKNOWN_USER;
+    }
+    std::lock_guard lock(g_settings1360Mutex);
+    g_hearingAssistUserId = userId;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI libSceUserServiceUnknown_0VWuaS7yx4Q_nid_no_patch() {
