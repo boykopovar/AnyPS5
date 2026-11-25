@@ -876,6 +876,38 @@ class CtestResolutionsTests(unittest.TestCase):
         self.assertEqual(self.resolve([]), {})
 
 
+class NinjaBuildTimings(unittest.TestCase):
+    def test_only_lists_the_ten_slowest_new_commands_after_log_compaction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            log = build / ".ninja_log"
+            header = b"# ninja log v7\n"
+            old = b"1\t9000\t123\told.obj\t1a\n"
+            log.write_bytes(header + old * 2)
+            previous = build_changed_guest_tests.ninja_log_entries(build)
+            rows = [f"5\t{5 + i}\t123\tstep {i}.obj\t{i:x}\n".encode() for i in range(12)]
+            log.write_bytes(header + old + b"".join(rows) + b"5\t16\t124\tsecond output.lib\tb\n"
+                            + b"99\t0\t123\tbackwards.obj\tc\n" + b"0\t99000\t123\tpartial.obj\td")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                build_changed_guest_tests.report_libs_ninja_steps(build, previous)
+            self.assertEqual(output.getvalue().splitlines(),
+                             [f"[ci-timing] libs Ninja step: {i} ms 'step {i}.obj'" for i in range(11, 1, -1)])
+
+    def test_failed_libs_build_still_reports_completed_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            def fail_build(cmd, **kwargs):
+                (build / ".ninja_log").write_bytes(b"# ninja log v5\n3\t15\t23\tcompleted.obj\tab\n")
+                raise subprocess.CalledProcessError(7, cmd)
+            output = io.StringIO()
+            with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=fail_build), \
+                    contextlib.redirect_stdout(output), self.assertRaises(subprocess.CalledProcessError) as error:
+                build_changed_guest_tests.run(build, [], {})
+            self.assertEqual(error.exception.returncode, 7)
+            self.assertIn("[ci-timing] libs Ninja step: 12 ms 'completed.obj'", output.getvalue())
+
+
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()

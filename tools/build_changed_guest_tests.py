@@ -1,5 +1,5 @@
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 import json
 import os
 from pathlib import Path
@@ -38,6 +38,38 @@ def report_compiler_cache():
         subprocess.run(["ccache", "--show-stats"], check=False)
     except OSError:
         pass
+
+
+def ninja_log_entries(build_dir):
+    try:
+        with (build_dir / ".ninja_log").open("rb") as log:
+            if log.readline().rstrip() in (b"# ninja log v5", b"# ninja log v6", b"# ninja log v7"):
+                return Counter(log)
+    except FileNotFoundError:
+        return Counter()
+    except OSError:
+        pass
+    return None
+
+
+def report_libs_ninja_steps(build_dir, previous):
+    if previous is None:
+        return
+    current = ninja_log_entries(build_dir)
+    if current is None:
+        return
+    steps = {}
+    for line in current - previous:
+        match = re.fullmatch(rb"(\d{1,10})\t(\d{1,10})\t-?\d+\t([^\t\r\n]+)\t([0-9a-fA-F]+)\r?\n", line)
+        if not match:
+            continue
+        start, end, output, command_hash = match.groups()
+        elapsed = int(end) - int(start)
+        if elapsed >= 0:
+            steps.setdefault((start, end, command_hash), (elapsed, output))
+    for elapsed, output in sorted(steps.values(), reverse=True)[:10]:
+        name = output.decode("utf-8", errors="backslashreplace")
+        print(f"[ci-timing] libs Ninja step: {elapsed} ms {name!a}", flush=True)
 
 
 def reaches_libs(changed):
@@ -221,11 +253,13 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
 
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     total = time.perf_counter()
+    previous = ninja_log_entries(build_dir)
     started = time.perf_counter()
     try:
         subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     finally:
         phase_report("build libs", started)
+        report_libs_ninja_steps(build_dir, previous)
     indices = set()
     if script_tests:
         started = time.perf_counter()
