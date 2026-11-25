@@ -4,7 +4,7 @@ import {keyNames} from './keys.js';
 export const settings = [
     {name: 'LeftStickDeadzone', kind: 'percent', minimum: 0, maximum: 90, builtin: '0'},
     {name: 'RightStickDeadzone', kind: 'percent', minimum: 0, maximum: 90, builtin: '0'},
-    {name: 'MouseSensitivity', kind: 'sensitivity', minimum: 0, maximum: 10, builtin: '1'},
+    {name: 'MouseSensitivity', minimum: 0, minimumExclusive: true, maximum: 10, builtin: '1'},
     {name: 'MouseVerticalScale', minimum: 0.1, maximum: 10, builtin: '1'},
     {name: 'MouseCurve', minimum: 0.2, maximum: 5, builtin: '1'},
     {name: 'MouseDeadzoneOffset', minimum: 0, maximum: 0.9, builtin: '0.2'},
@@ -45,8 +45,8 @@ export function settingValue(setting, value) {
         return '';
     }
     const parsed = numberPattern.test(text) ? Number(text) : undefined;
-    if (setting.kind === 'sensitivity') {
-        if (parsed === undefined || !Number.isFinite(parsed) || !(parsed > 0) || parsed > 10) return `${setting.name} must be a number greater than 0 and at most 10.`;
+    if (setting.minimumExclusive) {
+        if (!Number.isFinite(parsed) || parsed <= setting.minimum || parsed > setting.maximum) return `${setting.name} must be a number greater than ${setting.minimum} and at most ${setting.maximum}.`;
         return '';
     }
     if (setting.kind === 'stickTarget') {
