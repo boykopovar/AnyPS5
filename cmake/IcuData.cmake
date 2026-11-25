@@ -30,6 +30,7 @@ ExternalProject_Add(icu_host_tools
     BINARY_DIR ${icu_host_dir}
     CMAKE_ARGS ${icu_host_compilers}
         -DICU_SOURCE_DIR=${ICU_SOURCE_DIR}
+        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
         -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}

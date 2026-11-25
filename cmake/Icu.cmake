@@ -185,6 +185,7 @@ add_library(icu_i18n STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/i18n/ucol.cpp
     ${ICU_SOURCE_DIR}/i18n/ucol_res.cpp
     ${ICU_SOURCE_DIR}/i18n/ucoleitr.cpp
+    ${ICU_SOURCE_DIR}/i18n/usearch.cpp
     ${ICU_SOURCE_DIR}/i18n/ucsdet.cpp
     ${ICU_SOURCE_DIR}/i18n/uitercollationiterator.cpp
     ${ICU_SOURCE_DIR}/i18n/utf16collationiterator.cpp
