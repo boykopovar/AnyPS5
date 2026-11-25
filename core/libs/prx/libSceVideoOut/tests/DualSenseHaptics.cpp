@@ -2,10 +2,13 @@
 #include "prx/libScePad/include/PadHapticBuffer.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -131,6 +134,66 @@ void ReportsArePaced() {
     Require(DualSenseHaptics::NextReport(next, resumed) == resumed, "a report after a pause goes out at once, without a catch-up burst");
 }
 
+std::uint32_t ComputeExpectedCrc32(std::span<const std::uint8_t> report) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    const auto feed = [&crc](std::uint8_t byte) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 1u) != 0 ? (crc >> 1u) ^ 0xEDB88320u : crc >> 1u;
+        }
+    };
+    feed(0xA2);
+    for (std::size_t index = 0; index + 4 < report.size(); ++index) {
+        feed(report[index]);
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+bool HasValidCrcTrailer(std::span<const std::uint8_t> report) {
+    if (report.size() < 4) return false;
+    const std::uint32_t expected = ComputeExpectedCrc32(report);
+    for (std::size_t index = 0; index < 4; ++index) {
+        if (report[report.size() - 4 + index] != static_cast<std::uint8_t>(expected >> (8u * index))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void CheckHapticsSignBounds() {
+    for (std::size_t len = 0; len < 4; ++len) {
+        std::array<std::uint8_t, 16> backing{};
+        backing.fill(0xA5);
+        const std::array<std::uint8_t, 16> expected = backing;
+        bool threw = false;
+        try {
+            DualSenseHaptics::Sign(std::span<std::uint8_t>(backing.data() + 4, len));
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "Sign rejects reports shorter than 4 bytes");
+        Require(backing == expected, "Sign leaves short report backing buffer untouched");
+    }
+
+    std::array<std::uint8_t, 4> exact4{0x11, 0x22, 0x33, 0x44};
+    DualSenseHaptics::Sign(exact4);
+    Require(HasValidCrcTrailer(exact4), "Sign writes valid CRC trailer for 4-byte buffer");
+
+    std::array<std::uint8_t, 5> report5{0x31, 0x10, 0x20, 0x30, 0x40};
+    DualSenseHaptics::Sign(report5);
+    Require(report5[0] == 0x31 && HasValidCrcTrailer(report5), "Sign writes valid CRC trailer for 5-byte buffer");
+
+    const auto power = DualSenseHaptics::PowerReport(1);
+    Require(power[0] == 0x31 && power[1] == 0x10 && HasValidCrcTrailer(power), "PowerReport produces valid CRC trailer");
+
+    std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};
+    samples[0] = 12;
+    samples[DualSenseHaptics::SamplesBytes - 1] = -7;
+    const auto haptics = DualSenseHaptics::Report(1, 2, samples);
+    Require(haptics[0] == 0x32 && haptics[1] == 0x10 && haptics[10] == 2, "Report preserves header fields");
+    Require(static_cast<std::int8_t>(haptics[DualSenseHaptics::SamplesOffset]) == 12 && HasValidCrcTrailer(haptics), "Report produces valid CRC trailer");
+}
+
 }
 
 int main() {
@@ -141,6 +204,7 @@ int main() {
     BufferFollowsTheInputRate();
     BufferScalesByRumblePercent();
     ReportsArePaced();
+    CheckHapticsSignBounds();
     std::puts("dualsense haptics tests passed");
     return 0;
 }

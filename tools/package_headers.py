@@ -9,8 +9,6 @@ import tarfile
 import tempfile
 import zipfile
 
-from nid_names import CPP_TOKEN
-
 
 SYSTEM_HEADERS = frozenset("""algorithm any array atomic barrier bit bitset cassert ccomplex cctype cerrno cfenv cfloat charconv chrono
 cinttypes ciso646 climits clocale cmath codecvt compare complex concepts condition_variable coroutine
@@ -26,6 +24,110 @@ threads.h time.h uchar.h wchar.h wctype.h
 cxxabi.h dispatch/dispatch.h io.h link.h semaphore.h stdio_ext.h sys/uio.h unistd.h xmmintrin.h
 """.split())
 
+_NON_CODE_TRIGGER = re.compile(r'//|/\*|"|\'')
+_RAW_BODY = re.compile(r'"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)"')
+_STRING_BODY = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_BODY = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
+_CODE_TOKEN = re.compile(r"(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S")
+_PRE_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
+_RAW_PREFIXES = frozenset(("R", "u8R", "uR", "UR", "LR"))
+_INCLUDE_DIRECTIVE = re.compile(r"^[ \t]*(?:#|%:)[ \t]*(include(?:_next)?)\b([^\n]*)", re.M)
+_INCLUDE_TARGET = re.compile(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*')
+
+
+def _token_before(text, index, floor):
+    scan_start = index
+    while scan_start > floor and text[scan_start - 1] in _PRE_TOKEN_CHARS:
+        scan_start -= 1
+    if scan_start == index:
+        return None, None, index
+    last_start = index
+    last_token = None
+    for token in _CODE_TOKEN.finditer(text, scan_start):
+        if token.start() >= index:
+            break
+        if token.end() > index:
+            return token.start(), token.group(), token.end()
+        last_start = token.start()
+        last_token = token.group()
+        if token.end() == index:
+            return last_start, last_token, index
+    return None, None, index
+
+
+def _blank_span(text, start, end):
+    span = text[start:end]
+    if "\n" not in span:
+        return " " * (end - start)
+    return "\n".join(" " * len(line) for line in span.split("\n"))
+
+
+def _strip_comments_and_raw(text):
+    out = []
+    pos = 0
+    cursor = 0
+    floor = 0
+    no_block_close = False
+    length = len(text)
+    while cursor < length:
+        trigger = _NON_CODE_TRIGGER.search(text, cursor)
+        if trigger is None:
+            break
+        index = trigger.start()
+        token = trigger.group()
+        if token == "//":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            out.append(text[pos:index])
+            out.append(" " * (end - index))
+            pos = cursor = floor = end
+        elif token == "/*":
+            if no_block_close:
+                cursor = floor = index + 2
+                continue
+            close = text.find("*/", index + 2)
+            if close == -1:
+                no_block_close = True
+                cursor = floor = index + 2
+                continue
+            end = close + 2
+            out.append(text[pos:index])
+            out.append(_blank_span(text, index, end))
+            pos = cursor = floor = end
+        elif token == '"':
+            tok_start, tok_text, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            if tok_text in _RAW_PREFIXES:
+                raw_match = _RAW_BODY.match(text, index)
+                if raw_match is not None:
+                    end = raw_match.end()
+                    out.append(text[pos:tok_start])
+                    out.append(_blank_span(text, tok_start, end))
+                    pos = cursor = floor = end
+                    continue
+            str_match = _STRING_BODY.match(text, index)
+            if str_match is not None:
+                cursor = floor = str_match.end()
+            else:
+                cursor = floor = index + 1
+        else:
+            _, _, tok_end = _token_before(text, index, floor)
+            if tok_end > index:
+                cursor = floor = tok_end
+                continue
+            char_match = _CHAR_BODY.match(text, index)
+            if char_match is not None:
+                cursor = floor = char_match.end()
+            else:
+                cursor = floor = index + 1
+    if not out:
+        return text
+    out.append(text[pos:])
+    return "".join(out)
+
 
 def resolved_path(path):
     path = Path(path)
@@ -36,27 +138,54 @@ def resolved_path(path):
 
 
 def public_headers(root):
-    libs = resolved_path(root / "core/libs")
+    resolved_cache = {}
+    exists_cache = {}
+    seen_sources = set()
+
+    def resolve_cached(path):
+        key = os.fspath(path)
+        cached = resolved_cache.get(key)
+        if cached is None:
+            cached = resolved_path(path)
+            resolved_cache[key] = cached
+        return cached
+
+    libs = resolve_cached(root / "core/libs")
     directories = sorted(path for path in (libs / "prx").iterdir() if path.is_dir() and not path.name.startswith("."))
     if not directories:
         raise RuntimeError("No public library headers found")
     pending = [path / (path.name + ".hpp") for path in directories]
     visited = set()
     while pending:
-        header = resolved_path(pending.pop())
-        if not header.is_relative_to(libs):
+        source = pending.pop()
+        source_key = os.fspath(source)
+        if source_key in seen_sources:
+            continue
+        header = Path(os.path.abspath(source))
+        target = resolve_cached(source)
+        if resolve_cached(header) != target:
+            raise RuntimeError(f"Public header path changes when normalized: {source}")
+        if not header.is_relative_to(libs) or not target.is_relative_to(libs):
             raise RuntimeError(f"Public header is outside core/libs: {header}")
         if header in visited:
+            seen_sources.add(source_key)
             continue
         if not header.is_file():
             raise RuntimeError(f"Missing public header: {header}")
         visited.add(header)
-        text = header.read_text(encoding="utf-8-sig").replace("\\\n", "").replace("\\\r\n", "")
-        text = CPP_TOKEN.sub(lambda match: re.sub(r"[^\n]", " ", match.group()) if match.group("comment") or match.group("raw") else match.group(), text)
-        for keyword, line in re.findall(r"^[ \t]*(?:#|%:)[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
+        seen_sources.add(source_key)
+        text = header.read_text(encoding="utf-8-sig")
+        if "\\\n" in text:
+            text = text.replace("\\\n", "")
+        if "\\\r\n" in text:
+            text = text.replace("\\\r\n", "")
+        if "#" not in text and "%:" not in text:
+            continue
+        text = _strip_comments_and_raw(text)
+        for keyword, line in _INCLUDE_DIRECTIVE.findall(text):
             if keyword == "include_next":
                 raise RuntimeError(f"Unsupported include_next in {header}: {line.strip()}")
-            match = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', line)
+            match = _INCLUDE_TARGET.fullmatch(line)
             if not match:
                 raise RuntimeError(f"Non-literal public include in {header}: {line.strip()}")
             quoted, angled = match.groups()
@@ -64,16 +193,19 @@ def public_headers(root):
             if "\\" in name or ":" in name or PurePosixPath(name).is_absolute() or "3rdparty" in PurePosixPath(name).parts:
                 raise RuntimeError(f"Forbidden public include in {header}: {name}")
             search = (header.parent / name, libs / name) if quoted else (libs / name,)
-            candidates = set()
+            candidates = {}
             for path in search:
-                if path.is_symlink():
-                    candidates.add(resolved_path(path))
-                elif path.is_file():
-                    candidates.add(resolved_path(path))
+                key = os.fspath(path)
+                exists = exists_cache.get(key)
+                if exists is None:
+                    exists = path.is_symlink() or path.is_file()
+                    exists_cache[key] = exists
+                if exists:
+                    candidates.setdefault(resolve_cached(path), path)
             if len(candidates) > 1:
                 raise RuntimeError(f"Ambiguous public include in {header}: {name}")
             if candidates:
-                pending.append(candidates.pop())
+                pending.append(next(iter(candidates.values())))
             elif quoted or name not in SYSTEM_HEADERS:
                 raise RuntimeError(f"Missing project or unsupported external include in {header}: {name}")
     return sorted(visited)

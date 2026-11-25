@@ -145,6 +145,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
             }
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 Ngs2ClearCustomReverb(*this);
+                Ngs2ResetCustomFilterHistory(*this);
                 if (IsSampler()) {
                     Ngs2ReplaySampler(*this);
                     Ngs2ResetFilterHistory(*this);
@@ -247,6 +248,7 @@ void Ngs2Voice::ResetSetup() {
     else compressor.gain.fill(1.0f);
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
+    masteringLfe = {};
     channels = 0;
     inputChannels = 0;
     sampleRate = 0;
@@ -615,12 +617,10 @@ static bool IsMasteringEffect(const Ngs2Voice& voice, std::uint32_t id) {
 static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
     if (param.size < sizeof(Ngs2MasteringVoiceEffectParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
     const auto& effect = reinterpret_cast<const Ngs2MasteringVoiceEffectParam&>(param);
-    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER) {
-        if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
-        return;
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER && effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE && effect.enable_flag != 0 && std::bit_cast<std::int32_t>(effect.value) < 0) {
+        throw std::runtime_error("NGS2: mastering LFE cutoff with the high bit set is not implemented");
     }
-    if (effect.enable_flag == 0 || param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) return;
-    throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
@@ -1185,8 +1185,14 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (IsMasteringEffect(voice, param.id)) {
                 CheckMasteringEffect(param);
-                if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) {
-                    const auto& effect = ParamAs<Ngs2MasteringVoiceEffectParam>(param);
+                const auto& effect = ParamAs<Ngs2MasteringVoiceEffectParam>(param);
+                if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE) {
+                    auto& filter = voice.masteringLfe;
+                    const auto cutoff = effect.value <= 80 ? 80u : 120u;
+                    if (filter.cutoff != cutoff) filter.designRate = 0;
+                    filter.cutoff = cutoff;
+                    filter.enabled = effect.enable_flag != 0;
+                } else if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) {
                     const float threshold = std::bit_cast<float>(effect.value);
                     if (effect.enable_flag == 0 || std::isnan(threshold)) {
                         voice.compressor = {};

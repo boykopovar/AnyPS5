@@ -1,0 +1,9 @@
+# libkernel
+
+## change [vm.loadavg]
+
+- [vm.loadavg](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - `sysctl` {`CTL_VM`, `VM_LOADAVG`}, `sysctlbyname` and `sysctlnametomib` serve FreeBSD 11.4's 24-byte read-only [`struct loadavg`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/sys/resource.h#L161-L164), as its [`sysctl_vm_loadavg`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/vm/vm_meter.c#L71-L90) does: three 32-bit fixed-point averages over an `fscale` of 2048 (`FSHIFT` 11). The averages are the host's 1, 5 and 15 minute loads from `getloadavg`; on Windows they are 0 and the call succeeds. A PS5 Pro payload process (firmware 13.60) gets -1 with `ENOENT` for the name, the MIB and `sysctlnametomib`; a title process was not measured. A write returns `EPERM` and a short buffer `ENOMEM`. ProsperoCraft (PPSA99874) reads it at start-up through its Java 25 runtime's own `getloadavg`.
+
+## change [sceKernelGettimezone]
+
+- [sceKernelGettimezone](../../../core/libs/prx/libkernel/Time/Time.cpp) (libkernel) reports the host zone until a timezone has been stored with `sceRtcSetConf`, and the stored `{tz_minuteswest, tz_dsttime}` afterwards; the host zone is not the console's time zone setting: `tz_minuteswest` holds the standard offset in minutes east of UTC, despite its name, and `tz_dsttime` the zone's daylight saving amount in minutes, found as for the last argument of `sceKernelConvertLocaltimeToUtc`. A PS5 on firmware 13.40 set to US Eastern returned -300 and 60 (measured 2026-10-19, in summer time), and a PS5 Pro on firmware 13.60 set to Moscow returned 180 and 0 - a zone without daylight saving. A null output pointer returns 0 on a PS5 payload process (firmware 11.60, 2026-11-07), as here; a title process was not measured. The Windows limits of the entry above apply.

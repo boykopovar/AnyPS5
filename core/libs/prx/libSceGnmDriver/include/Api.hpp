@@ -78,7 +78,8 @@ int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void);
 int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void);
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void);
 int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(void);
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(void);
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
 
 }

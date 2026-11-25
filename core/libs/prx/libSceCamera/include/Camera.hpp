@@ -8,6 +8,8 @@ inline constexpr int SCE_CAMERA_ERROR_NOT_OPEN = static_cast<int>(0x802E0004);
 inline constexpr int SCE_CAMERA_ERROR_FORMAT_UNKNOWN = static_cast<int>(0x802E0007);
 inline constexpr int SCE_CAMERA_ERROR_NOT_CONNECTED = static_cast<int>(0x802E0010);
 inline constexpr int SCE_CAMERA_ERROR_FATAL = static_cast<int>(0x802E00FF);
+inline constexpr int SCE_CAMERA_ERROR_MBIS_ACCESS_DENIED = static_cast<int>(0x809B0080);
+inline constexpr int SCE_CAMERA_ERROR_MBIS_FATAL = static_cast<int>(0x809B00FF);
 
 extern "C" void SetCamera2AppCategoryForTest_nid_no_patch(const std::uint32_t* category);
 

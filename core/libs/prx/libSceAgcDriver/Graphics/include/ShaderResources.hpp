@@ -88,6 +88,17 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
 std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, const GuestTextureResource& resource);
+const ShaderRecompiler::ImageOverwriteDispatch*& OverwriteDispatch();
+class OverwriteDispatchScope {
+public:
+    explicit OverwriteDispatchScope(const ShaderRecompiler::ImageOverwriteDispatch* dispatch) : previous(OverwriteDispatch()) { OverwriteDispatch() = dispatch; }
+    ~OverwriteDispatchScope() { OverwriteDispatch() = previous; }
+    OverwriteDispatchScope(const OverwriteDispatchScope&) = delete;
+    OverwriteDispatchScope& operator=(const OverwriteDispatchScope&) = delete;
+
+private:
+    const ShaderRecompiler::ImageOverwriteDispatch* previous;
+};
 std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, const GuestTextureResource& resource, std::uint32_t firstLayer, std::uint32_t layerCount);
 // Whether `image` is still the storage cache's image of its surface (what CachedStorageSurface
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
@@ -328,6 +339,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     void InPlaceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.InPlaceReads(out); }
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
+    void StorageImages(std::vector<std::pair<VkImage, bool>>& out) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.DeviceReads(out); }
     bool ReadsImage(const StorageTexture* image) const;
@@ -363,6 +375,7 @@ public:
     void PrecollectSurfaces() const;
     bool Reusable() const { return reusable; }
     void KeepStorageImageBytes(Recorder& recorder) const;
+    std::size_t RefreshStorageChangedOutsideWatch();
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     static std::uint64_t DepthGuardRefusals();
