@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "prx/libSceLibreSsl3/include/Objects.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -29,34 +30,13 @@ std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix() {
     return LibreSslPeekLastError_nid_no_patch();
 }
 
-int APS5_VABI ERR_print_errors_cb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OBJ_txt2obj_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OCSP_cert_to_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+Asn1Object_nid_no_patch* APS5_VABI OBJ_txt2obj_nid_postfix(const char* text, int noName) {
+    return LibreSsl3::ObjectFromText(text, noName);
 }
 
 const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
@@ -71,57 +51,12 @@ const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
     }
 }
 
-int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PKCS7_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_ECParameters_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PKCS7_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PrivateKey_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

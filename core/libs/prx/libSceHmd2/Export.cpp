@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -92,11 +93,11 @@ std::int32_t BeforeInitialize(std::int32_t answer, const char* name) {
     return answer;
 }
 
-std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
+bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
 }
 
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
@@ -110,7 +111,7 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
         return Hmd2::NotInitialized;
     }
     localInfo.status = Hmd2::DeviceStatus::NotDetected;
-    if (CompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
+    if (ApplicationCompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
     localInfo.panelWidth = 4000;
     localInfo.panelHeight = 2040;
     localInfo.latency90Hz = 5555;
@@ -130,14 +131,18 @@ int APS5_VABI sceHmd2ReprojectionGetStatus(Hmd2::ReprojectionStatus* status) {
     std::lock_guard lock(reprojectionMutex);
     if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
     if (status == nullptr) return Hmd2::ParameterNull;
-    auto* bytes = reinterpret_cast<std::byte*>(status);
-    std::memset(bytes, 0, 0x68);
+    std::array<std::byte, 0x68> localBytes{};
+    auto* bytes = localBytes.data();
     const std::uint64_t now = sceKernelGetProcessTime();
     const std::uint64_t step = reprojectionState->timingUs != 0 ? reprojectionState->timingUs : Hmd2::ReprojectionTimingDefault;
     for (std::size_t index = 0; index < 4; ++index) {
         const std::uint64_t timestamp = now + index * step;
         std::memcpy(bytes + 0x28 + index * 8, &timestamp, sizeof(timestamp));
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, bytes, localBytes.size());
+    errno = savedErrno;
+    if (!copied) return Hmd2::ParameterNull;
     return 0;
 }
 
@@ -240,7 +245,7 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
     if (!initialized) return Hmd2::NotInitialized;
     if (type != 0 || index != 0 || param) return Hmd2::ParameterInvalid;
     if (userId != USER_SERVICE_INITIAL_USER_ID) {
-        if (CompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
+        if (ApplicationCompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
         throw std::runtime_error("sceHmd2Open: user is not the initial user");
     }
     if (openHandle != 0) return Hmd2::AlreadyOpened;
@@ -249,16 +254,28 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
 }
 
 int APS5_VABI sceHmd2ReprojectionBeginFrame(std::uint64_t frameId) {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionDisableMirroring() {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -346,6 +363,10 @@ int APS5_VABI sceHmd2ReprojectionSetAllowPositionalReprojection(std::uint8_t mod
 }
 
 int APS5_VABI sceHmd2ReprojectionSetMirroringOption(const Hmd2::MirroringOption* option) {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -893,15 +914,16 @@ APS5_EXPORT("W-ZIlUXcrNA", Hmd2CheckSecondThenError1002);
 std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x02, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOut(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("omimgG5itSs", Hmd2WriteStateTwo);
 
 std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1) {
     if (a0 == nullptr || a1 == nullptr) return Hmd2::ParameterNull;
-    *a0 = 0x2000;
-    *a1 = 0x100;
+    static constexpr std::uint64_t val0 = 0x2000;
+    static constexpr std::uint64_t val1 = 0x100;
+    if (!CopyGuestOut(a0, &val0, sizeof val0) || !CopyGuestOut(a1, &val1, sizeof val1)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
@@ -909,7 +931,7 @@ APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
 std::int32_t APS5_VABI Hmd2WriteFourConstants(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0xe1, 0xf0, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c, 0x1f, 0xf1, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOut(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("yur+xPdWPAg", Hmd2WriteFourConstants);
@@ -918,7 +940,7 @@ std::int32_t APS5_VABI Hmd2WriteSixHalvesThenInvalidHandle(std::uint64_t a0, voi
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOut(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("RnieDDp5ge4", Hmd2WriteSixHalvesThenInvalidHandle);
@@ -928,7 +950,7 @@ std::int32_t APS5_VABI Hmd2WriteTwelveHalvesThenInvalidHandle(std::uint64_t a0, 
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOut(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("b0H-n-tUk0U", Hmd2WriteTwelveHalvesThenInvalidHandle);

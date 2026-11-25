@@ -3,6 +3,7 @@
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdarg>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -147,7 +148,18 @@ int APS5_VABI sceOpusCeltEncCtl(OpusCeltEncoder* state, int request, ...) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
     if (outsideRequests(request) && request != requestMinusOne && request != requestMinusTwo) return encoderError(requestErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return __builtin_va_arg(list, int); });
+    __builtin_sysv_va_end(list);
+#else
+    std::va_list list;
+    va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return va_arg(list, int); });
+    va_end(list);
+#endif
+    return library.Ctl(state, request, value);
 }
 
 int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
@@ -158,7 +170,7 @@ int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std
     if (priority < lowestPriority || priority > highestPriority) return encoderError(priorityErrorOffset);
     if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
     if (!acceptedPriorityFrame(guestStateWord(state, codes.stateRateOffset), static_cast<std::uint32_t>(frameSize))) return encoderError(codes.frameErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
@@ -175,7 +187,10 @@ int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, cons
 int APS5_VABI sceOpusCeltEncGetAjmContext(const OpusCeltEncoder* state, std::uint32_t* context) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xD4, sizeof(value))) throw std::runtime_error("OpusCeltEnc: unreadable AJM context");
+    if (!GuestCopyOut_nid_no_patch(context, &value, sizeof(value))) throw std::runtime_error("OpusCeltEnc: unwritable AJM context");
+    return 0;
 }
 
 int APS5_VABI sceOpusCeltMultistreamEncCreate(OpusCeltMultistreamEncoder* state, int sampleRate, int streams, int coupledStreams, const std::uint8_t* mapping, int application) {

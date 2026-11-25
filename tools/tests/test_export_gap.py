@@ -8,9 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import export_gap
 import nid_names
 import stubgen
+from test_import_audit import build_elf, build_sce_module
 
 
 MODULE = "libSceExample"
@@ -87,6 +89,107 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_elf_matches_nid_inventory(self):
+        present, missing, unknown, imported = map(nid_of, ("Present", "Missing", "Unknown", "Imported"))
+        symbols = [(missing + "#B#C", 1, 0x12), (present, 1, 0x11), (unknown, 1, 0x22),
+                   (missing + "#A#A", 1, 0x12), (imported + "#A#A", 0, 0x12),
+                   (nid_of("Local"), 1, 0x02), ("module_start", 1, 0x12)]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int APS5_VABI Present(void) { return 1; }\n"})
+            db = write_db(directory, [(present, "Present"), (missing, "Missing"), (imported, "Imported")])
+            inventory = Path(directory) / "expected.txt"
+            inventory.write_text("\n".join(sorted([present, missing, unknown])), encoding="utf-8")
+            args = ["--module", MODULE, "--db", str(db)]
+            expected = run_tool(root, prx, args + ["--nids", str(inventory)])
+            self.assertEqual(expected[0], 0)
+            self.assertIn("1 missing, 1 already provided, 1 unknown", expected[1])
+            elf = Path(directory) / "module.prx"
+            for build in (build_elf, build_sce_module):
+                with self.subTest(build=build.__name__):
+                    elf.write_bytes(build(symbols))
+                    self.assertEqual(run_tool(root, prx, args + ["--elf", str(elf)]), expected)
+
+    def test_elf_input_errors_preserve_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            write_module(prx, MODULE, {})
+            elf = Path(directory) / "module.prx"
+            out = Path(directory) / "missing.txt"
+            out.write_bytes(b"keep")
+            db = write_db(directory, [(nid_of("Present"), "Present")])
+            args = ["--module", MODULE, "--db", str(db), "--elf", str(elf)]
+            for data, extra, reason in (
+                (b"unrecognized", [], "expected a console module in ELF format"),
+                (b"\x7fELF", [], "ELF header"),
+                (build_elf([("module_start", 1, 0x12)]), [], "no NID-shaped dynamic exports"),
+                (b"", ["--nids", str(out)], "exactly one"),
+                (b"", ["--module", MODULE], "single --module"),
+            ):
+                with self.subTest(reason=reason):
+                    elf.write_bytes(data)
+                    code, _, error = run_tool_with_stderr(root, prx, args + extra + ["--out", str(out)])
+                    self.assertEqual(code, 2)
+                    self.assertIn(reason, error)
+                    self.assertEqual(out.read_bytes(), b"keep")
+            elf.write_bytes(build_elf([(nid_of("Present"), 1, 0x12)]))
+            original = elf.read_bytes()
+            code, _, error = run_tool_with_stderr(root, prx, args + ["--out", str(elf)])
+            self.assertEqual(code, 2)
+            self.assertIn("overwrite input", error)
+            self.assertEqual(elf.read_bytes(), original)
+
+    def test_test_definitions_aliases_and_macros_do_not_hide_missing_exports(self):
+        missing = ["sceTestDefinition", "sceTestAlias", "sceTestMacro"]
+        present = ["sceProductionHeader", "sceProductionFilename"]
+        for folder in ("test", "tests", "Test", "TESTS", "nested/tests/fixtures"):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as directory:
+                root, prx, tables = tree(Path(directory) / "tests")
+                write_module(prx, MODULE, {
+                    "src/contest/Api.hpp": "int APS5_VABI sceProductionHeader(void) { return 0; }\n",
+                    "src/tests.cpp": "int APS5_VABI sceProductionFilename(void) { return 0; }\n",
+                    folder + "/Mocks.hpp": (
+                        "int APS5_VABI sceTestDefinition(void) { return 0; }\n"
+                        f'APS5_EXPORT("{nid_of(missing[1])}", test_alias);\n'
+                        "#define TEST_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                        "TEST_EXPORT(sceTestMacro)\n"),
+                })
+                write_table(tables, MODULE, [nid_of(name) for name in missing + present])
+                database = write_db(directory, [(nid_of(name), name) for name in missing + present])
+                output = Path(directory) / "missing.txt"
+                code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables),
+                                                   "--db", str(database), "--out", str(output)])
+                self.assertEqual(code, 0)
+                self.assertEqual(output.read_text(encoding="utf-8").splitlines(), [nid_of(name) for name in missing])
+                self.assertIn(f"{MODULE}: 3 missing, 2 already provided, 0 unknown", report)
+
+    def test_test_sources_do_not_confirm_shared_library_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "CMakeLists.txt": "include(${CMAKE_CURRENT_SOURCE_DIR}/../libExample.native/Shared.cmake)\n",
+                "Api.hpp": "int APS5_VABI Present(void);\nint APS5_VABI Missing(void);\n",
+                "tests/Api.hpp": "int APS5_VABI OnlyTestDeclaration(void);\n",
+            })
+            write_module(prx, "libExample.native", {
+                "Export.cpp": "int APS5_VABI Present(void) { return 0; }\nint APS5_VABI OnlyTestDeclaration(void) { return 0; }\n",
+                "tests/Mock.cpp": "int APS5_VABI Missing(void) { return 0; }\n",
+            })
+            self.assertEqual(set(export_gap.collect_provided(library)), {nid_of("Present")})
+
+    def test_self_call_report_excludes_test_callers(self):
+        name = "sceExampleSelfCall"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "src/Caller.cpp": "int use(void) {\n    return sceExampleSelfCall(1);\n}\n",
+                "tests/Caller.cpp": "int test(void) { return sceExampleSelfCall(2); }\n",
+                "nested/test/Fixture.hpp": "int test(void) { return sceExampleSelfCall(3); }\n",
+            })
+            with patch.object(export_gap, "ROOT", root):
+                calls = export_gap.find_self_calls(library, {nid_of(name): name})
+            self.assertEqual(calls, [(name, nid_of(name), f"core/libs/prx/{MODULE}/src/Caller.cpp", 2, "")])
+
     def test_export_table_ignores_comments_strings_and_macro_definitions(self):
         active = nid_of("sceExampleActive")
         commented = nid_of("sceExampleCommented")
@@ -151,6 +254,23 @@ class ExportGapTests(unittest.TestCase):
             self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
+
+    def test_gap_report_distinguishes_data_definitions_from_declarations(self):
+        names = ["Exported", "Declared", "Private"]
+        nids = [nid_of(name) for name in names]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {
+                "Export.cpp": 'extern "C" { int Exported_nid_postfix = 1; static int Private_nid_postfix; }',
+                "Api.hpp": 'extern "C" int Declared_nid_postfix;',
+            })
+            write_table(tables, MODULE, nids)
+            db = write_db(directory, zip(nids, names))
+            out = Path(directory) / "gaps.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(out.read_text().splitlines()), set(nids[1:]))
+            self.assertIn("defined as data", report)
 
     def test_assembly_postfix_name_counts_as_provided(self):
         name = "sceExampleAsm_nid_postfix"
@@ -303,6 +423,118 @@ class ExportGapTests(unittest.TestCase):
                   "    EXAMPLE_MACRO(sceExampleOnlyInDefinition)\n")
         self.assertFalse(provides_with(source, nid))
 
+    def test_comments_and_strings_containing_macro_definitions_do_not_export(self):
+        splice = "\\" + "\n"
+        fake_symbols = [
+            "sceExampleFakeComment",
+            "sceExampleFakeSplicedComment",
+            "sceExampleFakeBlock",
+            "sceExampleFakeString",
+            "sceExampleFakeEscapedString",
+            "sceExampleFakeContinuedString",
+            "sceExampleFakeRaw",
+            "sceExampleFakeDelimRaw",
+            "sceExampleFakeDirective",
+            "sceExampleRealInLineComment",
+            "sceExampleRealInBlockComment",
+            "sceExampleRealInString",
+            "sceExampleRealInRaw",
+        ]
+        real_symbol = "sceExampleRealMultiline"
+        all_symbols = fake_symbols + [real_symbol]
+        all_nids = [nid_of(name) for name in all_symbols]
+        source = (
+            "// #define FAKE_COMMENT_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+            f"// continued comment {splice}#define FAKE_SPLICED_COMMENT_EXPORT(NAME) int APS5_VABI NAME(void) {{ return 0; }}\n"
+            "/*\n"
+            " * #define FAKE_BLOCK_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+            " */\n"
+            'const char *quoted = "#define FAKE_STRING_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }";\n'
+            'const char *escaped = "prefix \\" #define FAKE_ESCAPED_STRING_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }";\n'
+            f'const char *continued = "prefix {splice}#define FAKE_CONTINUED_STRING_EXPORT(NAME) int APS5_VABI NAME(void) {{ return 0; }}";\n'
+            'const char *raw = R"(\n'
+            "#define FAKE_RAW_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+            ')";\n'
+            'const char *delim_raw = u8R"tag(\n'
+            "#define FAKE_DELIM_RAW_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+            ')tag";\n'
+            "#error see #define FAKE_DIRECTIVE_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+            "FAKE_COMMENT_EXPORT(sceExampleFakeComment)\n"
+            "FAKE_SPLICED_COMMENT_EXPORT(sceExampleFakeSplicedComment)\n"
+            "FAKE_BLOCK_EXPORT(sceExampleFakeBlock)\n"
+            "FAKE_STRING_EXPORT(sceExampleFakeString)\n"
+            "FAKE_ESCAPED_STRING_EXPORT(sceExampleFakeEscapedString)\n"
+            "FAKE_CONTINUED_STRING_EXPORT(sceExampleFakeContinuedString)\n"
+            "FAKE_RAW_EXPORT(sceExampleFakeRaw)\n"
+            "FAKE_DELIM_RAW_EXPORT(sceExampleFakeDelimRaw)\n"
+            "FAKE_DIRECTIVE_EXPORT(sceExampleFakeDirective)\n"
+            "/* leading comment\n"
+            "   #define FAKE_IN_SAME_BLOCK(NAME) int APS5_VABI NAME(void) { return 0; } */\n"
+            f"/* prefix */ #define REAL_MULTILINE_EXPORT(NAME) /* inline */ {splice}"
+            f"    int APS5_VABI /* return attr */ NAME(void) {splice}"
+            "    { /* body comment */ return 0; } // trailing comment\n"
+            "REAL_MULTILINE_EXPORT(\n"
+            "    sceExampleRealMultiline_nid_postfix\n"
+            ")\n"
+            "// REAL_MULTILINE_EXPORT(sceExampleRealInLineComment)\n"
+            "/* REAL_MULTILINE_EXPORT(sceExampleRealInBlockComment) */\n"
+            'const char *real_in_str = "REAL_MULTILINE_EXPORT(sceExampleRealInString)";\n'
+            'const char *real_in_raw = R"(\n'
+            "REAL_MULTILINE_EXPORT(sceExampleRealInRaw)\n"
+            ')";\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            library = write_module(prx, MODULE, {"Export.cpp": source})
+            texts = export_gap.source_texts(library)
+            self.assertEqual(export_gap.macro_definitions(texts), {"REAL_MULTILINE_EXPORT": "NAME"})
+            self.assertEqual(set(export_gap.collect_provided(library)), {nid_of(real_symbol)})
+            write_table(tables, MODULE, all_nids)
+            db = write_db(directory, [(nid_of(name), name) for name in all_symbols])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").splitlines(), [nid_of(name) for name in fake_symbols])
+            self.assertIn(f"{MODULE}: {len(fake_symbols)} missing, 1 already provided, 0 unknown", report)
+            self.assertIn(f"already provided {nid_of(real_symbol)} {real_symbol} through macro REAL_MULTILINE_EXPORT", report)
+            for name in fake_symbols:
+                self.assertIn(f"missing {nid_of(name)} {name}", report)
+
+    def test_multiline_macro_with_surrounding_comments_and_apostrophe_directive(self):
+        real_nid = nid_of("sceProbeMacroInit")
+        read_nid = nid_of("sceProbeRead")
+        source = (
+            "#if !defined(__x86_64__)\n"
+            "#error this library doesn't build for the host\n"
+            "#endif\n"
+            "/* before */ #define PROBE_EXPORT(NAME) /* inline */ \\\n"
+            "    int APS5_VABI NAME(void) { return 0; } // after\n"
+            "PROBE_EXPORT(sceProbeMacroInit)\n"
+            "int APS5_VABI sceProbeRead(int handle) { return handle == '0'; }\n"
+        )
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as directory:
+                root, prx, tables = tree(directory)
+                library = write_module(prx, MODULE, {})
+                (library / "Export.cpp").write_bytes(source.replace("\n", newline).encode("utf-8"))
+                write_table(tables, MODULE, [real_nid, read_nid])
+                db = write_db(directory, [(real_nid, "sceProbeMacroInit"), (read_nid, "sceProbeRead")])
+                out = Path(directory) / "out.txt"
+                code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                self.assertEqual(code, 0)
+                self.assertEqual(out.read_text(encoding="utf-8"), "")
+                self.assertIn(f"{MODULE}: 0 missing, 2 already provided, 0 unknown", report)
+
+    def test_apostrophe_in_directive_does_not_hide_later_definitions(self):
+        source = ("#if !defined(__x86_64__)\n"
+                  "#error this library doesn't build for the host\n"
+                  "#endif\n"
+                  "int APS5_VABI sceProbeInit(void) { return 0; }\n"
+                  "int APS5_VABI sceProbeRead(int handle) { return handle == '0'; }\n")
+        for name in ("sceProbeInit", "sceProbeRead"):
+            with self.subTest(name=name):
+                self.assertTrue(provides_with(source, nid_of(name)))
+
     def test_explicit_export_binding_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleExplicit")
         with tempfile.TemporaryDirectory() as directory:
@@ -356,6 +588,7 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
+            self.assertIn("may need a renamed helper bound with APS5_EXPORT", report)
 
     def test_self_call_line_counts_spliced_lines(self):
         nid = nid_names.compute_nid("sceExampleSelfCall")
@@ -526,6 +759,21 @@ class ExportGapTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("FAIL:", error)
 
+    def test_database_without_nid_records_fails(self):
+        for content in ("", "# comment only\n", "sceExampleAlpha,AAAAAAAAAAA\n"):
+            with self.subTest(content=content):
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    nids_file = Path(directory) / "nids.txt"
+                    nids_file.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+                    db = Path(directory) / "db.csv"
+                    db.write_text(content, encoding="utf-8")
+                    code, output, error = run_tool_with_stderr(root, prx, ["--module", MODULE, "--nids", str(nids_file), "--db", str(db)])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(output, "")
+                    self.assertEqual(error, f"FAIL: {db}: database contains no valid NID records\n")
+
     def test_both_export_table_and_nids_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root, prx, tables = tree(directory)
@@ -648,6 +896,26 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
 
+    def test_nested_mangled_names_are_reported_without_requiring_a_helper(self):
+        for name in ("_ZN3Foo3barEv", "_ZNK3Foo3barEv", "_ZNSt6vectorIiE3fooEv",
+                     "_ZNSs5eraseEmm", "_ZNSs6appendERKSsmm", "_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm",
+                     "_ZNKSs5_XlenEv", "_ZNKR3Foo3barEv", "_ZNO3Foo3barEv",
+                     "_ZNSaIcE8allocateEm", "_ZNSi3getEv", "_ZNSo3putEc", "_ZNSd3fooEv"):
+            with self.subTest(name=name):
+                nid = nid_names.compute_nid(name)
+                with tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+                    write_table(tables, MODULE, [nid])
+                    db = write_db(directory, [(nid, name)])
+                    out = Path(directory) / "out.txt"
+                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                    self.assertEqual(code, 0)
+                    self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+                    self.assertIn("C++ mangled name", report)
+                    self.assertIn("may use a renamed helper bound with APS5_EXPORT", report)
+                    self.assertNotIn(f"missing {nid} {name}", report)
+
     def test_non_identifier_name_needs_renamed_helper(self):
         name = "sceExample.dot-name"
         nid = nid_names.compute_nid(name)
@@ -701,6 +969,237 @@ class ExportGapTests(unittest.TestCase):
             code, _, error = run_tool_with_stderr(root, prx, ["--module", "libSceExample/bad", "--export-table", str(tables), "--db", str(db)])
             self.assertEqual(code, 2)
             self.assertIn("FAIL:", error)
+
+
+    def test_strip_token_keeps_first_word_without_comments(self):
+        self.assertEqual(export_gap.strip_token("\ufeffABC  # note"), "ABC")
+        self.assertEqual(export_gap.strip_token("  XYZ extra words"), "XYZ")
+        self.assertEqual(export_gap.strip_token("# whole line comment"), "")
+        self.assertEqual(export_gap.strip_token("   "), "")
+
+
+    def test_mangled_and_identifier_reasons(self):
+        self.assertTrue(export_gap.is_mangled("_Z3foo"))
+        self.assertFalse(export_gap.is_mangled("_Zx"))
+        self.assertFalse(export_gap.is_mangled("_ZNonsense"))
+        self.assertFalse(export_gap.is_mangled("_ZNSx"))
+        self.assertFalse(export_gap.is_mangled("_ZNS"))
+        self.assertFalse(export_gap.is_mangled("_ZNStq"))
+        self.assertFalse(export_gap.is_mangled("foo"))
+        self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
+        self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")
+        self.assertIsNone(export_gap.helper_reason("abc"))
+
+
+    def test_is_safe_module_rejects_path_like_names(self):
+        for name in ("", ".", "..", "../x", "a/b", "a\\b"):
+            self.assertFalse(export_gap.is_safe_module(name), name)
+        self.assertTrue(export_gap.is_safe_module("libSceFoo"))
+
+
+    def test_parse_nids_file_dedupes_and_rejects_bad_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "nids.txt"
+            good.write_text("\ufeffAAAAAAAAAAA # first\n# skipped\nBBBBBBBBBBB\nAAAAAAAAAAA\n", encoding="utf-8")
+            self.assertEqual(export_gap.parse_nids_file(good), ["AAAAAAAAAAA", "BBBBBBBBBBB"])
+            bad = Path(directory) / "bad.txt"
+            bad.write_text("not-a-nid-too-long\n", encoding="utf-8")
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(bad)
+
+
+    def test_normalize_module_strips_prx_suffix_only_with_a_stem(self):
+        self.assertEqual(export_gap.normalize_module("libSceFoo.prx"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module("libSceFoo.PRX"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module(".prx"), ".prx")
+        self.assertEqual(export_gap.normalize_module("libSceFoo"), "libSceFoo")
+
+
+    def test_base_of_ignores_postfix_without_a_stem(self):
+        postfix = export_gap.POSTFIXES[0]
+        self.assertEqual(export_gap.base_of("foo" + postfix), ("foo", postfix))
+        self.assertEqual(export_gap.base_of(postfix), (postfix, None))
+        self.assertEqual(export_gap.base_of("foo"), ("foo", None))
+
+
+    def test_strip_disambig_requires_digit_tail(self):
+        marker = export_gap.DISAMBIG
+        self.assertEqual(export_gap.strip_disambig("foo" + marker + "12"), "foo")
+        self.assertEqual(export_gap.strip_disambig("foo" + marker), "foo" + marker)
+        self.assertEqual(export_gap.strip_disambig("foo"), "foo")
+
+
+    def test_unreadable_input_files_raise_gap_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.txt"
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(missing)
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_export_table(missing)
+
+    def test_joined_lines_removes_backslash_continuations(self):
+        self.assertEqual(export_gap.joined_lines("a \\\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a \\\r\nb"), "a b")
+        self.assertEqual(export_gap.joined_lines("a\nb\\c"), "a\nb\\c")
+
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+class MaskCodeTests(unittest.TestCase):
+    def test_comments_are_blanked_and_layout_is_preserved(self):
+        source = "int a; // note\nint b; /* block\nmore */ int c;\n"
+        masked = export_gap.mask_code(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("note", masked)
+        self.assertNotIn("block", masked)
+        self.assertNotIn("more", masked)
+        for kept in ("int a;", "int b;", "int c;"):
+            self.assertIn(kept, masked)
+
+    def test_string_literal_contents_are_blanked(self):
+        masked = export_gap.mask_code('call("hidden text");\n')
+        self.assertNotIn("hidden", masked)
+        self.assertTrue(masked.startswith("call("))
+        self.assertTrue(masked.endswith(");\n"))
+
+    def test_fast_mask_matches_token_regex_on_cpp_edge_cases(self):
+        samples = [
+            'int a = 1\'000\'000; const char* s = u8R"tag(APS5_VABI fake() /*)tag"; int b = 0;\n',
+            'char c = L\'x\'; const char* r = R"(line1\nline2)"; int ok = 1;\n',
+            '#define M(x) int APS5_VABI x(void) { return 0; }\n#error don\'t break\nint z = 1;\n',
+            'int x = 1; /* unclosed block comment\nint y = 2;\n',
+            'const char* u = "unclosed\nint keep = 3;\n',
+            'int a = 0x1\'2 + \'a\' + 0;\n',
+        ]
+        for token in (nid_names.CPP_TOKEN, export_gap.DIRECTIVE_TOKEN, export_gap.NON_DEFINE_DIRECTIVE_TOKEN):
+            for sample in samples:
+                expected = token.sub(
+                    lambda m: m.group() if m.group("code") is not None else "\n".join(" " * len(line) for line in m.group().split("\n")),
+                    sample,
+                )
+                with self.subTest(token=token.pattern[:24], sample=sample[:24]):
+                    self.assertEqual(export_gap.mask_code(sample, token), expected)
+
+    def test_collect_source_exports_handles_directive_in_direct_init_data_def(self):
+        source = 'extern "C" {\nint sceExampleData_nid_postfix(\n#if 1\n1\n#endif\n);\n}\n'
+        provided = export_gap.collect_source_exports([(Path("Data.cpp"), source)])
+        self.assertIn(nid_names.compute_nid("sceExampleData"), provided)
+
+
+class MaskDirectivesTests(unittest.TestCase):
+    def test_directive_lines_and_continuations_are_blanked(self):
+        source = "#define X 1 \\\n  continued\nint a;\n  #if Y\nint b;\n"
+        masked = export_gap.mask_directives(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.splitlines()[2], "int a;")
+        self.assertEqual(masked.splitlines()[4], "int b;")
+        for blanked in (0, 1, 3):
+            self.assertEqual(masked.splitlines()[blanked].strip(), "")
+        self.assertNotIn("continued", masked)
+
+    def test_text_without_directives_is_unchanged(self):
+        source = "int a;\r\nint b = 1 \\\n  + 2;\r\n"
+        self.assertEqual(export_gap.mask_directives(source), source)
+
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+
+class LoadConsoleNidsTests(unittest.TestCase):
+    def test_export_table_that_is_not_a_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "tables"
+            with self.assertRaisesRegex(export_gap.GapError, "not a directory"):
+                export_gap.load_console_nids([MODULE], str(missing), None)
+
+    def test_module_without_a_table_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(export_gap.GapError, "export table not found"):
+                export_gap.load_console_nids([MODULE], directory, None)
+
+    def test_without_a_table_directory_every_module_gets_a_copy_of_the_nids_file(self):
+        with patch.object(export_gap, "parse_nids_file", return_value=["AAAAAAAAAAA", "BBBBBBBBBBB"]) as parse:
+            console = export_gap.load_console_nids(["libA", "libB"], None, "nids.txt")
+        parse.assert_called_once_with("nids.txt")
+        self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
+        self.assertIsNot(console["libA"], console["libB"])
+
+    def test_source_texts_and_self_calls_handle_dot_files_and_non_word_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Source.cpp").write_text(
+                "struct Number { int operator+(int x) { return x; } };\n"
+                "int f() { return Number{}.operator+(1) + Number{}.operator+ (2); }\n",
+                encoding="utf-8",
+            )
+            (root / ".tracked.cpp").write_text("int APS5_VABI sceTracked_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / "..cpp").write_text("int APS5_VABI scePhantom_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            (root / ".cpp").write_text("int APS5_VABI sceDotOnly_nid_postfix(void) { return 0; }\n", encoding="utf-8")
+            fixture_names = ("Source.cpp", ".tracked.cpp", "..cpp", ".cpp")
+            expected_names = sorted(
+                name for name in fixture_names
+                if Path(name).suffix.lower() in export_gap._SOURCE_SUFFIXES
+            )
+            names = [path.name for path, _ in export_gap.source_texts(root)]
+            self.assertEqual(names, expected_names)
+            provided = export_gap.collect_provided(root)
+            self.assertIn(export_gap.nid_names.compute_nid("sceTracked"), provided)
+            self.assertNotIn(export_gap.nid_names.compute_nid("sceDotOnly"), provided)
+            phantom_nid = export_gap.nid_names.compute_nid("scePhantom")
+            if Path("..cpp").suffix.lower() in export_gap._SOURCE_SUFFIXES:
+                self.assertIn(phantom_nid, provided)
+            else:
+                self.assertNotIn(phantom_nid, provided)
+            calls = export_gap.find_self_calls(root, {"AAAAAAAAAAA": "operator+"})
+            self.assertEqual([c[0] for c in calls], ["operator+", "operator+", "operator+"])
+            self.assertEqual([c[3] for c in calls], [1, 2, 2])
 
 
 if __name__ == "__main__":

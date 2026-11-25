@@ -22,11 +22,13 @@ std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const Devic
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     if (param != nullptr) {
         DeviceServiceInitParam local{};
-        if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return invalidArgument;
+        const bool copiedParam = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+        if (!copiedParam) return invalidArgument;
         if (local.size != sizeof(DeviceServiceInitParam) || local.reserved != 0) return invalidArgument;
         if (local.threadParam != nullptr) {
             DeviceServiceThreadParam thread{};
-            if (!GuestCopyIn_nid_no_patch(&thread, local.threadParam, sizeof(thread))) return invalidArgument;
+            const bool copiedThread = GuestCopyIn_nid_no_patch(&thread, local.threadParam, sizeof(thread));
+            if (!copiedThread) return invalidArgument;
             if (thread.reserved != 0) return invalidArgument;
             throw std::runtime_error("sceDeviceServiceInitialize: custom worker scheduling is not implemented");
         }
@@ -73,9 +75,7 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
     if (infoSize != 112 || maxInfos < 0 || (maxInfos != 0 && infos == nullptr)) return invalidArgument;
     if (count != nullptr) {
         const std::int32_t zero = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
-        errno = savedErrno;
         if (!copied) return invalidArgument;
     }
     return 0;

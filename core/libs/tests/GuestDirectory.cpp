@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
+#include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
@@ -164,6 +165,17 @@ int main() {
         nullResultThrows = true;
     }
     Require(nullResultThrows);
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        rewinddir_nid_postfix(directory);
+        GuestDirectoryEntry entry{};
+        *__error_nid_postfix() = 13;
+        Require(readdir_r_nid_postfix(directory, reinterpret_cast<GuestDirectoryEntry*>(const_cast<char*>(unusable)), &result) == 14);
+        Require(*__error_nid_postfix() == 13);
+        rewinddir_nid_postfix(directory);
+        *__error_nid_postfix() = 13;
+        Require(readdir_r_nid_postfix(directory, &entry, reinterpret_cast<GuestDirectoryEntry**>(const_cast<char*>(unusable))) == 14);
+        Require(*__error_nid_postfix() == 13);
+    }
     rewinddir_nid_postfix(directory);
 
     Require(readdir_nid_postfix(directory) != nullptr);
@@ -244,6 +256,23 @@ int main() {
     }
     Require(names.at(std::string(file.begin(), file.end())) == 8 && names.size() == 3);
     Require(closedir_nid_postfix(unicode) == 0);
+    const std::string nonDirDot = (root / "sample.txt").string() + "/sub/.";
+    const std::string nonDirDotDot = (root / "sample.txt").string() + "/sub/..";
+    const std::string movedTarget = (root / "moved").string();
+    *__error_nid_postfix() = 0;
+    Require(rename_nid_postfix(nonDirDot.c_str(), movedTarget.c_str()) == -1 && *__error_nid_postfix() == 20);
+    *__error_nid_postfix() = 0;
+    Require(rename_nid_postfix(nonDirDotDot.c_str(), movedTarget.c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(sceKernelRename(nonDirDot.c_str(), movedTarget.c_str()) == static_cast<int>(0x80020014u));
+    Require(sceKernelRename(nonDirDotDot.c_str(), movedTarget.c_str()) == static_cast<int>(0x80020014u));
+    Require(TrimTrailingSeparators_nid_no_patch("/") == "/");
+    Require(TrimTrailingSeparators_nid_no_patch("a/b///") == "a/b");
+#ifdef _WIN32
+    Require(TrimTrailingSeparators_nid_no_patch("C:/") == "C:/");
+    Require(TrimTrailingSeparators_nid_no_patch("C:/sub///") == "C:/sub");
+    const std::string utf8UncPath("//\xC3\xA9/sub///");
+    Require(TrimTrailingSeparators_nid_no_patch(utf8UncPath) == "//\xC3\xA9/sub");
+#endif
     std::filesystem::remove_all(root / std::filesystem::path(folder));
     if (links) {
         std::filesystem::remove(root / "file-link");

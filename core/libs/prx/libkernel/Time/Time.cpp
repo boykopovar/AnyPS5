@@ -10,9 +10,11 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestTime.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -113,11 +115,59 @@ static std::uint64_t ClockOrigin() {
     return origin;
 }
 
+namespace {
+
+struct GuestClockPause {
+    std::mutex mutex;
+    unsigned depth = 0;
+    std::atomic<std::uint64_t> sequence{0};
+    std::atomic<bool> paused{false};
+    std::atomic<std::uint64_t> pausedAt{0};
+    std::atomic<std::uint64_t> pausedNanos{0};
+};
+
+GuestClockPause& ClockPause() {
+    static GuestClockPause pause;
+    return pause;
+}
+
+}
+
+static std::uint64_t PausedRawMonotonicNanos() {
+    auto& pause = ClockPause();
+    for (;;) {
+        const auto sequence = pause.sequence.load();
+        if ((sequence & 1u) != 0) continue;
+        const auto now = pause.paused.load() ? pause.pausedAt.load() : RawMonotonicNanos() - pause.pausedNanos.load();
+        if (pause.sequence.load() == sequence) return now;
+    }
+}
+
 static std::uint64_t GetMonotonicNanos() {
-    if (TimeScale() == 1.0) return RawMonotonicNanos();
+    if (TimeScale() == 1.0) return PausedRawMonotonicNanos();
     const auto origin = ClockOrigin();
-    const auto raw = RawMonotonicNanos();
+    const auto raw = PausedRawMonotonicNanos();
     return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
+}
+
+extern "C" void KernelPauseGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth++ != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedAt.store(RawMonotonicNanos() - pause.pausedNanos.load());
+    pause.paused.store(true);
+    pause.sequence.fetch_add(1);
+}
+
+extern "C" void KernelResumeGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth == 0 || --pause.depth != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedNanos.store(RawMonotonicNanos() - pause.pausedAt.load());
+    pause.paused.store(false);
+    pause.sequence.fetch_add(1);
 }
 
 static std::uint64_t GetStartNanos() {
@@ -126,6 +176,18 @@ static std::uint64_t GetStartNanos() {
 }
 
 static const std::uint64_t g_processStart = GetStartNanos();
+#ifdef _WIN32
+static std::uint64_t APS5_VABI LibcMonotonicNanos() {
+    return GetMonotonicNanos();
+}
+#endif
+static const bool g_clockSourceInstalled = [] {
+    LibcSetProcessTimeSource_nid_no_patch(&sceKernelGetProcessTime);
+#ifdef _WIN32
+    LibcSetMonotonicTimeSource_nid_no_patch(&LibcMonotonicNanos);
+#endif
+    return true;
+}();
 
 #ifdef _WIN32
 // Every relative wait in the process (winpthreads nanosleep, std::condition_variable::wait_for, the
@@ -149,7 +211,8 @@ static const bool g_timerResolutionRaised = [] {
     const auto queryResolution = ntdll ? reinterpret_cast<NtQueryTimerResolutionFn>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtQueryTimerResolution"))) : nullptr;
     ULONG minimum = 0, maximum = 0, current = 0;
     if (queryResolution) queryResolution(&minimum, &maximum, &current);
-    std::fprintf(stderr, "[time] scheduler tick %s (was %.2f ms, now %.2f ms, timed waits %s)\n", raised ? "raised to 0.5 ms" : "unchanged", previous / 10000.0, current / 10000.0, TimedWait::Coarse() ? "coarse" : "fine");
+    const double timerLateUs = TimedWait::Coarse() ? 0.0 : static_cast<double>(TimedWait::TimerLateNanos()) / 1000.0;
+    std::fprintf(stderr, "[time] scheduler tick %s (was %.2f ms, now %.2f ms, timed waits %s, timers fire %.0f us late)\n", raised ? "raised to 0.5 ms" : "unchanged", previous / 10000.0, current / 10000.0, TimedWait::Coarse() ? "coarse" : "fine", timerLateUs);
     return raised;
 }();
 
@@ -419,21 +482,45 @@ int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) 
     return GUEST_EIO;
 }
 
-static bool CpuTimeNanos(bool callingThread, bool countKernel, std::uint64_t* nanos) {
+static bool InvariantTsc() {
+    static const bool invariant = GuestCpu::Cpuid(0x80000000u, 0)[0] >= 0x80000007u && (GuestCpu::Cpuid(0x80000007u, 0)[3] & (1u << 8u)) != 0;
+    return invariant;
+}
+
+bool HostThreadCpuNanos_nid_no_patch(void* thread, std::uint64_t* nanos) {
+    if (InvariantTsc()) {
+        const std::uint64_t frequency = HostTscFrequency_nid_no_patch();
+        ULONG64 cycles = 0;
+        if (!QueryThreadCycleTime(static_cast<HANDLE>(thread), &cycles)) return false;
+        *nanos = cycles / frequency * 1000000000ULL + cycles % frequency * 1000000000ULL / frequency;
+        return true;
+    }
     FILETIME creation{};
     FILETIME exitTime{};
     FILETIME kernel{};
     FILETIME user{};
-    if (callingThread) {
-        if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user)) {
-            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
-            return false;
-        }
-    } else {
-        if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user)) {
-            *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
-            return false;
-        }
+    if (!GetThreadTimes(static_cast<HANDLE>(thread), &creation, &exitTime, &kernel, &user)) return false;
+    const auto toTicks = [](const FILETIME& time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    *nanos = (toTicks(user) + toTicks(kernel)) * 100ULL;
+    return true;
+}
+
+static bool ThreadCpuTimeNanos(std::uint64_t* nanos) {
+    if (HostThreadCpuNanos_nid_no_patch(GetCurrentThread(), nanos)) return true;
+    *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+    return false;
+}
+
+static bool ProcessCpuTimeNanos(bool countKernel, std::uint64_t* nanos) {
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user)) {
+        *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
+        return false;
     }
     const auto toTicks = [](const FILETIME& time) {
         return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
@@ -442,23 +529,6 @@ static bool CpuTimeNanos(bool callingThread, bool countKernel, std::uint64_t* na
     return true;
 }
 
-static bool CpuTimeResolutionNanos(std::uint64_t* nanos) {
-    DWORD adjustment = 0;
-    DWORD increment = 0;
-    BOOL adjustmentDisabled = FALSE;
-    if (!GetSystemTimeAdjustment(&adjustment, &increment, &adjustmentDisabled)) {
-        *__error_nid_postfix() = ClockTimeWin32ErrorToGuestErrno_nid_no_patch(GetLastError());
-        return false;
-    }
-    if (increment == 0)
-        throw std::runtime_error("clock_getres: GetSystemTimeAdjustment reported no clock interrupt period");
-    *nanos = static_cast<std::uint64_t>(increment) * 100ULL;
-    return true;
-}
-
-static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
-    return CpuTimeResolutionNanos(nanos);
-}
 #else
 static std::uint64_t ClockTicksPerSecond() {
     const long rate = sysconf(_SC_CLK_TCK);
@@ -487,12 +557,6 @@ static std::uint64_t ProcessCpuNanos(bool countSystem) {
     const std::uint64_t rate = ClockTicksPerSecond();
     const std::uint64_t ticks = static_cast<std::uint64_t>(usage.tms_utime) + (countSystem ? static_cast<std::uint64_t>(usage.tms_stime) : 0ULL);
     return ticks / rate * 1000000000ULL + ticks % rate * 1000000000ULL / rate;
-}
-
-static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
-    const std::uint64_t rate = ClockTicksPerSecond();
-    *nanos = (1000000000ULL + rate - 1ULL) / rate;
-    return true;
 }
 #endif
 
@@ -532,7 +596,7 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
     if (clockId == 1 || clockId == 2) {
 #ifdef _WIN32
         std::uint64_t nanos = 0;
-        if (!CpuTimeNanos(false, clockId == 2, &nanos)) return -1;
+        if (!ProcessCpuTimeNanos(clockId == 2, &nanos)) return -1;
 #else
         const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
 #endif
@@ -569,7 +633,7 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
     }
     if (clockId == 14 || clockId == 15) {
         std::uint64_t nanos = 0;
-        if (!CpuTimeNanos(clockId == 14, true, &nanos)) return -1;
+        if (!(clockId == 14 ? ThreadCpuTimeNanos(&nanos) : ProcessCpuTimeNanos(true, &nanos))) return -1;
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
@@ -617,6 +681,12 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
 #endif
+    if (nativeId == CLOCK_MONOTONIC) {
+        const std::uint64_t nanos = PausedRawMonotonicNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
@@ -645,7 +715,13 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
         return -1;
     }
     KernelTimespec value{};
-    if (ReadClock(clockId, &value) != 0) return -1;
+    if (clockId == GUEST_CLOCK_PROCESS_CPUTIME_ID) {
+        const auto elapsed = GetMonotonicNanos() - GetStartNanos();
+        value.tv_sec = static_cast<std::int64_t>(elapsed / 1000000000ULL);
+        value.tv_nsec = static_cast<std::int64_t>(elapsed % 1000000000ULL);
+    } else if (ReadClock(clockId, &value) != 0) {
+        return -1;
+    }
     if (tp == nullptr) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
@@ -686,86 +762,34 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
 
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
-    if (IsCpuClock(clockId))
-        return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
-    if (clockId == 1 || clockId == 2) {
-        std::uint64_t nanos = 0;
-        if (!ProcessCpuResolutionNanos(&nanos)) return -1;
-        res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
-        res->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
-        return 0;
-    }
-    if (clockId == 13) {
-        res->tv_sec = 1;
-        res->tv_nsec = 0;
-        return 0;
-    }
-#ifdef _WIN32
-    if (clockId == 0 || clockId == 9) {
-        res->tv_sec = 0;
-        res->tv_nsec = 100LL;
-        return 0;
-    }
-    if (clockId == 4 || clockId == 5 || clockId == 7 || clockId == 8 || clockId == 10 || clockId == 11 || clockId == 12) {
-        static const std::uint64_t freq = [] {
-            LARGE_INTEGER f{};
-            QueryPerformanceFrequency(&f);
-            return static_cast<std::uint64_t>(f.QuadPart);
-        }();
-        std::uint64_t nsPerTick = (1000000000ULL + freq - 1ULL) / freq;
-        res->tv_sec = 0;
-        res->tv_nsec = static_cast<std::int64_t>(nsPerTick);
-        return 0;
-    }
-    if (clockId == 14 || clockId == 15) {
-        std::uint64_t nanos = 0;
-        if (!CpuTimeResolutionNanos(&nanos)) return -1;
-        res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
-        res->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
-        return 0;
-    }
-    throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
-#else
-    clockid_t nativeId;
+    if (IsCpuClock(clockId)) clockId = GUEST_CLOCK_THREAD_CPUTIME_ID;
     switch (clockId) {
         case 0:
-        case 9:
-            nativeId = CLOCK_REALTIME;
-            break;
-        case 10:
-#ifdef CLOCK_REALTIME_COARSE
-            nativeId = CLOCK_REALTIME_COARSE;
-#else
-            nativeId = CLOCK_REALTIME;
-#endif
-            break;
         case 4:
-        case 7:
-        case 11:
-            nativeId = CLOCK_MONOTONIC;
-            break;
         case 5:
+        case 7:
         case 8:
+        case 9:
+        case 10:
+        case 11:
         case 12:
-            nativeId = CLOCK_MONOTONIC;
-            break;
-        case 14:
-            nativeId = CLOCK_THREAD_CPUTIME_ID;
-            break;
-        case 15:
-            nativeId = CLOCK_PROCESS_CPUTIME_ID;
-            break;
+            *res = {0, 81};
+            return 0;
+        case 1:
+        case 2:
+            *res = {0, 1000000};
+            return 0;
+        case 13:
+            *res = {1, 0};
+            return 0;
+        case GUEST_CLOCK_THREAD_CPUTIME_ID:
+        case 21:
+            *res = {0, 1000};
+            return 0;
         default:
-            throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
+            *__error_nid_postfix() = GUEST_EINVAL;
+            return -1;
     }
-    struct timespec ts{};
-    if (clock_getres(nativeId, &ts) != 0) {
-        return -1;
-    }
-    res->tv_sec = static_cast<std::int64_t>(ts.tv_sec);
-    res->tv_nsec = static_cast<std::int64_t>(ts.tv_nsec);
-    return 0;
-#endif
 }
 
 int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
@@ -868,10 +892,39 @@ int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
     return result != 0 && *__error_nid_postfix() == 14 ? SceKernelErrorEfault : result;
 }
 
+namespace {
+
+std::mutex guestTimezoneMutex;
+bool guestTimezoneStored = false;
+KernelTimezone guestTimezone{};
+
+}
+
+void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime) {
+    std::lock_guard lock(guestTimezoneMutex);
+    guestTimezone = KernelTimezone{minutesWest, daylightTime};
+    guestTimezoneStored = true;
+}
+
+void ResetGuestTimezone_nid_no_patch() {
+    std::lock_guard lock(guestTimezoneMutex);
+    guestTimezoneStored = false;
+    guestTimezone = KernelTimezone{};
+}
+
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return 0;
-    const auto now = static_cast<std::int64_t>(std::time(nullptr));
-    const KernelTimezone zone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
+    KernelTimezone zone{};
+    bool stored = false;
+    {
+        std::lock_guard lock(guestTimezoneMutex);
+        stored = guestTimezoneStored;
+        zone = guestTimezone;
+    }
+    if (!stored) {
+        const auto now = static_cast<std::int64_t>(std::time(nullptr));
+        zone = KernelTimezone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
+    }
     return GuestCopyOut_nid_no_patch(tz, &zone, sizeof(zone)) ? 0 : SceKernelErrorEfault;
 }
 

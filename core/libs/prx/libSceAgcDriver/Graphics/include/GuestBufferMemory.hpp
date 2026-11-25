@@ -91,6 +91,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
+bool DmaBufImportSelected(const Context& context);
 
 enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
 inline constexpr std::size_t ImportRequesterCount = 6;
@@ -111,6 +112,8 @@ struct HostImportCounts {
     std::uint64_t growing = 0;
     std::uint64_t budgetChecks = 0;
     std::uint64_t retiredPinnedBytes = 0;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -122,7 +125,15 @@ void ReportHostImports();
 // (alignment and budget permitting), or null. Bytes at `address` are at `HostImportOffset(*import,
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
+bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t address, std::size_t bytes);
+struct HostImportCopy {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkDeviceSize bytes;
+};
+std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes);
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
@@ -132,9 +143,13 @@ void SetHostImportWindow(std::uint64_t bytes);
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
 std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t configured, std::uint64_t liveBytes);
+bool HostImportsInHeapUsage(VkDriverId driver);
+VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysicalDeviceMemoryProperties& memory, VkPhysicalDeviceMemoryBudgetPropertiesEXT reported, std::uint64_t liveBytes, bool importsInUsage);
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
+void SetHeapMirrorRetry(bool enabled);
+void SetImportRetireCredit(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
@@ -161,7 +176,9 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // with the registry or making one (HostImportFor may take a registry lease): a hint for choices
 // made outside the device lock (a sampled texture's path, a dispatch's pre-sync); the path taken
 // re-checks with HostImportFor when it binds the import.
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes);
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page);
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 std::uint64_t HostImportSetGeneration();
 struct RegisteredPiece {
@@ -179,6 +196,14 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address);
 // imported); see GuestBufferMemory.cpp.
 struct ImageMirror;
 class Recorder;
+class StorageTexture;
+
+struct MirrorPublishEntry {
+    std::shared_ptr<StorageTexture> image;
+    std::uint64_t base = 0;
+    std::uint64_t serial = 0;
+    std::uint64_t since = 0;
+};
 
 template<typename TRange>
 void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::vector<std::size_t>& indices) {
@@ -199,6 +224,9 @@ void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::sp
 // work using the import is recorded) the imports are left as they are.
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile);
 
+bool HostImportView(const Context& context, std::uint64_t address, std::size_t bytes, VkDescriptorBufferInfo& view, std::uint64_t& serial);
+
+
 // The import table's identity (the fast Revalidate): serials proved under one identity stand
 // while the table still has it, i.e. the same device, the same epoch (bumped by every retire)
 // and the registry generation it was reconciled with, which must still be the live one.
@@ -210,11 +238,15 @@ struct HostImportsProof {
 };
 // Whether the table still matches `proof` (one lock); false for an empty or stale proof.
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof);
+bool TouchHostImportsIfUnchanged(const Context& context, const HostImportsProof& proof, std::span<const HostImport* const> imports);
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
+std::uint64_t ChangedCopySnapshotBytes();
+std::uint64_t ChangedCopySnapshotsMade();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -234,12 +266,15 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 // when synced, and the waiter targets the newest of them. Under APS5_PROFILE_DRAW CountLeaseOutcome
 // prints the [address-sync] leases line every 10 s from LeaseCounters (cumulative).
 bool SyncLeaseWork();
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
+void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes);
 void FinishLeaseWork();
+void FinishLeaseWrites();
 bool LeaseWorkPending();
+bool LeaseWritesMayBePending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
+    std::uint64_t writing = 0;
     // Pin-contention waits made by guest threads (the waiter calls), how many of them finished the
     // newest lease batch, how many had to drain the whole recorder instead (no lease batch noted),
     // how many only dropped the cached address space (no GPU wait, see AddressSpaceStats), and
@@ -249,6 +284,8 @@ struct LeaseStats {
     std::uint64_t contentionDrains = 0;
     std::uint64_t cacheDrops = 0;
     double contentionMs = 0;
+    std::uint64_t retireSnapshots = 0;
+    std::uint64_t retireSnapshotsSkipped = 0;
 };
 LeaseStats LeaseCounters();
 
@@ -272,6 +309,10 @@ struct AddressSpaceStats {
     std::uint64_t waiterDrops = 0;
     std::uint64_t patchedEpoch = 0;
     std::uint64_t rebuiltGrowth = 0;
+    std::uint64_t heapRetries = 0;
+    std::uint64_t heapRetryImports = 0;
+    std::uint64_t heapRetryOwed = 0;
+    std::uint64_t heapRetryRetakes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -307,6 +348,7 @@ struct RetainedAddressSpace {
     RetainedAddressSpace* next = nullptr;
 };
 void ClearRetainedSpaces(VkDevice device);
+void ClearUploadCopies(VkDevice device);
 std::size_t RetainedSpaceCount();
 
 struct AddressCopy {
@@ -433,6 +475,8 @@ public:
         return false;
     }
     void MarkStagedWrites() const;
+    void NoteCarriedShadows(const Recorder& recorder) const;
+    static std::uint64_t CarriedShadowCopies();
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
@@ -520,6 +564,7 @@ private:
         VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
         std::shared_ptr<Buffer> shadowCopy;
+        std::weak_ptr<Buffer> releasedShadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
@@ -573,6 +618,7 @@ private:
     // instead of the CPU (see Region::gpuCopy): live guest bytes, not sparse, at most the size
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
+    bool copyBehindGpuWork(const Region& region, bool locked) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
     // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
     // written element inside, and an atomic element or a size within the written-shadow window.
@@ -588,6 +634,8 @@ private:
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
+    void publishIntoMirrors();
+    std::vector<MirrorPublishEntry> mirrorPublishes;
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;
@@ -613,6 +661,7 @@ private:
     bool regionsSorted = false;
     bool regionsOverlap = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;

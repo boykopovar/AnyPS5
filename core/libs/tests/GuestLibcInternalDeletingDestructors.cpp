@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -183,6 +184,11 @@ int main() {
         _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix,
         _ZNSt8messagesIcED0Ev_nid_postfix,
         _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix,
+        _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix,
+        _ZNSt7_MpunctIcED0Ev_nid_postfix,
+        _ZNSt7_MpunctIwED0Ev_nid_postfix,
+        _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix,
+        _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix,
     };
 
     for (Destructor destructor : destructors) {

@@ -2,6 +2,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <array>
+#include <cerrno>
+#include <cstdarg>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -65,7 +67,10 @@ int encoderError(std::uint32_t offset) {
 
 std::uint32_t guestStateWord(const void* state, std::size_t offset) {
     std::uint32_t word = 0;
-    if (!GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word)) throw std::runtime_error("OpusSilkEnc: unreadable state");
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error("OpusSilkEnc: unreadable state");
     return word;
 }
 
@@ -137,7 +142,18 @@ int APS5_VABI sceOpusSilkEncCtl(OpusSilkEncoder* state, int request, ...) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (!hasStateMarker(state)) return encoderError(codes.destroyStateErrorOffset);
     if (!knownRequest(request)) return encoderError(requestErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return __builtin_va_arg(list, int); });
+    __builtin_sysv_va_end(list);
+#else
+    std::va_list list;
+    va_start(list, request);
+    const std::int32_t value = OpusEncoderLibrary::ReadCtlValue(request, [&] { return va_arg(list, int); });
+    va_end(list);
+#endif
+    return library.Ctl(state, request, value);
 }
 
 int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId) {
@@ -148,7 +164,7 @@ int APS5_VABI sceOpusSilkEncCancel(OpusSilkEncoder* state, std::uint32_t batchId
 
 int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
     if (const int result = priorityEncodeError(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriority(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
@@ -179,7 +195,15 @@ int APS5_VABI sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(OpusSilkEncoder* s
 int APS5_VABI sceOpusSilkEncGetAjmContext(const OpusSilkEncoder* state, std::uint32_t* context) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xF0, sizeof(value));
+    errno = savedErrno;
+    if (!readable) throw std::runtime_error("OpusSilkEnc: unreadable AJM context");
+    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error("OpusSilkEnc: unwritable AJM context");
+    return 0;
 }
 
 } // extern "C"

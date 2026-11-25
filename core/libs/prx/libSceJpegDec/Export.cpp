@@ -95,13 +95,15 @@ void requireDecodeMode(const char* function, std::uint16_t decodeMode) {
     if (decodeMode != DECODE_MODE_NORMAL) throw std::runtime_error(std::string(function) + ": decode mode " + std::to_string(decodeMode) + " is not implemented");
 }
 
-Context* toContext(void* handle) {
+Context* toContext(void* handle, Context* copied = nullptr) {
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
     auto* context = reinterpret_cast<Context*>(handle);
     Context selfCheck{};
     if (!GuestCopyIn_nid_no_patch(&selfCheck, context, sizeof(selfCheck))) return nullptr;
-    return selfCheck.self == context ? context : nullptr;
+    if (selfCheck.self != context) return nullptr;
+    if (copied) *copied = selfCheck;
+    return context;
 }
 
 bool fillImageInfo(const Decoder::Jpeg::Header& header, std::uint32_t downScale, JpegDecImageInfo* info) {
@@ -244,6 +246,8 @@ std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std
     return static_cast<std::int32_t>(outputWidth << 16 | outputHeight);
 }
 
+enum class FirstScan { Absent, Pending, Rejected, Complete };
+
 struct InputStream {
     JpegDecInputCallback input = nullptr;
     void* argument = nullptr;
@@ -254,6 +258,7 @@ struct InputStream {
     std::optional<Decoder::Jpeg::Header> header;
     std::uint32_t downScale = 0;
     std::size_t scanOffset = 2;
+    FirstScan firstScan = FirstScan::Absent;
     bool inScan = false;
     std::optional<std::size_t> end;
     std::atomic<bool> busy = false;
@@ -281,9 +286,11 @@ void forgetStream(const Context* context) {
     streams.erase(context);
 }
 
-bool endFound(InputStream& stream);
+enum class ReadUntil { Scan, End };
 
-void pull(InputStream& stream, std::uint32_t size) {
+bool scanMarkers(InputStream& stream, ReadUntil until);
+
+void pull(InputStream& stream, std::uint32_t size, ReadUntil until) {
     while (size > 0 && stream.status == 0) {
         if (stream.chunkSize == 0) {
             JpegDecInputChunk chunk{};
@@ -306,11 +313,13 @@ void pull(InputStream& stream, std::uint32_t size) {
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
-        if (endFound(stream) && stream.end) return;
+        scanMarkers(stream, until);
+        if (stream.end || (until == ReadUntil::Scan && stream.firstScan == FirstScan::Complete)) return;
     }
 }
 
-bool endFound(InputStream& stream) {
+bool scanMarkers(InputStream& stream, ReadUntil until) {
+    if (until == ReadUntil::Scan && stream.firstScan == FirstScan::Rejected) return true;
     const std::vector<std::uint8_t>& data = stream.data;
     std::size_t& at = stream.scanOffset;
     while (true) {
@@ -334,19 +343,34 @@ bool endFound(InputStream& stream) {
             at += 2;
             continue;
         }
+        const bool firstScan = marker == 0xDA && until == ReadUntil::Scan;
+        if (firstScan) stream.firstScan = FirstScan::Pending;
         if (at + 3 >= data.size()) return false;
         const std::size_t length = (static_cast<std::size_t>(data[at + 2]) << 8) | data[at + 3];
-        if (length < 2) return true;
+        if (length < 2) {
+            if (firstScan) stream.firstScan = FirstScan::Rejected;
+            return true;
+        }
         if (at + 2 + length > data.size()) return false;
         at += 2 + length;
-        if (marker == 0xDA) stream.inScan = true;
+        if (firstScan) {
+            if (!Decoder::Jpeg::HasScanHeader(std::span(data).first(at))) {
+                stream.firstScan = FirstScan::Rejected;
+                return true;
+            }
+            stream.firstScan = FirstScan::Complete;
+        }
+        if (marker == 0xDA) {
+            stream.inScan = true;
+            if (until == ReadUntil::Scan) return true;
+        }
     }
 }
 
 bool mayBecomeHeader(InputStream& stream) {
     if (stream.data.size() < 2) return true;
     if (stream.data[0] != 0xFF || stream.data[1] != 0xD8) return false;
-    return !endFound(stream);
+    return !scanMarkers(stream, ReadUntil::Scan);
 }
 
 std::int32_t parseStream(const Context* context, const JpegDecInputControlParam* param, JpegDecImageInfo* imageInfo) {
@@ -362,8 +386,10 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     InputStream& stream = *use;
     stream.input = param->input;
     stream.argument = param->input_argument;
-    while (!(stream.header = Decoder::Jpeg::ParseHeader(stream.data)) && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE);
+    while (stream.firstScan != FirstScan::Complete && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::Scan);
     if (stream.status < 0) return stream.status;
+    if (stream.firstScan == FirstScan::Pending || stream.firstScan == FirstScan::Rejected) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
+    stream.header = Decoder::Jpeg::ParseHeader(stream.data);
     if (!stream.header) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.downScale = param->down_scale;
     JpegDecImageInfo localInfo{};
@@ -372,7 +398,7 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     return 0;
 }
 
-std::int32_t decodeStream(const Context* context, const JpegDecInputControlParam* param) {
+std::int32_t decodeStream(const Context* context, const Context& localContext, const JpegDecInputControlParam* param) {
     if (!param->image_mem_addr) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const std::uint16_t format = param->pixel_format;
     if ((format == 0 || format == 1 || format == 9 || format == 10) && (reinterpret_cast<std::uintptr_t>(param->image_mem_addr) & 3) != 0) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
@@ -398,9 +424,9 @@ std::int32_t decodeStream(const Context* context, const JpegDecInputControlParam
     stream.argument = param->input_argument;
     const DecodeTarget target{param->image_mem_addr, param->image_mem_size, param->coefficient_mem_addr, param->coefficient_mem_size,
                               param->down_scale, format, param->alpha_value, param->image_pitch};
-    const std::int32_t checked = checkTarget(*context, *stream.header, target);
+    const std::int32_t checked = checkTarget(localContext, *stream.header, target);
     if (checked != 0) return checked;
-    while (!stream.end && !endFound(stream) && stream.status == 0) pull(stream, INPUT_BLOCK_SIZE);
+    while (!stream.end && !scanMarkers(stream, ReadUntil::End) && stream.status == 0) pull(stream, INPUT_BLOCK_SIZE, ReadUntil::End);
     if (stream.status < 0) return stream.status;
     const std::span<const std::uint8_t> jpeg(stream.data.data(), stream.end.value_or(stream.data.size()));
     return writeImage(*stream.header, jpeg, target, nullptr);
@@ -438,8 +464,8 @@ int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memory
 }
 
 int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param, JpegDecImageInfo* imageInfo) {
-    const Context* context = toContext(handle);
-    if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
+    Context localContext{};
+    if (!toContext(handle, &localContext)) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     JpegDecDecodeParam localParam{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
@@ -458,7 +484,7 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
     if (!header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
     const DecodeTarget target{localParam.image_mem_addr, localParam.image_mem_size, localParam.coefficient_mem_addr, localParam.coefficient_mem_size,
                               localParam.down_scale, localParam.pixel_format, localParam.alpha_value, localParam.image_pitch};
-    const std::int32_t checked = checkTarget(*context, *header, target);
+    const std::int32_t checked = checkTarget(localContext, *header, target);
     if (checked != 0) return checked;
     return writeImage(*header, jpegBytes, target, imageInfo);
 }
@@ -473,6 +499,10 @@ int32_t APS5_VABI sceJpegDecDelete(void* handle) {
 }
 
 int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo) {
+    return JpegDecParseHeader_nid_no_patch(param, imageInfo);
+}
+
+int32_t APS5_VABI JpegDecParseHeader_nid_no_patch(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo) {
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     JpegDecParseParam localParam{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
@@ -480,7 +510,7 @@ int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecI
     if (localParam.jpeg_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     if (!validDecodeOptions(localParam.decode_mode, localParam.down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     if (!imageInfo) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    requireDecodeMode(__func__, localParam.decode_mode);
+    requireDecodeMode("sceJpegDecParseHeader", localParam.decode_mode);
     const std::uint32_t downScale = localParam.down_scale;
     std::vector<std::uint8_t> jpegBytes(localParam.jpeg_mem_size);
     if (!GuestCopyIn_nid_no_patch(jpegBytes.data(), localParam.jpeg_mem_addr, jpegBytes.size())) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
@@ -500,7 +530,8 @@ int32_t APS5_VABI sceJpegDecQueryMemorySize(const JpegDecCreateParam* param) {
 }
 
 int32_t APS5_VABI sceJpegDecDecodeWithInputControl(void* handle, const JpegDecInputControlParam* param, JpegDecImageInfo* imageInfo) {
-    const Context* context = toContext(handle);
+    Context localContext{};
+    const Context* context = toContext(handle, &localContext);
     if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     JpegDecInputControlParam localParam{};
@@ -508,7 +539,7 @@ int32_t APS5_VABI sceJpegDecDecodeWithInputControl(void* handle, const JpegDecIn
     if (!localParam.input) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const std::uint16_t operation = localParam.operation & ~std::uint16_t{1};
     if ((operation != OPERATION_PARSE && operation != OPERATION_DECODE) || localParam.reserved != 0) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    return operation == OPERATION_PARSE ? parseStream(context, &localParam, imageInfo) : decodeStream(context, &localParam);
+    return operation == OPERATION_PARSE ? parseStream(context, &localParam, imageInfo) : decodeStream(context, localContext, &localParam);
 }
 
 }

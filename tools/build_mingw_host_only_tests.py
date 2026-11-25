@@ -3,10 +3,13 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
-BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", "core/CMakeLists.txt", ".gitmodules")
+from performance_compare import unique_json_object
+
+BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", ".gitmodules")
 
 
 def object_document(value, path, name):
@@ -32,13 +35,26 @@ def target_document(value, path):
     return target
 
 
+def read_cmake_reply(path):
+    if not stat.S_ISREG(path.stat().st_mode):
+        raise ValueError(f"{path}: CMake reply must be a regular file")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
+    except RecursionError as error:
+        raise ValueError(f"{path}: CMake reply is nested too deeply") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
+
+
 def read_reply(build_dir):
     reply_dir = build_dir / ".cmake" / "api" / "v1" / "reply"
-    indexes = list(reply_dir.glob("index-*.json"))
+    indexes = [*reply_dir.glob("index-*.json"), *reply_dir.glob("error-*.json")]
     if not indexes:
         raise ValueError(f"{reply_dir}: no CMake File API index; configure with the codemodel-v2 query first")
-    index = max(indexes, key=lambda path: path.stat().st_mtime_ns)
-    document = object_document(json.loads(index.read_text(encoding="utf-8")), index, "CMake File API index")
+    index = max(indexes, key=lambda path: (path.name.split("-", 1)[1], path.name.startswith("error-")))
+    if index.name.startswith("error-"):
+        raise ValueError(f"{index}: latest CMake generation failed; configure successfully before selecting targets")
+    document = object_document(read_cmake_reply(index), index, "CMake File API index")
     reply = object_document(document.get("reply", {}), index, "CMake File API reply")
     codemodel = reply.get("codemodel-v2")
     if codemodel is None:
@@ -47,17 +63,20 @@ def read_reply(build_dir):
     if not codemodel:
         raise ValueError(f"{index}: missing codemodel-v2 reply")
     model_path = reply_dir / codemodel["jsonFile"]
-    model = object_document(json.loads(model_path.read_text(encoding="utf-8")), model_path, "CMake codemodel")
-    configurations = model.get("configurations", [])
+    model = object_document(read_cmake_reply(model_path), model_path, "CMake codemodel")
+    configurations = object_entries(model.get("configurations", []), model_path, "CMake configurations")
     if len(configurations) != 1:
         raise ValueError(f"{index}: expected one CMake configuration, found {len(configurations)}")
-    configuration = object_document(configurations[0], model_path, "CMake configuration")
+    configuration = configurations[0]
     targets = {}
-    for target in configuration.get("targets", []):
-        target = object_document(target, model_path, "CMake target reference")
+    for target in object_entries(configuration.get("targets", []), model_path, "CMake target references"):
+        target_id = target.get("id")
+        if not isinstance(target_id, str) or not target_id:
+            raise ValueError(f"{model_path}: invalid CMake target id (expected a nonempty string)")
+        if target_id in targets:
+            raise ValueError(f"{model_path}: duplicate CMake target id {target_id!r}")
         target_path = reply_dir / target["jsonFile"]
-        targets[target["id"]] = target_document(
-            json.loads(target_path.read_text(encoding="utf-8")), target_path)
+        targets[target_id] = target_document(read_cmake_reply(target_path), target_path)
     return Path(model["paths"]["source"]).resolve(), targets
 
 
@@ -205,7 +224,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         except ValueError:
             continue
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
-        if not any("tests" in source.parts and source.is_relative_to(source_root / "core" / "libs") for source in sources):
+        if not any(is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
         if links_guest_libc(target) or links_product_library(target, targets, source_root):
             continue
@@ -240,7 +259,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
+        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:
             print("No changed host-only core/libs test executables require a link check")
@@ -248,7 +267,9 @@ def main(argv=None):
         print("Host-only core/libs test executables:")
         print("\n".join(selected))
         if not args.list_only:
-            subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *selected], check=True)
+            from select_tests import chunks
+            for batch in chunks(selected):
+                subprocess.run(["cmake", "--build", str(args.build_dir), "--parallel", "3", "--target", *batch], check=True)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1

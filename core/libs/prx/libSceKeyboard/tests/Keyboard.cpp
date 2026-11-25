@@ -5,6 +5,9 @@
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
 
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,12 +15,97 @@
 #include <source_location>
 #include <stdexcept>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 static constexpr int InitialUserId = 0x10000000;
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "%s:%u: keyboard assertion failed\n", location.file_name(), location.line());
     std::abort();
+}
+
+class GuardedOutput {
+public:
+    unsigned char* data = nullptr;
+    std::size_t page = 0;
+
+    GuardedOutput() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(data + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        page = static_cast<std::size_t>(pageSize);
+        auto* mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        data = static_cast<unsigned char*>(mapping);
+        Require(mprotect(data + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    void ProtectFirstReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(data, page, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, page, PROT_READ) == 0);
+#endif
+    }
+
+    ~GuardedOutput() {
+#ifdef _WIN32
+        Require(VirtualFree(data, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(data, page * 2) == 0);
+#endif
+    }
+
+    GuardedOutput(const GuardedOutput&) = delete;
+    GuardedOutput& operator=(const GuardedOutput&) = delete;
+};
+
+static void CheckGuardedOutputs() {
+    GuardedOutput memory;
+    KeyboardInputEvent event{};
+    event.keyCode = 0x05;
+    event.pressed = true;
+    KeyboardPublishInput_nid_postfix(event);
+    event.pressed = false;
+    KeyboardPublishInput_nid_postfix(event);
+
+    auto* unmapped = reinterpret_cast<KeyboardData*>(std::uintptr_t{1});
+    auto* crossing = reinterpret_cast<KeyboardData*>(memory.data + memory.page - sizeof(KeyboardData));
+    const int previousErrno = errno;
+    errno = ERANGE;
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, unmapped, 2) == KEYBOARD_ERROR_INVALID_ARG && errno == ERANGE);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, crossing, 2) == KEYBOARD_ERROR_INVALID_ARG && errno == ERANGE);
+    KeyboardData output[2]{};
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, output, 2) == 2);
+    Require(output[0].key_code[0] == 0x05 && output[1].key_code[0] == 0);
+    Require(output[0].timestamp <= output[1].timestamp);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, output, 1) == 0);
+
+    Require(sceKeyboardReadState(KEYBOARD_HANDLE, unmapped) == KEYBOARD_ERROR_INVALID_ARG && errno == ERANGE);
+    memory.ProtectFirstReadOnly();
+    Require(sceKeyboardReadState(KEYBOARD_HANDLE, reinterpret_cast<KeyboardData*>(memory.data)) == KEYBOARD_ERROR_INVALID_ARG && errno == ERANGE);
+    Require(sceKeyboardReadState(KEYBOARD_HANDLE, output) == KEYBOARD_OK);
+    Require(output[0].connected && output[0].key_code[0] == 0);
+    errno = previousErrno;
 }
 
 static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Uint8 repeat = 0) {
@@ -121,6 +209,13 @@ int main() {
     KeyboardCharData charData{};
     bool connected = false;
     std::int32_t deviceId = 0;
+    unsigned char clearedState[sizeof(KeyboardData)]{};
+    clearedState[offsetof(KeyboardData, length)] = 1;
+    Require(sceKeyboardReadState(42, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    std::memset(data, 0xa5, sizeof(data[0]));
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(std::memcmp(data, clearedState, sizeof(data[0])) == 0);
+    Require(sceKeyboardRead(42, nullptr, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
@@ -136,10 +231,23 @@ int main() {
     Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
+    std::memset(data, 0xa5, sizeof(data[0]));
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(std::memcmp(data, clearedState, sizeof(data[0])) == 0);
     CheckInvalidKeys(false);
-    Require(sceKeyboardOpen(1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardOpen(1, 0, 2, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardOpen(1, 0, -1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardOpen(1, 1, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardOpen(0, 0, 1, nullptr) == KEYBOARD_ERROR_UNKNOWN_USER);
+    Require(sceKeyboardOpen(-1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_USER_ID);
+    Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(0x7fff, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(0x7fff, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(-1, 0, 0, nullptr) == KEYBOARD_ERROR_INVALID_USER_ID);
     Require(sceKeyboardOpen(0, 0, 0, nullptr) == KEYBOARD_ERROR_UNKNOWN_USER);
@@ -152,16 +260,51 @@ int main() {
     CheckUnconvertedKeys();
     CheckKanaLed();
     Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
+    Require(sceKeyboardOpen(InitialUserId, 0, 1, nullptr) == KEYBOARD_SECOND_PORT_HANDLE);
+    Require(sceKeyboardOpen(InitialUserId, 0, 1, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_SECOND_PORT_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    bool secondConnected = true;
+    Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, &secondConnected) == KEYBOARD_OK && !secondConnected);
+    KeyboardData secondData{};
+    secondData.connected = true;
+    secondData.key_code[0] = 0x04;
+    Require(sceKeyboardRead(KEYBOARD_SECOND_PORT_HANDLE, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardRead(KEYBOARD_SECOND_PORT_HANDLE, &secondData, 1) == 0 && secondData.connected && secondData.key_code[0] == 0x04);
+    Require(sceKeyboardReadState(KEYBOARD_SECOND_PORT_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    const int secondPortErrno = errno;
+    errno = ERANGE;
+    Require(sceKeyboardReadState(KEYBOARD_SECOND_PORT_HANDLE, reinterpret_cast<KeyboardData*>(std::uintptr_t{1})) == KEYBOARD_ERROR_INVALID_ARG && errno == ERANGE);
+    errno = secondPortErrno;
+    Require(sceKeyboardReadState(KEYBOARD_SECOND_PORT_HANDLE, &secondData) == KEYBOARD_OK && !secondData.connected && secondData.length == 1 && secondData.key_code[0] == 0);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_SECOND_PORT_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_OK && charData.char_code == 'a');
+    std::int32_t secondDeviceId = 0;
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_SECOND_PORT_HANDLE, &secondDeviceId) == KEYBOARD_ERROR_INVALID_HANDLE && secondDeviceId == -1);
+    Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_OK);
+    Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
+    Require(sceKeyboardReadState(KEYBOARD_SECOND_PORT_HANDLE, &secondData) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
     Require(sceKeyboardGetConnection(42, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
     Require(sceKeyboardRead(42, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardRead(42, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardRead(42, data, 0) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardRead(42, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardReadState(42, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardReadState(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1);
     Require(data[0].connected && data[0].length == 1 && data[0].key_code[0] == 0 && data[0].modifier_key == 0);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+    CheckGuardedOutputs();
 
     KeyboardInput input;
     input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A), 8);
@@ -258,6 +401,9 @@ int main() {
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, reinterpret_cast<KeyboardCharData*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, reinterpret_cast<bool*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, reinterpret_cast<std::int32_t*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);

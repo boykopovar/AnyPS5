@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <vector>
 
 struct PcmFixture {
@@ -235,6 +236,33 @@ static void TestSkipWindowContract() {
     Require(callbacks.size() == 1 && callbacks.front().flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks.front().user_data == 101);
 }
 
+static void TestLoopPastData(const PcmFixture& fixture) {
+    constexpr std::uint32_t channels = 2;
+    constexpr std::uint32_t frames = 4;
+    const auto canonical = Canonical(fixture);
+    const auto framesOf = [&](const PcmFixture& input, const std::vector<std::uint32_t>& order) {
+        std::vector<std::uint8_t> data;
+        for (const auto frame : order) for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto first = input.data.begin() + (frame + channel) % input.samples.size() * input.bytes;
+            data.insert(data.end(), first, first + input.bytes);
+        }
+        return data;
+    };
+    const auto data = framesOf(fixture, {0, 1, 2, 3, 4, 5, 6, 7});
+    const auto frameBytes = fixture.bytes * channels;
+    for (const std::uint32_t samples : {frames * 2, frames + frames / 2}) {
+        std::vector<std::uint32_t> order;
+        while (order.size() < PcmGrain * 4) for (std::uint32_t sample = 0; sample < samples; ++sample) order.push_back(sample % frames);
+        const auto expected = framesOf(canonical, order);
+        Playback playback(fixture.type, channels), reference(canonical.type, channels);
+        const Ngs2WaveformBlock blocks[] = {{0, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}, {frameBytes * frames, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}};
+        const Ngs2WaveformBlock expectedBlock{0, expected.size(), 0, 0, static_cast<std::uint32_t>(order.size()), 0, 0};
+        playback.Add(data.data(), blocks, 2);
+        reference.Add(expected.data(), &expectedBlock, 1);
+        for (unsigned pass = 0; pass < 3; ++pass) Require(playback.Render() == reference.Render());
+    }
+}
+
 static void TestResampling(const PcmFixture& fixture) {
     const auto canonical = Canonical(fixture);
     Playback playback(fixture.type, 1, 24000), reference(canonical.type, 1, 24000);
@@ -337,6 +365,64 @@ static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t c
     Require(lateWriteVisible);
 }
 
+static void TestReportedRingLifetime(const PcmFixture& fixture, std::uint32_t channels, std::uint32_t rate, float pitch) {
+    constexpr std::uint32_t RegionFrames = PcmGrain * 4;
+    constexpr std::uint32_t RegionCount = 4;
+    const auto frameBytes = channels * fixture.bytes;
+    std::vector<std::uint8_t> ring(RegionFrames * RegionCount * frameBytes);
+    struct Region { std::uint8_t* data; std::uint32_t frames; };
+    std::deque<Region> pending;
+    std::deque<std::vector<std::uint8_t>> immutable;
+    Playback playback(fixture.type, channels, rate), reference(fixture.type, channels, rate);
+    for (const auto voice : {playback.voice, reference.voice})
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, pitch});
+    std::uint64_t generated = 0;
+    const auto queue = [&](std::uint8_t* data, std::uint32_t frames) {
+        for (std::uint32_t frame = 0; frame < frames; ++frame, ++generated) {
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                const auto index = (generated * 17 + generated / 7 + channel * 3) % fixture.samples.size();
+                std::copy_n(fixture.data.data() + index * fixture.bytes, fixture.bytes,
+                            data + static_cast<std::size_t>(frame * channels + channel) * fixture.bytes);
+            }
+        }
+        immutable.emplace_back(data, data + frames * frameBytes);
+        const Ngs2WaveformBlock block{0, frames * frameBytes, 0, 0, frames, 0, 0};
+        playback.Add(data, &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE);
+        reference.Add(immutable.back().data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE);
+        pending.push_back({data, frames});
+    };
+    for (std::uint32_t region = 0; region < RegionCount; ++region)
+        queue(ring.data() + region * RegionFrames * frameBytes, RegionFrames);
+    std::uint64_t previous = 0, recycled = 0;
+    for (unsigned grain = 0; grain < 100; ++grain) {
+        Require(playback.Render() == reference.Render());
+        const auto state = playback.State();
+        const auto expected = reference.State();
+        Require(state.decoded_data_size == expected.decoded_data_size);
+        Require(state.num_decoded_samples == expected.num_decoded_samples);
+        Require(state.decoded_data_size >= previous && state.decoded_data_size <= generated * frameBytes);
+        Require(state.decoded_data_size % frameBytes == 0);
+        auto released = state.decoded_data_size / frameBytes - recycled;
+        while (!pending.empty() && released >= pending.front().frames) {
+            const auto region = pending.front();
+            pending.pop_front();
+            queue(region.data, region.frames);
+            released -= region.frames;
+            recycled += region.frames;
+        }
+        previous = state.decoded_data_size;
+    }
+    Require(previous > ring.size() * 2);
+}
+
+static void TestReportedRingLifetimes() {
+    for (const auto& fixture : Fixtures)
+        for (const auto channels : {1u, 2u})
+            for (const auto rate : {44100u, 48000u, 96000u})
+                for (const auto pitch : {0.75f, 1.0f, 2.0f})
+                    TestReportedRingLifetime(fixture, channels, rate, pitch);
+}
+
 static void TestReportedInputLifetimes() {
     for (const auto& fixture : Fixtures)
         for (const auto channels : {1u, 2u})
@@ -346,6 +432,10 @@ static void TestReportedInputLifetimes() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--reported-ring") == 0) {
+        TestReportedRingLifetimes();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--reported-lifetime") == 0) {
         TestReportedInputLifetimes();
         return 0;
@@ -355,11 +445,13 @@ int main(int argc, char** argv) {
         TestConstantConversions(fixture);
         for (const auto channels : {1u, 2u, 6u, 8u}) TestFramesAndPositions(fixture, channels);
         TestRepeatAndTransition(fixture);
+        TestLoopPastData(fixture);
         TestResampling(fixture);
         TestPitch(fixture);
         TestBounds(fixture);
     }
     TestNumericEdges();
     TestReportedInputLifetimes();
+    TestReportedRingLifetimes();
     return 0;
 }

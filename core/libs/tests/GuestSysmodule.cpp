@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -12,8 +13,10 @@
 #include <stdexcept>
 #include <string>
 #ifdef _WIN32
+#include <cstdio>
+#include <filesystem>
+#include <vector>
 #include <windows.h>
-#include <psapi.h>
 #endif
 #ifdef __linux__
 #include <cstdio>
@@ -31,7 +34,19 @@
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+#ifdef _WIN32
+std::vector<std::wstring> longTree;
+#endif
+
+void Require(bool value) {
+    if (value) return;
+#ifdef _WIN32
+    for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+        if (RemoveDirectoryW(entry->c_str()) == FALSE) DeleteFileW(entry->c_str());
+    }
+#endif
+    std::abort();
+}
 
 template <typename TFunction>
 bool ThrowsRuntimeError(TFunction function) {
@@ -121,6 +136,9 @@ void CheckUnwindInfo() {
     }
     Require(threw);
     Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 
@@ -156,21 +174,80 @@ void CheckUnknownIds() {
 }
 
 #ifdef _WIN32
+std::wstring Extended(const std::filesystem::path& path) {
+    return LR"(\\?\)" + std::filesystem::absolute(path).lexically_normal().make_preferred().wstring();
+}
+
+std::string NtName(HANDLE handle) {
+    std::wstring name(32768, L'\0');
+    const DWORD length = GetFinalPathNameByHandleW(handle, name.data(), static_cast<DWORD>(name.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_NT);
+    Require(length > 0 && length < name.size());
+    const int bytes = WideCharToMultiByte(CP_ACP, 0, name.data(), static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+    Require(bytes > 0);
+    std::string result(static_cast<std::size_t>(bytes), '\0');
+    Require(WideCharToMultiByte(CP_ACP, 0, name.data(), static_cast<int>(length), result.data(), bytes, nullptr, nullptr) == bytes);
+    return result;
+}
+
+std::string ExpectedName(const MEMORY_BASIC_INFORMATION& region) {
+    if (region.Type != MEM_IMAGE) return {};
+    std::wstring file(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(static_cast<HMODULE>(region.AllocationBase), file.data(), static_cast<DWORD>(file.size()));
+    Require(length > 0 && length < file.size());
+    file.resize(length);
+    const HANDLE handle = CreateFileW(Extended(file).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    auto name = NtName(handle);
+    Require(CloseHandle(handle) != FALSE);
+    return name;
+}
+
+void RequireName(const ModuleInfoForUnwind& info, const std::string& expected) {
+    const auto length = std::min(expected.size(), sizeof(info.name) - 1);
+    if (std::strlen(info.name) != length || _strnicmp(info.name, expected.c_str(), length) != 0) {
+        std::fprintf(stderr, "unwind region name: expected the first %zu bytes of %s, got %s\n", length, expected.c_str(), info.name);
+    }
+    Require(std::strlen(info.name) == length && _strnicmp(info.name, expected.c_str(), length) == 0);
+}
+
 void RequireUnwindMatchesRegion(const void* pointer) {
     const auto address = reinterpret_cast<std::uint64_t>(pointer);
     MEMORY_BASIC_INFORMATION expected{};
     Require(VirtualQuery(pointer, &expected, sizeof(expected)) != 0);
-    char mapped[4096] = {};
-    const DWORD length = GetMappedFileNameA(GetCurrentProcess(), expected.BaseAddress, mapped, sizeof(mapped) - 1);
-    mapped[length] = '\0';
+    const auto name = ExpectedName(expected);
     for (int repeat = 0; repeat < 3; ++repeat) {
         ModuleInfoForUnwind info{};
         Require(sceSysmoduleGetModuleInfoForUnwind(address, 0, &info) == 0);
         Require(info.st_size == sizeof(ModuleInfoForUnwind));
         Require(info.seg0_addr == reinterpret_cast<std::uint64_t>(expected.BaseAddress) && info.seg0_size == expected.RegionSize);
-        Require(std::strncmp(info.name, mapped, sizeof(info.name) - 1) == 0);
+        RequireName(info, name);
         Require(info.eh_frame_hdr_addr == 0 && info.eh_frame_addr == 0 && info.eh_frame_size == 0);
     }
+}
+
+void CheckLongMappedFileName() {
+    std::vector<std::filesystem::path> levels{std::filesystem::current_path() / ("sysmodule-long-" + std::to_string(GetCurrentProcessId()))};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    const auto file = levels.back() / "mapped.bin";
+    for (const auto& level : levels) longTree.push_back(Extended(level));
+    longTree.push_back(Extended(file));
+    for (const auto& level : levels) Require(CreateDirectoryW(Extended(level).c_str(), nullptr) != FALSE);
+    Require(std::filesystem::absolute(file).native().size() > MAX_PATH);
+    const HANDLE handle = CreateFileW(Extended(file).c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    const auto expected = NtName(handle);
+    const HANDLE mapping = CreateFileMappingW(handle, nullptr, PAGE_READWRITE, 0, 4096, nullptr);
+    Require(mapping != nullptr);
+    void* view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4096);
+    Require(view != nullptr);
+    ModuleInfoForUnwind info{};
+    const int result = sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(view), 0, &info);
+    Require(UnmapViewOfFile(view) != FALSE && CloseHandle(mapping) != FALSE && CloseHandle(handle) != FALSE);
+    Require(result == 0);
+    RequireName(info, expected);
+    Require(DeleteFileW(Extended(file).c_str()) != FALSE);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(RemoveDirectoryW(Extended(*level).c_str()) != FALSE);
+    longTree.clear();
 }
 
 void CheckUnwindInfo() {
@@ -213,6 +290,12 @@ void CheckUnwindInfo() {
     RequireUnwindMatchesRegion(memory + 2 * page);
     Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
     RequireUnwindMatchesRegion(memory);
+    CheckLongMappedFileName();
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #elif defined(__APPLE__)
 void RequireUnwindMatchesRegion(const void* pointer, const char* nameEnd) {
@@ -249,7 +332,7 @@ void CheckUnwindInfo() {
     Require(anonymous != MAP_FAILED);
     RequireUnwindMatchesRegion(anonymous, nullptr);
     Require(munmap(anonymous, page) == 0);
-    void* gap = mmap(nullptr, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* gap = mmap(reinterpret_cast<void*>(std::uintptr_t{0x400000000000}), page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(gap != MAP_FAILED && munmap(gap, page) == 0);
     ModuleInfoForUnwind info{};
     bool threw = false;
@@ -259,6 +342,11 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 
@@ -421,9 +509,13 @@ int main() {
     Require(unloadArgResult == -1);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == kModuleUnloaded);
     Require(unloadArgResult == -1);
+    Require(ThrowsRuntimeError([] { sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == kModuleUnloaded);
     int loadArgResult = -1;
     Require(sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &loadArgResult) == 0);
     Require(loadArgResult == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
     Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == 0);
     Require(unloadArgResult == 0);
@@ -450,15 +542,26 @@ int main() {
     Require(ThrowsRuntimeError([&] { sceSysmoduleGetModuleHandleInternal(0x00ffffffu, &handle); }));
 
     Require(sceSysmoduleLoadModule(kFiberModuleId) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(nullptr) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(reinterpret_cast<const void*>(&sceSysmoduleLoadModule)) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == 0);
     Require(handle >= 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kFiberModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     std::int32_t again = -1;
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &again) == 0);
     Require(again == handle);
     void* symbol = nullptr;
     Require(sceKernelDlsym(handle, "sceFiberOptParamInitialize", &symbol) == 0);
     Require(symbol != nullptr);
+    Require(sceSysmoduleIsCalledFromSysModule(symbol) == 1);
+    ModuleInfoEx fiberInfo{};
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uint64_t>(symbol), 1, &fiberInfo) == 0);
+    const auto data = std::find_if(std::begin(fiberInfo.segments), std::begin(fiberInfo.segments) + fiberInfo.segment_count,
+        [](const ModuleSegmentInfo& segment) { return (segment.prot & 2) != 0; });
+    Require(data != std::begin(fiberInfo.segments) + fiberInfo.segment_count);
+    Require(sceSysmoduleIsCalledFromSysModule(reinterpret_cast<const void*>(data->address)) == 0);
     Require(sceSysmoduleUnloadModule(kFiberModuleId) == 0);
+    Require(sceSysmoduleIsCalledFromSysModule(symbol) == 0);
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == kModuleUnloaded);
 
     constexpr std::uint16_t kAudioPropagationModuleId = 0x0120;
@@ -469,6 +572,7 @@ int main() {
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == 0);
     Require(audioPropagationHandle >= 0);
     void* audioPropagationSymbol = nullptr;
@@ -482,6 +586,8 @@ int main() {
     constexpr int kKernelEinval = static_cast<int>(0x80020016);
     int moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal(nullptr, 0, nullptr, 0, &moduleResult) == kKernelEinval);
+    Require(moduleResult == -1);
+    Require(sceSysmoduleLoadModuleByNameInternal(reinterpret_cast<const char*>(0x10), 0, nullptr, 0, &moduleResult) == static_cast<int>(0x8002000e));
     Require(moduleResult == -1);
     KernelModule byName = sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult);
     Require(byName > 0);

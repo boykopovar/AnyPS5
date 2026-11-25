@@ -1,15 +1,33 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
 #include "prx/libSceRegMgr/include/InventoryExports.hpp"
+#include <vector>
 #include <initializer_list>
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TCall>
+static bool ThrowsWithMessage(const char* message, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == message;
+    }
+    return false;
+}
 
 template <typename TCall>
 static bool ReportsNotImplemented(const char* name, TCall call) {
@@ -19,6 +37,39 @@ static bool ReportsNotImplemented(const char* name, TCall call) {
         return std::string(error.what()) == std::string(name) + " not implemented";
     }
     return false;
+}
+
+static void CheckBoundedBinaryInput() {
+    constexpr std::size_t limit = 1024 * 1024;
+    constexpr int bad = static_cast<int>(0x80820001u);
+    constexpr int missing = static_cast<int>(0x80820002u);
+    const std::uint8_t tiny[] = {0x63, 0x82};
+    std::uint8_t output[2]{};
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2020, tiny, 256 * limit) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetBin(0x2020, output, sizeof(output)) == missing);
+    Require(sceRegMgrIsChange(0x2020, 0x0d010001u) == 0);
+
+    Require(sceRegMgrSetBin(0x2021, tiny, sizeof(tiny)) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 1);
+    std::vector<std::uint8_t> oversized(limit + 1, 0x33);
+    errno = 71;
+    Require(sceRegMgrSetBin(0x2021, oversized.data(), oversized.size()) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetBin(0x2021, output, sizeof(output)) == 0);
+    Require(std::memcmp(tiny, output, sizeof(tiny)) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 0);
+
+    std::vector<std::uint8_t> bytes(limit, 0x5a);
+    bytes[0] = 0x45;
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 1);
+    std::vector<std::uint8_t> restored(limit);
+    Require(sceRegMgrGetBin(0x2022, restored.data(), static_cast<int>(restored.size())) == 0);
+    Require(restored == bytes);
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 0);
 }
 
 using SizeCheck = decltype(&libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch);
@@ -73,8 +124,94 @@ static void CheckRemovedRangeKeys() {
     }
 }
 
+static void CheckStringPageBoundary() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* pages = static_cast<char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+#endif
+    constexpr int bad = static_cast<int>(0x80820001u);
+    constexpr int absent = static_cast<int>(0x80820002u);
+    char text[32]{};
+    char* input = pages + page - 3;
+    std::memcpy(input, "ok", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 1);
+
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2011, input, std::numeric_limits<std::uint32_t>::max()) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2011, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 1);
+
+    std::memcpy(input, "abc", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2012, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2012, text, sizeof(text)) == absent);
+    Require(sceRegMgrIsChange(0x2012, 0x0d010001u) == 0);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, page * 2) == 0);
+#endif
+}
+
+static void CheckStringLengthCap() {
+    std::string input(1024 * 1024 + 1, 'x');
+    char text[16]{};
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2013, input.data(), input.size()) == static_cast<int>(0x80820001u));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2013, text, sizeof(text)) == static_cast<int>(0x80820002u));
+    Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
+}
+
+static void CheckZeroLengthCalls() {
+    char text[8] = {};
+    std::uint8_t bytes[4] = {};
+    const std::uint8_t payload[] = {0x11, 0x22};
+    Require(sceRegMgrSetStr(0x2050, "keep", 5) == 0);
+    std::strcpy(text, "CANARY");
+    Require(sceRegMgrGetStr(0x2050, text, 0) == static_cast<int>(0x80820004));
+    Require(std::strcmp(text, "CANARY") == 0);
+    Require(sceRegMgrSetBin(0x2051, payload, sizeof(payload)) == 0);
+    bytes[0] = 0x77;
+    Require(sceRegMgrGetBin(0x2051, bytes, 0) == static_cast<int>(0x80820004));
+    Require(bytes[0] == 0x77);
+    Require(sceRegMgrGetStr(0x2052, text, 0) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(0x2052, bytes, 0) == static_cast<int>(0x80820002));
+    Require(ThrowsWithMessage("sceRegMgrSetStr: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetStr(0x2050, "gone", 0); }));
+    Require(ThrowsWithMessage("sceRegMgrSetBin: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetBin(0x2051, payload, 0); }));
+    Require(sceRegMgrGetStr(0x2050, text, sizeof(text)) == 0 && std::strcmp(text, "keep") == 0);
+    Require(sceRegMgrGetBin(0x2051, bytes, sizeof(bytes)) == 0 && bytes[0] == 0x11 && bytes[1] == 0x22);
+}
+
 int main() {
     CheckRemovedRangeKeys();
+    CheckStringPageBoundary();
+    CheckStringLengthCap();
+    CheckZeroLengthCalls();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
@@ -122,6 +259,19 @@ int main() {
     Require(errno == 71);
     Require(sceRegMgrSetStr(0x2001, "world", 6) == 0);
     Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
+    const auto* unreadableStr = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2006, unreadableStr, 6) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2006, strBuf, sizeof(strBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrIsChange(0x2006, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x2001, 0x0d010001u) == 1);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2001, unreadableStr, 6) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrGetStr(0x2001, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "world") == 0);
+    Require(sceRegMgrIsChange(0x2001, 0x0d010001u) == 0);
     const std::uint8_t data[] = {1, 2, 3, 4};
     Require(sceRegMgrSetBin(0x2002, data, sizeof(data)) == 0);
     std::memset(binBuf, 0, sizeof(binBuf));
@@ -168,6 +318,11 @@ int main() {
     Require(sceRegMgrNonSysSetInt(0x3000, 7, 0x1234) == 0);
     Require(sceRegMgrNonSysGetInt(0x3000, 9, &intVal) == 0 && intVal == 0x1234);
     Require(sceRegMgrNonSysSetStr(0x3001, 3, "abc", 3) == 0);
+    errno = 71;
+    Require(sceRegMgrNonSysSetStr(0x3008, 3, unreadableStr, 3) == static_cast<int>(0x80820001));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x3008, strBuf, sizeof(strBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrIsChange(0x3008, 0x0d010001u) == 0);
     Require(sceRegMgrNonSysGetStr(0x3001, 3, nullptr, 8) == static_cast<int>(0x800D0202));
     Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0x801) == static_cast<int>(0x800D0208));
     Require(sceRegMgrNonSysGetStr(0x3001, 3, strBuf, 0) == static_cast<int>(0x80820004));
@@ -229,6 +384,19 @@ int main() {
     Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
+    Require(sceRegMgrGetVersion() == static_cast<int>(0x01140001));
 
+    char fill[16];
+    std::memset(fill, 0x5A, sizeof(fill));
+    Require(sceRegMgrMemset(fill, 0xAB, 4) == static_cast<void*>(fill));
+    Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
+    Require(sceRegMgrMemset(nullptr, 0, 0) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(1)));
+    char copied[8];
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, "xyz", 3) == copied);
+    Require(std::memcmp(copied, "xyz", 3) == 0 && copied[3] == 0x5A);
+    Require(sceRegMgrStrncpy(nullptr, "x", 1) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
+
+    CheckBoundedBinaryInput();
     return 0;
 }

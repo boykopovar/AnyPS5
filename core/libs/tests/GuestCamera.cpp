@@ -53,6 +53,10 @@ void CheckClosed() {
     Require(sceCameraCloseByHandle(1) == ErrorNotOpen, "closing by handle before any open must report NOT_OPEN");
     Require(sceCameraStart(1, &start) == ErrorNotOpen, "starting before any open must report NOT_OPEN");
     Require(sceCameraStartByHandle(1, &start) == ErrorNotOpen, "starting by handle before any open must report NOT_OPEN");
+    errno = 71;
+    Require(sceCameraStart(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "unmapped start parameter must be rejected before open");
+    Require(sceCameraStartByHandle(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "unmapped start parameter by handle must be rejected before open");
+    Require(errno == 71, "preserve errno on unmapped start parameter");
     Require(sceCameraStop(1) == ErrorNotOpen, "stopping before any open must report NOT_OPEN");
     Require(sceCameraStopByHandle(1) == ErrorNotOpen, "stopping by handle before any open must report NOT_OPEN");
     Require(sceCameraIsValidFrameData(1, &frame) == ErrorNotOpen, "frame validity before any open must report NOT_OPEN");
@@ -103,6 +107,10 @@ void CheckStart() {
     CameraStartParameter start = Start(1, 1);
     Require(sceCameraStart(0, &start) == ErrorParam, "handle 0 must be rejected");
     Require(sceCameraStart(1, nullptr) == ErrorParam, "a null start parameter must be rejected");
+    errno = 71;
+    Require(sceCameraStart(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "unmapped start parameter must be rejected while open");
+    Require(sceCameraStartByHandle(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "unmapped start parameter by handle must be rejected while open");
+    Require(errno == 71, "preserve errno on unmapped start parameter while open");
     start.sizeThis = 16;
     Require(sceCameraStart(1, &start) == ErrorParam, "a start parameter of the wrong size must be rejected");
     start = Start(0, 0);
@@ -142,6 +150,11 @@ void CheckFrames() {
     Require(sceCameraGetFrameData(0, &frame) == ErrorParam, "reading handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(0, &frame) == ErrorParam, "validating handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(1, nullptr) == ErrorParam, "validating a null frame must be rejected");
+    errno = 71;
+    Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
+    Require(errno == 71, "errno preserved");
+    Require(sceCameraGetFrameData(1, reinterpret_cast<CameraFrameData*>(0x10)) == ErrorParam, "unwritable frame data must be rejected");
+    Require(errno == 71, "caller errno must be preserved on unwritable frame data");
 }
 
 void CheckClose() {
@@ -181,14 +194,15 @@ void CheckClose() {
 
 int main() {
     Require(sceCameraIsAttached(0) == 0, "camera 0 must be reported as not attached");
-    Require(sceCameraIsAttached(1) == ErrorParam, "camera index 1 must be rejected");
+    Require(sceCameraIsAttached(1) == 0, "camera 1 must be reported as not attached");
+    Require(sceCameraIsAttached(2) == ErrorParam, "camera index 2 must be rejected");
     Require(sceCameraIsAttached(-1) == ErrorParam, "a negative camera index must be rejected");
     CheckClosed();
     CheckOpen();
     CheckStart();
     CheckFrames();
     CheckClose();
-    RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
+    Require(sceCameraSetVideoSync() == ErrorParam, "set video sync before open must report PARAM");
     RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
     return 0;
 }

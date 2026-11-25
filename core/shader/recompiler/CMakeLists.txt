@@ -109,6 +109,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ImageOverwriteProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
@@ -116,6 +117,8 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowIndexNarrower.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanPayloadEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtAddressArithmetic.cpp
@@ -253,6 +256,7 @@ function(add_shader_recompiler target runtimeTarget)
         string(APPEND shaderCacheExtra " system-deps=${ANYPS5_SYSTEM_DEPS_STAMP}")
     endif()
     set(shaderCacheReviewedNames
+            BdaAbi::OtherFaults
             BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
@@ -263,7 +267,9 @@ function(add_shader_recompiler target runtimeTarget)
             DebugProbeActive
             DecodeRdnaInstruction
             DepthBitsTextureWidth
+            ExactF32Arithmetic
             HashBytes
+            ImageOverwriteCovers
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
             NativeCachePath_nid_no_patch
@@ -272,6 +278,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::TableHeader
             FmaskLayoutOf
             IsFmaskTextureFormat
+            PipelineSpecialization::IsAtomicLockTable
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords
@@ -330,7 +337,15 @@ function(add_shader_recompiler target runtimeTarget)
             LinkUserDataCalls
             FindTableCalls
             LinkCalls
+            SplitTableCall
+            BuildSplitTableCallPrograms
+            ContinueTableCall
+            BuildTableCallContinuation
+            SplitStateAbi::TotalSlots
+            SplitStateAbi::TargetSlot
+            SplitStateAbi::SlotCount
             LoadStamp
+            StoreStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)
@@ -400,6 +415,23 @@ function(add_shader_recompiler target runtimeTarget)
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
+    if(BUILD_TESTING AND NOT TARGET ir_opcode_traits_tests)
+        add_test_executable(ir_opcode_traits_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/tests/IrOpcodeTraits.cpp"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/src/IrOpcode.cpp")
+        target_include_directories(ir_opcode_traits_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include")
+        set_target_properties(ir_opcode_traits_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(ir_opcode_traits_tests)
+        add_test(NAME ir_opcode_traits COMMAND ir_opcode_traits_tests)
+        set_tests_properties(ir_opcode_traits PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(ir_opcode_traits_tests PRIVATE libc)
+            set_tests_properties(ir_opcode_traits PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+
     if(BUILD_TESTING AND NOT TARGET shader_memory_decoder_tolerance_tests)
         add_test_executable(shader_memory_decoder_tolerance_tests
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/ShaderMemoryDecoderToleranceTests.cpp")

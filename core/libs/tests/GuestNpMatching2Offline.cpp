@@ -32,6 +32,7 @@ constexpr int InvalidRoomId = static_cast<int>(0x80550C0Fu);
 constexpr int ServerNotAvailable = static_cast<int>(0x80550C28u);
 constexpr int SessionNotFound = static_cast<int>(0x80550C3Au);
 constexpr int InvalidContext = static_cast<int>(0x80550C3Bu);
+constexpr int SignalingNotInitialized = static_cast<int>(0x80550E01u);
 constexpr int SignalingContextNotFound = static_cast<int>(0x80550E05u);
 constexpr int SignalingInvalidArgument = static_cast<int>(0x80550E15u);
 constexpr int SignalingPeerNotFound = static_cast<int>(0x80550E19u);
@@ -81,6 +82,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getRoomDataInternal = Resolve<RequestFn>("sceNpMatching2GetRoomDataInternal");
     const auto getPingInfo = Resolve<RequestFn>("sceNpMatching2SignalingGetPingInfo");
     const auto leaveRoom = Resolve<RequestFn>("sceNpMatching2LeaveRoom");
+    const auto joinRoomA = Resolve<RequestFn>("sceNpMatching2JoinRoomA");
     const auto sendRoomMessage = Resolve<RequestFn>("sceNpMatching2SendRoomMessage");
     const auto getServerId = Resolve<GetServerIdFn>("sceNpMatching2GetServerId");
     const auto getSlotMask = Resolve<SlotMaskFn>("sceNpMatching2GetRoomJoinedSlotMaskLocal");
@@ -116,6 +118,8 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getWorldInfoList(context, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request was taken");
     Require(getWorldInfoList(context, serverRequest, nullptr, nullptr) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request id was taken");
     for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "server request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
         Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
@@ -127,7 +131,11 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getUserInfoList(99, zeroed, nullptr, &requestId) == ContextNotFound, "sceNpMatching2GetUserInfoList", "an unknown context did not return CONTEXT_NOT_FOUND");
     Require(getUserInfoList(contextA, zeroed, nullptr, &requestId) == InvalidContext, "sceNpMatching2GetUserInfoList", "an A context did not return 0x80550C3B");
     Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
-    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
+    errno = 71;
+    Require(getUserInfoList(context, reinterpret_cast<const void*>(0x10), nullptr, &requestId) == InvalidArgument && errno == 71, "sceNpMatching2GetUserInfoList", "an unreadable request did not return INVALID_ARGUMENT with errno preserved");
+    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom, joinRoomA}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "room request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
@@ -197,8 +205,8 @@ int main() {
     Require(sceNpMatching2ContextStop(1) == NotInitialized, "sceNpMatching2ContextStop", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2AbortContextStart(1) == NotInitialized, "sceNpMatching2AbortContextStart", "a call before initialization did not return NOT_INITIALIZED");
     std::int32_t status = StatusSentinel;
-    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, &status, nullptr, nullptr) == NotInitialized && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a call before initialization did not return NOT_INITIALIZED without writing the status");
-    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, nullptr, nullptr, nullptr) == NotInitialized, "sceNpMatching2SignalingGetConnectionStatus", "a null status before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, &status, nullptr, nullptr) == SignalingNotInitialized && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a call before initialization did not return the signaling NOT_INITIALIZED without writing the status");
+    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, nullptr, nullptr, nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetConnectionStatus", "a null status before initialization did not return the signaling NOT_INITIALIZED first");
     Require(sceNpMatching2RegisterContextCallback(nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterContextCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterRoomEventCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterRoomMessageCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
@@ -213,13 +221,13 @@ int main() {
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(registerLobbyMessage(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, nullptr) == NotInitialized, "sceNpMatching2SetDefaultRequestOptParam", "a call before initialization did not return NOT_INITIALIZED first");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call before initialization did not return NOT_INITIALIZED");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer before initialization did not return NOT_INITIALIZED without reading");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer before initialization did not return the signaling NOT_INITIALIZED without reading");
     NpMatching2SignalingNetInfo beforeInitInfo{};
     beforeInitInfo.size = 0;
-    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 0 before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 0 before initialization did not return the signaling NOT_INITIALIZED first");
     beforeInitInfo.size = 25;
-    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 25 before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 25 before initialization did not return the signaling NOT_INITIALIZED first");
     Require(sceNpMatching2CreateJoinRoom() == NotInitialized, "sceNpMatching2CreateJoinRoom", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2GetRoomDataExternalList() == NotInitialized, "sceNpMatching2GetRoomDataExternalList", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2GetRoomMemberDataInternal() == NotInitialized, "sceNpMatching2GetRoomMemberDataInternal", "a call before initialization did not return NOT_INITIALIZED");
@@ -242,13 +250,25 @@ int main() {
     Require(sceNpMatching2GetUserInfoListA() == NotInitialized, "sceNpMatching2GetUserInfoListA", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2GrantRoomOwner() == NotInitialized, "sceNpMatching2GrantRoomOwner", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2JoinLobby() == NotInitialized, "sceNpMatching2JoinLobby", "a call before initialization did not return NOT_INITIALIZED");
-    Require(sceNpMatching2JoinRoomA() == NotInitialized, "sceNpMatching2JoinRoomA", "a call before initialization did not return NOT_INITIALIZED");
+    std::uint32_t joinRoomARequestId = 77;
+    Require(sceNpMatching2JoinRoomA(1, nullptr, nullptr, &joinRoomARequestId) == NotInitialized && joinRoomARequestId == 77, "sceNpMatching2JoinRoomA", "a null request before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2LeaveLobby() == NotInitialized, "sceNpMatching2LeaveLobby", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterManualUdpSignalingCallback() == NotInitialized, "sceNpMatching2RegisterManualUdpSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SendLobbyChatMessage() == NotInitialized, "sceNpMatching2SendLobbyChatMessage", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetLobbyMemberDataInternal() == NotInitialized, "sceNpMatching2SetLobbyMemberDataInternal", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetRoomDataInternalExt() == NotInitialized, "sceNpMatching2SetRoomDataInternalExt", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetSignalingOptParam() == NotInitialized, "sceNpMatching2SetSignalingOptParam", "a call before initialization did not return NOT_INITIALIZED");
+    unsigned char beforeInitConnectionInfo[64] = {};
+    Require(sceNpMatching2SignalingGetConnectionInfo(99, 5, 1, 1, nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetConnectionInfo", "a null info before initialization did not return the signaling NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetConnectionInfo(99, 5, 1, 1, beforeInitConnectionInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetConnectionInfo", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetConnectionInfoA(99, 5, 1, 1, nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetConnectionInfoA", "a null info before initialization did not return the signaling NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetConnectionInfoA(99, 5, 1, 1, beforeInitConnectionInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetConnectionInfoA", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingAbortConnection() == SignalingNotInitialized, "sceNpMatching2SignalingAbortConnection", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingCancelPeerNetInfo() == SignalingNotInitialized, "sceNpMatching2SignalingCancelPeerNetInfo", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingEnableManualUdpMode() == SignalingNotInitialized, "sceNpMatching2SignalingEnableManualUdpMode", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingEstablishConnection() == SignalingNotInitialized, "sceNpMatching2SignalingEstablishConnection", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetPeerNetInfo() == SignalingNotInitialized, "sceNpMatching2SignalingGetPeerNetInfo", "a call before initialization did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetPeerNetInfoResult() == SignalingNotInitialized, "sceNpMatching2SignalingGetPeerNetInfoResult", "a call before initialization did not return the signaling NOT_INITIALIZED");
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
     errno = 71;
@@ -370,12 +390,12 @@ int main() {
     Require(sceNpMatching2DestroyContext(1) == NotInitialized, "sceNpMatching2DestroyContext", "a context was destroyed after termination");
     Require(sceNpMatching2AbortContextStart(1) == NotInitialized, "sceNpMatching2AbortContextStart", "a call after termination did not return NOT_INITIALIZED");
     status = StatusSentinel;
-    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, &status, nullptr, nullptr) == NotInitialized && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a call after termination did not return NOT_INITIALIZED without writing the status");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after termination with null did not return NOT_INITIALIZED");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after termination did not return NOT_INITIALIZED without reading");
+    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, &status, nullptr, nullptr) == SignalingNotInitialized && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a call after termination did not return the signaling NOT_INITIALIZED without writing the status");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after termination with null did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after termination did not return the signaling NOT_INITIALIZED without reading");
     NpMatching2SignalingNetInfo postTermInfo{};
     postTermInfo.size = 0;
-    Require(sceNpMatching2SignalingGetLocalNetInfo(&postTermInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size after termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&postTermInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size after termination did not return the signaling NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initializing again failed");
     Require(sceNpMatching2RegisterRoomEventCallback(5, nullptr, nullptr) == InvalidContextId, "sceNpMatching2Terminate", "a context created before termination is still found");
     Require(sceNpMatching2CreateContext(&create, &created) == 0 && created == 1, "sceNpMatching2Terminate", "termination did not restart the context ids at 1");
@@ -390,8 +410,8 @@ int main() {
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(createContextA(&createA, &created) == NotInitialized, "sceNpMatching2CreateContextA", "a call after termination did not return NOT_INITIALIZED");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after final termination did not return NOT_INITIALIZED");
-    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after final termination did not return NOT_INITIALIZED without reading");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after final termination did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after final termination did not return the signaling NOT_INITIALIZED without reading");
 
     CheckOfflineRequests(createContextA);
 

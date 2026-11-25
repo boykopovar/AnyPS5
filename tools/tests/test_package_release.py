@@ -1,14 +1,18 @@
 import contextlib
 import io
+import gzip
+import hashlib
 import json
 import os
 import ctypes
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import zipfile
 from contextlib import contextmanager
@@ -33,6 +37,10 @@ def working_directory(path):
 
 class PublicHeaderPackageTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("SOURCE_DATE_EPOCH", None)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
@@ -58,6 +66,234 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(archive.namelist()), len(expected))
         with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
             self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_source_date_epoch_archives_ignore_source_root_mtime_and_permissions(self):
+        nested = self.umbrella.with_name("é" * 60 + ".hpp")
+        nested.write_bytes(b"")
+        self.api.write_text('#include "' + nested.name + '"\n', encoding="utf-8")
+        other = self.root / "different-source-root"
+        shutil.copytree(self.source, other)
+        expected = {"include/anyps5/prx/libExample/libExample.hpp": self.umbrella.read_bytes(),
+                    "include/anyps5/prx/libExample/Api.hpp": self.api.read_bytes(),
+                    "include/anyps5/prx/libExample/" + nested.name: b"",
+                    "include/anyps5/Common.hpp": (self.libs / "Common.hpp").read_bytes(),
+                    "LICENSE": b"project license"}
+        snapshots = []
+        for index, source in enumerate((self.source, other)):
+            files = [path for path in source.rglob("*") if path.is_file()]
+            for path in files:
+                os.utime(path, (1_500_000_000 + index * 100_000, 1_500_000_000 + index * 100_000))
+                path.chmod(0o640 if index else 0o600)
+            before = {path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns) for path in files}
+            output = self.root / ("output-" + str(index))
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000001"}):
+                package_headers.package(source, output, "v1")
+            self.assertEqual({path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns) for path in files}, before)
+            archives = {path.name: path.read_bytes() for path in output.iterdir()}
+            snapshots.append({name: hashlib.sha256(data).hexdigest() for name, data in archives.items()})
+            with zipfile.ZipFile(output / "prx-headers-v1.zip") as archive:
+                self.assertEqual({info.filename: archive.read(info) for info in archive.infolist()}, expected)
+                self.assertEqual(archive.comment, b"")
+                for info in archive.infolist():
+                    self.assertEqual(info.date_time, (2023, 11, 14, 22, 13, 20))
+                    self.assertEqual(info.create_system, 3)
+                    self.assertEqual(info.external_attr >> 16, stat.S_IFREG | 0o644)
+                    self.assertEqual(info.extra, b"")
+                    self.assertEqual(info.comment, b"")
+                    self.assertEqual(info.compress_type, zipfile.ZIP_DEFLATED)
+            raw = archives["prx-headers-v1.tar.gz"]
+            self.assertEqual(raw[:4], b"\x1f\x8b\x08\x00")
+            self.assertEqual(struct.unpack("<I", raw[4:8])[0], 1_700_000_001)
+            self.assertEqual(raw[8:10], b"\x02\xff")
+            with tarfile.open(fileobj=io.BytesIO(gzip.decompress(raw)), mode="r:") as archive:
+                self.assertEqual({info.name: archive.extractfile(info).read() for info in archive.getmembers()}, expected)
+                for info in archive.getmembers():
+                    self.assertTrue(info.isfile())
+                    self.assertEqual((info.uid, info.gid, info.uname, info.gname), (0, 0, "", ""))
+                    self.assertEqual(info.mtime, 1_700_000_001)
+                    self.assertEqual(info.mode, 0o644)
+                    self.assertLessEqual(set(info.pax_headers), {"path"})
+        self.assertEqual(snapshots[0], snapshots[1])
+
+    def test_source_date_epoch_boundaries_are_exact_except_zip_precision_and_minimum(self):
+        for epoch, zip_date in ((0, (1980, 1, 1, 0, 0, 0)), (1, (1980, 1, 1, 0, 0, 0)),
+                                (315532799, (1980, 1, 1, 0, 0, 0)), (315532800, (1980, 1, 1, 0, 0, 0)),
+                                (1700000001, (2023, 11, 14, 22, 13, 20)), (4294967295, (2106, 2, 7, 6, 28, 14))):
+            with self.subTest(epoch=epoch), patch.dict(os.environ, {"SOURCE_DATE_EPOCH": str(epoch)}):
+                package_headers.package(self.source, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+                    self.assertTrue(all(info.date_time == zip_date for info in archive.infolist()))
+                raw = (self.output / "prx-headers-v1.tar.gz").read_bytes()
+                self.assertEqual(struct.unpack("<I", raw[4:8])[0], epoch)
+                with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+                    self.assertTrue(all(info.mtime == epoch for info in archive.getmembers()))
+
+    def test_invalid_source_date_epoch_preserves_existing_or_absent_output(self):
+        invalid = ("", "-1", "+1", " 1", "1 ", "1\n", "1.0", "1e3", "0x10", "١", "4294967296", "9" * 5000)
+        for existing in (False, True):
+            for index, epoch in enumerate(invalid):
+                with self.subTest(existing=existing, epoch=epoch[:20]):
+                    output = self.root / ("invalid-" + str(existing) + "-" + str(index))
+                    before = {}
+                    if existing:
+                        output.mkdir()
+                        for name in ("prx-headers-v1.zip", "prx-headers-v1.tar.gz", "unrelated.asset"):
+                            path = output / name
+                            path.write_bytes(("previous " + name).encode())
+                            before[name] = (path.read_bytes(), path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode))
+                    with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": epoch}), self.assertRaisesRegex(ValueError, "SOURCE_DATE_EPOCH"):
+                        package_headers.package(self.source, output, "v1")
+                    if existing:
+                        self.assertEqual({path.name: (path.read_bytes(), path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode)) for path in output.iterdir()}, before)
+                    else:
+                        self.assertFalse(output.exists())
+
+    def test_source_date_epoch_leading_zeroes_remain_decimal(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0" * 5000 + "1700000001"}):
+            package_headers.package(self.source, self.output, "v1")
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertTrue(all(info.mtime == 1700000001 for info in archive.getmembers()))
+
+    def test_unset_source_date_epoch_keeps_source_metadata(self):
+        for path in (self.umbrella, self.source / "LICENSE"):
+            os.utime(path, (1_600_000_000, 1_600_000_000))
+            path.chmod(0o640)
+        package_headers.package(self.source, self.output, "v1")
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            info = archive.getmember("LICENSE")
+            self.assertEqual(info.mtime, 1_600_000_000)
+            self.assertEqual(info.mode, stat.S_IMODE((self.source / "LICENSE").stat().st_mode))
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual(archive.getinfo("LICENSE").date_time, time.localtime(1_600_000_000)[:6])
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "requires changing the process timezone")
+    def test_source_date_epoch_archives_are_independent_of_timezone(self):
+        archives = []
+        try:
+            for zone in ("UTC0", "EST5EDT"):
+                with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000001", "TZ": zone}):
+                    time.tzset()
+                    package_headers.package(self.source, self.output, "v1")
+                    archives.append({path.name: path.read_bytes() for path in self.output.iterdir()})
+        finally:
+            time.tzset()
+        self.assertEqual(archives[0], archives[1])
+
+    def test_source_date_epoch_keeps_internal_symlink_dependencies_and_empty_headers(self):
+        target = self.umbrella.with_name("Target.hpp")
+        target.write_bytes(b"")
+        link = self.umbrella.with_name("Alias.hpp")
+        try:
+            link.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
+            self.assert_archive_bytes((self.umbrella, self.api, link, self.libs / "Common.hpp"))
+        self.assertTrue(link.is_symlink())
+
+    def test_symlink_aliases_preserve_relative_includes_in_both_archive_modes(self):
+        directory = self.umbrella.parent
+        target = directory / "Target.hpp"
+        target.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        (directory / "Nested.hpp").write_text('struct Nested {};\n', encoding="utf-8")
+        aliases = [directory / "Alias.hpp", directory / "Other.hpp"]
+        try:
+            for alias in aliases:
+                alias.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n#include "Other.hpp"\n', encoding="utf-8")
+        for epoch in (None, "0"):
+            with self.subTest(epoch=epoch), patch.dict(os.environ, {}, clear=False):
+                if epoch is None:
+                    os.environ.pop("SOURCE_DATE_EPOCH", None)
+                else:
+                    os.environ["SOURCE_DATE_EPOCH"] = epoch
+                self.assert_archive_bytes((self.umbrella, self.api, *aliases, directory / "Nested.hpp", self.libs / "Common.hpp"))
+                with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+                    for alias in aliases:
+                        info = archive.getinfo("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(stat.S_ISREG(info.external_attr >> 16))
+                with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+                    for alias in aliases:
+                        info = archive.getmember("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(info.isfile())
+
+
+    def test_same_target_search_paths_use_relative_alias(self):
+        alias = self.umbrella.with_name("Alias.hpp")
+        (self.libs / "Alias.hpp").write_text("struct Alias {};\n", encoding="utf-8")
+        try:
+            alias.symlink_to(self.libs / "Alias.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
+        self.assert_archive_bytes((self.umbrella, self.api, alias, self.libs / "Common.hpp"))
+
+    def test_parent_after_symlink_directory_cannot_change_source(self):
+        directory = self.umbrella.parent
+        target = self.libs / "other" / "nested"
+        target.mkdir(parents=True)
+        (target.parent / "Dependency.hpp").write_text("struct Other {};\n", encoding="utf-8")
+        (directory / "Dependency.hpp").write_text("struct Local {};\n", encoding="utf-8")
+        try:
+            (directory / "Link").symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(str(error))
+        spelled = directory / "Link" / ".." / "Dependency.hpp"
+        if os.path.realpath(spelled) == os.path.realpath(os.path.abspath(spelled)):
+            self.skipTest("host resolves the symlink-parent path without changing its target")
+        self.api.write_text('#include "Link/../Dependency.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "changes when normalized"):
+            package_headers.package(self.source, self.output, "v1")
+
+    def test_source_date_epoch_rejects_empty_header_set_and_missing_license(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
+            for empty_license in (False, True):
+                with self.subTest(empty_license=empty_license):
+                    license_file = self.source / "LICENSE"
+                    license_file.write_bytes(b"") if empty_license else license_file.unlink()
+                    with self.assertRaisesRegex(RuntimeError, "Missing project license"):
+                        package_headers.package(self.source, self.output, "v1")
+                    self.assertFalse(self.output.exists())
+            license_file.write_bytes(b"license")
+            shutil.rmtree(self.libs / "prx/libExample")
+            with self.assertRaisesRegex(RuntimeError, "No public library headers"):
+                package_headers.package(self.source, self.output, "v1")
+            self.assertFalse(self.output.exists())
+
+    def test_invalid_source_date_epoch_cli_reports_error_without_staging(self):
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "4294967296"}), patch.object(package_release, "ROOT", self.source), \
+                contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as caught:
+            package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("SOURCE_DATE_EPOCH", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertFalse(self.output.exists())
+
+    def test_source_date_epoch_retains_destination_checks_and_transactional_restore(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        self.output.mkdir()
+        (self.output / names[1]).mkdir()
+        (self.output / names[0]).write_bytes(b"previous zip")
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}), self.assertRaisesRegex(RuntimeError, "not a file"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertEqual((self.output / names[0]).read_bytes(), b"previous zip")
+        self.assertEqual({path.name for path in self.output.iterdir()}, set(names))
+        (self.output / names[1]).rmdir()
+        (self.output / names[1]).write_bytes(b"previous tar")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        real_replace = Path.replace
+
+        def replace(source, target):
+            if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                raise OSError("second promotion failed")
+            return real_replace(source, target)
+
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}), patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
         self.assert_archive_bytes((self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp"))
@@ -215,6 +451,88 @@ class PublicHeaderPackageTests(unittest.TestCase):
                         self.assertFalse(path.exists())
                 self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
 
+    def test_archive_interrupted_renames_restore_output_and_allow_retry(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        for existing in (False, True):
+            for operation in (("backup", "promotion") if existing else ("promotion",)):
+                for failing in names:
+                    for after_rename in (False, True):
+                        for kind in (OSError, KeyboardInterrupt):
+                            with self.subTest(existing=existing, operation=operation, failing=failing,
+                                              after_rename=after_rename, exception=kind.__name__), tempfile.TemporaryDirectory() as directory:
+                                output = Path(directory) / "output"
+                                output.mkdir()
+                                sentinel = output / "unrelated.asset"
+                                sentinel.write_bytes(b"keep unrelated asset")
+                                if existing:
+                                    for index, name in enumerate(names):
+                                        target = output / name
+                                        target.write_bytes(("previous " + name).encode())
+                                        os.utime(target, ns=(1_600_000_000_000_000_000 + index,
+                                                            1_600_000_000_000_000_000 + index))
+
+                                def snapshot(path):
+                                    return path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns
+
+                                before = {file.name: snapshot(file) for file in output.iterdir()}
+                                source_before = {file: snapshot(file) for file in self.source.rglob("*") if file.is_file()}
+                                failure = kind("archive rename interrupted")
+
+                                def replace(source, target):
+                                    target = Path(target)
+                                    backup = source == output / failing and target.parent.name == "previous"
+                                    promotion = target == output / failing and source.parent.name.startswith(".headers-")
+                                    if backup if operation == "backup" else promotion:
+                                        if after_rename:
+                                            real_replace(source, target)
+                                        raise failure
+                                    return real_replace(source, target)
+
+                                with patch.object(Path, "replace", replace), self.assertRaises(kind) as caught:
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertIs(caught.exception, failure)
+                                self.assertEqual({file.name: snapshot(file) for file in output.iterdir()}, before)
+                                self.assertEqual({file: snapshot(file) for file in source_before}, source_before)
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertEqual({file.name for file in output.iterdir()}, {sentinel.name, *names})
+                                self.assertEqual(snapshot(sentinel), before[sentinel.name])
+                                with zipfile.ZipFile(output / names[0]) as archive:
+                                    self.assertEqual(archive.read("LICENSE"), (self.source / "LICENSE").read_bytes())
+                                with tarfile.open(output / names[1]) as archive:
+                                    self.assertEqual(archive.extractfile("LICENSE").read(), (self.source / "LICENSE").read_bytes())
+
+    def test_interrupted_promotion_with_failed_restore_keeps_recovery_files(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {name: ("previous " + name).encode() for name in names}
+            for name, data in previous.items():
+                (output / name).write_bytes(data)
+            (output / "unrelated.asset").write_bytes(b"keep")
+
+            def replace(source, target):
+                target = Path(target)
+                if target == output / names[1] and source.parent.name.startswith(".headers-"):
+                    raise KeyboardInterrupt("second archive promotion interrupted")
+                if target == output / names[1] and source.parent.name == "previous":
+                    raise PermissionError("archive restore blocked")
+                return real_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(RuntimeError, "second archive promotion interrupted.*unrestored backups") as caught:
+                package_headers.package(self.source, output, "v1")
+            self.assertIsInstance(caught.exception.__cause__, PermissionError)
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertEqual((output / "unrelated.asset").read_bytes(), b"keep")
+            recovery = list(output.glob(".headers-*/previous"))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(caught.exception))
+            self.assertIn(names[1], str(caught.exception))
+
     def test_archive_restore_failure_preserves_unrestored_backup(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
@@ -353,6 +671,21 @@ class ReleasePackageTests(unittest.TestCase):
         binary = self.build / "core/relinker/relinker"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"relinker bytes")
+        self.freetype_notices = {
+            "LICENSE.TXT": ("freetype-licenses.txt", b"FreeType license options"),
+            "docs/FTL.TXT": ("freetype-ftl.txt", b"FreeType project license"),
+            "src/bdf/README": ("freetype-bdf.txt", b"FreeType BDF notice"),
+            "src/pcf/README": ("freetype-pcf.txt", b"FreeType PCF notice"),
+        }
+        for source, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / source
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
+        self.ffmpeg_notices = self.root / "FFmpeg override" / "share/ffmpeg"
+        self.ffmpeg_notices.mkdir(parents=True)
+        (self.ffmpeg_notices / "copyright").write_bytes(b"FFmpeg copyright\n")
+        (self.ffmpeg_notices / "SOURCE.txt").write_bytes(b"FFmpeg corresponding source\n")
+        (self.build / "release-ffmpeg-notices.txt").write_text(self.ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -428,6 +761,33 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [previous])
         self.assertEqual(previous.read_bytes(), b"previous release")
 
+    def stage_ffmpeg_library(self):
+        (self.source / "core/libs/prx/libSceVdecCore").mkdir()
+        (self.library.parent / "libSceVdecCore.prx").write_bytes(b"patched video decoder")
+        (self.unpatched.parent / "libSceVdecCore.prx").write_bytes(b"unpatched video decoder")
+
+    def test_ffmpeg_notices_follow_the_configured_prebuilt(self):
+        self.stage_ffmpeg_library()
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.read("libs/licenses/ffmpeg/" + name), (self.ffmpeg_notices / name).read_bytes())
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.extractfile("libs/licenses/ffmpeg/" + name).read(), (self.ffmpeg_notices / name).read_bytes())
+
+    def test_missing_ffmpeg_notice_preserves_existing_output(self):
+        self.stage_ffmpeg_library()
+        (self.ffmpeg_notices / "SOURCE.txt").unlink()
+        self.output.mkdir()
+        published = self.output / "prx-linux-v1.zip"
+        published.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, "Missing or empty release file: .*SOURCE.txt"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [published])
+        self.assertEqual(published.read_bytes(), b"previous release")
+
     def test_mimalloc_license_in_archives(self):
         package_release.package("linux", self.build, self.output, "v1")
         for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
@@ -494,7 +854,7 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
 
-    def test_cairo_and_pixman_licenses_in_archives(self):
+    def test_cairo_pixman_and_libpng_licenses_in_archives(self):
         (self.source / "core/libs/prx/libcairo").mkdir()
         (self.unpatched.parent / "libcairo.prx").write_bytes(b"unpatched library")
         (self.build / "core/libs/libs/libcairo.prx").write_bytes(b"cairo")
@@ -503,6 +863,7 @@ class ReleasePackageTests(unittest.TestCase):
             "cairo/COPYING-LGPL-2.1": ("cairo-lgpl-2.1.txt", b"cairo LGPL"),
             "cairo/COPYING-MPL-1.1": ("cairo-mpl-1.1.txt", b"cairo MPL"),
             "pixman/COPYING": ("pixman.txt", b"pixman notice"),
+            "libpng/LICENSE": ("libpng.txt", b"libpng notice"),
         }
         for source, (_, content) in notices.items():
             path = self.source / "3rdparty" / source
@@ -635,7 +996,7 @@ class ReleasePackageTests(unittest.TestCase):
                     (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
                     self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
-    def test_webrtc_library_archives_include_vad_notices(self):
+    def test_webrtc_library_archives_include_vad_and_scaler_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
@@ -643,8 +1004,14 @@ class ReleasePackageTests(unittest.TestCase):
         source.mkdir(parents=True)
         (source / "LICENSE").write_bytes(b"VAD license\n")
         (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        source = self.source / "3rdparty/libyuv"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"Scaler license\n")
+        (source / "PATENTS").write_bytes(b"Scaler patent grant\n")
         package_release.package("linux", self.build, self.output, "v1")
-        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+        notices = {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n",
+                   "libyuv.txt": b"Scaler license\n", "libyuv-patents.txt": b"Scaler patent grant\n"}
+        for archive_name, content in notices.items():
             with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
@@ -687,6 +1054,55 @@ class ReleasePackageTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "COPYING"):
                     package_release.package("linux", self.build, self.output, "v1")
                 self.assertFalse(self.output.exists())
+
+    def test_freetype_notices_follow_every_font_backend(self):
+        for library in ("libSceFreeType", "libSceFreeTypeOt", "libSceFontFt", "libharfbuzz"):
+            with self.subTest(library=library):
+                (self.source / "core/libs/prx" / library).mkdir()
+                (self.library.parent / (library + ".prx")).write_bytes(b"patched font backend")
+                (self.unpatched.parent / (library + ".prx")).write_bytes(b"unpatched font backend")
+                if library == "libharfbuzz":
+                    for path in ("COPYING", "src/ms-use/COPYING"):
+                        file = self.source / "3rdparty/harfbuzz" / path
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        file.write_bytes(b"HarfBuzz notice")
+                package_release.package("linux", self.build, self.output, "v1")
+                expected = {"libs/licenses/" + name: content for name, content in self.freetype_notices.values()}
+                expected["libs/licenses/freetype-attribution.txt"] = b"This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n"
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.namelist())
+                            self.assertEqual(archive.read(name), content)
+                    with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.getnames())
+                            self.assertEqual(archive.extractfile(name).read(), content)
+                self.assertEqual({file.name for file in self.output.iterdir()}, {"prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"})
+                (self.source / "core/libs/prx" / library).rmdir()
+                (self.library.parent / (library + ".prx")).unlink()
+                (self.unpatched.parent / (library + ".prx")).unlink()
+
+    def test_missing_or_empty_freetype_notices_preserve_existing_assets(self):
+        (self.source / "core/libs/prx/libSceFreeType").mkdir()
+        (self.library.parent / "libSceFreeType.prx").write_bytes(b"patched font backend")
+        (self.unpatched.parent / "libSceFreeType.prx").write_bytes(b"unpatched font backend")
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for path, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / path
+            for missing in (True, False):
+                with self.subTest(path=path, missing=missing):
+                    if missing:
+                        file.unlink()
+                    else:
+                        file.write_bytes(b"")
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+            file.write_bytes(content)
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
@@ -784,6 +1200,14 @@ class ReleasePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
                     self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
+    def test_linux_sanitizer_packages_omit_stale_allocator_runtimes(self):
+        for option in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=option):
+                (self.build / "CMakeCache.txt").write_text(f"{option}:BOOL=ON\n", encoding="utf-8")
+                package_release.package("linux", self.build, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/licenses/mimalloc.txt"])
+
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
         previous = {"prx-linux-v1.zip": b"old zip", "prx-linux-v1.tar.gz": b"old tar", "relinker-v1": b"old binary"}
@@ -804,6 +1228,53 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual((self.output / "relinker-v1.0").read_bytes(), b"relinker bytes")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
+
+    def test_tracy_file_validation_preserves_existing_release_assets(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        self.output.mkdir()
+        previous = self.output / "previous.asset"
+        previous.write_bytes(b"previous release")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            with self.subTest(kind=kind):
+                if kind == "dangling-symlink":
+                    try:
+                        client.symlink_to(self.root / "missing-client")
+                    except (OSError, NotImplementedError) as error:
+                        self.skipTest(f"symlinks unavailable: {error}")
+                elif kind == "directory":
+                    client.mkdir()
+                else:
+                    client.touch()
+                with self.assertRaisesRegex(RuntimeError, "Tracy"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous release")
+                if kind == "directory":
+                    client.rmdir()
+                else:
+                    client.unlink()
+
+    def test_tracy_symlink_contents_are_packaged_and_extra_entries_are_ambiguous(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/" + client.name), b"linked Tracy client")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/" + client.name).read(), b"linked Tracy client")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        extra = client.with_name("libTracyClient.so.0.13.1")
+        extra.symlink_to(self.root / "missing-client")
+        with self.assertRaisesRegex(RuntimeError, "ambiguous Tracy"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_hidden_cache_directory_is_not_a_required_library(self):
         (self.source / "core/libs/prx/.cache").mkdir()
@@ -1135,6 +1606,17 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(self.library.stat().st_mtime_ns, before)
                 self.assertEqual((web / package_release.WEB_FILES[0]).stat().st_mtime, timestamp)
 
+    def test_cmake_option_reads_cache_values_case_insensitively(self):
+        self.assertFalse(package_release.cmake_option(self.build, "FLAG"))
+        cache = self.build / "CMakeCache.txt"
+        cases = (("FLAG:BOOL=ON", True), ("FLAG:BOOL=yes", True), ("FLAG:BOOL=1", True), ("FLAG:BOOL=OFF", False),
+                 ("FLAG:BOOL=false", False), ("FLAG:BOOL=", False), ("FLAG:BOOL=x-NOTFOUND", False),
+                 ("OTHER:BOOL=ON", False), ("FLAGGED:BOOL=ON", False))
+        for line, expected in cases:
+            with self.subTest(line=line):
+                cache.write_text("// comment\n" + line + "\n", encoding="utf-8")
+                self.assertIs(package_release.cmake_option(self.build, "FLAG"), expected)
+
 
 
 class DocumentationAssetsTests(unittest.TestCase):
@@ -1168,6 +1650,138 @@ class DocumentationAssetsTests(unittest.TestCase):
                 package_release.collect_docs(source, output)
                 expected.update({"A.md": b"first document", "B.md": b"second document"})
                 self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+
+    def test_document_promotion_failure_restores_output_and_allows_retry(self):
+        for failing in ("A.md", "B.md", "C.md"):
+            for after_rename in (False, True):
+                for readonly in (False, True):
+                    for kind in (OSError, KeyboardInterrupt):
+                        with self.subTest(failing=failing, after_rename=after_rename, readonly=readonly, exception=kind.__name__), tempfile.TemporaryDirectory() as directory:
+                            root = Path(directory)
+                            source, output = root / "docs", root / "assets"
+                            source.mkdir()
+                            output.mkdir()
+                            unrelated = output / "existing.zip"
+                            unrelated.write_bytes(b"unrelated asset")
+                            for index, name in enumerate(("A.md", "B.md", "C.md")):
+                                document = source / name
+                                document.write_text(name, encoding="utf-8")
+                                os.utime(document, ns=(1_600_000_000_000_000_000 + index, 1_600_000_000_000_000_000 + index))
+                                if readonly:
+                                    document.chmod(stat.S_IREAD)
+
+                            def snapshot(path):
+                                return path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns
+
+                            expected = {path.name: snapshot(path) for path in source.iterdir()}
+                            original_asset = snapshot(unrelated)
+                            real_replace = Path.replace
+                            failure = kind("document promotion failed")
+                            restored = {}
+
+                            def replace(path, destination):
+                                destination = Path(destination)
+                                if destination == output / failing:
+                                    if after_rename:
+                                        real_replace(path, destination)
+                                    raise failure
+                                result = real_replace(path, destination)
+                                if path.parent == output and destination.parent.name.startswith(".docs-"):
+                                    restored[destination.name] = snapshot(destination)
+                                return result
+
+                            with patch.object(Path, "replace", replace), self.assertRaises(kind) as caught:
+                                package_release.collect_docs(source, output)
+                            self.assertIs(caught.exception, failure)
+                            self.assertEqual({path.name for path in output.iterdir()}, {unrelated.name})
+                            self.assertEqual(snapshot(unrelated), original_asset)
+                            self.assertEqual({path.name: snapshot(path) for path in source.iterdir()}, expected)
+                            promoted = [name for name in sorted(expected) if name < failing or after_rename and name == failing]
+                            self.assertEqual(restored, {name: expected[name] for name in promoted})
+                            package_release.collect_docs(source, output)
+                            self.assertEqual({name: snapshot(output / name) for name in expected}, expected)
+                            self.assertEqual(snapshot(unrelated), original_asset)
+
+    def test_failed_document_rollback_reports_remaining_paths_and_recovers_other_docs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / "docs", root / "assets"
+            source.mkdir()
+            output.mkdir()
+            unrelated = output / "existing.zip"
+            unrelated.write_bytes(b"unrelated asset")
+            for name in ("A.md", "B.md", "C.md"):
+                document = source / name
+                document.write_text(name, encoding="utf-8")
+                document.chmod(stat.S_IREAD)
+            real_replace = Path.replace
+            restored = []
+
+            def replace(path, destination):
+                destination = Path(destination)
+                if destination == output / "C.md":
+                    raise OSError("last promotion failed")
+                if path == output / "B.md":
+                    raise OSError("B rollback blocked")
+                result = real_replace(path, destination)
+                if path == output / "A.md":
+                    restored.append(destination)
+                return result
+
+            with patch.object(Path, "replace", replace):
+                try:
+                    package_release.collect_docs(source, output)
+                except (OSError, RuntimeError) as error:
+                    observed = error
+                else:
+                    self.fail("promotion unexpectedly succeeded")
+            self.assertIsInstance(observed, RuntimeError)
+            self.assertIn("last promotion failed", str(observed))
+            self.assertIn("B rollback blocked", str(observed))
+            self.assertIn(str(output / "B.md"), str(observed))
+            self.assertIn("require recovery", str(observed))
+            self.assertEqual([path.name for path in restored], ["A.md"])
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "B.md"})
+            self.assertEqual(unrelated.read_bytes(), b"unrelated asset")
+            self.assertEqual({path.name: path.read_text(encoding="utf-8") for path in source.iterdir()}, {name: name for name in ("A.md", "B.md", "C.md")})
+            (output / "B.md").chmod(stat.S_IREAD | stat.S_IWRITE)
+            (output / "B.md").unlink()
+            package_release.collect_docs(source, output)
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "A.md", "B.md", "C.md"})
+
+    def test_document_promotion_cli_failure_preserves_assets_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "anchor").mkdir()
+            source, output = root / "anchor" / ".." / "docs", root / "anchor" / ".." / "assets"
+            source.mkdir()
+            output.mkdir()
+            (output / "existing.zip").write_bytes(b"unrelated asset")
+            for name in ("A.md", "B.md"):
+                (source / name).write_text(name, encoding="utf-8")
+            promoted_output = package_release.resolve_release_path(output)
+            injected = []
+            real_replace = Path.replace
+
+            def replace(path, destination):
+                if Path(destination) == promoted_output / "B.md":
+                    self.assertEqual((promoted_output / "A.md").read_bytes(), b"A.md")
+                    self.assertEqual(path.read_bytes(), b"B.md")
+                    injected.append(path.name)
+                    raise OSError("document promotion blocked")
+                return real_replace(path, destination)
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(Path, "replace", replace), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+                package_release.main(["--docs", str(source), "--output", str(output)])
+            self.assertEqual(injected, ["B.md"])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("document promotion blocked", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, {"existing.zip": b"unrelated asset"})
+            self.assertEqual(package_release.main(["--docs", str(source), "--output", str(output)]), 0)
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "A.md", "B.md"})
 
     def test_readonly_source_metadata_survives_staging(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1848,7 +2462,7 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertTrue(full.is_symlink())
             self.assertEqual(target.read_bytes(), b"new")
 
-    def test_promotion_failure_leaves_other_destination_intact(self):
+    def test_promotion_failure_restores_both_destinations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, body, full = (root / name for name in ("notes.json", "body", "full"))
@@ -1856,17 +2470,66 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             body.write_bytes(b"old body")
             full.write_bytes(b"old full")
             original_replace = os.replace
+            failed = []
 
             def replace(first, second):
-                if second == body.resolve():
+                if second == body.resolve() and not failed:
+                    failed.append(first)
                     raise OSError("second promotion failed")
                 return original_replace(first, second)
 
             with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
                 prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(len(failed), 1)
             self.assertEqual(body.read_bytes(), b"old body")
-            self.assertEqual(full.read_bytes(), b"new")
+            self.assertEqual(full.read_bytes(), b"old full")
             self.assertEqual(list(root.glob(".release-notes-*")), [])
+
+    def test_promotion_failure_with_new_outputs_leaves_neither_behind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            original_replace = os.replace
+            failed = []
+
+            def replace(first, second):
+                if second == body.resolve() and not failed:
+                    failed.append(first)
+                    raise OSError("second promotion failed")
+                return original_replace(first, second)
+
+            with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(len(failed), 1)
+            self.assertFalse(body.exists())
+            self.assertFalse(full.exists())
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
+
+class NativeAuxiliaryRuntimesTests(unittest.TestCase):
+    def runtimes(self, platform, sanitizer=False, tracy=()):
+        with patch.object(package_release, "cmake_option", return_value=sanitizer), \
+                patch.object(package_release, "tracy_runtime", return_value=list(tracy)):
+            return package_release.native_auxiliary_runtimes(platform, Path("build"))
+
+    def test_each_platform_names_its_mimalloc_runtime(self):
+        base = Path("build") / "core/libs/libs"
+        self.assertEqual(self.runtimes("linux"), [base / "libmimalloc.so"])
+        self.assertEqual(self.runtimes("windows"), [base / "mimalloc.dll", base / "mimalloc-redirect.dll"])
+        self.assertEqual(self.runtimes("macos"), [base / "libmimalloc.dylib"])
+
+    def test_sanitizer_builds_on_linux_drop_mimalloc(self):
+        self.assertEqual(self.runtimes("linux", sanitizer=True), [])
+        self.assertEqual(len(self.runtimes("windows", sanitizer=True)), 2)
+
+    def test_tracy_runtime_is_appended(self):
+        extra = Path("build") / "tracy.so"
+        self.assertEqual(self.runtimes("linux", tracy=[extra])[-1], extra)
+        self.assertEqual(self.runtimes("linux", sanitizer=True, tracy=[extra]), [extra])
+
+    def test_unknown_platform_is_refused(self):
+        with self.assertRaises(KeyError):
+            self.runtimes("plan9")
 
 
 if __name__ == "__main__":

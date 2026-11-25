@@ -6,15 +6,64 @@
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 
 namespace {
 
 constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
+
+bool CopyGuestCString(const char* source, std::string& destination) {
+    if (!source) return false;
+    destination.clear();
+    const int savedErrno = errno;
+    constexpr std::size_t kMinPageSize = 4096;
+    std::array<char, kMinPageSize> chunk{};
+    std::uintptr_t address = reinterpret_cast<std::uintptr_t>(source);
+    for (;;) {
+        const std::size_t toPageEnd = kMinPageSize - (address & (kMinPageSize - 1));
+        const std::uintptr_t remaining = std::numeric_limits<std::uintptr_t>::max() - address;
+        const std::size_t chunkBytes = remaining < (toPageEnd - 1) ? static_cast<std::size_t>(remaining) + 1 : toPageEnd;
+        if (GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), chunkBytes)) {
+            const void* nul = std::memchr(chunk.data(), '\0', chunkBytes);
+            if (nul != nullptr) {
+                destination.append(chunk.data(), static_cast<std::size_t>(static_cast<const char*>(nul) - chunk.data()));
+                errno = savedErrno;
+                return true;
+            }
+            destination.append(chunk.data(), chunkBytes);
+            if (remaining < chunkBytes) {
+                errno = savedErrno;
+                return false;
+            }
+            address += chunkBytes;
+            continue;
+        }
+        for (;;) {
+            char ch = '\0';
+            if (!GuestCopyIn_nid_no_patch(&ch, reinterpret_cast<const void*>(address), 1)) {
+                errno = savedErrno;
+                return false;
+            }
+            if (ch == '\0') {
+                errno = savedErrno;
+                return true;
+            }
+            destination.push_back(ch);
+            if (address == std::numeric_limits<std::uintptr_t>::max()) {
+                errno = savedErrno;
+                return false;
+            }
+            ++address;
+        }
+    }
+}
 
 std::string DecodeBase64(std::string_view in) {
     auto val = [](char c) -> int {
@@ -26,17 +75,18 @@ std::string DecodeBase64(std::string_view in) {
         return -1;
     };
     std::string out;
-    int buf = 0;
+    std::uint32_t buf = 0;
     int bits = 0;
     for (char c : in) {
         if (c == '=' || c == '\0') break;
         const int v = val(c);
         if (v < 0) continue;
-        buf = (buf << 6) | v;
+        buf = (buf << 6) | static_cast<std::uint32_t>(v);
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
             out.push_back(static_cast<char>((buf >> bits) & 0xFF));
+            buf &= (1u << bits) - 1u;
         }
     }
     return out;
@@ -47,8 +97,9 @@ std::string DecodeBase64(std::string_view in) {
 extern "C" {
 
 int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId) {
-    if (!jsonNpId) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    const std::string decoded = DecodeBase64(jsonNpId);
+    std::string encoded;
+    if (!CopyGuestCString(jsonNpId, encoded)) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    const std::string decoded = DecodeBase64(encoded);
     std::string handle;
     std::string opt;
     const std::size_t at = decoded.find('@');

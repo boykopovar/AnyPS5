@@ -20,8 +20,26 @@ def compare(base, head):
                 row[state] = {"added": sorted(new - old), "removed": sorted(old - new)}
             groups.append(row)
         result[section] = {"baseline_percent": base[section]["percent"], "candidate_percent": head[section]["percent"],
-                           "change_percentage_points": head[section]["percent"] - base[section]["percent"], "groups": groups}
+                           "change_percentage_points": round(head[section]["percent"] - base[section]["percent"], 2), "groups": groups}
     return result
+
+
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def read_snapshot(path):
+    try:
+        snapshot = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
+        progress.validate_snapshot(snapshot)
+    except (ValueError, RecursionError) as error:
+        raise ValueError(f"{path}: {error}") from error
+    return snapshot
 
 
 def main(argv=None):
@@ -33,9 +51,7 @@ def main(argv=None):
     parser.add_argument("candidate", type=Path)
     args = parser.parse_args(argv)
     try:
-        snapshots = [json.loads(path.read_text(encoding="utf-8-sig")) for path in (args.baseline, args.candidate)]
-        for snapshot in snapshots:
-            progress.validate_snapshot(snapshot)
+        snapshots = [read_snapshot(path) for path in (args.baseline, args.candidate)]
         text = json.dumps(compare(*snapshots), ensure_ascii=False, allow_nan=False, indent=2)
     except (OSError, ValueError, RecursionError) as error:
         parser.error(str(error))

@@ -45,6 +45,7 @@ static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
 static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
+static constexpr std::uint64_t DEVICE_RETRY_US = 2000000;
 static constexpr int MONITOR_TYPE_HDMI = 1;
 static constexpr std::uint32_t HDMI_MONITOR_INFO_SIZE = 0x180;
 static constexpr std::uint32_t EX_MONITOR_INFO_SIZE = 0x400;
@@ -126,6 +127,7 @@ struct Port {
     int mixLevel = DEFAULT_VOLUME;
     std::uint64_t lastDataOutputTime = 0;
     std::uint64_t virtualQueueEnd = 0;
+    std::uint64_t nextDeviceRetry = 0;
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
@@ -217,8 +219,12 @@ static void closeDevice(Port& port) {
 }
 
 static void reopenStoppedDevice(Port& port) {
-    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
-    closeDevice(port);
+    if (port.device == 0) {
+        if (port.nextDeviceRetry == 0 || sceKernelGetProcessTime() < port.nextDeviceRetry) return;
+    } else {
+        if (SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+        closeDevice(port);
+    }
     if (port.type == PORT_TYPE_VIBRATION) {
         try {
             openVibrationDevice(port);
@@ -228,6 +234,7 @@ static void reopenStoppedDevice(Port& port) {
         }
     } else {
         openDevice(port);
+        port.nextDeviceRetry = port.device == 0 ? sceKernelGetProcessTime() + DEVICE_RETRY_US : 0;
     }
 }
 
@@ -438,7 +445,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
                 port.volume[c] = DEFAULT_VOLUME;
             }
             if (type != PORT_TYPE_VIBRATION && type != PORT_TYPE_EX && type != PORT_TYPE_SYS) {
-                openDevice(port);
+                if (!openDevice(port)) port.nextDeviceRetry = sceKernelGetProcessTime() + DEVICE_RETRY_US;
             }
             static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
             if (trace) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
@@ -625,7 +632,13 @@ int APS5_VABI sceAudioOutGetLastOutputTime(int handle, std::uint64_t* outputTime
     if (port == nullptr) {
         return -2144993277;
     }
-    *outputTime = port->lastDataOutputTime;
+    const std::uint64_t time = port->lastDataOutputTime;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(outputTime, &time, sizeof(time));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     return 0;
 }
 
@@ -783,7 +796,11 @@ int APS5_VABI sceAudioOutExGetMonitorInfo(int type, int index, void* info, std::
     if (type != 0) return static_cast<int>(0x80260003);
     if (info == nullptr) return static_cast<int>(0x80260004);
     if (size != EX_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
-    std::memset(info, 0, EX_MONITOR_INFO_SIZE);
+    const std::array<std::uint8_t, EX_MONITOR_INFO_SIZE> empty{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, empty.data(), empty.size());
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80260004);
     return 0;
 }
 
@@ -800,8 +817,14 @@ int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
     if (state == nullptr) {
         return -2144993276;
     }
-    *state = {};
-    state->loudness = 0.0f;
+    AudioOutSystemState localState{};
+    localState.loudness = 0.0f;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     return 0;
 }
 

@@ -1,4 +1,5 @@
 #include "prx/libSceHttp/include/Http.hpp"
+#include "prx/libSceHttp/src/Options.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
@@ -9,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -69,17 +71,18 @@ void CheckAuthEnabled(int context) {
 void CheckCookieEnabled(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     Require(Get(sceHttpGetCookieEnabled, pattern) == 0, "a template enables cookies by default");
-    Require(sceHttpSetCookieEnabled(pattern, 1) == 0 && Get(sceHttpGetCookieEnabled, pattern) == 1, "the cookie-enabled getter does not return what was set");
+    for (const int value : {0, 1, 2, 3, 255, -1, std::numeric_limits<int>::min(), 256}) {
+        Require(sceHttpSetCookieEnabled(pattern, value) == 0 && Get(sceHttpGetCookieEnabled, pattern) == value, "the cookie-enabled getter does not return the raw value that was set");
+    }
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
     const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
-    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, request) == 1, "a child did not inherit its parent's cookie option");
+    Require(Get(sceHttpGetCookieEnabled, connection) == 256 && Get(sceHttpGetCookieEnabled, request) == 256, "a child did not inherit its parent's raw cookie option");
     Require(sceHttpSetCookieEnabled(request, 0) == 0 && Get(sceHttpGetCookieEnabled, request) == 0, "the cookie option could not be disabled on a child");
-    Require(Get(sceHttpGetCookieEnabled, connection) == 1 && Get(sceHttpGetCookieEnabled, pattern) == 1, "changing a child changed its parent or sibling");
+    Require(Get(sceHttpGetCookieEnabled, connection) == 256 && Get(sceHttpGetCookieEnabled, pattern) == 256, "changing a child changed its parent or sibling");
     int value = -1;
     Require(sceHttpGetCookieEnabled(request, nullptr) == InvalidValue, "a null cookie output was not refused");
-    Require(sceHttpSetCookieEnabled(pattern, -1) == InvalidValue && sceHttpSetCookieEnabled(pattern, 2) == InvalidValue, "an invalid cookie-enabled value was accepted");
-    Require(sceHttpGetCookieEnabled(UnknownId, &value) == InvalidId && sceHttpSetCookieEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused for cookie options");
-    Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetCookieEnabled(request, &value) == InvalidId, "a deleted request retained its cookie option");
+    Require(sceHttpGetCookieEnabled(UnknownId, &value) == InvalidId && value == -1 && sceHttpSetCookieEnabled(UnknownId, 2) == InvalidId, "an unknown id was not refused for cookie options");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetCookieEnabled(request, &value) == InvalidId && value == -1 && sceHttpSetCookieEnabled(request, 2) == InvalidId, "a deleted request retained its cookie option");
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
 }
 
@@ -137,6 +140,10 @@ void CheckOfflineSetters(int context) {
 }
 
 void CheckOfflineSettersBeforeInit() {
+    Require(sceHttpSetChunkedTransferEnabled(UnknownId, std::numeric_limits<int>::min()) == 0, "sceHttpSetChunkedTransferEnabled started requiring initialisation");
+    Require(sceHttpsSetMinSslVersion(UnknownId, std::numeric_limits<std::uint32_t>::max()) == 0, "sceHttpsSetMinSslVersion started requiring initialisation");
+    Require(sceHttpGetEpollId(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpGetEpollId answered before sceHttpInit");
+    Require(sceHttpSetEpollId(UnknownId, std::numeric_limits<int>::min(), reinterpret_cast<void*>(std::uintptr_t{0x10})) == BeforeInit, "sceHttpSetEpollId answered before sceHttpInit");
     Require(sceHttpSetHttp09Enabled(UnknownId, 1) == BeforeInit, "sceHttpSetHttp09Enabled answered before sceHttpInit");
     Require(sceHttpSetPriorityOption(UnknownId, 1) == BeforeInit, "sceHttpSetPriorityOption answered before sceHttpInit");
     Require(sceHttpSetPolicyOption(UnknownId, 1) == BeforeInit, "sceHttpSetPolicyOption answered before sceHttpInit");
@@ -170,9 +177,34 @@ void CheckEpoll(int context) {
     HttpEpollHandle epoll = nullptr;
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr, "sceHttpCreateEpoll failed");
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
-    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
-    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    const auto initial = FindHttpOptions(pattern);
+    Require(initial && initial->epollId == -1, "a template did not start with the default epoll id");
     int marker = 0;
+    for (const int value : {std::numeric_limits<int>::min(), -1, 0, std::numeric_limits<int>::max()}) {
+        Require(sceHttpSetEpollId(pattern, value, &marker) == 0, "sceHttpSetEpollId refused a 32-bit epoll id");
+        const auto options = FindHttpOptions(pattern);
+        Require(options && options->epollId == value, "sceHttpSetEpollId did not retain the epoll id");
+    }
+    Require(sceHttpSetEpollId(pattern, 17, &marker) == 0, "sceHttpSetEpollId failed on a template");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const auto connectionOptions = FindHttpOptions(connection);
+    Require(connectionOptions && connectionOptions->epollId == 17, "a connection did not inherit its template's epoll id");
+    Require(sceHttpSetEpollId(connection, std::numeric_limits<int>::min(), reinterpret_cast<void*>(std::uintptr_t{0x10})) == 0, "sceHttpSetEpollId read its user argument");
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    const auto requestOptions = FindHttpOptions(request);
+    Require(requestOptions && requestOptions->epollId == std::numeric_limits<int>::min(), "a request did not inherit its connection's epoll id");
+    Require(sceHttpSetEpollId(request, std::numeric_limits<int>::max(), nullptr) == 0, "sceHttpSetEpollId failed on a request");
+    Require(FindHttpOptions(request)->epollId == std::numeric_limits<int>::max() && FindHttpOptions(connection)->epollId == std::numeric_limits<int>::min() && FindHttpOptions(pattern)->epollId == 17, "changing a request changed a parent epoll id");
+    Require(sceHttpSetEpollId(pattern, 23, nullptr) == 0 && FindHttpOptions(connection)->epollId == std::numeric_limits<int>::min(), "an existing connection followed a later template epoll id change");
+    Require(sceHttpSetEpollId(context, 1, nullptr) == InvalidId && sceHttpSetEpollId(UnknownId, std::numeric_limits<int>::max(), reinterpret_cast<void*>(std::uintptr_t{0x10})) == InvalidId, "sceHttpSetEpollId accepted an invalid object id");
+    int epollId = 7;
+    void* idArgument = &marker;
+    Require(sceHttpGetEpollId(pattern, &epollId, &idArgument) == 0 && epollId == 23 && idArgument == &marker, "sceHttpGetEpollId did not return a template's epoll id");
+    Require(sceHttpGetEpollId(connection, &epollId, &idArgument) == 0 && epollId == std::numeric_limits<int>::min() && idArgument == &marker, "sceHttpGetEpollId did not return a connection's epoll id");
+    Require(sceHttpGetEpollId(request, &epollId, &idArgument) == 0 && epollId == std::numeric_limits<int>::max() && idArgument == &marker, "sceHttpGetEpollId did not return a request's epoll id");
+    epollId = 7;
+    Require(sceHttpGetEpollId(UnknownId, nullptr, &idArgument) == InvalidValue, "the epoll id output is not checked before the id");
+    Require(sceHttpGetEpollId(UnknownId, &epollId, &idArgument) == InvalidId && epollId == 7 && idArgument == &marker, "sceHttpGetEpollId changed outputs for an unknown id");
     HttpEpollHandle bound = epoll;
     void* argument = &marker;
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr && argument == nullptr, "a new request is bound to an epoll");
@@ -190,6 +222,7 @@ void CheckEpoll(int context) {
     Require(sceHttpSetEpoll(request, epoll, &marker) == InvalidId, "sceHttpSetEpoll took a destroyed epoll");
     Require(sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr, "a refused sceHttpSetEpoll changed the binding");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetEpollId(request, 1, nullptr) == InvalidId, "a deleted request still accepted an epoll id");
     Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
@@ -202,18 +235,20 @@ void CheckTermEndsOptions() {
     HttpEpollHandle bound = nullptr;
     Require(sceHttpGetAutoRedirect(pattern, &value) == BeforeInit && sceHttpSetAutoRedirect(pattern, 0) == BeforeInit, "the redirect option outlived the last sceHttpTerm");
     Require(sceHttpGetAuthEnabled(pattern, &value) == BeforeInit && sceHttpSetAuthEnabled(pattern, 0) == BeforeInit, "the authentication option outlived the last sceHttpTerm");
-    Require(sceHttpGetCookieEnabled(pattern, &value) == BeforeInit && sceHttpSetCookieEnabled(pattern, 0) == BeforeInit, "the cookie option outlived the last sceHttpTerm");
+    Require(sceHttpGetCookieEnabled(pattern, &value) == InvalidId && sceHttpSetCookieEnabled(pattern, 0) == InvalidId, "the cookie option outlived the last sceHttpTerm");
     Require(sceHttpGetNonblock(connection, &value) == BeforeInit && sceHttpTryGetNonblock(connection, &value) == BeforeInit, "the nonblocking getters work after the last sceHttpTerm");
     Require(sceHttpSetNonblock(connection, 1) == BeforeInit && sceHttpTrySetNonblock(connection, 1) == BeforeInit, "the nonblocking setters work after the last sceHttpTerm");
     Require(sceHttpGetAcceptEncodingGZIPEnabled(pattern, &value) == BeforeInit && sceHttpSetAcceptEncodingGZIPEnabled(pattern, 1) == BeforeInit, "the gzip option outlived the last sceHttpTerm");
     Require(sceHttpGetEpoll(connection, &bound, nullptr) == BeforeInit && sceHttpUnsetEpoll(connection) == BeforeInit, "the epoll binding outlived the last sceHttpTerm");
+    Require(sceHttpGetEpollId(connection, nullptr, nullptr) == BeforeInit, "the epoll id binding outlived the last sceHttpTerm");
+    Require(sceHttpSetEpollId(connection, std::numeric_limits<int>::max(), reinterpret_cast<void*>(std::uintptr_t{0x10})) == BeforeInit, "the epoll id outlived the last sceHttpTerm");
     Require(sceHttpCacheRedirectedConnectionEnabled(connection, 1) == BeforeInit, "sceHttpCacheRedirectedConnectionEnabled works after the last sceHttpTerm");
     Require(sceHttpSetProxy(connection, 1, 0, "proxy.example", 3128) == BeforeInit, "sceHttpSetProxy works after the last sceHttpTerm");
     Require(sceHttpsEnableOptionPrivate(connection, 0x4000u) == BeforeInit && sceHttpsDisableOptionPrivate(connection, 0x4000u) == BeforeInit, "the private SSL options work after the last sceHttpTerm");
     Require(sceHttpGetNonblock(connection, nullptr) == BeforeInit, "a null output is checked before initialisation");
     Require(value == -1 && bound == nullptr, "a refused getter wrote its output");
     const int next = sceHttpInit_nid_postfix(1, 1, 0x10000);
-    Require(sceHttpSetAutoRedirect(pattern, 0) == InvalidId && sceHttpGetNonblock(connection, &value) == InvalidId, "an object outlived the last sceHttpTerm into a new sceHttpInit");
+    Require(sceHttpSetAutoRedirect(pattern, 0) == InvalidId && sceHttpGetNonblock(connection, &value) == InvalidId && sceHttpSetEpollId(connection, 1, nullptr) == InvalidId, "an object outlived the last sceHttpTerm into a new sceHttpInit");
     Require(sceHttpTerm_nid_postfix(next) == 0, "sceHttpTerm failed");
 }
 
@@ -249,6 +284,10 @@ void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
     const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    for (const int id : {pattern, connection, request, UnknownId}) {
+        Require(sceHttpSetChunkedTransferEnabled(id, -1) == 0 && sceHttpSetChunkedTransferEnabled(id, 0) == 0 && sceHttpSetChunkedTransferEnabled(id, 1) == 0, "sceHttpSetChunkedTransferEnabled started validating or storing its inputs");
+        Require(sceHttpsSetMinSslVersion(id, 0) == 0 && sceHttpsSetMinSslVersion(id, std::numeric_limits<std::uint32_t>::max()) == 0, "sceHttpsSetMinSslVersion started validating or storing its inputs");
+    }
     Require(sceHttpAddRequestHeader(request, "X-Test", "value", 0) == 0 && sceHttpRemoveRequestHeader(request, "X-Test") == 0, "offline request header calls failed");
     Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
@@ -273,6 +312,27 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpSetDelayBuildRequestEnabled(request, 1) == InvalidId, "a deleted request still accepted delay build request");
 }
 
+void CheckProxy(int context) {
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    Require(sceHttpSetProxy(pattern, 1, 2, "proxy.example", 3128) == 0, "sceHttpSetProxy failed on a template");
+    const auto stored = FindHttpOptions(pattern);
+    Require(stored && stored->proxyHttpConf == 1 && stored->proxyWlanConf == 2 && stored->proxyPort == 3128 && stored->proxyHost == "proxy.example", "sceHttpSetProxy did not store the proxy settings");
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const auto inherited = FindHttpOptions(connection);
+    Require(inherited && inherited->proxyHttpConf == 1 && inherited->proxyWlanConf == 2 && inherited->proxyPort == 3128 && inherited->proxyHost == "proxy.example", "a connection did not inherit its template's proxy");
+    Require(sceHttpSetProxy(connection, 0, 0, "other.proxy", 8080) == 0, "sceHttpSetProxy failed on a connection");
+    const auto updated = FindHttpOptions(connection);
+    Require(updated && updated->proxyHttpConf == 0 && updated->proxyWlanConf == 0 && updated->proxyPort == 8080 && updated->proxyHost == "other.proxy", "sceHttpSetProxy did not update a connection's proxy");
+    Require(FindHttpOptions(pattern)->proxyHost == "proxy.example", "setting a connection changed its template's proxy");
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    const auto requestProxy = FindHttpOptions(request);
+    Require(requestProxy && requestProxy->proxyHost == "other.proxy" && requestProxy->proxyPort == 8080, "a request did not inherit its connection's proxy");
+    Require(sceHttpSetProxy(request, 3, 0, "request.proxy", 9000) == 0, "sceHttpSetProxy failed on a request");
+    Require(FindHttpOptions(request)->proxyHttpConf == 3 && FindHttpOptions(connection)->proxyHttpConf == 0, "setting a request changed its connection's proxy");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetProxy(request, 1, 0, "gone.proxy", 1) == InvalidId, "a deleted request still stored a proxy");
+}
+
 }
 
 int main() {
@@ -286,6 +346,7 @@ int main() {
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
     CheckUnobservedOptions(context);
+    CheckProxy(context);
     CheckOfflineSetters(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");

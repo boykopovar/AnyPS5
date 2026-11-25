@@ -11,7 +11,7 @@
 
 namespace {
 
-constexpr int SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED = static_cast<int>(0x80550C03);
+constexpr int SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED = static_cast<int>(0x80550E01);
 constexpr int SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550C0A);
 constexpr std::uint64_t SIGNALING_NET_INFO_SIZE = 0x18;
 
@@ -30,15 +30,13 @@ extern "C" {
 
 int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo(NpMatching2SignalingNetInfo* info) {
     if (!NpMatching2IsInitialized_nid_no_patch()) {
-        return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+        return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
     }
     if (!info) {
         return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     }
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &info->size, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != SIGNALING_NET_INFO_SIZE) {
         return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     }

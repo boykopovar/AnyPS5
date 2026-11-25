@@ -1,7 +1,10 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,7 +12,17 @@
 #include <exception>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -214,10 +227,266 @@ void Printed() {
     Require(i2a_ASN1_OBJECT_nid_postfix(nullptr, &unknown.object) == 0, "a null BIO writes nothing");
 }
 
+struct ScratchAllocation {
+    std::uintptr_t address;
+    std::size_t bytes;
+    bool released;
+};
+
+std::array<ScratchAllocation, 2> scratch{};
+std::size_t scratchAllocations = 0;
+std::size_t scratchReleases = 0;
+bool trackingScratch = false;
+
+void* APS5_VABI Allocate(std::size_t bytes) {
+    void* pointer = std::malloc(bytes ? bytes : 1);
+    if (pointer && trackingScratch) {
+        Require(scratchAllocations < scratch.size(), "only the scratch buffers are allocated");
+        if (scratchAllocations != 0) Require(scratch[0].released, "the old scratch buffer is freed before growing");
+        scratch[scratchAllocations++] = {reinterpret_cast<std::uintptr_t>(pointer), bytes, false};
+    }
+    return pointer;
+}
+
+void APS5_VABI Release(void* pointer) {
+    if (pointer && trackingScratch) {
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        ScratchAllocation* allocation = nullptr;
+        for (auto& item : scratch)
+            if (item.address == address && !item.released) allocation = &item;
+        Require(allocation != nullptr, "only an owned scratch buffer is freed");
+        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        for (std::size_t index = 0; index < allocation->bytes; ++index)
+            Require(bytes[index] == 0, "the whole scratch capacity is cleansed before freeing");
+        allocation->released = true;
+        ++scratchReleases;
+    }
+    std::free(pointer);
+}
+
+void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
+    Require(!trackingScratch, "scratch allocation uses malloc");
+    return std::calloc(count ? count : 1, bytes ? bytes : 1);
+}
+
+void* APS5_VABI Reallocate(void* pointer, std::size_t bytes) {
+    Require(!trackingScratch, "scratch growth does not use realloc");
+    return std::realloc(pointer, bytes);
+}
+
+void* APS5_VABI Align(std::size_t, std::size_t) { return nullptr; }
+void* APS5_VABI Realign(void*, std::size_t, std::size_t) { return nullptr; }
+int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { return 12; }
+
+enum class WriteBehavior { Complete, MethodThrows, BeforeThrows, AfterThrows };
+struct WriteFailure {};
+
+WriteBehavior writeBehavior;
+std::string_view expectedWrite;
+int methodCalls = 0;
+int callbackCalls = 0;
+
+int APS5_VABI Write(LibreSsl::Bio*, const char* text, int length) {
+    ++methodCalls;
+    Require(length >= 0 && static_cast<std::size_t>(length) == expectedWrite.size(), "the BIO receives the complete text");
+    Require(std::memcmp(text, expectedWrite.data(), expectedWrite.size()) == 0, "the BIO receives the expected text");
+    if (writeBehavior == WriteBehavior::MethodThrows) throw WriteFailure{};
+    return length;
+}
+
+std::int64_t APS5_VABI Callback(LibreSsl::Bio*, int operation, const char*, int, std::int64_t, std::int64_t result) {
+    ++callbackCalls;
+    if ((operation == 3 && writeBehavior == WriteBehavior::BeforeThrows) ||
+        (operation == 0x83 && writeBehavior == WriteBehavior::AfterThrows)) throw WriteFailure{};
+    return result;
+}
+
+void CheckScratchCleanup(const LibreSslAsn1Object* object, std::string_view expected, WriteBehavior behavior) {
+    LibreSsl::BioMethod method{};
+    method.write = Write;
+    LibreSsl::Bio bio{};
+    bio.method = &method;
+    bio.callback = Callback;
+    bio.initialized = 1;
+    scratch = {};
+    scratchAllocations = scratchReleases = 0;
+    methodCalls = callbackCalls = 0;
+    writeBehavior = behavior;
+    expectedWrite = expected;
+    bool caught = false;
+    int written = -1;
+    trackingScratch = true;
+    try {
+        written = i2a_ASN1_OBJECT_nid_postfix(&bio, object);
+    } catch (const WriteFailure&) {
+        caught = true;
+    }
+    trackingScratch = false;
+    Require(caught == (behavior != WriteBehavior::Complete), "the original BIO exception propagates");
+    if (!caught) Require(written == static_cast<int>(expected.size()), "a completed BIO write returns its length");
+    const std::size_t count = expected.size() >= 256 ? 2 : 1;
+    if (scratchAllocations != count || scratchReleases != count) {
+        std::fprintf(stderr, "i2a scratch cleanup failed: bytes=%zu behavior=%d allocations=%zu releases=%zu\n",
+            expected.size(), static_cast<int>(behavior), scratchAllocations, scratchReleases);
+        Require(false, "every scratch buffer is freed exactly once");
+    }
+    Require(scratch[0].bytes == 256 && scratch[0].released, "the initial scratch allocation is released");
+    if (count == 2) Require(scratch[1].bytes == expected.size() + 1 && scratch[1].released, "the grown scratch allocation is released");
+    Require(methodCalls == (behavior == WriteBehavior::BeforeThrows ? 0 : 1), "the BIO method is called at the expected point");
+    const bool completedMethod = behavior == WriteBehavior::Complete || behavior == WriteBehavior::AfterThrows;
+    Require(callbackCalls == (completedMethod ? 2 : 1), "the BIO callbacks keep their order");
+    Require(bio.bytesWritten == (completedMethod ? expected.size() : 0), "completed BIO bytes remain accounted for");
+    Require(ERR_get_error_nid_postfix() == 0, "scratch cleanup queues no error");
+}
+
+void ScratchCleanup() {
+    std::vector<unsigned char> arcs(300, 0x7f);
+    arcs[0] = 0x2a;
+    LibreSslAsn1Object longer{nullptr, nullptr, 0, static_cast<int>(arcs.size()), arcs.data(), 0};
+    std::string expected = "1.2";
+    for (std::size_t index = 1; index < arcs.size(); ++index) expected += ".127";
+    for (const auto behavior : {WriteBehavior::Complete, WriteBehavior::MethodThrows, WriteBehavior::BeforeThrows, WriteBehavior::AfterThrows}) {
+        CheckScratchCleanup(&LibreSslObjects_nid_no_patch[13], "commonName", behavior);
+        CheckScratchCleanup(&longer, expected, behavior);
+    }
+}
+
+struct ProtectedPages {
+    std::byte* bytes;
+    std::size_t pageSize;
+
+    ProtectedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        bytes = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(bytes != nullptr, "VirtualAlloc failed");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "sysconf page size failed");
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "mmap failed");
+        bytes = static_cast<std::byte*>(mapped);
+#endif
+    }
+
+    void ProtectSecond(bool readable) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(bytes + pageSize, pageSize, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "VirtualProtect failed");
+#else
+        Require(mprotect(bytes + pageSize, pageSize, readable ? PROT_READ : PROT_NONE) == 0, "mprotect failed");
+#endif
+    }
+
+    ~ProtectedPages() {
+#ifdef _WIN32
+        VirtualFree(bytes, 0, MEM_RELEASE);
+#else
+        munmap(bytes, pageSize * 2);
+#endif
+    }
+};
+
+void CheckPairBoundary(ProtectedPages& pages, std::size_t offset, void (APS5_VABI* setter)(LibreSslCtx*, void*, void*), const char* label) {
+    void* const initialCallback = reinterpret_cast<void*>(std::uintptr_t{0x5a5a5a5a5a5a5a5aULL});
+    void* const newCallback = reinterpret_cast<void*>(std::uintptr_t{0x123456789abcdef0ULL});
+    void* const newArg = reinterpret_cast<void*>(std::uintptr_t{0x0fedcba987654321ULL});
+    std::byte* const base = pages.bytes + pages.pageSize - (offset + sizeof(void*));
+    std::memcpy(base + offset, &initialCallback, sizeof(initialCallback));
+    LibreSslCtx ctx{};
+    ctx.internal = reinterpret_cast<LibreSslCtxInternal*>(base);
+    errno = 42;
+    RequireThrows([&] { setter(&ctx, newCallback, newArg); }, label);
+    Require(errno == 42, "boundary failure preserves errno");
+    void* afterCallback = nullptr;
+    std::memcpy(&afterCallback, base + offset, sizeof(afterCallback));
+    Require(afterCallback == initialCallback, "boundary failure does not mutate callback");
+    void* afterArg = nullptr;
+    std::memcpy(&afterArg, base + offset + sizeof(void*), sizeof(afterArg));
+    Require(afterArg == nullptr, "boundary failure does not mutate arg");
+}
+
+void SslCtxCallbacks() {
+    LibreSslCtxInternal internal{};
+    LibreSslCtx ctx{};
+    ctx.internal = &internal;
+
+    void* const infoCb = reinterpret_cast<void*>(std::uintptr_t{0x1001});
+    void* const newSessCb = reinterpret_cast<void*>(std::uintptr_t{0x1002});
+    void* const verifyCb = reinterpret_cast<void*>(std::uintptr_t{0x1003});
+    void* const verifyArg = reinterpret_cast<void*>(std::uintptr_t{0x1004});
+    void* const clientCb = reinterpret_cast<void*>(std::uintptr_t{0x1005});
+    void* const nextCb = reinterpret_cast<void*>(std::uintptr_t{0x1006});
+    void* const nextArg = reinterpret_cast<void*>(std::uintptr_t{0x1007});
+    void* const alpnCb = reinterpret_cast<void*>(std::uintptr_t{0x1008});
+    void* const alpnArg = reinterpret_cast<void*>(std::uintptr_t{0x1009});
+
+    errno = 37;
+    SSL_CTX_set_info_callback_nid_postfix(&ctx, infoCb);
+    SSL_CTX_sess_set_new_cb_nid_postfix(&ctx, newSessCb);
+    SSL_CTX_set_cert_verify_callback_nid_postfix(&ctx, verifyCb, verifyArg);
+    SSL_CTX_set_client_cert_cb_nid_postfix(&ctx, clientCb);
+    SSL_CTX_set_next_proto_select_cb_nid_postfix(&ctx, nextCb, nextArg);
+    SSL_CTX_set_alpn_select_cb_nid_postfix(&ctx, alpnCb, alpnArg);
+    Require(errno == 37, "valid callback writes preserve errno");
+
+    Require(internal.infoCallback == infoCb, "infoCallback updated");
+    Require(internal.newSessionCb == newSessCb, "newSessionCb updated");
+    Require(internal.appVerifyCallback == verifyCb && internal.appVerifyArg == verifyArg, "appVerify pair updated");
+    Require(internal.clientCertCb == clientCb, "clientCertCb updated");
+    Require(internal.nextProtoSelectCb == nextCb && internal.nextProtoSelectCbArg == nextArg, "nextProtoSelect pair updated");
+    Require(internal.alpnSelectCb == alpnCb && internal.alpnSelectCbArg == alpnArg, "alpnSelect pair updated");
+
+    LibreSslCtx nullInternalCtx{};
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(nullptr, infoCb); }, "null ctx info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(nullptr, newSessCb); }, "null ctx new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(nullptr, verifyCb, verifyArg); }, "null ctx cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(nullptr, clientCb); }, "null ctx client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(nullptr, nextCb, nextArg); }, "null ctx next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(nullptr, alpnCb, alpnArg); }, "null ctx alpn");
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(&nullInternalCtx, infoCb); }, "null internal info");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(&nullInternalCtx, verifyCb, verifyArg); }, "null internal cert verify");
+
+    ProtectedPages noAccessPages;
+    noAccessPages.ProtectSecond(false);
+    auto* const unreadableCtx = reinterpret_cast<LibreSslCtx*>(noAccessPages.bytes + noAccessPages.pageSize);
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(unreadableCtx, infoCb); }, "unreadable ctx info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(unreadableCtx, newSessCb); }, "unreadable ctx new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(unreadableCtx, verifyCb, verifyArg); }, "unreadable ctx cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(unreadableCtx, clientCb); }, "unreadable ctx client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(unreadableCtx, nextCb, nextArg); }, "unreadable ctx next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(unreadableCtx, alpnCb, alpnArg); }, "unreadable ctx alpn");
+
+    ProtectedPages readOnlyPages;
+    std::memset(readOnlyPages.bytes + readOnlyPages.pageSize, 0, sizeof(LibreSslCtxInternal));
+    readOnlyPages.ProtectSecond(true);
+    LibreSslCtx readOnlyCtx{};
+    readOnlyCtx.internal = reinterpret_cast<LibreSslCtxInternal*>(readOnlyPages.bytes + readOnlyPages.pageSize);
+    RequireThrows([&] { SSL_CTX_set_info_callback_nid_postfix(&readOnlyCtx, infoCb); }, "read-only internal info");
+    RequireThrows([&] { SSL_CTX_sess_set_new_cb_nid_postfix(&readOnlyCtx, newSessCb); }, "read-only internal new session");
+    RequireThrows([&] { SSL_CTX_set_cert_verify_callback_nid_postfix(&readOnlyCtx, verifyCb, verifyArg); }, "read-only internal cert verify");
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(&readOnlyCtx, clientCb); }, "read-only internal client cert");
+    RequireThrows([&] { SSL_CTX_set_next_proto_select_cb_nid_postfix(&readOnlyCtx, nextCb, nextArg); }, "read-only internal next proto");
+    RequireThrows([&] { SSL_CTX_set_alpn_select_cb_nid_postfix(&readOnlyCtx, alpnCb, alpnArg); }, "read-only internal alpn");
+
+    ProtectedPages boundaryPages;
+    std::memset(boundaryPages.bytes, 0, boundaryPages.pageSize * 2);
+    boundaryPages.ProtectSecond(true);
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, appVerifyCallback), SSL_CTX_set_cert_verify_callback_nid_postfix, "boundary cert verify");
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, nextProtoSelectCb), SSL_CTX_set_next_proto_select_cb_nid_postfix, "boundary next proto");
+    CheckPairBoundary(boundaryPages, offsetof(LibreSslCtxInternal, alpnSelectCb), SSL_CTX_set_alpn_select_cb_nid_postfix, "boundary alpn");
+}
+
 } // namespace
 
 int main() {
-    std::array<void*, 10> api{};
+    std::array<void*, 10> api{
+        reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed),
+        reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign),
+        reinterpret_cast<void*>(PosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Table();
     Lookup();
@@ -226,4 +495,6 @@ int main() {
     Errors();
     Created();
     Printed();
+    ScratchCleanup();
+    SslCtxCallbacks();
 }

@@ -1,6 +1,26 @@
 # Project technical debt
 
-Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
+Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry is limited to 1000 characters; a longer one is reported as a `debt-length` warning ([CONTRIBUTING](../../CONTRIBUTING.md#documentation)). An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
+
+#### Fragments
+
+A pull request does not edit the debt files to add, change or remove entries. It adds its own fragment, `docs/dev/debt/changes/<branch>.md`, with a `# <name>` line per debt file (`TechnicalDebt` for this page) and these operations under it:
+
+  ```markdown
+  # libc
+
+  ## add Silent stubs
+
+  - [sceFoo](../../../core/libs/prx/libc/Export.cpp) (libc) - returns 0 without reading its argument
+
+  ## change [sceBar]
+
+  - [sceBar](../../../core/libs/prx/libc/Export.cpp) (libc) - clears the pool, as the 4.03 module does
+
+  ## remove [sceBaz]
+  ```
+
+`add` puts entries after the last entry of that `###` section that links the same file, or at the end of the section, creating it if needed. `change` and `remove` name text that occurs in exactly one entry of the file, usually its link; table rows count as entries. Links are written exactly as they will appear in the target debt file: relative links resolve from `docs/dev/debt/<name>.md` (or `docs/dev/TechnicalDebt.md` for `# TechnicalDebt`), not from the fragment path under `docs/dev/debt/changes/`. [`tools/debt_fold.py`](../../tools/debt_fold.py) `--show <name>` prints a debt file with the pending fragments applied and `--check` validates them, as the Conventions check does. Without options it applies every fragment and deletes it, and it refuses two fragments that change the same entry. Headings and text outside entries are still edited in place.
 
 ### Build
 
@@ -24,7 +44,6 @@ Throughout the project, every function at every stage either **does exactly what
 
 ### Functional
 
-- `title_run.py --compare` compares no frame percentiles: neither `aps5-summary.jsonl` nor `anyps5-report.json` holds them, so only the average FPS of each is compared. Closes when: a run report or trace summary field carries frame percentiles and `compare_runs` pairs it.
 - Controller haptic PCM that no controller sound card plays (a DualSense over Bluetooth, or any other controller) drives motor rumble from its per-channel RMS (large/small motor, scale 2x, below 0.01 ignored, 80 ms hold); the mapping approximates waveform energy and is not measured against console hardware
 - [Cancellation coverage](ARCHITECTURE.md#thread-cancellation) checks deferred request handling and recovery, not full asynchronous support or console ABI compatibility. Cancellation during file/socket I/O, sleep interruption, cancellation versus exit/detach, condition signal conservation under cancellation, and safe rejection of non-null invalid or reclaimed thread handles remain unverified. No console title or homebrew establishes the cleanup NIDs or buffer layout. Accepted asynchronous mode currently has no diagnostic for its deferred behavior.
 - `--to-intel` guest module trampolines are covered only by a synthetic relinker test; no game title has been verified with them on Linux or Windows.
