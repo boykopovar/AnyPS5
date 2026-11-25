@@ -90,6 +90,18 @@ public:
 class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
 };
 
+class Error final : public ObjectOf<ObjectType::Error> {
+public:
+    Error() = default;
+    Error(std::string domain, int errorCode, std::string failingURL, std::string localizedDescription)
+        : domain(std::move(domain)), errorCode(errorCode), failingURL(std::move(failingURL)), localizedDescription(std::move(localizedDescription)) {}
+
+    std::string domain;
+    int errorCode = 0;
+    std::string failingURL;
+    std::string localizedDescription;
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
