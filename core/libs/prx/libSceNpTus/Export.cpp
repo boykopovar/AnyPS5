@@ -1,7 +1,6 @@
 #include "prx/libSceNpTus/include/Api.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
@@ -58,9 +57,7 @@ int nextRequest = 1;
 bool AreSlotsValid(const std::int32_t* slotIds, int arrayLen) {
     if (arrayLen <= 0) return true;
     std::array<std::int32_t, MAX_SLOTS> localSlots{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, static_cast<std::size_t>(arrayLen) * sizeof(std::int32_t));
-    errno = savedErrno;
     if (!copied) return false;
     for (int index = 0; index < arrayLen; ++index) {
         if (localSlots[index] < 0) return false;
@@ -92,9 +89,7 @@ int ValidateFriendsA(std::int32_t slotId, std::int32_t sortType, std::int32_t mi
     if (arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (option) {
         FriendsOptParam localOption{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-        errno = savedErrno;
         if (!copied || localOption.size != sizeof(FriendsOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     if (sortType < minSortType || sortType > maxSortType) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -120,18 +115,14 @@ struct TssGetDataOptParam {
 
 bool IsEmpty(const NpOnlineId* user) {
     char first = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&first, user->data, sizeof(first));
-    errno = savedErrno;
     return !copied || first == 0;
 }
 
 int TssOptionError(const void* option) {
     if (!option) return 0;
     TssGetDataOptParam localOption{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-    errno = savedErrno;
     if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return localOption.size == sizeof(TssGetDataOptParam) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
 }
@@ -152,9 +143,7 @@ int WaitOffline(int reqId, int* result) {
     if (!request->second.started) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (result) {
         const int outVal = request->second.result;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
-        errno = savedErrno;
         if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return 0;
@@ -222,9 +211,7 @@ int APS5_VABI sceNpTusPollAsync(int reqId, int* result) {
     if (!request->second.started) return POLL_RUNNING;
     if (result) {
         const int outVal = request->second.result;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(result, &outVal, sizeof(outVal));
-        errno = savedErrno;
         if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return POLL_FINISHED;
