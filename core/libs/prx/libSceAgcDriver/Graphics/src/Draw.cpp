@@ -5100,7 +5100,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
         if (recipeOut != nullptr) recipeOut->reset();
-        for (std::uint32_t base = 0; base < state.renderLayers;) {
+        const auto makeWindow = [&](std::uint32_t base) {
             auto window = state;
             window.renderLayers = std::min(limit, state.renderLayers - base);
             window.meshLayerBase = base;
@@ -5112,8 +5112,88 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 color.layers = window.renderLayers;
             }
             if (!window.colors.empty()) window.color = window.colors.front();
-            Draw(context, window, draw, shaders, snapshots, nullptr, trace);
-            base += window.renderLayers;
+            return window;
+        };
+        auto firstWindow = makeWindow(0u);
+        static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        PreparedDraw prepared(profile);
+        prepared.trace = trace;
+        prepared.shape = shape;
+        prepared.contentKey = contentKey;
+        prepared.passAttachments = PassAttachmentMemoEnabled();
+        const struct HeldSpace {
+            PreparedDraw& prepared;
+            ~HeldSpace() {
+                const auto& resources = prepared.resolved.resources;
+                if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
+                if (prepared.spaceKeep != nullptr) *prepared.spaceKeep = resources->ReleaseSpace();
+                else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->Id(), prepared.recorder->OpenSerial());
+                else static_cast<void>(resources->ReleaseSpace());
+            }
+        } heldSpace{prepared};
+        bool sharePrepared = false;
+        try {
+            if (!prepareDraw(context, firstWindow, draw, shaders, snapshots, prepared)) {
+                keepHeldSpace(prepared);
+                return;
+            }
+            sharePrepared = !draw.indirect && prepared.lean && !prepared.multisampled && prepared.stencilReplay.empty() && prepared.resolved.resources != nullptr && !prepared.resolved.resources->SpaceReuse() && !prepared.targets.empty() && std::none_of(prepared.targets.begin(), prepared.targets.end(), [](const TargetBinding& binding) { return binding.resident == nullptr || binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; });
+            const bool finalCompletion = prepared.completion;
+            const bool finalWaited = prepared.outcome.waited;
+            if (sharePrepared) {
+                prepared.completion = false;
+                prepared.outcome.waited = false;
+            }
+            recordPreparedDraw(context, firstWindow, draw, shaders, prepared);
+            if (sharePrepared) {
+                auto prevLayers = firstWindow.renderLayers;
+                for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                    auto window = makeWindow(base);
+                    if (base + window.renderLayers >= state.renderLayers) {
+                        prepared.completion = finalCompletion;
+                        prepared.outcome.waited = finalWaited;
+                    }
+                    for (std::size_t index = 0; index < window.colors.size(); ++index) {
+                        const auto& color = window.colors[index];
+                        prepared.targets[index].color = color;
+                        prepared.targetViews[index] = prepared.targets[index].resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
+                    }
+                    if (window.renderLayers != prevLayers) {
+                        const State& pipelineState = prepared.masked.has_value() ? [&] {
+                            auto updated = *prepared.masked;
+                            updated.renderLayers = window.renderLayers;
+                            updated.meshLayerBase = window.meshLayerBase;
+                            updated.meshLayerCount = window.meshLayerCount;
+                            updated.colors = window.colors;
+                            updated.color = window.color;
+                            prepared.masked = updated;
+                            return *prepared.masked;
+                        }() : window;
+                        prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+                        prevLayers = window.renderLayers;
+                    } else if (prepared.masked.has_value()) {
+                        prepared.masked->meshLayerBase = window.meshLayerBase;
+                        prepared.masked->meshLayerCount = window.meshLayerCount;
+                        prepared.masked->colors = window.colors;
+                        prepared.masked->color = window.color;
+                    }
+                    prepared.framebuffer = prepared.pipeline->AcquireFramebuffer(prepared.targetViews, prepared.framebufferOwners, window.renderExtent, window.renderLayers);
+                    recordPreparedDraw(context, window, draw, shaders, prepared);
+                    base += window.renderLayers;
+                }
+            }
+        } catch (...) {
+            ThreadTargetMemo().Invalidate();
+            keepHeldSpace(prepared);
+            throw;
+        }
+        keepHeldSpace(prepared);
+        if (!sharePrepared) {
+            for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                auto window = makeWindow(base);
+                Draw(context, window, draw, shaders, snapshots, nullptr, trace);
+                base += window.renderLayers;
+            }
         }
         return;
     }
