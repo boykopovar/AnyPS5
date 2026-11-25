@@ -1225,25 +1225,44 @@ static void CheckDirectMemoryQuery() {
     info = {-1, -1, -1};
     Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelDirectMemoryQuery(first, 0, reinterpret_cast<void*>(0x10), sizeof(info)) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
-    for (const int flags : {2, 3, 4, 5, 8, 0x10, 0x100, 0x10000}) {
+    for (const unsigned flags : {0u, 0x40000000u, 0x80000000u}) Require(sceKernelDirectMemoryQuery(-1, static_cast<int>(flags), &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+    Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    const auto throws = [&](std::int64_t offset, unsigned flags, std::size_t size) {
+        try {
+            sceKernelDirectMemoryQuery(offset, static_cast<int>(flags), &info, size);
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    for (const unsigned flags : {1u, 0x10000000u, 0x20000000u, 0x40000001u, 0xc0000000u}) Require(throws(-1, flags, sizeof(info)));
+    for (unsigned bit = 1; bit < 28; ++bit) {
         info = {-1, -1, -1};
-        Require(sceKernelDirectMemoryQuery(first, flags, &info, sizeof(info)) == 0);
+        Require(sceKernelDirectMemoryQuery(first, static_cast<int>(1u << bit), &info, sizeof(info)) == 0);
         Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+        info = {-1, -1, -1};
+        Require(sceKernelDirectMemoryQuery(first + page * 2, static_cast<int>(1u << bit), &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+        Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    }
+    for (const unsigned flags : {3u, 5u, 9u, 0x11u, 0x201u, 0x1001u, 0x10001u}) {
+        info = {-1, -1, -1};
+        Require(sceKernelDirectMemoryQuery(first, static_cast<int>(flags), &info, sizeof(info)) == 0);
+        Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+        info = {-1, -1, -1};
+        Require(sceKernelDirectMemoryQuery(first + page * 3, static_cast<int>(flags), &info, sizeof(info)) == 0);
+        Require(info.start == second && info.end == second + page && info.memoryType == 1);
     }
     info = {-1, -1, -1};
-    Require(sceKernelDirectMemoryQuery(first, 0x40000000, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    for (const unsigned flags : {0x40000000u, 0x40000002u}) Require(sceKernelDirectMemoryQuery(first, static_cast<int>(flags), &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    for (const std::int64_t offset : {first, first + static_cast<std::int64_t>(page * 2)}) Require(sceKernelDirectMemoryQuery(offset, 0x10000000, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    for (const unsigned flags : {0x20000000u, 0x40000000u, 0x40000002u, 0x80000000u, 0x80000002u, 0xc0000000u}) Require(sceKernelDirectMemoryQuery(first + page * 2, static_cast<int>(flags), &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
     Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
     Require(sceKernelDirectMemoryQuery(first, 0, &info, 0) == 0);
     Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
-    for (const int flags : {2, 4, 8}) Require(sceKernelDirectMemoryQuery(first + page * 2, flags, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+    for (const unsigned flags : {0x20000000u, 0x80000000u, 0xc0000000u}) Require(throws(first, flags, sizeof(info)));
+    for (const unsigned flags : {0x10000001u, 0x10000002u, 0x30000000u, 0x40000001u, 0x60000000u, 0x80000001u}) Require(throws(first + page * 2, flags, sizeof(info)));
     Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
-    bool refused = false;
-    try { sceKernelDirectMemoryQuery(first, static_cast<int>(0x80000000u), &info, sizeof(info)); } catch (const std::runtime_error&) { refused = true; }
-    Require(refused);
-    refused = false;
-    try { sceKernelDirectMemoryQuery(first + page * 2, 0, &info, 0); } catch (const std::runtime_error&) { refused = true; }
-    Require(refused);
+    Require(throws(first + page * 2, 0, 0));
     Require(sceKernelDirectMemoryQuery(first, 0, &info, 8) == 0);
     Require(info.end == -1 && info.memoryType == -1);
     info = {-1, -1, -1};
