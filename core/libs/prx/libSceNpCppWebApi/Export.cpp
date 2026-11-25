@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <span>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -1034,13 +1035,96 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter14accountIdIsSetEv(
     return value;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
-    (void)value;
-    return InitializeParameter(self, context, text != nullptr);
+struct CloudParameterLayout {
+    std::size_t size;
+    std::span<const std::size_t> strings;
+};
+
+static constexpr std::size_t DownloadStrings[] = {0x00, 0x30, 0x58, 0x80};
+static constexpr std::size_t MultiSlotStrings[] = {0x00, 0x20, 0x40};
+static constexpr CloudParameterLayout DownloadLayout{0xb0, DownloadStrings};
+static constexpr CloudParameterLayout SlotStatusLayout{0x98, MultiSlotStrings};
+static constexpr CloudParameterLayout SlotDeleteLayout{0x88, MultiSlotStrings};
+
+static void DestroyCloudParameterData(void* data, const CloudParameterLayout& layout) {
+    for (auto offset : layout.strings) DestroyCommonString(CommonStringAt(data, offset));
+    std::free(data);
+}
+
+static int InitializeCloudParameter(void* self, const std::uint64_t* context, const CloudParameterLayout& layout,
+                                   std::span<const char* const> arguments) {
+    if (!context) return ParameterInvalidArgument;
+    if (!*context) return ParameterNotInitialized;
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (parameter->implementation) return ParameterAlreadyInitialized;
+    void* data = AllocateParameterImplementation(layout.size);
+    if (!data) return ParameterOutOfMemory;
+    auto* libContext = const_cast<std::uint64_t*>(context);
+    for (auto offset : layout.strings) ConstructCommonString(CommonStringAt(data, offset), libContext);
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+        const int status = AssignCommonString(CommonStringAt(data, layout.strings[i]), arguments[i]);
+        if (status != 0) {
+            DestroyCloudParameterData(data, layout);
+            return status;
+        }
+    }
+    std::memcpy(static_cast<std::uint8_t*>(data) + layout.size - sizeof(libContext), &libContext, sizeof(libContext));
+    parameter->implementation = data;
+    return 0;
+}
+
+static int TerminateCloudParameter(void* self, const CloudParameterLayout& layout) {
+    auto* parameter = static_cast<ParameterObject*>(self);
+    if (!parameter->implementation) return ParameterTerminatedUninitialized;
+    DestroyCloudParameterData(const_cast<void*>(parameter->implementation), layout);
+    parameter->implementation = nullptr;
+    return 0;
+}
+
+static std::uint8_t* CloudParameterData(void* self) {
+    return static_cast<std::uint8_t*>(const_cast<void*>(static_cast<ParameterObject*>(self)->implementation));
+}
+
+static int SetCloudString(void* self, const char* text, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return ParameterNotInitialized;
+    const int status = AssignCommonString(CommonStringAt(data, offset), text);
+    if (status == 0 && flag) data[flag] = 1;
+    return status;
+}
+
+static void SetCloudInteger(void* self, std::uint32_t value, std::size_t offset, std::size_t flag = 0) {
+    auto* data = CloudParameterData(self);
+    if (!data) return;
+    std::memcpy(data + offset, &value, sizeof(value));
+    if (flag) data[flag] = 1;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10setifMatchEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x80, 0xa0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData8setrangeEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x58, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9setslotIdEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* accountId, int slotId) {
+    const char* arguments[] = {accountId};
+    const int result = InitializeCloudParameter(self, context, DownloadLayout, arguments);
+    if (result == 0) SetCloudInteger(self, slotId, 0x20);
+    return result;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, DownloadLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataC1Ev(void* self) {
@@ -1140,22 +1224,29 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x24, 0x28);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* slotIds, const char* accountId) {
+    const char* arguments[] = {slotIds, accountId};
+    return InitializeCloudParameter(self, context, SlotDeleteLayout, arguments);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotDeleteLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev(void* self) {
@@ -1168,9 +1259,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDel
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self, std::uint32_t value) {
+    SetCloudInteger(self, value, 0x84, 0x88);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
@@ -3163,8 +3253,8 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi13InGameCatalog2V57Product9skusIsSetEv(const
     return *reinterpret_cast<const std::uint8_t*>(static_cast<const std::uint8_t*>(self) + 0x1f8) != 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* objectId) {
-    return SetParameterText(self, objectId);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData11setobjectIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x30, 0x50);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserC1Ev(void* self) {
@@ -3172,16 +3262,41 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGet
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
-    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10setslotIdsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x20);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* fields) {
-    return SetParameterText(self, fields);
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser11setsortModeENS5_8SortModeE(void* self, int value) {
+    SetCloudInteger(self, value, 0x7c, 0x80);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser12setaccountIdEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x0);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser7setsortENS5_4SortE(void* self, int value) {
+    SetCloudInteger(self, value, 0x74, 0x78);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser8setlimitEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x64, 0x68);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setoffsetEi(void* self, int value) {
+    SetCloudInteger(self, value, 0x6c, 0x70);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* accountId, const char* slotIds) {
+    const char* arguments[] = {accountId, slotIds};
+    return InitializeCloudParameter(self, context, SlotStatusLayout, arguments);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9setfieldsEPKc(void* self, const char* value) {
+    return SetCloudString(self, value, 0x40, 0x60);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser9terminateEv(void* self) {
-    return TerminateParameter(self);
+    return TerminateCloudParameter(self, SlotStatusLayout);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUserD1Ev(void* self) {

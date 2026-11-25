@@ -17,7 +17,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 - Run `tools/import_audit.py` on the registries. Exit code 1 means an import or a needed library is missing; the report also lists `stub` imports, which throw when called, and `--strict-stubs` makes them fail the audit too.
   `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
-  files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only.
+  files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only. `--trap-sdk-syscall-stubs`
+  and `--function-symbol-roots` pass the relinker options of the same name, for a title converted with them.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
 
 ## Launch
@@ -120,6 +121,16 @@ Include, in this order:
 8. The date of the test. Leave unknown fields empty rather than filling them from another report.
 
 Keep AI-generated analysis separate from measured data, and say which is which.
+
+## Comparing saved smoke runs
+
+Compare two smoke-run summaries without a build or extracted titles:
+
+```sh
+python tools/title_run.py compare baseline/summary.json candidate/summary.json
+```
+
+The table groups saved outcomes by title and by cold or warm run label. A run with no recognized label appears under `unknown`. FPS samples, medians and ranges use only rendering runs with a recorded FPS. Missing titles are listed on the side where they were absent. Use `--json` to retain the outcome order in each group. Compare runs made on the same machine with matched content, settings and scenes.
 
 ## Clean window captures
 

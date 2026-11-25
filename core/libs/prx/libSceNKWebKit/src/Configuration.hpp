@@ -67,6 +67,7 @@ public:
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
     bool isClosed = false;
+    bool activeDOMObjectsAndAnimationsSuspended = false;
     std::optional<std::u16string> title;
     Retained<URL> activeURL;
     Retained<URL> provisionalURL;
@@ -222,6 +223,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserStyleSheet final : public ObjectOf<ObjectType::UserStyleSheet> {
@@ -233,6 +235,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserContentController final : public ObjectOf<ObjectType::UserContentController> {
@@ -293,6 +296,7 @@ public:
     Retained<Object> preferences;
     Retained<UserContentController> userContentController;
     std::vector<Retained<Object>> userStyleSheets;
+    std::u16string userStyleSheetLocation;
 };
 
 }  // namespace NKWebKit
