@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {setImmediate} from 'node:timers/promises';
+import {settings as settingDefinitions} from '../validation.js';
 
 class MockElement extends EventTarget {
     children = [];
@@ -434,5 +435,82 @@ test('controller overrides can be added, edited, disabled and inherited alongsid
     app.get('reset').click();
     await setImmediate();
     assert.equal(control('a').value, '');
+    assert.equal(app.get('preview').value, '');
+});
+
+function inputSetting(app, name) {
+    const row = app.get('input-setting-values').children.find(item => item.querySelector('span').textContent === name);
+    assert.ok(row, name);
+    return row.querySelector('input') ?? row.querySelector('select');
+}
+
+function editInputSetting(app, name, value) {
+    const field = inputSetting(app, name);
+    field.value = value;
+    field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input'));
+}
+
+test('settings can be added, validated, and removed without touching bindings', async t => {
+    const app = await setup(t, 'edit-input-settings');
+    assert.deepEqual(app.get('input-setting-values').children.map(row => row.querySelector('span').textContent),
+        settingDefinitions.map(setting => setting.name));
+    const original = 'Cross = KEY:J\nSDLButton:b = Cross\n';
+    await app.importFile('anyps5-input.ini', original);
+    editInputSetting(app, 'LeftStickDeadzone', '12');
+    assert.equal(app.get('preview').value, 'Cross = KEY:J\nLeftStickDeadzone = 12\nSDLButton:b = Cross\n');
+    editInputSetting(app, 'LeftStickDeadzone', '91');
+    assert.equal(app.get('preview').value, '');
+    assert.equal(app.get('copy').disabled, true);
+    assert.equal(app.get('download').disabled, true);
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').getAttribute('aria-invalid'), 'true');
+    assert.match(app.get('validation').querySelector('li').textContent, /whole percentage from 0 to 90/u);
+    editInputSetting(app, 'LeftStickDeadzone', '');
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').getAttribute('aria-invalid'), 'false');
+    assert.equal(app.get('copy').disabled, false);
+    assert.equal(app.get('download').disabled, false);
+    assert.equal(app.get('preview').value, original);
+});
+
+test('settings preserve imported spellings and keep edits across locale changes', async t => {
+    const app = await setup(t, 'localized-input-settings');
+    const original = 'LeftStickDeadzone = -00\nMouseSensitivity = 1e0\nMouseStickTarget = RIGHT\nToggleActions = r2 ,cross, R2\n';
+    await app.importFile('anyps5-input.PPSA01234.ini', original);
+    assert.equal(app.get('profile-title-id').value, 'PPSA01234');
+    assert.equal(inputSetting(app, 'MouseSensitivity').value, '1e0');
+    assert.equal(inputSetting(app, 'MouseStickTarget').value, 'Right');
+    assert.equal(app.get('preview').value, original);
+    editInputSetting(app, 'MouseStickTarget', 'Left');
+    editInputSetting(app, 'ToggleActions', 'R2, L1');
+    const select = app.get('language-control').querySelector('select');
+    select.value = 'ar-EG';
+    select.dispatchEvent(new Event('change'));
+    assert.equal(document.documentElement.dir, 'rtl');
+    assert.equal(inputSetting(app, 'MouseSensitivity').dir, 'ltr');
+    assert.equal(inputSetting(app, 'MouseStickTarget').value, 'Left');
+    assert.equal(inputSetting(app, 'ToggleActions').value, 'R2, L1');
+    const expected = 'LeftStickDeadzone = -00\nMouseSensitivity = 1e0\nMouseStickTarget = Left\nToggleActions = R2, L1\n';
+    assert.equal(app.get('preview').value, expected);
+    let copied = '';
+    navigator.clipboard.writeText = async text => { copied = text; };
+    app.get('copy').click();
+    await setImmediate();
+    assert.equal(copied, expected);
+});
+
+test('invalid imports and canceled resets preserve edited settings', async t => {
+    const app = await setup(t, 'input-settings-reset');
+    editInputSetting(app, 'MouseDecayMs', '50');
+    await app.importFile('anyps5-input.ini', 'MouseDecayMs = 0\n');
+    assert.equal(app.get('import-report').hidden, false);
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '50');
+    assert.equal(app.get('preview').value, 'MouseDecayMs = 50\n');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '50');
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '');
     assert.equal(app.get('preview').value, '');
 });
