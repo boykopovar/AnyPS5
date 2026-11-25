@@ -294,8 +294,14 @@ void BadPointers() {
         const auto badTime = static_cast<const GuestTimespec*>(pointer);
         Require(kmq_timedsend_nid_postfix(queue, static_cast<const char*>(pointer), 3, 1, nullptr) == -1 && Error() == Efault);
         Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 64, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedsend_nid_postfix(queue, "0123456789abcdefg", 17, 1, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedsend_nid_postfix(queue, static_cast<const char*>(pointer), 3, 64, nullptr) == -1 && Error() == Einval);
+        Require(kmq_timedsend_nid_postfix(queue, static_cast<const char*>(pointer), 17, 1, nullptr) == -1 && Error() == Emsgsize);
         Require(kmq_timedsend_nid_postfix(queue, "ok", 2, 1, nullptr) == 0);
         Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedreceive_nid_postfix(queue, buffer, 8, nullptr, badTime) == -1 && Error() == Efault);
+        Require(kmq_timedreceive_nid_postfix(queue, static_cast<char*>(const_cast<void*>(pointer)), 8, nullptr, nullptr) == -1 && Error() == Emsgsize);
         Require(Receive(queue) == "ok");
     }
     Require(kmq_timedsend_nid_postfix(queue, nullptr, 0, 1, nullptr) == 0);
