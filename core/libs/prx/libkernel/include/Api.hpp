@@ -891,6 +891,7 @@ int APS5_VABI sceKernelAllocateToolMemory(std::int32_t partition, std::int64_t s
 int APS5_VABI sceKernelAvailableToolMemorySize(std::int64_t searchStart, std::int64_t searchEnd, size_t alignment, std::int64_t* physAddrOut, size_t* sizeOut);
 int APS5_VABI sceKernelMapToolMemory(void** addr, size_t len, int prot, int flags, std::int64_t start, size_t alignment);
 int APS5_VABI sceKernelReleaseToolMemory(std::int64_t start, size_t len);
-int APS5_VABI sceKernelSetProcessProperty(void);
+int APS5_VABI sceKernelSetProcessProperty(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4);
 
 }
