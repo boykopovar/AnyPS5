@@ -1,9 +1,11 @@
 import argparse
 import bisect
 import functools
+import io
 import posixpath
 import re
 import sys
+import tokenize
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +46,7 @@ STRING_READERS = {"GetEnvironmentVariableA", "GetEnvironmentVariableW", "addWide
 NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\s*\(")
 INTEGER_TEST = re.compile(r"\b(atoi|strtol|strtoul|strtoll|strtoull|stoi|stol|stoul|from_chars|atoi64|_wtoi|_wtol|_wtoi64)\s*\(")
 INTEGER = r"(?:0[xX][0-9A-Fa-f]+(?:'[0-9A-Fa-f]+)*|[0-9]+(?:'[0-9]+)*)"
+COMPUTED_INTEGER = r"(?:0[bB][01]+(?:'[01]+)*|" + INTEGER + r")(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?"
 GREP = (r'(getenv|_wgetenv|wgetenv|IsEnvironmentSet|kibSetting|MaskFromEnvironment|EnvInt|GetEnvironmentVariable[AW]'
         r'|configured|PipelineSwitch|environmentCount|EnvironmentNumber|MebibytesFromEnvironment|addWideString)'
         r'\([[:space:]]*(u|L)?"(APS5|ANYPS5)_[A-Za-z0-9_]+"')
@@ -109,8 +112,8 @@ def default_of(match, window):
     default = match.groupdict().get("default")
     if default:
         return default
-    found = re.search(r"\?[\s\S]*?:\s*(" + INTEGER + ")", window)
-    return found.group(1) if found else ""
+    found = re.search(r"\?[\s\S]*?:\s*([+-]?)\s*(" + INTEGER + ")", window)
+    return "".join(found.groups()) if found else ""
 
 
 def expression_window(text, code, matches, match, start, end):
@@ -161,6 +164,17 @@ def cpp_reads(text):
                          if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
 
 
+def python_reads(text):
+    offsets = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    result = list(text)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            result[start:end] = " " * (end - start)
+    return "".join(result)
+
+
 def _blank_non_code(text):
     if '"' not in text and "'" not in text and "//" not in text and "/*" not in text:
         return text
@@ -201,8 +215,8 @@ def computed_forms(prefixes=PREFIXES):
     prefix = "|".join(re.escape(prefix) for prefix in prefixes)
     declaration = re.compile(r'\b(?P<ident>[A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<prefix>(?:' + prefix + r')[A-Za-z0-9_]*)"'
                              r'\s*\+\s*(?:std::)?to_string\s*\(\s*(?P<slot>[A-Za-z_]\w*)\s*'
-                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
-    loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + INTEGER + r')\s*;\s*'
+                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + COMPUTED_INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
+    loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + COMPUTED_INTEGER + r')\s*;\s*'
                       r'(?P=slot)\s*<\s*(?P<bound>[^;{}]+?)\s*;\s*(?:(?P=slot)\s*\+\+|\+\+\s*(?P=slot))\s*\)')
     reader = re.compile(r'(?<![\w:])(?:std::)?(?P<reader>' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*'
                         r'(?P<ident>[A-Za-z_]\w*)\.c_str\s*\(\s*\)')
@@ -210,7 +224,9 @@ def computed_forms(prefixes=PREFIXES):
 
 
 def _integer(value):
-    value = value.replace("'", "")
+    value = value.replace("'", "").rstrip("uUlL")
+    if value[:2] in ("0b", "0B"):
+        return int(value[2:], 2)
     if value[:2] in ("0x", "0X"):
         return int(value[2:], 16)
     if len(value) > 1 and value[0] == "0":
@@ -220,10 +236,10 @@ def _integer(value):
 
 def _loop_bound(bound, text):
     bound = bound.strip()
-    if re.fullmatch(INTEGER, bound):
+    if re.fullmatch(COMPUTED_INTEGER, bound):
         return _integer(bound)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(bound)
-                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\s*;', text)
     if constant:
         return _integer(constant.group(1))
     sized = re.fullmatch(r'(?:std::)?size\s*\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*)\.size\s*\(\s*\)', bound)
@@ -234,14 +250,14 @@ def _loop_bound(bound, text):
     if not declared:
         return None
     alias = re.search(r'\busing\s+' + re.escape(declared.group(1))
-                      + r'\s*=\s*std::array\s*<[^;]*?,\s*(' + INTEGER + r'|[A-Za-z_]\w*)\s*>', text)
+                      + r'\s*=\s*std::array\s*<[^;]*?,\s*(' + COMPUTED_INTEGER + r'|[A-Za-z_]\w*)\s*>', text)
     if not alias:
         return None
     size = alias.group(1)
-    if re.fullmatch(INTEGER, size):
+    if re.fullmatch(COMPUTED_INTEGER, size):
         return _integer(size)
     constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(size)
-                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+                         + r'\s*=\s*(' + COMPUTED_INTEGER + r')\s*;', text)
     return _integer(constant.group(1)) if constant else None
 
 
@@ -255,13 +271,13 @@ def computed_reads(text, prefixes=PREFIXES):
                      default=None)
         bound = _loop_bound(expand[3], text) if expand else None
         ident = match.group("ident")
-        if bound is not None and bound > 0:
+        if bound is not None:
             start = _integer(expand[2])
             offset = _integer(match.group("offset")) if match.group("offset") else 0
             if match.group("sign") == "-":
                 offset = -offset
             names.setdefault(ident, set()).update(match.group("prefix") + str(value) + match.group("suffix")
-                                                  for value in range(start + offset, start + offset + bound))
+                                                  for value in range(start + offset, bound + offset))
         else:
             wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + match.group("suffix"))
     found = []
@@ -381,14 +397,17 @@ def reads(roots, prefixes=PREFIXES):
         text = cleaned.get(path)
         if text is None:
             raw = raw_by_path[path]
-            text = cpp_reads(raw) if path.suffix != ".py" else raw
+            try:
+                text = python_reads(raw) if path.suffix == ".py" else cpp_reads(raw)
+            except (tokenize.TokenError, IndentationError, SyntaxError) as error:
+                raise ValueError(f"cannot tokenize {path.as_posix()}: {error}") from error
             cleaned[path] = text
         return text
 
     def commentless_of(path):
         text = uncommented_cache.get(path)
         if text is None:
-            text = text_of(path) if path.suffix != ".py" else uncommented(raw_by_path[path])
+            text = text_of(path) if path.suffix != ".py" else uncommented(text_of(path))
             uncommented_cache[path] = text
         return text
 

@@ -10,6 +10,8 @@ python3 tools/run_report_summary.py path/to/anyps5-report.json
 
 The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
 
+The command exits with 0 when it prints a summary, even if the run recorded in the report failed. It exits with 2 when it cannot read or interpret the report. Use the summary's `Result` line or the JSON report's `run.exit` field to check how the game ended.
+
 Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
 
 ```powershell
@@ -17,6 +19,20 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 ```
 
 The file stays on your machine. Nothing is uploaded unless you share it.
+
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
 
 ## Switching it off
 
@@ -59,7 +75,7 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
-| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. The percentile is nearest-rank, the same math the optional performance trace uses. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. For `n` sorted intervals, percentile `p` is the value at zero-based position `floor(p * n)`, or the last value when that position is past the end. This is the same math the optional performance trace uses. It is not nearest-rank: with 10 intervals, `p50` is the 6th value and `p90` the 10th, where nearest-rank gives the 5th and the 9th. `tools/presentmon_compare.py` reports nearest-rank, so its `p99` can be one rank lower than this one for the same frames. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
 
 ## Run recipe

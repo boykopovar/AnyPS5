@@ -7,7 +7,7 @@
 extern "C" {
 
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEED1Ev_nid_postfix();
-int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
+std::size_t APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9underflowEv_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9_EndwriteEv_nid_postfix();
 int APS5_VABI _ZNSt6locale6globalERKS__nid_postfix();
@@ -48,7 +48,7 @@ int APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix();
 int APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC1Em_nid_postfix();
 void APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE7_UnlockEv_nid_postfix(void* self);
-int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix();
+void APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
 void APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch(void* self);
 void APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt6_WinitD1Ev_nid_postfix(void* self);

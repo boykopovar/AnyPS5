@@ -1,0 +1,5 @@
+# libSceVideoRecording
+
+## add Unknown function info
+
+- [sceVideoRecordingSetInfo](../../../core/libs/prx/libSceVideoRecording/Export.cpp) (libSceVideoRecording, PS4) - answers as `libSceVideoRecording.sprx` of PS4 firmware 13.52 (0x5c90, read from disassembly, not run) does when its capture service cannot be reached, as AnyPS5 runs none: info 0x9004, 0xa004 and 0xa006 need the recorder of `sceVideoRecordingOpen`, which this library never opens, and return 0x80A80006; every other value returns 0x80A80003. The module's start calls `sceVshAvcapInit`, whose IPMI client stays null when it cannot connect; info 2, 6 to 8, 13, 0x8001 to 0x8005, 0xa01, 0xa007 to 0xa009 and 0xa00c go to `sceVshAvcapSetStaticInfo`, which then returns 0x80A70001, turned into 0x80A80003 (0x80A70009 would give 0x80A80007, other errors 0x80A80002); other values are refused. What a console's service answers was not measured. The data is not read; for 0xa009 a console with a title SDK of 2.50 or later reads its first 12 bytes first. A PS5 title still throws.

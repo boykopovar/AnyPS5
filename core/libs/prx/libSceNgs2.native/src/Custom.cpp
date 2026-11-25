@@ -180,7 +180,7 @@ int Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option) {
             const auto* data = reinterpret_cast<const std::uint8_t*>(info.option);
             rack.customModuleOptions[m].assign(data, data + info.option->size);
         }
-        rack.customModules[m] = {info.module_id, info.source_buffer_id, info.extra_buffer_id, info.dest_buffer_id, info.state_offset, info.state_size, 0, 0};
+        rack.customModules[m] = {info.module_id, info.source_buffer_id, info.extra_buffer_id, info.dest_buffer_id, static_cast<std::uint16_t>(info.state_offset), info.state_size, 0, 0};
         if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
             const auto size = info.option == nullptr ? 1u : OptionWord(*info.option);
             for (auto& voice : rack.voices) voice.customReverb[m] = Ngs2CreateCustomReverb(size);
