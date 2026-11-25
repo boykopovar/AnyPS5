@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,16 +31,12 @@ static_assert(offsetof(PngDecInputControlParam, reserved) == 0x22);
 namespace {
 
 bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
