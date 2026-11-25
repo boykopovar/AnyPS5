@@ -894,6 +894,29 @@ class SourceFileFilterTests(unittest.TestCase):
             (root / "src" / "d.hpp").write_text("x", encoding="utf-8")
             names = [path.name for path in env_reference.source_files(root)]
             self.assertEqual(names, ["a.cpp", "d.hpp"])
+
+    def test_source_files_matches_path_suffix_for_leading_dot_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = (
+                ("Source.cpp", "APS5_SOURCE"),
+                (".tracked.cpp", "APS5_TRACKED"),
+                ("..cpp", "APS5_PHANTOM"),
+                (".cpp", "APS5_DOTONLY"),
+            )
+            for filename, env_name in fixtures:
+                (root / filename).write_text(f'getenv("{env_name}");\n', encoding="utf-8")
+            expected_names = sorted(
+                filename for filename, _ in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            )
+            expected_env = {
+                env_name for filename, env_name in fixtures
+                if Path(filename).suffix in env_reference.EXTENSIONS
+            }
+            names = [path.name for path in env_reference.source_files(root)]
+            self.assertEqual(names, expected_names)
+            self.assertEqual(set(env_reference.reads([root])), expected_env)
 class HelperTests(unittest.TestCase):
     def test_library_of_names_the_library_or_core_component(self):
         self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
@@ -906,6 +929,62 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(len(blanked), len(text))
         self.assertIn('getenv("ANYPS5_A")', blanked)
         self.assertNotIn("ANYPS5_B", blanked)
+
+    def test_fast_cpp_scanners_match_cpp_token_on_literals_and_digit_separators(self):
+        samples = [
+            'int n = 1\'000\'000; auto s = u8R"d(getenv("APS5_RAW"))d"; // APS5_C\r\nauto a = getenv("APS5_OK");\n',
+            'char c = L\'x\'; /* block\nAPS5_B */ auto b = _wgetenv(L"ANYPS5_W");\n',
+            'int x = 0x1\'2; /* unclosed comment\nauto k = "APS5_KEEP";\n',
+        ]
+        for sample in samples:
+            expected_cpp = env_reference.CPP_TOKEN.sub(
+                lambda m: env_reference.NON_NEWLINE.sub(" ", m.group())
+                if m.lastgroup in ("comment", "raw", "char") else m.group(),
+                sample,
+            )
+            expected_blank = env_reference.CPP_TOKEN.sub(
+                lambda m: m.group() if m.group("code") else " " * len(m.group()),
+                sample,
+            )
+            expected_uncommented = env_reference.CPP_TOKEN.sub(
+                lambda m: " " * len(m.group()) if m.group("comment") else m.group(),
+                sample,
+            )
+            self.assertEqual(env_reference.cpp_reads(sample), expected_cpp)
+            self.assertEqual(env_reference._blank_non_code(sample), expected_blank)
+            self.assertEqual(env_reference.uncommented(sample), expected_uncommented)
+
+    def test_unterminated_block_comment_matches_cpp_token_and_reads(self):
+        samples = [
+            'auto a = getenv("APS5_BEFORE"); /* unclosed getenv("APS5_AFTER")',
+            '/* closed */ auto a = getenv("APS5_BEFORE"); /* unclosed // getenv("APS5_LINE")\ngetenv("APS5_AFTER")',
+        ]
+        for sample in samples:
+            expected_cpp = env_reference.CPP_TOKEN.sub(
+                lambda m: env_reference.NON_NEWLINE.sub(" ", m.group())
+                if m.lastgroup in ("comment", "raw", "char") else m.group(),
+                sample,
+            )
+            expected_blank = env_reference.CPP_TOKEN.sub(
+                lambda m: m.group() if m.group("code") else " " * len(m.group()),
+                sample,
+            )
+            expected_uncommented = env_reference.CPP_TOKEN.sub(
+                lambda m: " " * len(m.group()) if m.group("comment") else m.group(),
+                sample,
+            )
+            self.assertEqual(env_reference.cpp_reads(sample), expected_cpp)
+            self.assertEqual(env_reference._blank_non_code(sample), expected_blank)
+            self.assertEqual(env_reference.uncommented(sample), expected_uncommented)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Unclosed.cpp").write_text(samples[1], encoding="utf-8")
+            self.assertEqual(set(env_reference.reads([root])), {"APS5_BEFORE", "APS5_AFTER"})
+
+    def test_anchored_line_reads_preserve_word_boundaries(self):
+        text = 'foo_std::getenv("APS5_NO"); foo_wgetenv(L"APS5_NO2"); std::getenv("APS5_YES"); std::_wgetenv(L"APS5_YES2");'
+        names = [m.group("name") for _, m in env_reference.line_reads(text)]
+        self.assertEqual(names, ["APS5_YES", "APS5_YES2"])
 
     def test_list_names_writes_sorted_tab_separated_rows(self):
         found = {"ANYPS5_B": [("core/a.cpp", 3, "getenv", "1")],
