@@ -1078,12 +1078,26 @@ def main(argv=None):
     parser.add_argument("--branch", help="check a local branch against the open pull requests instead")
     parser.add_argument("--names", nargs="+", metavar="NAME",
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
+    parser.add_argument("--from-file", action="append", default=[], metavar="PATH",
+                        help="append --names from a UTF-8 file, one name per line; repeat or use - for standard input")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
     parser.add_argument("--head-repo", help="head repository owner/name for --branch with the same branch name; must be the correct fork because its matching pull request is excluded")
     args = parser.parse_args(argv)
-    if sum(map(bool, (args.out, args.branch, args.names))) != 1:
-        parser.error("pass exactly one of --out, --branch or --names")
+    if sum(map(bool, (args.out, args.branch, args.names or args.from_file))) != 1:
+        parser.error("pass exactly one of --out, --branch, --names or --from-file")
+    file_names = []
+    for path in args.from_file:
+        try:
+            file_names.extend(nid_names.symbol_file(path))
+        except UnicodeError:
+            parser.error(f"--from-file {path} is not valid UTF-8")
+        except OSError as error:
+            parser.error(str(error))
+    names = [*(args.names or []), *(name for raw in file_names if (name := raw.strip()))]
+    if args.from_file and not names:
+        parser.error("--from-file produced no names")
+    args.names = names or None
     if args.head_repo is not None and (not args.branch or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+", args.head_repo) or args.head_repo.split("/", 1)[1] in (".", "..")):
         parser.error("--head-repo needs --branch and a GitHub owner/name")
     if args.jobs < 1:
