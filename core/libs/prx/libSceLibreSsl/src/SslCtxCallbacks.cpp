@@ -1,5 +1,4 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -34,9 +33,7 @@ LibreSslCtxInternal* ReadInternal(const LibreSslCtx* ctx, const char* function) 
     if (!ctx) throw std::invalid_argument(std::string(function) + ": null context");
     LibreSslCtxInternal* internal = nullptr;
     const auto* source = reinterpret_cast<const std::byte*>(ctx) + offsetof(LibreSslCtx, internal);
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&internal, source, sizeof(internal));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable context");
     if (!internal) throw std::invalid_argument(std::string(function) + ": null internal state");
     return internal;
@@ -46,10 +43,8 @@ template<typename TValue>
 void WriteInternal(LibreSslCtx* ctx, std::size_t offset, const TValue& value, const char* function) {
     LibreSslCtxInternal* internal = ReadInternal(ctx, function);
     auto* destination = reinterpret_cast<std::byte*>(internal) + offset;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(destination, sizeof(value));
     const bool copied = writable && GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable internal state");
 }
 
