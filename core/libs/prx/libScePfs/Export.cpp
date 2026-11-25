@@ -1,5 +1,4 @@
 #include "prx/libScePfs/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -19,16 +18,12 @@ constexpr std::uint64_t OffsetMask44 = 0xfffffffffffULL;
 constexpr std::uint64_t IndexEntryTypeMask = 0xffULL;
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
