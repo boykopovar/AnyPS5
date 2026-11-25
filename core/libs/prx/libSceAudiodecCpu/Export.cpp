@@ -172,7 +172,7 @@ int InitHevag(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localMemor
     HevagParam localParam{};
     CopyIn(&localParam, localCtrl.pParam, sizeof(localParam), "sceAudiodecCpuInitDecoder: unreadable decoder parameter");
     if (localParam.size != HevagParamSize) return ErrorParamSize;
-    if (localParam.channels > 8u) return ErrorHevagChannels;
+    if (localParam.channels == 0u || localParam.channels > 8u) return ErrorHevagChannels;
     const std::uint32_t sampleRate = ReadBe32(localParam.sampleRateBe);
     if (sampleRate < 2000u || sampleRate > 192000u) return ErrorHevagSampleRate;
     if (localParam.pcmFormat != 1u && localParam.pcmFormat != 2u) return ErrorHevagPcmFormat;

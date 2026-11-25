@@ -153,6 +153,10 @@ void TestHevagLifecycle(ProtectedRegion& guarded) {
     Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorParamSize, "HE-VAG InitDecoder accepted bad param size");
 
     initValidHevagParam();
+    hevagParam[0x22] = 0u;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagChannels, "HE-VAG InitDecoder accepted 0 channels");
+
+    initValidHevagParam();
     hevagParam[0x22] = 9u;
     Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagChannels, "HE-VAG InitDecoder accepted >8 channels");
 
@@ -160,6 +164,13 @@ void TestHevagLifecycle(ProtectedRegion& guarded) {
     hevagParam[0x16] = 0x07u;
     hevagParam[0x17] = 0xcfu;
     Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagSampleRate, "HE-VAG InitDecoder accepted <2000 Hz");
+
+    initValidHevagParam();
+    hevagParam[0x14] = 0x00u;
+    hevagParam[0x15] = 0x02u;
+    hevagParam[0x16] = 0xeeu;
+    hevagParam[0x17] = 0x01u;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagSampleRate, "HE-VAG InitDecoder accepted >192000 Hz");
 
     initValidHevagParam();
     const std::uint32_t badFormat = 3u;
