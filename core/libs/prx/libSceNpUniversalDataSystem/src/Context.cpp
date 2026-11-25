@@ -1,5 +1,4 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -47,9 +46,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, u
     auto& table = Uds::contexts();
     std::lock_guard lock(table.mutex);
     const int created = table.next++;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(context, &created, sizeof(created));
-    errno = savedErrno;
     if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     table.owners[created] = {user_id, service_label};
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
