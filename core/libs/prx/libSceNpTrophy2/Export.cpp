@@ -134,7 +134,7 @@ int APS5_VABI sceNpTrophy2SystemBuildGroupIconUri(const void* npCommId, int grou
     if (rc != SCE_NP_TROPHY2_OK) {
         return rc;
     }
-    if (groupId != -1 && static_cast<std::uint32_t>(groupId - 1) > 0x31u) {
+    if (groupId != -1 && (groupId < 1 || groupId > 50)) {
         return kErrInvalidGroupId;
     }
     char uri[96]{};

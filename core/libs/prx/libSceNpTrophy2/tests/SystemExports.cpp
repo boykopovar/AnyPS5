@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
@@ -117,10 +118,16 @@ void testSystemIconUriBuilders() {
     require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/icon") == 0, "BuildTitleIconUri text");
 
     std::memset(buf, 0xA5, sizeof(buf));
+    require(sceNpTrophy2SystemBuildGroupIconUri(&comm, std::numeric_limits<int>::min(), buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri INT_MIN");
+    require(sceNpTrophy2SystemBuildGroupIconUri(&comm, -2, buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri -2");
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 0, buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri 0");
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 51, buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri 51");
+    require(sceNpTrophy2SystemBuildGroupIconUri(&comm, std::numeric_limits<int>::max(), buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri INT_MAX");
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, -1, buf, sizeof(buf)) == SCE_NP_TROPHY2_OK, "BuildGroupIconUri -1");
     require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/-1/icon") == 0, "BuildGroupIconUri -1 text");
+    std::memset(buf, 0xA5, sizeof(buf));
+    require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 1, buf, sizeof(buf)) == SCE_NP_TROPHY2_OK, "BuildGroupIconUri 1");
+    require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/1/icon") == 0, "BuildGroupIconUri 1 text");
     std::memset(buf, 0xA5, sizeof(buf));
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 50, buf, sizeof(buf)) == SCE_NP_TROPHY2_OK, "BuildGroupIconUri 50");
     require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/50/icon") == 0, "BuildGroupIconUri 50 text");
