@@ -130,6 +130,10 @@ struct DepthTarget {
     std::uint32_t pipeBankXor = 0;
     std::uint32_t firstSlice = 0;
     std::uint32_t lastSlice = 0;
+    std::uint32_t layers = 1;
+    std::uint32_t depthSlicePitch = 0;
+    std::uint32_t stencilSlicePitch = 0;
+    std::uint64_t htileSlicePitch = 0;
     bool iterate256 = false;
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
@@ -145,7 +149,8 @@ struct DepthTarget {
             htileAddress == other.htileAddress && htileStencil == other.htileStencil && samples == other.samples && depthSwizzle == other.depthSwizzle &&
             pipeBankXor == other.pipeBankXor && firstSlice == other.firstSlice && lastSlice == other.lastSlice && iterate256 == other.iterate256 &&
             htilePipeAligned == other.htilePipeAligned && htileVrsEncoding == other.htileVrsEncoding && htileDepthOnly == other.htileDepthOnly &&
-            gcn == other.gcn && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident;
+            gcn == other.gcn && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident &&
+            layers == other.layers && depthSlicePitch == other.depthSlicePitch && stencilSlicePitch == other.stencilSlicePitch && htileSlicePitch == other.htileSlicePitch;
     }
 };
 
