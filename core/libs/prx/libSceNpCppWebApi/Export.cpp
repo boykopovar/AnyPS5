@@ -1,7 +1,6 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include <atomic>
 #include <array>
-#include <cerrno>
 #include <limits>
 #include <cstdint>
 #include <cstddef>
@@ -27,11 +26,9 @@ static int SetSessionScalar(void* self, std::size_t offset, const T* value, cons
     auto* target = reinterpret_cast<void*>(address + offset);
     std::array<std::uint8_t, Width + 1> field{};
     field.back() = 1;
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(field.data(), value, Width);
     const bool written = read && GuestWritable_nid_no_patch(target, field.size()) &&
                          GuestCopyOut_nid_no_patch(target, field.data(), field.size());
-    errno = savedErrno;
     if (!read) throw std::invalid_argument(std::string(function) + ": unreadable value");
     if (!written) throw std::invalid_argument(std::string(function) + ": unwritable model");
     int result = 0;
