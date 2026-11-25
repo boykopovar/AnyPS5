@@ -264,7 +264,7 @@ static void replaceDeviceInBackground(std::size_t index, std::uint64_t generatio
     if (!installed) closeHostDevice(device);
 }
 
-static void reopenStoppedDevice(Port& port, std::unique_lock<std::mutex>& lock) {
+static void reopenStoppedDevice(Port& port, std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point& deadline) {
     if (port.opening) return;
     SDL_AudioDeviceID stopped = 0;
     if (port.device == 0) {
@@ -304,7 +304,10 @@ static void reopenStoppedDevice(Port& port, std::unique_lock<std::mutex>& lock) 
         closeHostDevice(stopped);
         return;
     }
-    g_deviceOpened.wait_for(lock, std::chrono::microseconds(DEVICE_OPEN_WAIT_US), [&] { return !port.opening || port.generation != generation; });
+    if (deadline == std::chrono::steady_clock::time_point{}) {
+        deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(DEVICE_OPEN_WAIT_US);
+    }
+    g_deviceOpened.wait_until(lock, deadline, [&] { return !port.opening || port.generation != generation; });
 }
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
@@ -611,7 +614,8 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
-    reopenStoppedDevice(*port, lock);
+    std::chrono::steady_clock::time_point reopenDeadline{};
+    reopenStoppedDevice(*port, lock, reopenDeadline);
     if (port->device == 0) {
         outputVirtualPort(*port, ptr, lock);
     } else {
@@ -647,9 +651,10 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     Port& first = *getPort(param[0].handle);
+    std::chrono::steady_clock::time_point reopenDeadline{};
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
-        reopenStoppedDevice(port, lock);
+        reopenStoppedDevice(port, lock, reopenDeadline);
         if (port.device == 0) {
             outputVirtualPort(port, param[i].ptr, lock);
         } else {
