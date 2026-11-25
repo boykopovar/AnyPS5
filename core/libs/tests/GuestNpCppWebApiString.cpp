@@ -716,9 +716,57 @@ void TestVectorCopyFromResolvesDirectBodies() {
     Require(VectorGuardIntact(target));
 }
 
+void TestStringSubstrings() {
+    alignas(8) unsigned char params[64]{};
+    std::uint64_t context = 0;
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
+    _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(&context);
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0);
+    CommonString source{}, needle{};
+    const auto construct = _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE;
+    const auto copy = _ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc;
+    const auto destroy = _ZN3sce2Np9CppWebApi6Common6StringD1Ev;
+    const auto find = _ZNK3sce2Np9CppWebApi6Common6String4findERKS3_;
+    const auto findFrom = _ZNK3sce2Np9CppWebApi6Common6String4findERKS3_m;
+    const auto replace = _ZN3sce2Np9CppWebApi6Common6String7replaceEmmRS3_;
+    const auto npos = _ZN3sce2Np9CppWebApi6Common6String4nposE;
+    Require(npos == static_cast<std::size_t>(-1));
+    construct(&source, &context);
+    construct(&needle, &context);
+    Require(find(&source, &needle) == 0 && findFrom(&source, &needle, 1) == npos);
+    Require(replace(&source, 0, 0, &needle) == 0 && !source.buffer && source.bufferSize == 0);
+    Require(copy(&needle, "") == 0);
+    Require(replace(&source, 0, 0, &needle) == 0 && source.buffer && source.bufferSize == 1);
+    Require(copy(&source, "ababa") == 0);
+    Require(findFrom(&source, &needle, 5) == 5 && findFrom(&source, &needle, 6) == npos);
+    Require(copy(&needle, "aba") == 0);
+    Require(find(&source, &needle) == 0 && findFrom(&source, &needle, 1) == 2);
+    Require(findFrom(&source, &needle, 3) == npos && findFrom(&source, &needle, npos) == npos);
+    char* original = source.buffer;
+    Require(replace(&source, 6, 0, &needle) == static_cast<int>(0x8055351a));
+    Require(source.buffer == original && source.bufferSize == 6);
+    std::uint64_t uninitialized = 0;
+    source.libContext = &uninitialized;
+    Require(replace(&source, 1, 2, &needle) == static_cast<int>(0x80553504));
+    Require(source.buffer == original && std::strcmp(source.buffer, "ababa") == 0);
+    source.libContext = &context;
+    Require(replace(&source, 1, 2, &source) == 0);
+    Require(std::strcmp(source.buffer, "aabababa") == 0 && source.bufferSize == 9);
+    Require(replace(&source, 3, 100, &needle) == 0 && std::strcmp(source.buffer, "aababa") == 0);
+    Require(replace(&source, 0, npos, &needle) == 0 && std::strcmp(source.buffer, "aba") == 0);
+    const char* prior = source.buffer;
+    Require(replace(&source, 3, 0, &needle) == 0 && source.buffer != prior);
+    Require(std::strcmp(source.buffer, "abaaba") == 0 && source.bufferSize == 7);
+    Require(std::strcmp(needle.buffer, "aba") == 0 && source.libContext == &context);
+    destroy(&source);
+    destroy(&needle);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-append") == 0) return TestAppendAliased() ? 1 : 0;
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) return TestVectorAliased();
+    TestStringSubstrings();
     TestConstructedStringIsEmpty();
     TestNullLibContextIsStored();
     TestAppendBuildsAndClearsBuffer();

@@ -1,5 +1,6 @@
 #include "FreeTypeFontFixture.hpp"
 #include "FontFixture.hpp"
+#include "Type1Fixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -12,12 +13,15 @@
 #include FT_RENDER_H
 #include FT_TYPE1_TABLES_H
 #include FT_SYNTHESIS_H
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <random>
 #include <vector>
 #ifdef _WIN32
@@ -29,6 +33,18 @@
 using FreeType::GuestOutline;
 using FreeType::GuestOutlineFuncs;
 using FreeType::GuestVector;
+
+extern "C" {
+
+int (APS5_VABI *FreeTypeOtValidatorSetjmpTarget)(std::uint64_t*) = nullptr;
+[[gnu::returns_twice]] int APS5_VABI FreeTypeOtValidatorSetjmp(std::uint64_t* buffer);
+
+}
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("FreeTypeOtValidatorSetjmp")
+    "    jmp *" APS5_ASM_SYMBOL("FreeTypeOtValidatorSetjmpTarget") "(%rip)\n"
+    APS5_ASM_FUNCTION_END("FreeTypeOtValidatorSetjmp"));
 
 namespace {
 
@@ -99,6 +115,54 @@ struct ForwardedExports {
 };
 
 ForwardedExports forwarded;
+
+struct ValidatorFixture {
+    const std::uint8_t* base;
+    const std::uint8_t* limit;
+    std::int32_t level;
+    std::int32_t error;
+    std::uint64_t jumpBuffer[12];
+};
+
+static_assert(offsetof(ValidatorFixture, error) == 20 && offsetof(ValidatorFixture, jumpBuffer) == 24);
+
+void JumpWithValidatorError(decltype(&ft_validator_error_nid_postfix) report, ValidatorFixture& validator,
+                            std::int32_t error) {
+    const int result = FreeTypeOtValidatorSetjmp(validator.jumpBuffer);
+    if (result == 0) {
+        report(&validator, error);
+        Require(false, "validator error must jump to the saved context");
+    }
+    Require(result == 1, "validator error resumes with value 1");
+    Require(validator.error == error, "validator error stores the supplied error");
+}
+
+void ValidatorErrors(decltype(&ft_validator_error_nid_postfix) report) {
+    const std::array<std::uint8_t, 4> table{};
+    const auto* const end = table.data() + table.size();
+    constexpr std::uint64_t canary = 0xa5a5a5a5a5a5a5a5ull;
+    struct {
+        std::uint64_t before;
+        ValidatorFixture validator;
+        std::uint64_t after;
+    } fixture{canary, {table.data(), end, 2, 0, {}}, canary};
+
+    for (const std::int32_t error : {7, -23, 0}) {
+        fixture.validator.error = 42;
+        JumpWithValidatorError(report, fixture.validator, error);
+        Require(fixture.validator.base == table.data() && fixture.validator.limit == end &&
+                fixture.validator.level == 2, "validator error preserves the table bounds and level");
+        Require(fixture.before == canary && fixture.after == canary, "validator error preserves surrounding storage");
+    }
+    for (auto* bad : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) {
+        try {
+            report(bad, 3);
+        } catch (const std::exception&) {
+            continue;
+        }
+        Require(false, "validator error rejects an inaccessible record");
+    }
+}
 
 void* APS5_VABI Allocate(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     ++*static_cast<int*>(memory->user);
@@ -414,6 +478,55 @@ void Trigonometry() {
     }
 }
 
+void MultiMaster(decltype(&FT_Get_Multi_Master_nid_postfix) query) {
+    struct Axis {
+        const char* name;
+        std::int64_t minimum;
+        std::int64_t maximum;
+    };
+    struct Master {
+        std::uint32_t numAxis;
+        std::uint32_t numDesigns;
+        std::array<Axis, T1_MAX_MM_AXIS> axes;
+    };
+    static_assert(sizeof(Axis) == 24 && sizeof(Master) == 104);
+
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    Require(forwarded.init(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init multi-master libraries");
+    for (const auto& bytes : {Type1Fixture::MultipleMasterFont(), Type1Fixture::Font({})}) {
+        FreeType::GuestFaceRec* guest = nullptr;
+        FT_Face native = nullptr;
+        Require(forwarded.newMemoryFace(guestLibrary, bytes.data(), bytes.size(), 0, &guest) == 0, "open guest Type 1 face");
+        Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), bytes.size(), 0, &native) == 0, "open native Type 1 face");
+
+        Master actual{0x1234, 0x5678, {}};
+        actual.axes.fill({nullptr, -12345, 12345});
+        const Master before = actual;
+        FT_Multi_Master expected{};
+        const int error = FT_Get_Multi_Master(native, &expected);
+        Require(query(guest, &actual) == error, "multi-master result");
+        if (error == 0) {
+            Require(actual.numAxis == expected.num_axis && actual.numDesigns == expected.num_designs && actual.numAxis == 1,
+                    "multi-master counts");
+            const auto& axis = actual.axes[0];
+            Require(axis.name && std::strcmp(axis.name, expected.axis[0].name) == 0, "multi-master axis name");
+            Require(axis.minimum == expected.axis[0].minimum && axis.maximum == expected.axis[0].maximum, "multi-master axis bounds");
+            for (std::size_t index = actual.numAxis; index < actual.axes.size(); ++index) {
+                Require(std::memcmp(&actual.axes[index], &before.axes[index], sizeof(Axis)) == 0, "preserve inactive axes");
+            }
+        } else {
+            Require(std::memcmp(&actual, &before, sizeof(Master)) == 0, "preserve multi-master output on failure");
+        }
+        Require(query(guest, nullptr) == FT_Get_Multi_Master(native, nullptr), "multi-master null output");
+        Require(forwarded.doneFace(guest) == 0 && FT_Done_Face(native) == 0, "release Type 1 faces");
+    }
+    Master output{};
+    Require(query(nullptr, &output) == FT_Err_Invalid_Face_Handle, "multi-master null face");
+    Require(query(nullptr, nullptr) == FT_Get_Multi_Master(nullptr, nullptr), "multi-master null face and output");
+    Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release multi-master libraries");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -539,16 +652,27 @@ int main(int argc, char** argv) {
     const bool forwards = true;
     void* dependency = library;
 #endif
+    Require(dependency != nullptr, "locate libSceFreeType");
+    void* faceProvider = forwards ? library : dependency;
+    Resolve(forwarded.init, faceProvider, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
+    Resolve(forwarded.finish, faceProvider, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
+    Resolve(forwarded.newMemoryFace, faceProvider, patched, "40Wa2neSLM0", "FT_New_Memory_Face_nid_postfix");
+    Resolve(forwarded.doneFace, faceProvider, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
     Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
     Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
             "reject a missing library");
+#ifdef _WIN32
+    void* guestLibc = GetModuleHandleA("libc.prx");
+#else
+    void* guestLibc = library;
+#endif
+    Require(guestLibc != nullptr, "locate the guest libc");
+    Resolve(FreeTypeOtValidatorSetjmpTarget, guestLibc, patched, "gNQ1V2vfXDE", "setjmp_nid_postfix");
+    decltype(&ft_validator_error_nid_postfix) validatorError = nullptr;
+    Resolve(validatorError, library, patched, "CfkNVHnT78w", "ft_validator_error_nid_postfix");
+    ValidatorErrors(validatorError);
     if (forwards) {
-        Require(dependency != nullptr, "locate libSceFreeType");
-        Resolve(forwarded.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
-        Resolve(forwarded.finish, library, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
         Resolve(forwarded.version, library, patched, "5qqbXOGlHw4", "FT_Library_Version_nid_postfix");
-        Resolve(forwarded.newMemoryFace, library, patched, "40Wa2neSLM0", "FT_New_Memory_Face_nid_postfix");
-        Resolve(forwarded.doneFace, library, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
         Resolve(forwarded.pixelSizes, library, patched, "lJxMIwj81SQ", "FT_Set_Pixel_Sizes_nid_postfix");
         Resolve(forwarded.load, library, patched, "M156RuYoUbU", "FT_Load_Glyph_nid_postfix");
         Resolve(forwarded.hasGlyphNames, library, patched, "x8y0qzLiYOU", "FT_Has_PS_Glyph_Names_nid_postfix");
@@ -585,6 +709,13 @@ int main(int argc, char** argv) {
     Resolve(ot.vectorUnit, library, patched, "3WpTQrvGUcU", "FT_Vector_Unit_nid_postfix");
     Resolve(ot.orientation, library, patched, "weVsBCT+TTQ", "FT_Outline_Get_Orientation_nid_postfix");
     Resolve(ot.copy, library, patched, "Bhm8Injl0KA", "FT_Outline_Copy_nid_postfix");
+    decltype(&FT_Get_Multi_Master_nid_postfix) multiMaster = nullptr;
+#ifdef _WIN32
+    Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_MasterForward_nid_no_patch");
+#else
+    Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_Master_nid_postfix");
+#endif
+    MultiMaster(multiMaster);
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
     if (forwards) {
         Resolve(strokers.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");

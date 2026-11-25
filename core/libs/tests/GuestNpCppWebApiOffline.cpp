@@ -1,6 +1,8 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "NpCppWebApiFixture.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -527,8 +529,12 @@ static void TestSessionManagerRemaining() {
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi41deletePlayerSessionJoinableSpecifiedUsersEiRKNS4_52ParameterToDeletePlayerSessionJoinableSpecifiedUsersERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(nullptr) == kNotSignedIn, "deletePlayerSessionJoinableSpecifiedUsers is not signed out");
     Require(_ZN3sce2Np9CppWebApi14SessionManager2V150PutPlayerSessionsSessionIdLeaderRequestBodyFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE(nullptr) == kNotSignedIn, "the leader request factory is not signed out");
 
-    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(nullptr, nullptr);
-    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(nullptr, nullptr);
+    const bool disabled = true;
+    _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession15setJoinDisabledERKb(sessionPlayer, &disabled);
+    Require(sessionPlayer[0x38] == 1 && sessionPlayer[0x39] == 1, "the disabled property was not stored");
+    const int maxPlayers = 4;
+    _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody13setMaxPlayersERKi(sessionPlayer, &maxPlayers);
+    Require(sessionPlayer[0x10] == 4 && sessionPlayer[0x14] == 1, "the maxPlayers property was not stored");
 }
 
 static void TestSmallInstantiations() {
@@ -549,7 +555,32 @@ static void TestSmallInstantiations() {
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1ERKSB_(transaction) == 0, "the profanity transaction copy failed");
 }
 
+static void TestInvalidSessionFieldArguments() {
+    const auto setMaximum = _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession16setMaxSpectatorsERKi;
+    std::array<unsigned char, 0x40> model{};
+    model.fill(0xa5);
+    const auto initial = model;
+    const int value = 4;
+    const auto reports = NotImplementedCalls_nid_no_patch();
+    auto check = [&](void* destination, const int* source, const char* detail) {
+        errno = EAGAIN;
+        try {
+            setMaximum(destination, source);
+        } catch (const std::invalid_argument& error) {
+            Require(std::strstr(error.what(), detail) != nullptr, "session setter reported the wrong argument");
+            Require(errno == EAGAIN, "session setter changed errno on an invalid argument");
+            Require(NotImplementedCalls_nid_no_patch() == reports, "session setter reported a missing export");
+            return;
+        }
+        Require(false, "session setter accepted an invalid argument");
+    };
+    check(model.data(), nullptr, "unreadable value");
+    check(nullptr, &value, "unwritable model");
+    Require(model == initial, "an invalid session setter changed the model");
+}
+
 int main() {
+    TestInvalidSessionFieldArguments();
     TestLeaderboardEntryAccessors();
     TestSessionManagerRemaining();
     TestSmallInstantiations();

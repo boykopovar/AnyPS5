@@ -985,6 +985,16 @@ class PreparationTests(unittest.TestCase):
         (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/src/AnyPS5\n", encoding="utf-8")
         self.assertEqual(title_run.source_root(build), Path("C:/src/AnyPS5"))
 
+    def test_source_root_preserves_unicode_in_cmake_cache_paths(self):
+        build = self.root / "build"
+        build.mkdir()
+        cache = build / "CMakeCache.txt"
+        for encoding in ("utf-8", "utf-8-sig"):
+            with self.subTest(encoding=encoding):
+                source = "C:/src/Any\u2028PS5=checkout"
+                cache.write_bytes(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\r\n".encode(encoding))
+                self.assertEqual(title_run.source_root(build), Path(source))
+
     def test_discover_refuses_duplicates(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
