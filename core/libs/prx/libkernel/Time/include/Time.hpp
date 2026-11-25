@@ -20,10 +20,14 @@ extern "C" {
     int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
 #ifdef _WIN32
     int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error);
+    bool HostThreadCpuNanos_nid_no_patch(void* thread, std::uint64_t* nanos);
 #endif
     int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz);
     void SetGuestTimezone_nid_no_patch(std::int32_t minutesWest, std::int32_t daylightTime);
     void ResetGuestTimezone_nid_no_patch();
+
+    void KernelPauseGuestClock_nid_no_patch();
+    void KernelResumeGuestClock_nid_no_patch();
 
     // Debug aid: APS5_TRACE_WAITS=1 aggregates blocking waits (event flags, semaphores, condition
     // variables, event queues) per guest call site and prints the sites that wait longest every 3 s,

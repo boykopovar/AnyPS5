@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <new>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -89,9 +90,14 @@ int RegisterGuestVfs() {
     if (guest.iVersion >= 2) guest.xCurrentTimeInt64 = ForwardVfs<&sqlite3_vfs::xCurrentTimeInt64>;
 
     auto* memory = sqlite3_vfs_find("memdb");
-    while (auto* registered = sqlite3_vfs_find(nullptr)) sqlite3_vfs_unregister(registered);
-    if (memory) sqlite3_vfs_register(memory, 0);
-    return sqlite3_vfs_register(&guest, 1);
+    std::vector<sqlite3_vfs*> replaced;
+    for (auto* registered = native; registered; registered = registered->pNext) {
+        if (registered != memory) replaced.push_back(registered);
+    }
+    const int result = sqlite3_vfs_register(&guest, 1);
+    if (result != SQLITE_OK) return result;
+    for (auto* registered : replaced) sqlite3_vfs_unregister(registered);
+    return SQLITE_OK;
 }
 
 int InitializeGuestVfs() {

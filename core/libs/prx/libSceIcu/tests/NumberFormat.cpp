@@ -366,11 +366,64 @@ void Run() {
 
 } // namespace UnumOpen
 
+namespace UnumFormatDoubleForFields {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&unum_formatDoubleForFields_nid_postfix),
+                             std::int32_t (APS5_VABI*)(const UNumberFormat*, double, char16_t*, std::int32_t, UFieldPositionIterator*, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
+
+} // namespace
+
+void Run() {
+    auto storage = Filler();
+    const auto format = reinterpret_cast<const UNumberFormat*>(storage.data());
+    const auto iterator = reinterpret_cast<UFieldPositionIterator*>(storage.data());
+    char16_t buffer[8]{};
+    for (const auto incoming : Failing) {
+        std::int32_t status = incoming;
+        Require(unum_formatDoubleForFields_nid_postfix(format, 1.5, buffer, 8, iterator, &status) == -1);
+        Require(unum_formatDoubleForFields_nid_postfix(nullptr, 1.5, nullptr, -1, nullptr, &status) == -1);
+        Require(status == incoming);
+    }
+    for (const auto incoming : Passing) {
+        std::int32_t status = incoming;
+        Require(unum_formatDoubleForFields_nid_postfix(format, 1.5, nullptr, 1, iterator, &status) == -1);
+        Require(status == IllegalArgument);
+        status = incoming;
+        Require(unum_formatDoubleForFields_nid_postfix(format, 1.5, buffer, -1, iterator, &status) == -1);
+        Require(status == IllegalArgument);
+        status = incoming;
+        Require(unum_formatDoubleForFields_nid_postfix(nullptr, 1.5, nullptr, -1, nullptr, &status) == -1);
+        Require(status == IllegalArgument);
+        status = incoming;
+        RequireThrows([&] { unum_formatDoubleForFields_nid_postfix(format, 1.5, buffer, 8, iterator, &status); });
+        RequireThrows([&] { unum_formatDoubleForFields_nid_postfix(format, 1.5, nullptr, 0, nullptr, &status); });
+        RequireThrows([&] { unum_formatDoubleForFields_nid_postfix(format, 1.5, buffer, 0, nullptr, &status); });
+        Require(status == incoming);
+    }
+    RequireThrows([&] { unum_formatDoubleForFields_nid_postfix(format, 1.5, buffer, 8, iterator, nullptr); });
+    for (const auto unit : buffer) Require(unit == 0);
+    Require(Unchanged(storage));
+}
+
+} // namespace UnumFormatDoubleForFields
+
 void CheckIcuNumberFormat() {
     UnumClone::Run();
     UnumClose::Run();
     UnumFormatDecimal::Run();
     UnumFormatDouble::Run();
+    UnumFormatDoubleForFields::Run();
     UnumGetSymbol::Run();
     UnumOpen::Run();
 }

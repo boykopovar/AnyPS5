@@ -1,15 +1,18 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <span>
 #include <string>
@@ -477,6 +480,105 @@ void Allocator() {
     failAllocation = false;
 }
 
+void FileAndSocketBio() {
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+        ("anyps5-libressl-bio-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directories(tempRoot), "create temp directory for BIO tests");
+    AddPathAlias_nid_no_patch("/bio-test", tempRoot.string().c_str());
+
+    const char* borrowedPath = "/bio-test/borrowed.txt";
+    FileStream* borrowedStream = fopen_nid_postfix(borrowedPath, "w+");
+    Require(borrowedStream != nullptr, "open borrowed guest FileStream");
+    LibreSsl::Bio* borrowedBio = BIO_new_fp_nid_postfix(borrowedStream, 0x10);
+    Require(borrowedBio != nullptr && borrowedBio->shutdown == 0 && borrowedBio->initialized == 1 && borrowedBio->data == borrowedStream,
+        "BIO_new_fp with 0x10 masks BioClose to 0");
+    Require(BIO_ctrl_nid_postfix(borrowedBio, 8, 0, nullptr) == 0, "BIO_CTRL_GET_CLOSE returns 0 for 0x10");
+    Require(BIO_write_nid_postfix(borrowedBio, "hi", 2) == 2, "write through borrowed file BIO");
+    Require(BIO_free_nid_postfix(borrowedBio) == 1, "free borrowed file BIO");
+    Require(fwrite_nid_postfix("!", 1, 1, borrowedStream) == 1, "borrowed FileStream remains writable after BIO_free");
+    Require(fflush_nid_postfix(borrowedStream) == 0, "flush borrowed FileStream");
+    rewind_nid_postfix(borrowedStream);
+    char content[4]{};
+    Require(fread_nid_postfix(content, 1, 3, borrowedStream) == 3 && std::memcmp(content, "hi!", 3) == 0,
+        "borrowed FileStream remains readable after BIO_free");
+    Require(fclose_nid_postfix(borrowedStream) == 0, "close borrowed FileStream");
+
+    const char* ownedPath = "/bio-test/owned.txt";
+    FileStream* ownedStream = fopen_nid_postfix(ownedPath, "w+");
+    Require(ownedStream != nullptr, "open owned guest FileStream");
+    LibreSsl::Bio* ownedBio = BIO_new_fp_nid_postfix(ownedStream, 0x11);
+    Require(ownedBio != nullptr && ownedBio->shutdown == 1 && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1,
+        "BIO_new_fp with 0x11 masks BioClose to 1");
+    Require(BIO_write_nid_postfix(ownedBio, "ok", 2) == 2, "write through owned file BIO");
+    Require(BIO_free_nid_postfix(ownedBio) == 1, "free owned file BIO closes stream");
+    FileStream* verifyStream = fopen_nid_postfix(ownedPath, "r");
+    Require(verifyStream != nullptr, "reopen file closed by BIO_free");
+    char verified[4]{};
+    Require(fread_nid_postfix(verified, 1, 2, verifyStream) == 2 && std::memcmp(verified, "ok", 2) == 0,
+        "owned FileStream flushed and closed on BIO_free");
+    Require(fclose_nid_postfix(verifyStream) == 0, "close verification FileStream");
+
+    LibreSsl::Bio* fileBio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(fileBio != nullptr && fileBio->initialized == 0, "BIO_new(BIO_s_file()) starts uninitialized");
+    char scratch[4]{};
+    Require(fileBio->method->read(fileBio, scratch, sizeof(scratch)) == 0, "FileRead on uninitialized BIO returns 0");
+    Require(fileBio->method->write(fileBio, "abc", 3) == 0, "FileWrite on uninitialized BIO returns 0");
+    Require(fileBio->method->read(fileBio, scratch, -1) == -1, "FileRead keeps negative size returning -1");
+    Require(fileBio->method->write(fileBio, "abc", -1) == -1, "FileWrite keeps negative size returning -1");
+    fileBio->initialized = 1;
+    Require(fileBio->method->read(fileBio, scratch, sizeof(scratch)) == 0, "FileRead with null FileStream returns 0");
+    Require(BIO_write_nid_postfix(fileBio, "abc", 3) == 0, "BIO_write with null FileStream returns 0");
+    fileBio->initialized = 0;
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, 0x12345678, nullptr) == 1, "BIO_CTRL_SET_CLOSE stores int on file BIO");
+    Require(fileBio->shutdown == 0x12345678 && BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == 0x12345678,
+        "BIO_CTRL_GET_CLOSE round-trips positive int on file BIO");
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, -5, nullptr) == 1 && fileBio->shutdown == -5 &&
+        BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == -5, "BIO_CTRL_GET_CLOSE round-trips negative int on file BIO");
+    Require(BIO_ctrl_nid_postfix(fileBio, 9, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(fileBio, 8, 0, nullptr) == 0,
+        "BIO_CTRL_SET_CLOSE resets file BIO shutdown to 0");
+    Require(BIO_free_nid_postfix(fileBio) == 1, "free file BIO");
+
+    LibreSsl::Bio* socketBio = BIO_new_socket_nid_postfix(17, 0x2a);
+    Require(socketBio != nullptr && socketBio->shutdown == 0x2a && BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0x2a,
+        "BIO_new_socket stores arbitrary int closeFlag");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, 0x1357, nullptr) == 1 && socketBio->shutdown == 0x1357 &&
+        BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0x1357, "BIO_ctrl round-trips positive int on socket BIO");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, -3, nullptr) == 1 && socketBio->shutdown == -3 &&
+        BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == -3, "BIO_ctrl round-trips negative int on socket BIO");
+    Require(BIO_ctrl_nid_postfix(socketBio, 9, 0, nullptr) == 1 && BIO_ctrl_nid_postfix(socketBio, 8, 0, nullptr) == 0,
+        "reset socket BIO close flag before free");
+    Require(BIO_free_nid_postfix(socketBio) == 1, "free socket BIO");
+
+    const char* writeOnlyPath = "/bio-test/writeonly.txt";
+    FileStream* writeOnlyStream = fopen_nid_postfix(writeOnlyPath, "w");
+    Require(writeOnlyStream != nullptr, "open write-only FileStream");
+    LibreSsl::Bio* writeOnlyBio = BIO_new_fp_nid_postfix(writeOnlyStream, 0x11);
+    Require(writeOnlyBio != nullptr, "wrap write-only FileStream in BIO");
+    Require(BIO_write_nid_postfix(writeOnlyBio, nullptr, 4) == 0, "BIO_write with null buffer returns 0");
+    Require(writeOnlyBio->method->read(writeOnlyBio, nullptr, 4) == 0, "FileRead with null buffer returns 0");
+    Require(writeOnlyBio->method->write(writeOnlyBio, nullptr, 4) == 0, "FileWrite with null buffer returns 0");
+    Require(writeOnlyBio->method->read(writeOnlyBio, scratch, -1) == -1, "initialized FileRead with negative size returns -1");
+    Require(writeOnlyBio->method->write(writeOnlyBio, "abc", -1) == -1, "initialized FileWrite with negative size returns -1");
+    ERR_clear_error_nid_postfix();
+    errno = 0;
+    char byte = 0;
+    Require(writeOnlyBio->method->read(writeOnlyBio, &byte, 1) == -1, "FileRead on write-only FileStream returns -1");
+    const int readErrno = errno;
+    Require(readErrno != 0, "FileRead sets non-zero errno on write-only FileStream");
+    const std::uint64_t sysError = ERR_get_error_nid_postfix();
+    const std::uint64_t bioError = ERR_get_error_nid_postfix();
+    Require(sysError == ((2ULL << 24) | (0xfffULL << 12) | (static_cast<std::uint64_t>(readErrno) & 0xfff)),
+        "FileRead queues SYS error with function code 0xfff");
+    Require(bioError == ((32ULL << 24) | (0xfffULL << 12) | 2),
+        "FileRead queues BIO error with function code 0xfff");
+    Require(ERR_get_error_nid_postfix() == 0, "FileRead queues only SYS and BIO errors");
+    Require(BIO_free_nid_postfix(writeOnlyBio) == 1, "free write-only BIO");
+
+    RemovePathAlias_nid_no_patch("/bio-test");
+    std::error_code ignored;
+    std::filesystem::remove_all(tempRoot, ignored);
+}
+
 } // namespace
 
 int main(int argc, char**) {
@@ -493,4 +595,5 @@ int main(int argc, char**) {
     MalformedStrings();
     Times();
     GuestPointers();
+    FileAndSocketBio();
 }

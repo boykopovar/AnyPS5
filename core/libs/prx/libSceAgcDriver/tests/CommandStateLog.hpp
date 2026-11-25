@@ -54,6 +54,7 @@ inline VKAPI_ATTR void VKAPI_CALL stateDepthTest(VkCommandBuffer, VkBool32 enabl
 inline VKAPI_ATTR void VKAPI_CALL stateDepthWrite(VkCommandBuffer, VkBool32 enable) { stateNote("depthwrite", static_cast<std::uint32_t>(enable)); }
 inline VKAPI_ATTR void VKAPI_CALL stateDepthCompare(VkCommandBuffer, VkCompareOp compare) { stateNote("depthcompare", static_cast<std::uint32_t>(compare)); }
 inline VKAPI_ATTR void VKAPI_CALL stateBoundsTest(VkCommandBuffer, VkBool32 enable) { stateNote("boundstest", static_cast<std::uint32_t>(enable)); }
+inline VKAPI_ATTR void VKAPI_CALL stateDepthBiasEnable(VkCommandBuffer, VkBool32 enable) { stateNote("biasenable", static_cast<std::uint32_t>(enable)); }
 inline VKAPI_ATTR void VKAPI_CALL stateStencilTest(VkCommandBuffer, VkBool32 enable) { stateNote("stenciltest", static_cast<std::uint32_t>(enable)); }
 inline VKAPI_ATTR void VKAPI_CALL stateStencilOp(VkCommandBuffer, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) { stateNote("stencilop", static_cast<std::uint32_t>(faces), static_cast<std::uint32_t>(failOp), static_cast<std::uint32_t>(passOp), static_cast<std::uint32_t>(depthFailOp), static_cast<std::uint32_t>(compareOp)); }
 inline VKAPI_ATTR void VKAPI_CALL stateCompareMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("comparemask", static_cast<std::uint32_t>(faces), mask); }
@@ -102,6 +103,7 @@ inline DeviceFunctions stateFunctions() {
     functions.cmdSetStencilWriteMask = stateWriteMask;
     functions.cmdSetStencilReference = stateReference;
     functions.cmdSetColorWriteMask = stateColorWriteMask;
+    functions.cmdSetDepthBiasEnable = stateDepthBiasEnable;
     return functions;
 }
 

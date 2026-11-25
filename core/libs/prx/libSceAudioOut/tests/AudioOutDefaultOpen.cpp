@@ -2,6 +2,7 @@
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +15,8 @@ const char* driver = "wasapi";
 int outputDevices = 0;
 bool endpointAbsent = false;
 bool unplugged = false;
+bool failOpen = false;
+std::uint64_t nowUs = 1000000;
 int probes = 0;
 int opened = 0;
 int closed = 0;
@@ -26,6 +29,8 @@ void Require(bool value, const char* message) {
 
 bool live(SDL_AudioDeviceID id) { return id == device && !unplugged; }
 }
+
+extern "C" std::uint64_t APS5_VABI sceKernelGetProcessTime() { return nowUs; }
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
 bool WasapiDefaultOutputAbsent_nid_no_patch() {
@@ -40,8 +45,9 @@ extern "C" const char* SDLCALL SDL_GetCurrentAudioDriver() { return driver; }
 extern "C" const char* SDLCALL SDL_GetError() { return "test error"; }
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int capture, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int) {
     Require(name == nullptr && capture == 0, "the main port did not open the default output");
-    device = static_cast<SDL_AudioDeviceID>(7 + opened);
     ++opened;
+    if (failOpen) return 0;
+    device = static_cast<SDL_AudioDeviceID>(6 + opened);
     unplugged = false;
     *obtained = *desired;
     return device;
@@ -62,6 +68,26 @@ int main(int argc, char** argv) {
     try {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
+        if (mode == "startup_retry") {
+            driver = "wasapi";
+            outputDevices = 0;
+            endpointAbsent = true;
+            const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
+            Require(port >= 1 && probes == 1 && opened == 0, "the port did not start without an output endpoint");
+
+            outputDevices = 2;
+            endpointAbsent = false;
+            std::array<std::int16_t, 256 * 2> samples{};
+            nowUs += 1999999;
+            Require(sceAudioOutOutput(port, samples.data()) == 256, "virtual output failed before retry");
+            Require(opened == 0 && queuedLive == 0 && queuedDead == 0, "the initial output retried before the interval elapsed");
+            ++nowUs;
+            Require(sceAudioOutOutput(port, samples.data()) == 256, "output failed when the initial endpoint appeared");
+            Require(opened == 1 && queuedLive == 1 && queuedDead == 0, "audio did not start when the initial endpoint appeared");
+            Require(sceAudioOutClose(port) == 0, "the recovered guest port did not close");
+            return 0;
+        }
+
         bool expectOpen = true;
         if (mode == "zero_default") {
             driver = "alsa";
@@ -80,11 +106,49 @@ int main(int argc, char** argv) {
         } else if (mode == "unknown") {
             driver = "wasapi";
             outputDevices = -1;
-        } else if (mode == "disconnect") {
+        } else if (mode == "disconnect" || mode.starts_with("retry_")) {
             driver = "wasapi";
             outputDevices = 2;
         } else {
             Require(false, "invalid default open mode");
+        }
+        if (mode.starts_with("retry_")) {
+            const bool absent = mode.find("absent") != std::string_view::npos;
+            const bool multiple = mode.ends_with("multiple");
+            const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
+            Require(port >= 1 && opened == 1, "initial output did not open");
+            std::array<std::int16_t, 256 * 2> samples{};
+            const auto output = [&] {
+                AudioOutOutputParam parameter{port, samples.data()};
+                Require((multiple ? sceAudioOutOutputs(&parameter, 1) : sceAudioOutOutput(port, samples.data())) == 256, "output during recovery failed");
+            };
+            unplugged = true;
+            outputDevices = absent ? 0 : 2;
+            endpointAbsent = absent;
+            failOpen = !absent;
+            output();
+            Require(closed == 1 && queuedDead == 0 && queuedLive == 0, "removed output was used during recovery");
+            const int attempts = opened;
+            const int endpointProbes = probes;
+            output();
+            nowUs += 1999999;
+            output();
+            Require(opened == attempts && probes == endpointProbes, "recovery retried before the interval elapsed");
+            ++nowUs;
+            output();
+            Require(absent ? probes == endpointProbes + 1 : opened == attempts + 1, "failed recovery was not retried");
+            outputDevices = 2;
+            endpointAbsent = false;
+            failOpen = false;
+            nowUs += 2000000;
+            output();
+            Require(queuedLive == 1 && queuedDead == 0, "audio did not resume after the output returned");
+            unplugged = true;
+            output();
+            Require(queuedLive == 2 && closed == 2, "a later disconnect did not reopen immediately");
+            Require(sceAudioOutClose(port) == 0 && closed == 3, "recovered output did not close");
+            std::puts("default output recovery tests passed");
+            return 0;
         }
         if (mode == "disconnect") {
             const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
