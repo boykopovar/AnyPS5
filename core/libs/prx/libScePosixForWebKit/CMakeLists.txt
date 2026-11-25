@@ -1,4 +1,4 @@
-add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp TemporaryFile.cpp Wrap.cpp RecordLock.cpp FileTree.cpp)
+add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp TemporaryFile.cpp Wrap.cpp RecordLock.cpp FileTree.cpp SetMode.cpp)
 target_include_directories(libScePosixForWebKit PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libScePosixForWebKit PRIVATE libSceNet libkernel_sys libSceLibcInternal)
 target_sources(libScePosixForWebKit PRIVATE Times.cpp)
@@ -197,3 +197,12 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libScePosixForWebKit PRIVATE UserDatabase.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_posix_setmode_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSetmode.cpp)
+    target_include_directories(guest_posix_setmode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_setmode_tests PRIVATE libScePosixForWebKit libkernel_sys libc)
+    configure_windows_unwind(guest_posix_setmode_tests)
+    add_test(NAME guest_posix_setmode COMMAND guest_posix_setmode_tests)
+    set_tests_properties(guest_posix_setmode PROPERTIES TIMEOUT 20)
+endif()

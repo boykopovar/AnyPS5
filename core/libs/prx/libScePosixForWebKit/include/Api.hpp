@@ -85,4 +85,7 @@ const char* APS5_VABI gai_strerror_nid_postfix(int error);
 struct PosixForWebKitTms;
 std::int32_t APS5_VABI times_nid_postfix(PosixForWebKitTms* output);
 
+void* APS5_VABI setmode_nid_postfix(const char* p);
+std::uint16_t APS5_VABI getmode_nid_postfix(const void* bbox, std::uint16_t omode);
+
 }
