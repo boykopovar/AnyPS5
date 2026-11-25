@@ -1,7 +1,6 @@
 #include "prx/libSceContentExport/include/Api.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -54,9 +53,7 @@ extern "C" {
 int APS5_VABI sceContentExportInit2(const ContentExportInitParam2* init_param) {
     if (init_param == nullptr) APS5_INVALID_ARG_EX;
     ContentExportInitParam2 localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, init_param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     if (localParam.malloc_func == nullptr || localParam.free_func == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
     if (localParam.reserved0 != 0 || localParam.reserved1 != 0) throw std::invalid_argument(std::string(__func__) + ": reserved fields are not zero");
@@ -77,9 +74,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
     ContentExportParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidArgument;
     {
         std::lock_guard lock(g_sessionMutex);
@@ -113,9 +108,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
                 if (size > std::numeric_limits<std::uintptr_t>::max() - address) return ErrorStorage;
                 for (std::size_t offset = 0; offset < size;) {
                     const std::size_t count = std::min(staging.size(), size - offset);
-                    const int savedErrno = errno;
                     const bool copied = GuestCopyIn_nid_no_patch(staging.data(), reinterpret_cast<const void*>(address + offset), count);
-                    errno = savedErrno;
                     if (!copied) return ErrorStorage;
                     file.write(staging.data(), static_cast<std::streamsize>(count));
                     if (!file) return ErrorStorage;
@@ -135,9 +128,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
     }
     if (path != nullptr) {
         const std::size_t length = std::min(pathBufferLength, MaximumPathLength);
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(path, guestPath.data(), length);
-        errno = savedErrno;
         if (!copied) return ErrorInvalidArgument;
     }
     return 0;
@@ -201,9 +192,7 @@ int APS5_VABI sceContentExportFromFileWithTitleIdList(std::int32_t expId, const 
 int APS5_VABI sceContentExportInit(const ContentExportInitParam* param) {
     if (param == nullptr) APS5_INVALID_ARG_EX;
     ContentExportInitParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     if (localParam.mallocFunc == nullptr || localParam.freeFunc == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
     bool expected = false;
