@@ -1,5 +1,4 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
-#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -101,9 +100,7 @@ int CheckComment(int reqId, const char* comment, void* option) {
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     std::string copy;
-    const int savedErrno = errno;
     const int status = CopyGuestString_nid_no_patch(comment, COMMENT_MAX_LENGTH + 1, copy);
-    errno = savedErrno;
     if (status != 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return Offline(reqId);
 }
@@ -119,9 +116,7 @@ int RecordScore(int reqId, const NpScoreGameInfo* gameInfo, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (gameInfo) {
         NpScoreGameInfo localInfo{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localInfo, gameInfo, sizeof(localInfo));
-        errno = savedErrno;
         if (!copied || localInfo.infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return Offline(reqId);
@@ -154,15 +149,11 @@ int GetFriendsRanking(int reqId, int includeSelf, void* rankArray, std::uint64_t
         if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     } else if (option) {
         NpScoreFriendRankingOption localOption{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-        errno = savedErrno;
         if (!copied || localOption.size != FRIEND_RANKING_OPTION_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
         if (localOption.startSerialRank) {
             std::uint32_t rank = 0;
-            const int savedRankErrno = errno;
             const bool copiedRank = GuestCopyIn_nid_no_patch(&rank, localOption.startSerialRank, sizeof(rank));
-            errno = savedRankErrno;
             if (!copiedRank) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
             startSerialRank = rank;
         }
@@ -303,9 +294,7 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result) {
     if (!request->second.result) return POLL_RUNNING;
     if (result) {
         const int value = *request->second.result;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-        errno = savedErrno;
         if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return POLL_FINISHED;
@@ -577,9 +566,7 @@ int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
     });
     if (result) {
         const int value = *requests.at(reqId).result;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
-        errno = savedErrno;
         if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     }
     return 0;
