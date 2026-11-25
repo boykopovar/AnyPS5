@@ -1419,6 +1419,7 @@ struct CachedStorageTexture {
     std::uint32_t mip;
     std::shared_ptr<StorageTexture> texture;
     std::uint64_t accounted = 0;
+    std::uint64_t lastPresent = 0;
 };
 
 // As TextureCache: use order with a hash index by key, plus one by image for StorageImageCached.
@@ -1661,6 +1662,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (layers) it->texture->RefreshLayers(layers->first, layers->second);
             else it->texture->Refresh();
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
+            it->lastPresent = Recorder::Presents();
             texture = it->texture;
             if (TextureCountersReported()) counters.storageHits.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
@@ -1676,6 +1678,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             }
             created->AdoptHandOver(std::move(handOver));
             CachedStorageTexture entry{key, mip, std::move(created)};
+            entry.lastPresent = Recorder::Presents();
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
@@ -1934,9 +1937,10 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                         }
                         storageKept = 0;
                         bool spared = false;
+                        const auto present = Recorder::Presents();
                         for (auto it = cache.entries.end(); it != cache.entries.begin();) {
                             --it;
-                            if (it->texture->Dirty()) {
+                            if (it->texture->Dirty() || (present != 0u && it->lastPresent + 1u >= present)) {
                                 ++storageKept;
                                 continue;
                             }
@@ -2476,7 +2480,7 @@ std::string HexText(std::uint64_t value) {
     return text;
 }
 
-void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std::uint32_t> words) {
+void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std::byte> data) {
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
     const auto& descriptors = program.bindings;
@@ -2490,19 +2494,28 @@ void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std:
             heap = &binding;
         }
     }
-    Require(words.size() == program.shaderDataDwords, "invalid compact shader data size");
+    Require(data.size() == program.shaderDataDwords * sizeof(std::uint32_t), "invalid compact shader data size");
     constexpr auto metadataWords = sizeof(ShaderRecompiler::RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t);
-    Require(program.imageMetadataDword <= words.size() && program.runtimeImageCount <= (words.size() - program.imageMetadataDword) / metadataWords, "runtime image metadata exceeds shader data");
+    Require(program.imageMetadataDword <= program.shaderDataDwords && program.runtimeImageCount <= (program.shaderDataDwords - program.imageMetadataDword) / metadataWords, "runtime image metadata exceeds shader data");
     for (const auto index : program.runtimeImageResources) {
         Require(index < program.runtimeImageCount, "runtime image resource exceeds its compact layout");
         const auto offset = program.imageMetadataDword + index * metadataWords;
-        const auto kind = words[offset];
-        const auto first = words[offset + 1u];
-        const auto count = words[offset + 2u];
+        std::array<std::uint32_t, 3> header;
+        std::memcpy(header.data(), data.data() + offset * sizeof(std::uint32_t), sizeof(header));
+        const auto [kind, first, count] = header;
         Require(count != 0u, "runtime image metadata has no descriptor elements");
         Require(kind < heaps.size() && heaps[kind] != nullptr, "runtime metadata references an unbound image heap");
         Require(first < heaps[kind]->count && count <= heaps[kind]->count - first, "runtime metadata exceeds its bound heap");
     }
+}
+
+void ValidatePushedImageData(const CompiledShader& shader) {
+    const auto& program = *shader.program;
+    if (program.runtimeImageCount == 0u || program.pushConstants.empty()) return;
+    const auto size = program.stencilReferences.empty() ? program.pushConstants.size() : program.stencilReferenceDword * sizeof(std::uint32_t);
+    if (size == 0u) return;
+    Require(size <= ShaderRecompiler::RuntimeAbi::PushConstantDwords * sizeof(std::uint32_t) && size <= program.pushConstants.size(), "invalid pushed image metadata size");
+    ValidateRuntimeResources(shader, std::as_bytes(std::span(program.pushConstants)).first(size));
 }
 
 }
@@ -2537,6 +2550,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
+            ValidatePushedImageData(shader);
             if (shader.program->poisonedSrtReads != 0) {
                 const auto& programBindings = shader.program->bindings;
                 const auto flat = std::find_if(programBindings.begin(), programBindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; });
@@ -2646,7 +2660,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     Require(binding.count == 1, "shader data and flattened SRT descriptors must not be arrays");
                     Require(!binding.guestDescriptor.empty(), "empty shader data descriptor");
                     if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) {
-                        ValidateRuntimeResources(shader, binding.guestDescriptor);
+                        ValidateRuntimeResources(shader, std::as_bytes(std::span(binding.guestDescriptor)));
                     }
                     item.allocations.push_back(addDataBuffer(binding.guestDescriptor));
                     if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) shaderData = static_cast<std::int64_t>(item.allocations.back());
@@ -5764,6 +5778,7 @@ bool ShaderResources::RefreshData(VkCommandBuffer commands, const CompiledShader
 
 bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader& shader, Recorder* recorder) {
     Require(shader.program != nullptr, "missing compiled shader");
+    ValidatePushedImageData(shader);
     const auto& program = *shader.program;
     bool recorded = false;
     // One [gputime] range of class TemplateDataRefresh around the updates, begun at the first one
@@ -5779,7 +5794,7 @@ bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader
         const auto size = binding.guestDescriptor.size() * sizeof(std::uint32_t);
         Require(allocation.buffer != nullptr && !allocation.guest && allocation.size == size && size <= MaxRefreshBytes, "template data buffer cannot take the dispatch's words");
         if (allocation.dataWords.size() == binding.guestDescriptor.size() && std::equal(allocation.dataWords.begin(), allocation.dataWords.end(), binding.guestDescriptor.begin())) continue;
-        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, binding.guestDescriptor);
+        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, std::as_bytes(std::span(binding.guestDescriptor)));
         if (recorder != nullptr && timing == Recorder::NoTiming) timing = recorder->BeginGpuTiming(Recorder::CommandClass::TemplateDataRefresh);
         writeDataWords(commands, held->allocations.front(), binding.guestDescriptor);
         allocation.dataWords.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());

@@ -870,9 +870,12 @@ def truncated(lines):
 
 def write_reports(out, rows, blob, main_exports=None):
     main_exports = main_exports or {}
-    out.mkdir(parents=True, exist_ok=True)
-    for number, found in rows.items():
-        (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        for number, found in rows.items():
+            (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
+    except OSError as error:
+        raise SystemExit(f"pr_overlap: {error}") from None
 
 
 def unverified_overlaps(rows):

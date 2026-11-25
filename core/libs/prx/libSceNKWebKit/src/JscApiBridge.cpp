@@ -1,4 +1,5 @@
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/Jsc.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
@@ -66,8 +67,19 @@ void AppendNumberRespectingIntegers(Jsc::WtfAbi::TextStream* stream, double valu
     WtfAbi::AppendRespectingIntegers(*reinterpret_cast<WtfAbi::TextStream*>(stream), value);
 }
 
+static_assert(sizeof(Jsc::WtfAbi::StringView) == sizeof(WtfAbi::StringView));
+
+void ConstructUrlFromBase(Jsc::WtfAbi::URL* url, const Jsc::WtfAbi::URL* base, const Jsc::WtfAbi::String* relative, const void* encoding) {
+    _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(reinterpret_cast<WtfAbi::URL*>(url), reinterpret_cast<const WtfAbi::URL*>(base),
+        reinterpret_cast<const WtfAbi::String*>(relative), encoding);
+}
+
+void SetPassword(Jsc::WtfAbi::URL* url, Jsc::WtfAbi::StringView password) {
+    WtfAbi::SetUrlPassword(reinterpret_cast<WtfAbi::URL*>(url), WtfAbi::StringView{password.characters, password.length, password.is8Bit});
+}
+
 constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder, &RemoveUrlFragmentIdentifier,
-    &WriteTextStreamIndent, &AppendNumberRespectingIntegers};
+    &WriteTextStreamIndent, &AppendNumberRespectingIntegers, &ConstructUrlFromBase, &SetPassword};
 const bool bridgeRegistered = (RegisterApiBridge_nid_no_patch(&bridge), true);
 
 }
