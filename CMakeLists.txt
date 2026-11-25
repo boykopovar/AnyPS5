@@ -813,6 +813,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
         add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
+        add_test(NAME linux_release_abi COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_linux_release_abi.py)
+        set_tests_properties(linux_release_abi PROPERTIES TIMEOUT 60)
         add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_web_release.py)
         set_tests_properties(web_release PROPERTIES TIMEOUT 120)
