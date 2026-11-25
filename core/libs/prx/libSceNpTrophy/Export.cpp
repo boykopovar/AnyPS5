@@ -1,16 +1,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
-#include <cerrno>
 #include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -187,16 +184,12 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (entry == context.entries.end()) return NP_TROPHY_ERROR_ICON_FILE_NOT_FOUND;
     const std::uint64_t iconSize = entry->second.size;
     if (buffer == nullptr) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(size, &iconSize, sizeof(iconSize));
-        errno = savedErrno;
         return copied ? 0 : NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     std::uint64_t capacity = 0;
     {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&capacity, size, sizeof(capacity));
-        errno = savedErrno;
         if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (capacity < iconSize) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
@@ -290,13 +283,10 @@ int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyF
     TrophyFlagArray localFlags{};
     for (const auto id : context->unlocked) localFlags.bits[id >> 5] |= 1u << (id & 31);
     const std::uint32_t localCount = static_cast<std::uint32_t>(context->trophies);
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(flags, &localFlags, sizeof(localFlags)) ||
         !GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount))) {
-        errno = savedErrno;
         return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
-    errno = savedErrno;
     return 0;
 }
 
@@ -355,16 +345,12 @@ int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* det
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
         std::uint64_t detailsSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
-        errno = savedErrno;
         if (!copied || detailsSize != sizeof(GameDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
         std::uint64_t dataSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
-        errno = savedErrno;
         if (!copied || dataSize != sizeof(GameData)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard lock(g_mutex);
@@ -376,9 +362,7 @@ int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* det
         localDetails.size = sizeof(GameDetails);
         localDetails.numGroups = static_cast<std::uint32_t>(Groups(*context));
         localDetails.numTrophies = static_cast<std::uint32_t>(context->trophies);
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(details, &localDetails, sizeof(localDetails));
-        errno = savedErrno;
         if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
@@ -396,16 +380,12 @@ int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, Gr
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
         std::uint64_t detailsSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
-        errno = savedErrno;
         if (!copied || detailsSize != sizeof(GroupDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
         std::uint64_t dataSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
-        errno = savedErrno;
         if (!copied || dataSize != sizeof(GroupData)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard lock(g_mutex);
@@ -421,9 +401,7 @@ int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, Gr
         localDetails.size = sizeof(GroupDetails);
         localDetails.groupId = groupId;
         localDetails.numTrophies = static_cast<std::uint32_t>(context->trophies);
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(details, &localDetails, sizeof(localDetails));
-        errno = savedErrno;
         if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
@@ -442,16 +420,12 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
     if (!details && !data) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     if (details) {
         std::uint64_t detailsSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&detailsSize, &details->size, sizeof(detailsSize));
-        errno = savedErrno;
         if (!copied || detailsSize != sizeof(TrophyDetails)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
         std::uint64_t dataSize = 0;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&dataSize, &data->size, sizeof(dataSize));
-        errno = savedErrno;
         if (!copied || dataSize != sizeof(TrophyData)) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard lock(g_mutex);
@@ -466,9 +440,7 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
         localDetails.trophyId = trophyId;
         localDetails.trophyGrade = NP_TROPHY_GRADE_UNKNOWN;
         localDetails.groupId = NP_TROPHY_BASE_GAME_GROUP_ID;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(details, &localDetails, sizeof(localDetails));
-        errno = savedErrno;
         if (!copied) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     }
     if (data) {
@@ -604,9 +576,7 @@ int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
 
 int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
     std::array<std::uint8_t, 64> localInput{};
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(localInput.data(), setInfo, localInput.size());
-    errno = savedErrno;
     if (!read) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 16> localFlags{};
     int count = 0;
@@ -615,7 +585,6 @@ int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, 
         count += std::popcount(localFlags[index]);
     }
     const bool written = GuestCopyOut_nid_no_patch(flagArray, localFlags.data(), localFlags.size());
-    errno = savedErrno;
     if (!written) NotImplemented_nid_no_patch(__func__);
     return count;
 }
