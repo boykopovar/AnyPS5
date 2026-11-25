@@ -2,7 +2,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
-#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -16,18 +15,14 @@ std::mutex onceMutex;
 std::condition_variable onceChanged;
 
 bool ReadControlState(const GuestOnce* control, std::int32_t& state) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(
         &state, reinterpret_cast<const std::uint8_t*>(control) + offsetof(GuestOnce, state), sizeof(state));
-    errno = savedErrno;
     return copied;
 }
 
 bool WriteControlState(GuestOnce* control, std::int32_t state) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(
         reinterpret_cast<std::uint8_t*>(control) + offsetof(GuestOnce, state), &state, sizeof(state));
-    errno = savedErrno;
     return copied;
 }
 
