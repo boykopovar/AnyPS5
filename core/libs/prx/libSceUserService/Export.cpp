@@ -29,6 +29,8 @@ namespace {
 std::atomic<bool> initialized{false};
 bool terminating{};
 std::mutex userMutex;
+std::atomic<std::int32_t> hearingAssistUserId1360{USER_SERVICE_USER_ID_INVALID};
+std::atomic<void (*)()> reset1360SettingsHook{nullptr};
 
 struct UserEvent {
     std::uint32_t eventType;
@@ -555,6 +557,10 @@ int APS5_VABI sceUserServiceTerminate(void) {
  {
   std::lock_guard lock(userMutex);
   eventQueue.clear();
+ }
+ hearingAssistUserId1360.store(USER_SERVICE_USER_ID_INVALID, std::memory_order_release);
+ if (const auto hook = reset1360SettingsHook.load(std::memory_order_acquire); hook != nullptr) {
+  hook();
  }
  {
   std::unique_lock lock(eventCallbacksMutex);
@@ -2520,8 +2526,17 @@ int APS5_VABI sceUserServiceGetPbtcTuesdayDuration(void) {
 }
 
 int APS5_VABI sceUserServiceGetUserWithHearingAssist(std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!initialized.load()) {
+        return USER_SERVICE_ERROR_NOT_INITIALIZED;
+    }
+    if (userId == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t stored = UserService1360::GetHearingAssistUserId();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(userId, &stored, sizeof(stored));
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceUserServiceGetNpOnlineId(void) {
@@ -3507,6 +3522,22 @@ int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
     errno = savedErrno;
     if (!copied) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     return USER_SERVICE_OK;
+}
+
+}
+
+namespace UserService1360 {
+
+void SetHearingAssistUserId(std::int32_t userId) {
+    hearingAssistUserId1360.store(userId, std::memory_order_release);
+}
+
+std::int32_t GetHearingAssistUserId() {
+    return hearingAssistUserId1360.load(std::memory_order_acquire);
+}
+
+void RegisterResetHook(void (*hook)()) {
+    reset1360SettingsHook.store(hook, std::memory_order_release);
 }
 
 }

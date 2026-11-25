@@ -30,7 +30,6 @@ struct UserSettings1360 {
 
 std::mutex g_settings1360Mutex;
 std::array<UserSettings1360, USER_SERVICE_MAX_USERS> g_userSettings1360{};
-std::int32_t g_hearingAssistUserId = USER_SERVICE_USER_ID_INVALID;
 
 bool IsUserServiceInitialized() {
     return sceUserServiceRegisterEventCallback(nullptr, nullptr) != USER_SERVICE_ERROR_NOT_INITIALIZED;
@@ -56,6 +55,19 @@ int SetUserSetting32(std::int32_t userId, FieldPtr field, ValueType value) {
     g_userSettings1360[index].*field = value;
     return USER_SERVICE_OK;
 }
+
+void ResetSettings() {
+    std::lock_guard lock(g_settings1360Mutex);
+    g_userSettings1360 = {};
+}
+
+struct Settings1360ResetRegistrar {
+    Settings1360ResetRegistrar() {
+        UserService1360::RegisterResetHook(&ResetSettings);
+    }
+};
+
+Settings1360ResetRegistrar g_settings1360ResetRegistrar;
 
 }
 
@@ -194,8 +206,7 @@ int APS5_VABI sceUserServiceSetUserWithHearingAssist(std::int32_t userId) {
     if (userId != USER_SERVICE_USER_ID_INVALID && UserSlotIndex(userId) < 0) {
         return USER_SERVICE_ERROR_UNKNOWN_USER;
     }
-    std::lock_guard lock(g_settings1360Mutex);
-    g_hearingAssistUserId = userId;
+    UserService1360::SetHearingAssistUserId(userId);
     return USER_SERVICE_OK;
 }
 

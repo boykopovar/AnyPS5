@@ -69,6 +69,10 @@ void CheckPreInitBehavior() {
     Require(sceUserServiceSetIsPersonalizedHrtfEnabled(USER_SERVICE_INITIAL_USER_ID, 1) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceSetProControllerBtAddress_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, 0x112233445566ull) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceSetUserWithHearingAssist(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    std::int32_t hearingAssistUser = 0x12345678;
+    Require(sceUserServiceGetUserWithHearingAssist(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(hearingAssistUser == 0x12345678);
 }
 
 void CheckPostInitBehavior() {
@@ -126,9 +130,37 @@ void CheckPostInitBehavior() {
     Require(sceUserServiceSetIsPersonalizedHrtfEnabled(USER_SERVICE_INITIAL_USER_ID, 1) == USER_SERVICE_OK);
     Require(sceUserServiceSetProControllerBtAddress_nid_no_patch(0, 0x112233445566ull) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceSetProControllerBtAddress_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, 0x112233445566ull) == USER_SERVICE_OK);
+    std::int32_t hearingAssistUser = 0x12345678;
+    Require(sceUserServiceGetUserWithHearingAssist(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetUserWithHearingAssist(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_OK);
+    Require(hearingAssistUser == USER_SERVICE_USER_ID_INVALID);
+
     Require(sceUserServiceSetUserWithHearingAssist(0) == USER_SERVICE_ERROR_UNKNOWN_USER);
-    Require(sceUserServiceSetUserWithHearingAssist(USER_SERVICE_USER_ID_INVALID) == USER_SERVICE_OK);
     Require(sceUserServiceSetUserWithHearingAssist(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_OK);
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_OK);
+    Require(hearingAssistUser == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceSetUserWithHearingAssist(USER_SERVICE_USER_ID_INVALID) == USER_SERVICE_OK);
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_OK);
+    Require(hearingAssistUser == USER_SERVICE_USER_ID_INVALID);
+    Require(sceUserServiceSetUserWithHearingAssist(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_OK);
+}
+
+void CheckLifecycleReset() {
+    std::int32_t hearingAssistUser = 0x12345678;
+    Require(sceUserServiceGetUserWithHearingAssist(&hearingAssistUser) == USER_SERVICE_OK);
+    Require(hearingAssistUser == USER_SERVICE_USER_ID_INVALID);
+
+    std::uint32_t notificationSettings = 0xA5A5A5A5u;
+    Require(sceUserServiceGetNotificationSettings_4_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, &notificationSettings) == USER_SERVICE_OK);
+    Require(notificationSettings == 0u);
+
+    char history[32];
+    std::memset(history, 0xA5, sizeof(history));
+    Require(sceUserServiceGetPartyGameIconInstallHistory_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, history, sizeof(history)) == USER_SERVICE_OK);
+    Require(history[0] == '\0');
 }
 
 } // namespace
@@ -139,5 +171,8 @@ int main() {
     CheckPostInitBehavior();
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     CheckPreInitBehavior();
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    CheckLifecycleReset();
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     return 0;
 }
