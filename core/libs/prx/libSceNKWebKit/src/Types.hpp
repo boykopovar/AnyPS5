@@ -204,6 +204,7 @@ public:
     };
 
     std::vector<OriginAccessEntry> originAccessAllowList;
+    std::map<std::pair<const void*, const void*>, bool> notificationPermissions;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {

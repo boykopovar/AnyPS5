@@ -4536,10 +4536,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_Yxafith2tNw_nid_no_patch() {
 }
 APS5_EXPORT("Yxafith2tNw", libSceNKWebKitLegacyUnknown_Yxafith2tNw_nid_no_patch);
 
-int APS5_VABI WKBundleGetWebNotificationID() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore30InspectorInstrumentationWebKit30shouldInterceptRequestInternalERKNS_5FrameERKNS_15ResourceRequestE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8628,10 +8624,6 @@ int APS5_VABI WKBundleSetDatabaseQuota() {
 }
 
 int APS5_VABI WKBundleSetTabKeyCyclesThroughElements() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleSetWebNotificationPermission() {
     NotImplemented_nid_no_patch(__func__);
 }
 
