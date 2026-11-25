@@ -80,6 +80,8 @@ void arms() {
     Require(plan.switches.size() == 3 && plan.switches[0] == RuntimeSwitch::NoBarrierBatch && plan.switches[1] == RuntimeSwitch::NoGuardSpans && plan.switches[2] == RuntimeSwitch::NoOwnedDrawInputs, "the union of the arms' switches was not collected");
     const auto bare = AbSchedule::Parse("60:A|APS5_NO_OWNED_DRAW_INPUTS", "", "");
     Require(bare.arms.size() == 2 && bare.arms[1].name == "APS5_NO_OWNED_DRAW_INPUTS" && bare.arms[1].switches.size() == 1, "a bare switch name as an arm was not parsed");
+    const auto spaced = AbSchedule::Parse("60:A|APS5_NO_GUARD_SPANS + APS5_NO_OWNED_DRAW_INPUTS", "", "");
+    Require(spaced.arms.size() == 2 && spaced.arms[1].name == "APS5_NO_GUARD_SPANS+APS5_NO_OWNED_DRAW_INPUTS" && spaced.arms[1].switches.size() == 2, "a bare arm with spaces around + did not get the trimmed name the phase markers print");
     Require(Refusal("60:A|X").find("cannot change while the title runs") != std::string::npos, "an undefined group name was not refused");
     Require(Refusal("60:A|X=APS5_NO_BARRIER_BATCH|X=APS5_NO_OWNED_DRAW_INPUTS").find("defined twice") != std::string::npos, "a group defined twice was not refused");
     Require(Refusal("60:A|").find("empty arm") != std::string::npos, "an empty arm was not refused");

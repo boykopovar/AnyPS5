@@ -128,7 +128,10 @@ AbSchedule::Arm ParseArm(std::string_view token, std::string_view ab, const std:
     for (const auto& arm : defined) {
         if (arm.name == token) return arm;
     }
-    return {std::string(token), ParseSwitchList(token, ab)};
+    auto switches = ParseSwitchList(token, ab);
+    std::string name;
+    for (const auto id : switches) name += (name.empty() ? "" : "+") + std::string(RuntimeSwitches::Name(id));
+    return {std::move(name), std::move(switches)};
 }
 
 bool InArm(const AbSchedule::Arm& arm, RuntimeSwitch id) {
