@@ -49,7 +49,6 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<c
         queue.NoteDecodeDrainSkip();
         return info;
     }
-    if (reads.empty()) return info;
     struct RangesStorage {};
     auto& ranges = HostThreadLocal<std::vector<DrawPipeline::Range>, RangesStorage>();
     ranges.clear();
