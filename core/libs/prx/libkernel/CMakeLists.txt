@@ -1,4 +1,5 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/LibKernelSysProviders.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.Mapper.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
