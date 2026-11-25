@@ -929,6 +929,11 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
             && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
         "an unreadable online id text must be refused and leave the text untouched");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(nullptr, "player") == InvalidArgument && errno == 71,
+        "a null online id object must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(reinterpret_cast<NpOnlineIdObject*>(0x10), "player") == InvalidArgument && errno == 71,
+        "an unwritable online id object must be refused");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -986,6 +991,11 @@ void CheckValueClasses() {
     Require(!_ZN3sce2npneERKNS0_4UserERKi(&userCopy, &guestId), "a user must not differ from its id");
     _ZN3sce2np4User5ClearEv(&userCopy);
     Require(_ZNK3sce2np4User7IsEmptyEv(&userCopy), "a cleared user must be empty");
+    errno = 71;
+    _ZN3sce2np4User5ClearEv(nullptr);
+    Require(errno == 71, "User::Clear must preserve errno for a null object");
+    _ZN3sce2np4User5ClearEv(reinterpret_cast<UserObject*>(0x10));
+    Require(errno == 71, "User::Clear must preserve errno for an unmapped object");
 
     UserObject initialUser;
     _ZN3sce2np4UserC1Ei(&initialUser, USER_SERVICE_INITIAL_USER_ID);
@@ -1024,6 +1034,10 @@ void CheckValueClasses() {
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
     Require(_ZNK3sce2np12NpTitleToken6GetStrEv(&titleToken) == titleToken.data, "GetStr must point at the token storage");
     Require(titleToken.data[0] == '\0' && titleToken.data[0x40f] == '\0', "a default title token must be empty");
+    errno = 71;
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(nullptr) == nullptr && errno == 71, "GetStr must return null for a null token");
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(reinterpret_cast<const NpTitleTokenObject*>(0x10)) == nullptr && errno == 71,
+        "GetStr must return null for an unmapped token");
     NpTitleTokenObject titleTokenCopy;
     _ZN3sce2np12NpTitleTokenC1ERKS1_(&titleTokenCopy, &titleToken);
     Require(std::memcmp(titleTokenCopy.data, titleToken.data, sizeof(titleToken.data)) == 0, "a title token must copy the full block");
