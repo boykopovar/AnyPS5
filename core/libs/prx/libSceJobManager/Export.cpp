@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -750,13 +749,10 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
     Sequence& sequence = sequences[static_cast<std::size_t>(index)].value;
     if (!sequence.Open(manager, limits, priority, name)) return SequenceNoNodes;
     ISequence* handle = &sequence;
-    const int savedErrno = errno;
     if (!GuestCopyOut_nid_no_patch(out, &handle, sizeof(handle))) {
-        errno = savedErrno;
         sequence.Abandon();
         return SequenceNullArgument;
     }
-    errno = savedErrno;
     free &= ~(std::uint32_t{1} << index);
     return 0;
 }
@@ -1033,12 +1029,9 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     }
     ConfigParams localConfig{};
     if (config != nullptr) {
-        const int savedErrno = errno;
         if (!GuestCopyIn_nid_no_patch(&localConfig, config, sizeof(localConfig))) {
-            errno = savedErrno;
             return ManagerInvalidArgument;
         }
-        errno = savedErrno;
         if (localConfig.version > 1) return ManagerInvalidArgument;
     }
     const ConfigParams& settings = config != nullptr ? localConfig : DefaultConfig;
@@ -1140,12 +1133,9 @@ void APS5_VABI _ZN3sce3Job10JobManagerD2Ev(void* self) {
 std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKNS1_21MemorySizeQueryParamsE(const MemorySizeQueryParams* params) {
     if (params == nullptr) return 0;
     MemorySizeQueryParams localParams{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams))) {
-        errno = savedErrno;
         return 0;
     }
-    errno = savedErrno;
     if (localParams.version > 1 || localParams.workers == 0 || localParams.workers > MaxWorkers || localParams.sequences > MaxSequences) return 0;
     const bool unified = localParams.version == 1;
     const std::uint32_t computeSequences = unified ? localParams.computeSequences : 0;
