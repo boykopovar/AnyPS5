@@ -1,7 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
-#include <cerrno>
 #include <climits>
 #include <cinttypes>
 #include <cstdio>
@@ -189,9 +188,7 @@ int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback) {
 void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value) {
     if (id == nullptr) APS5_INVALID_ARG_EX;
     const CryptoThreadId local{nullptr, value};
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(id, &local, sizeof(local));
-    errno = savedErrno;
 }
 
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
