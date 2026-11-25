@@ -207,6 +207,42 @@ static void CheckConsecutiveClauseConversion() {
     }
 }
 
+static void CheckTextInfo() {
+    constexpr int InvalidRange = -3;
+    char16_t text[] = u"abcd";
+    ImeEditText info{};
+    info.str = text;
+    info.caret_index = 4;
+    info.area_num = 1;
+    info.text_area[0] = {TextAreaMode::Preedit, 1, 2};
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == 0, "valid text range");
+
+    info.text_area[0].index = 3;
+    info.text_area[0].length = 2;
+    const ImeEditText invalid = info;
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == InvalidRange, "invalid range must be reported");
+    Require(std::memcmp(&info, &invalid, sizeof(info)) == 0, "check-only mode changed text info");
+
+    info.caret_index = 8;
+    Require(sceImeCheckUpdateTextInfo(&info, 1) == 0, "repair mode");
+    Require(info.caret_index == 4 && info.text_area[0].index == 0, "repair did not reset invalid positions");
+
+    info.text_area[0] = {TextAreaMode::Edit, 5, 8};
+    info.caret_index = 4;
+    Require(sceImeCheckUpdateTextInfo(&info, 0) == 0, "disabled edit range must not be checked");
+
+    ImeEvent event{};
+    event.id = 1;
+    event.param.text = info;
+    event.param.text.text_area[0].mode = TextAreaMode::Preedit;
+    Require(sceImeCheckRemoteEventParam(&event, 0) == InvalidRange, "update-text event must validate its range");
+    event.id = 2;
+    Require(sceImeCheckRemoteEventParam(&event, 1) == 0, "unrelated event must be ignored");
+
+    RequireNotImplemented([] { sceImeCheckUpdateTextInfo(nullptr, 0); }, "sceImeCheckUpdateTextInfo");
+    RequireNotImplemented([] { sceImeCheckRemoteEventParam(nullptr, 0); }, "sceImeCheckRemoteEventParam");
+}
+
 int main() {
     CheckInitialization();
     CheckPanelSizes();
@@ -215,4 +251,5 @@ int main() {
     CheckOpenPanel();
     CheckKeyboardResourceIds();
     CheckConsecutiveClauseConversion();
+    CheckTextInfo();
 }
