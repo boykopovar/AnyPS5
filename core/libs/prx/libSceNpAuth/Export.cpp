@@ -1,7 +1,6 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
 #include <atomic>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -45,9 +44,7 @@ int CreateRequest(bool isAsync) {
 }
 
 bool CopyOutResult(int* result, int value) {
- const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
- errno = savedErrno;
  return copied;
 }
 
@@ -88,18 +85,14 @@ int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuth
  (void)issuerId;
  if (parameter == nullptr || code == nullptr || authorizationRequired == nullptr) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  NpAuthAuthorizedAppCodeParameter localParameter{};
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(&localParameter, parameter, sizeof(localParameter));
- errno = savedErrno;
  if (!copied) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  if (localParameter.size != sizeof(NpAuthAuthorizedAppCodeParameter)) return static_cast<int>(0x80550302u);
  if (localParameter.userId == -1 || localParameter.clientId == nullptr || localParameter.scope == nullptr || localParameter.option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::array<char, 136> localClientId{};
  std::string localScope;
- const int copyErrno = errno;
  const bool clientIdCopied = GuestCopyIn_nid_no_patch(localClientId.data(), localParameter.clientId, localClientId.size());
  const bool scopeCopied = clientIdCopied && CopyGuestString_nid_no_patch(localParameter.scope, 512, localScope) == 0;
- errno = copyErrno;
  if (!scopeCopied) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  if (!g_requests.contains(requestId)) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
