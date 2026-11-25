@@ -1,7 +1,6 @@
 #include "prx/libSceNpGameIntent/include/InventoryExports.hpp"
 #include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -32,9 +31,7 @@ std::atomic_bool& AppLauncherInitialized() {
 }
 
 bool ReadGuestBytePreservingErrno_nid_no_patch(const char* source, char& value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
@@ -71,17 +68,14 @@ int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* inte
 		return NpGameIntentErrorInvalidArgument;
 	}
 
-	const int savedErrno = errno;
 	char firstKeyByte{};
 	const bool keyReadable = GuestCopyIn_nid_no_patch(&firstKeyByte, key, 1);
-	errno = savedErrno;
 	if (!keyReadable || firstKeyByte == '\0') {
 		return NpGameIntentErrorInvalidArgument;
 	}
 
 	const char terminator = '\0';
 	const bool outputWritable = GuestCopyOut_nid_no_patch(valueBuf, &terminator, 1);
-	errno = savedErrno;
 	return outputWritable ? NpGameIntentErrorValueNotFound : NpGameIntentErrorInvalidArgument;
 }
 
@@ -101,18 +95,14 @@ int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
 		return NpGameIntentErrorInvalidArgument;
 	}
 	NpGameIntentInfo localInfo{};
-	const int savedErrno = errno;
 	const bool copiedIn = GuestCopyIn_nid_no_patch(&localInfo, intentInfo, sizeof(localInfo));
-	errno = savedErrno;
 	if (!copiedIn || localInfo.size != 0x4140) {
 		return NpGameIntentErrorInvalidArgument;
 	}
 	localInfo.user_id = NpGameIntentUserIdInvalid;
 	std::memset(localInfo.intent_type, 0, sizeof(localInfo.intent_type));
 	std::memset(&localInfo.intent_data, 0, sizeof(localInfo.intent_data));
-	const int savedErrnoOut = errno;
 	const bool copiedOut = GuestCopyOut_nid_no_patch(intentInfo, &localInfo, sizeof(localInfo));
-	errno = savedErrnoOut;
 	if (!copiedOut) {
 		return NpGameIntentErrorInvalidArgument;
 	}
@@ -130,9 +120,7 @@ int APS5_VABI sceNpGameIntentInitParamInit(NpGameIntentInitParam* param) {
     }
     NpGameIntentInitParam localParam{};
     localParam.size = sizeof(NpGameIntentInitParam);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(param, &localParam, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) {
         APS5_INVALID_ARG_EX;
     }
@@ -146,9 +134,7 @@ int APS5_VABI sceNpGameIntentInfoInit(NpGameIntentInfo* info) {
     NpGameIntentInfo localInfo{};
     localInfo.size = sizeof(NpGameIntentInfo);
     localInfo.user_id = NpGameIntentUserIdInvalid;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
     if (!copied) {
         APS5_INVALID_ARG_EX;
     }
@@ -176,9 +162,7 @@ int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, con
     if (arg2 == nullptr || !ReadGuestBytePreservingErrno_nid_no_patch(arg2, first) || first == '\0') return NpAppLauncherErrorInvalidArgument;
     if (arg3 != nullptr) {
         std::string optionalArgument;
-        const int savedErrno = errno;
         const int copyResult = CopyGuestString_nid_no_patch(arg3, 0x2001, optionalArgument);
-        errno = savedErrno;
         if (copyResult != 0) return NpAppLauncherErrorInvalidArgument;
     }
     return NpAppLauncherErrorNotInitialized;
