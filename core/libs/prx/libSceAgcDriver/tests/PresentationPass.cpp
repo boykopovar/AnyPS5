@@ -14,6 +14,7 @@
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
+#include <cfenv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -850,7 +852,15 @@ void upscaleModeTests() {
     for (const char* value : {"FSR", "fsr1", "bilinear", " fsr", "fsr "}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode(value, nullptr)); }), std::string("ANYPS5_UPSCALE accepted ") + value);
     }
-    for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "nan", "inf", " 1", "1 "}) {
+    Require(SelectUpscaleMode("fsr", ".5e+0").sharpness == 0.5f && SelectUpscaleMode("fsr", "1e-45").sharpness == std::numeric_limits<float>::denorm_min(),
+            "decimal exponents and representable subnormal sharpness values must be accepted");
+    const int rounding = std::fegetround();
+    Require(std::fesetround(FE_DOWNWARD) == 0, "cannot set the rounding mode for the sharpness test");
+    const float nearHalf = SelectUpscaleMode("fsr", "1.0000000596046447753906251").sharpness;
+    const int after = std::fegetround();
+    Require(std::fesetround(rounding) == 0, "cannot restore the rounding mode after the sharpness test");
+    Require(after == FE_DOWNWARD && nearHalf == std::nextafter(1.0f, 2.0f), "sharpness parsing changed or used the caller's rounding mode");
+    for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "nan", "inf", " 1", "1 ", "+1", "0x1p0", "1e-90", "1,5"}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode("fsr", value)); }), std::string("ANYPS5_FSR_SHARPNESS accepted ") + value);
     }
 }
