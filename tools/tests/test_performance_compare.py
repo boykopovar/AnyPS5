@@ -278,6 +278,33 @@ class PerformanceCompareTests(unittest.TestCase):
                 self.assertIn("before.jsonl:2:", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_native_summary_field_widths(self):
+        fields = (
+            (("cpu_threads",), 32),
+            (("memory_mib",), 64),
+            (("window", "first_present"), 64),
+            (("presents",), 64),
+            (("graphics_track", "Graphics.Copy"), 64),
+            (("owned_draw_counts", "OwnedDraw.unbound"), 64),
+        )
+        for path, bits in fields:
+            for value in (1 << bits, (1 << bits) + 1, 10**100):
+                with self.subTest(path=path, value=value):
+                    document = copy.deepcopy(self.baseline)
+                    parent = document
+                    for part in path[:-1]:
+                        parent = parent.setdefault(part, {})
+                    parent[path[-1]] = value
+                    with self.assertRaisesRegex(ValueError, rf"{'.'.join(path)}.*unsigned {bits}"):
+                        performance_compare.validate(document)
+
+    def test_native_unsigned_maxima(self):
+        maximum = 2**64 - 1
+        document = dict(self.baseline, cpu_threads=2**32 - 1, memory_mib=maximum, presents=maximum,
+                        window=dict(self.baseline["window"], first_present=maximum),
+                        graphics_track={"Graphics.Copy": maximum}, owned_draw_counts={"OwnedDraw.unbound": maximum})
+        self.assertEqual(performance_compare.validate(document), document)
+
     def test_unknown_metadata_is_not_a_claim_of_equivalent_machines(self):
         self.baseline.update(dirty=None, gpu="", driver="")
         report = performance_compare.compare(self.baseline, self.candidate)
