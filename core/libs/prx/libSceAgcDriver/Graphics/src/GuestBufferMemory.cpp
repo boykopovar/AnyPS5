@@ -410,6 +410,9 @@ struct HostImports {
     // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
     std::vector<RefreshedRange> refreshedRanges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> loggedChanges;
+    std::vector<const HostImport*> loggedImports;
+    GuestAllocations::Mapped loggedMapped;
     std::uint64_t refreshedWindow = 0;
     std::set<std::uint64_t> pendingImports;
     std::map<std::uint64_t, GrowthRun> growth;
@@ -3021,6 +3024,91 @@ bool importsStale(const Context& context, const HostImports& state) {
     return state.device != context.device || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration;
 }
 
+bool refreshedFromLoggedChanges(const Context& context, HostImports& state) {
+    const auto window = importWindow.load(std::memory_order_relaxed);
+    if (state.device != context.device || window == 0 || window != state.refreshedWindow) return false;
+    auto& spans = state.loggedChanges;
+    spans.clear();
+    std::uint64_t current = 0;
+    if (!GuestAllocations::GuestAllocationsChangesSince_nid_no_patch(state.refreshedGeneration, spans, current)) return false;
+    std::sort(spans.begin(), spans.end());
+    std::size_t merged = 0;
+    for (const auto& span : spans) {
+        if (merged != 0 && span.first <= spans[merged - 1].second) spans[merged - 1].second = std::max(spans[merged - 1].second, span.second);
+        else spans[merged++] = span;
+    }
+    spans.resize(merged);
+    const auto touched = [&](std::uint64_t base, std::uint64_t bytes) {
+        const auto low = base / window * window;
+        const auto high = std::max(low + window, base + bytes);
+        const auto found = std::upper_bound(spans.begin(), spans.end(), low, [](std::uint64_t value, const auto& span) { return value < span.second; });
+        return found != spans.end() && found->first < high;
+    };
+    for (const auto& [key, failure] : state.failed) {
+        if (touched(failure.base, failure.bytes)) return false;
+    }
+    for (const auto& [key, failure] : state.failedJoins) {
+        if (touched(failure.base, failure.bytes)) return false;
+    }
+    for (const auto& [key, failure] : state.failedBlocks) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [key, refusal] : state.refusals) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [key, refusal] : state.evictingRefusals) {
+        if (touched(key.first, key.second)) return false;
+    }
+    for (const auto& [begin, run] : state.growth) {
+        if (touched(begin, run.end - begin)) return false;
+    }
+    for (const auto& [base, end] : state.sparseRunEnds) {
+        if (touched(base, 1)) return false;
+    }
+    for (const auto& [base, joins] : state.sparseRunJoins) {
+        if (touched(base, 1)) return false;
+    }
+    auto& checked = state.loggedImports;
+    checked.clear();
+    std::uint64_t unchecked = 0;
+    for (const auto& [begin, end] : spans) {
+        auto it = state.imports.lower_bound(std::max(begin / window * window, unchecked));
+        if (it != state.imports.begin() && std::prev(it)->first >= unchecked && std::prev(it)->first + std::prev(it)->second.bytes > begin) --it;
+        for (; it != state.imports.end() && it->first / window * window < end; ++it) checked.push_back(&it->second);
+        unchecked = it == state.imports.end() ? std::numeric_limits<std::uint64_t>::max() : it->first;
+    }
+    const auto walked = checked.size();
+    for (const auto base : state.pendingImports) {
+        const auto seen = std::lower_bound(checked.begin(), checked.begin() + walked, base, [](const HostImport* entry, std::uint64_t value) { return entry->base < value; });
+        if (seen != checked.begin() + walked && (*seen)->base == base) continue;
+        if (const auto found = state.imports.find(base); found != state.imports.end()) checked.push_back(&found->second);
+    }
+    auto& mapped = state.loggedMapped;
+    mapped.clear();
+    for (const auto* entry : checked) {
+        for (const auto& range : entry->ranges) mapped.emplace_back(range);
+    }
+    const auto local = mapped.empty() ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(mapped);
+    mapped.clear();
+    for (const auto* entry : checked) {
+        if (!sameRange(*entry, local)) return false;
+    }
+    const auto alignment = context.hostImportAlignment;
+    for (const auto* entry : checked) {
+        if (entry->unwatched) GuestMemory::Unwatch(entry->base, entry->bytes);
+        if (entry->joined) continue;
+        const auto desired = desiredRun(local, entry->base, alignment);
+        if (!desired || desired->first > entry->base || entry->base + entry->bytes > desired->second || peekImport(state, desired->first, desired->second) != nullptr) continue;
+        auto& run = growthAt(state, desired->first, desired->second)->second;
+        if (run.blocked == GrowthBlock::Failed) run.blocked = GrowthBlock::Untried;
+    }
+    resetGrowthFloor(state);
+    state.refreshedGeneration = current;
+    state.gateRefusals.clear();
+    state.pendingImports.clear();
+    return true;
+}
+
 // The mirror registry: by range base. The map is protected by `mutex` (findMirror runs in a build's
 // unlocked stage A, UploadPrepare); the mirrors' contents (fills, refreshes, sweeps) change under
 // GuestMemory::GpuMutex only (every completion and every stage B holds it). APS5_NO_LEASE_MIRROR=1
@@ -5095,7 +5183,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     settleUnwatchedImports(context, state);
 #endif
     // A hit is only valid while the registry has not changed since the imports were reconciled.
-    if (!importsStale(context, state)) {
+    if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
         if (recentImportsEnabled()) {
             if (const auto* entry = recentImport(state, address, address + bytes)) {
                 entry->lastUse = ++state.useCounter;
@@ -5141,7 +5229,7 @@ const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t addr
     settleUnwatchedImports(context, state);
 #endif
     const auto end = address + bytes;
-    if (!importsStale(context, state)) {
+    if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
         if (const auto* entry = findImport(state, address, end)) {
             entry->lastUse = ++state.useCounter;
             return entry;
@@ -8479,7 +8567,7 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     std::lock_guard lock(state.mutex);
     // An import whose registered range changed must not be reused: reconcile first, as an upload
     // does (the walk only runs when the registry changed since the last one).
-    if (reconcile && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) static_cast<void>(refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix()));
+    if (reconcile && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration && !refreshedFromLoggedChanges(context, state)) static_cast<void>(refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix()));
     auto found = state.imports.upper_bound(address);
     if (found == state.imports.begin()) return 0;
     --found;
@@ -8530,7 +8618,7 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     if (state.device != proof.device) return false;
-    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
+    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration && !refreshedFromLoggedChanges(context, state)) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
 }
 

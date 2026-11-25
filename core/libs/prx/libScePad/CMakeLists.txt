@@ -294,6 +294,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_trigger_effect_state_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+
+    add_test_executable(guest_pad_get_data_internal_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadGetDataInternal.cpp)
+    target_include_directories(guest_pad_get_data_internal_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_get_data_internal_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_get_data_internal_tests)
+    add_test(NAME guest_pad_get_data_internal COMMAND guest_pad_get_data_internal_tests)
+    if(WIN32)
+        set_tests_properties(guest_pad_get_data_internal PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -328,5 +338,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(pad_descriptor_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_pad_haptics_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadHapticsBounds.cpp)
+    target_include_directories(guest_pad_haptics_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_haptics_bounds_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_haptics_bounds_tests)
+    add_test(NAME guest_pad_haptics_bounds COMMAND guest_pad_haptics_bounds_tests)
+    set_tests_properties(guest_pad_haptics_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pad_haptics_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
 endif()

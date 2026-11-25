@@ -537,9 +537,7 @@ int APS5_VABI sceFontGetCharGlyphCode(FontHandle fontHandle, std::uint32_t code,
     });
     if (rc == SCE_FONT_OK) {
         const std::uint32_t outGlyph = index | 0x80000000u;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(glyphCode, &outGlyph, sizeof(outGlyph));
-        errno = savedErrno;
         if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     return rc;

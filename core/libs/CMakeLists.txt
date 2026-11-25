@@ -240,6 +240,25 @@ target_compile_options(fvad PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
 target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
 target_link_libraries(libwebrtc PRIVATE fvad)
+
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc)
+    message(FATAL_ERROR "libyuv: ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc is missing; initialize the submodule with git submodule update --init 3rdparty/libyuv")
+endif()
+add_library(webrtc_yuv STATIC EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/cpu_id.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/planar_functions.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_any.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_common.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_gcc.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_any.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_common.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_gcc.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_uv.cc)
+target_include_directories(webrtc_yuv PUBLIC ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/include)
+set_target_properties(webrtc_yuv PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+target_compile_options(webrtc_yuv PRIVATE -w)
+target_link_libraries(libwebrtc PRIVATE webrtc_yuv)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libwebrtc PRIVATE LINKER:--exclude-libs,ALL)
 endif()
@@ -1100,6 +1119,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_abstract_storage_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractStorage>")
+    endif()
+    add_test_executable(guest_abstract_youtube_trivial_returns_tests tests/GuestAbstractYoutubeTrivialReturns.cpp)
+    target_include_directories(guest_abstract_youtube_trivial_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_abstract_youtube_trivial_returns_tests PRIVATE libSceAbstractYoutube libc)
+    configure_windows_unwind(guest_abstract_youtube_trivial_returns_tests)
+    add_test(NAME guest_abstract_youtube_trivial_returns COMMAND guest_abstract_youtube_trivial_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_youtube_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
     endif()
     add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
     target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
