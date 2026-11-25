@@ -372,9 +372,12 @@ static void CheckStrtonum() {
     fails("9223372036854775808", LLONG_MIN, LLONG_MAX, "too large", 34);
     fails("-9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too small", 34);
     fails("9999999999999999999999999999999999", LLONG_MIN, LLONG_MAX, "too large", 34);
+    fails(nullptr, 0, 100, "invalid", 14);
+    const auto paddedNumber = std::string(8192, '0') + "42";
     *__error_nid_postfix() = 34;
     errno = 34;
     Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34 && errno == 34);
+    Require(strtonum_nid_postfix(paddedNumber.c_str(), 0, 100, nullptr) == 42 && errno == 34);
     std::size_t page = 0;
     char* memory = nullptr;
 #ifdef _WIN32
@@ -393,6 +396,11 @@ static void CheckStrtonum() {
     Require(memory != MAP_FAILED);
     Require(mprotect(memory + page, page, PROT_NONE) == 0);
 #endif
+    char* edgeNumber = memory + page - 3;
+    std::memcpy(edgeNumber, "42", 3);
+    Require(strtonum_nid_postfix(edgeNumber, 0, 100, nullptr) == 42);
+    edgeNumber[2] = '0';
+    fails(edgeNumber, 0, 100, "invalid", 14);
     const std::array<const char**, 2> badErrors = {
         reinterpret_cast<const char**>(std::uintptr_t{0x10}),
         reinterpret_cast<const char**>(memory + page)

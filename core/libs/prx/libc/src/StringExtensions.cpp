@@ -25,10 +25,19 @@ long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, lo
         return 0;
     };
     if (minimum > maximum) return fail("invalid", 22);
+    constexpr int NameTooLong = 63;
+    std::string input;
+    for (std::size_t capacity = 64;; capacity *= 2) {
+        const int copyError = CopyGuestString_nid_no_patch(text, capacity, input);
+        if (copyError == 0) break;
+        if (copyError != NameTooLong) return fail("invalid", copyError);
+        if (capacity > input.max_size() / 2) return fail("invalid", ENOMEM);
+    }
     errno = 0;
     char* end = nullptr;
-    const long long value = std::strtoll(text, &end, 10);
-    if (errno == EINVAL || end == text || *end != '\0') return fail("invalid", 22);
+    const char* start = input.c_str();
+    const long long value = std::strtoll(start, &end, 10);
+    if (errno == EINVAL || end == start || *end != '\0') return fail("invalid", 22);
     if ((value == LLONG_MIN && errno == ERANGE) || value < minimum) return fail("too small", 34);
     if ((value == LLONG_MAX && errno == ERANGE) || value > maximum) return fail("too large", 34);
     if (error != nullptr) {
