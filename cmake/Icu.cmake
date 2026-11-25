@@ -77,6 +77,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/ustr_cnv.cpp
     ${ICU_SOURCE_DIR}/common/ustrfmt.cpp
     ${ICU_SOURCE_DIR}/common/ucase.cpp
+    ${ICU_SOURCE_DIR}/common/ucasemap.cpp
     ${ICU_SOURCE_DIR}/common/uchar.cpp
     ${ICU_SOURCE_DIR}/common/ucharstrie.cpp
     ${ICU_SOURCE_DIR}/common/ucharstrieiterator.cpp
@@ -105,6 +106,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/uprops.cpp
     ${ICU_SOURCE_DIR}/common/uscript_props.cpp
     ${ICU_SOURCE_DIR}/common/ustrcase.cpp
+    ${ICU_SOURCE_DIR}/common/ustrcase_locale.cpp
     ${ICU_SOURCE_DIR}/common/ustring.cpp
     ${ICU_SOURCE_DIR}/common/ustrtrns.cpp
     ${ICU_SOURCE_DIR}/common/utext.cpp
@@ -140,6 +142,7 @@ endif()
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
 target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1 UCONFIG_USE_WINDOWS_LCID_MAPPING_API=0)
 target_compile_features(icu_common PUBLIC cxx_std_17)
+set_source_files_properties(${ICU_SOURCE_DIR}/common/ucasemap.cpp PROPERTIES COMPILE_DEFINITIONS UCONFIG_NO_BREAK_ITERATION=1)
 target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/uset.cpp)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")

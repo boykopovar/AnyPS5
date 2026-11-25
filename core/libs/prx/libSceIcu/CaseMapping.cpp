@@ -4,6 +4,7 @@
 #include "ucase.h"
 #include "ucasemap_imp.h"
 #include "unicode/ustring.h"
+#include "unicode/ucasemap.h"
 #include <cstdint>
 
 namespace {
@@ -121,6 +122,24 @@ std::int32_t APS5_VABI _ZN6icu_687CaseMap4foldEjPKDsiPDsiPNS_5EditsER10UErrorCod
     void* edits, std::int32_t* error) {
     return MapWithoutOverlap(__func__, UCASE_LOC_ROOT, options, source, length, destination, capacity, edits, error,
                              ustrcase_internalFold);
+}
+
+Icu::CaseMap* APS5_VABI ucasemap_open_nid_postfix(const char* locale, std::uint32_t options, std::int32_t* error) {
+    return reinterpret_cast<Icu::CaseMap*>(ucasemap_open(locale, options, &Status(error)));
+}
+
+std::int32_t APS5_VABI ucasemap_utf8FoldCase_nid_postfix(const Icu::CaseMap* caseMap, char* destination,
+                                                         std::int32_t capacity, const char* source,
+                                                         std::int32_t length, std::int32_t* error) {
+    return ucasemap_utf8FoldCase(reinterpret_cast<const UCaseMap*>(caseMap), destination, capacity, source, length,
+                                &Status(error));
+}
+
+std::int32_t APS5_VABI ucasemap_utf8ToUpper_nid_postfix(const Icu::CaseMap* caseMap, char* destination,
+                                                        std::int32_t capacity, const char* source,
+                                                        std::int32_t length, std::int32_t* error) {
+    return ucasemap_utf8ToUpper(reinterpret_cast<const UCaseMap*>(caseMap), destination, capacity, source, length,
+                               &Status(error));
 }
 
 }

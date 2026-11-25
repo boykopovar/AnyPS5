@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -257,6 +258,48 @@ void TestConfigurationAndParagraphs() {
     const void* context = nullptr;
     ubidi_getClassCallback_nid_postfix(bidi, &function, &context);
     Expect(function == MarkXRightToLeft && context == &calls, "ubidi_getClassCallback");
+    ubidi_close_nid_postfix(bidi);
+}
+
+void TestMapsAndReordering() {
+    auto* bidi = ubidi_open_nid_postfix();
+    const char16_t text[] = u"abc \u05d0\u05d1";
+    std::int32_t error = Success;
+    ubidi_setPara_nid_postfix(bidi, text, 6, DefaultLtr, nullptr, &error);
+    ExpectInt(error, Success, "ubidi_setPara for maps");
+
+    const auto* levels = ubidi_getLevels_nid_postfix(bidi, &error);
+    ExpectInt(error, Success, "ubidi_getLevels status");
+    const std::uint8_t expectedLevels[] = {0, 0, 0, 0, 1, 1};
+    for (int i = 0; i < 6; ++i) ExpectInt(levels[i], expectedLevels[i], "ubidi_getLevels");
+
+    ExpectInt(ubidi_getVisualIndex_nid_postfix(bidi, 4, &error), 5, "ubidi_getVisualIndex");
+    ExpectInt(ubidi_getLogicalIndex_nid_postfix(bidi, 5, &error), 4, "ubidi_getLogicalIndex");
+    std::int32_t logicalMap[6] = {};
+    std::int32_t visualMap[6] = {};
+    ubidi_getLogicalMap_nid_postfix(bidi, logicalMap, &error);
+    ExpectInt(error, Success, "ubidi_getLogicalMap status");
+    ubidi_getVisualMap_nid_postfix(bidi, visualMap, &error);
+    ExpectInt(error, Success, "ubidi_getVisualMap status");
+    const std::int32_t expectedMap[] = {0, 1, 2, 3, 5, 4};
+    for (int i = 0; i < 6; ++i) {
+        ExpectInt(logicalMap[i], expectedMap[i], "ubidi_getLogicalMap");
+        ExpectInt(visualMap[i], expectedMap[i], "ubidi_getVisualMap");
+    }
+
+    std::int32_t reordered[6] = {};
+    ubidi_reorderLogical_nid_postfix(expectedLevels, 6, reordered);
+    for (int i = 0; i < 6; ++i) ExpectInt(reordered[i], expectedMap[i], "ubidi_reorderLogical");
+    const std::int32_t sourceMap[] = {2, 0, 1};
+    std::int32_t inverted[3] = {};
+    ubidi_invertMap_nid_postfix(sourceMap, inverted, 3);
+    const std::int32_t expectedInverted[] = {1, 2, 0};
+    for (int i = 0; i < 3; ++i) ExpectInt(inverted[i], expectedInverted[i], "ubidi_invertMap");
+
+    char16_t output[8] = {};
+    ExpectInt(ubidi_writeReordered_nid_postfix(bidi, output, 8, 0, &error), 6, "ubidi_writeReordered");
+    ExpectInt(error, Success, "ubidi_writeReordered status");
+    Expect(std::u16string(output) == u"abc \u05d1\u05d0", "ubidi_writeReordered result");
     ubidi_close_nid_postfix(bidi);
 }
 
@@ -527,6 +570,7 @@ int main() {
     TestStatelessHelpers();
     TestStateQueries();
     TestConfigurationAndParagraphs();
+    TestMapsAndReordering();
     TestArguments();
     TestGuestPointers();
     return 0;

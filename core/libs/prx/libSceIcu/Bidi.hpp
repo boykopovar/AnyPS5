@@ -45,4 +45,13 @@ void APS5_VABI ubidi_getParagraphByIndex_nid_postfix(const Icu::BiDi*, std::int3
                                                      std::uint8_t*, std::int32_t*);
 void APS5_VABI ubidi_getClassCallback_nid_postfix(Icu::BiDi*, Icu::BiDiClassCallback*, const void**);
 const char16_t* APS5_VABI ubidi_getText_nid_postfix(const Icu::BiDi*);
+const std::uint8_t* APS5_VABI ubidi_getLevels_nid_postfix(Icu::BiDi*, std::int32_t*);
+std::int32_t APS5_VABI ubidi_getLogicalIndex_nid_postfix(Icu::BiDi*, std::int32_t, std::int32_t*);
+void APS5_VABI ubidi_getLogicalMap_nid_postfix(Icu::BiDi*, std::int32_t*, std::int32_t*);
+std::int32_t APS5_VABI ubidi_getVisualIndex_nid_postfix(Icu::BiDi*, std::int32_t, std::int32_t*);
+void APS5_VABI ubidi_getVisualMap_nid_postfix(Icu::BiDi*, std::int32_t*, std::int32_t*);
+void APS5_VABI ubidi_invertMap_nid_postfix(const std::int32_t*, std::int32_t*, std::int32_t);
+void APS5_VABI ubidi_reorderLogical_nid_postfix(const std::uint8_t*, std::int32_t, std::int32_t*);
+std::int32_t APS5_VABI ubidi_writeReordered_nid_postfix(Icu::BiDi*, char16_t*, std::int32_t, std::uint16_t,
+                                                        std::int32_t*);
 }

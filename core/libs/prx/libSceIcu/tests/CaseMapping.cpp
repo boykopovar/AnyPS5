@@ -284,6 +284,23 @@ void TestComparison() {
     ExpectThrow<std::invalid_argument>([&] { u_caseInsensitivePrefixMatch_nid_postfix(u"a", 1, u"a", 1, 0, &first, &second, nullptr); }, "u_caseInsensitivePrefixMatch null error");
 }
 
+void TestUtf8CaseMap() {
+    std::int32_t error = Success;
+    auto* caseMap = ucasemap_open_nid_postfix("tr", 0, &error);
+    Expect(caseMap != nullptr, "ucasemap_open");
+    ExpectInt(error, Success, "ucasemap_open status");
+    char buffer[64] = {};
+    ExpectInt(ucasemap_utf8ToUpper_nid_postfix(caseMap, buffer, 64, "i stra\xC3\x9F" "e", -1, &error), 10,
+              "ucasemap_utf8ToUpper");
+    ExpectInt(error, Success, "ucasemap_utf8ToUpper status");
+    Expect(std::string(buffer) == "\xC4\xB0 STRASSE", "ucasemap_utf8ToUpper result");
+    ExpectInt(ucasemap_utf8FoldCase_nid_postfix(caseMap, buffer, 64, "Stra\xC3\x9F" "e", -1, &error), 7,
+              "ucasemap_utf8FoldCase");
+    ExpectInt(error, Success, "ucasemap_utf8FoldCase status");
+    Expect(std::string(buffer) == "strasse", "ucasemap_utf8FoldCase result");
+    ExpectThrow<std::invalid_argument>([] { ucasemap_open_nid_postfix("", 0, nullptr); }, "ucasemap_open null status");
+}
+
 }
 
 int main() {
@@ -293,5 +310,6 @@ int main() {
     TestCaseMapOverlap();
     TestCaseMapEdits();
     TestComparison();
+    TestUtf8CaseMap();
     std::puts("ICU case mapping tests passed");
 }

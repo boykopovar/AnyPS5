@@ -361,4 +361,130 @@ const char16_t* APS5_VABI ubidi_getText_nid_postfix(const Icu::BiDi* bidi) {
     return ubidi_getText(Checked(bidi));
 }
 
+const std::uint8_t* APS5_VABI ubidi_getLevels_nid_postfix(Icu::BiDi* bidi, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return nullptr;
+    const auto* levels = ubidi_getLevels(Native(bidi), &status);
+    LeaveStatus(error, status, previous, __func__);
+    return levels;
+}
+
+std::int32_t APS5_VABI ubidi_getLogicalIndex_nid_postfix(Icu::BiDi* bidi, std::int32_t index, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return -1;
+    const auto logical = ubidi_getLogicalIndex(Native(bidi), index, &status);
+    LeaveStatus(error, status, previous, __func__);
+    return logical;
+}
+
+void APS5_VABI ubidi_getLogicalMap_nid_postfix(Icu::BiDi* bidi, std::int32_t* indexMap, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return;
+    const auto length = ubidi_getProcessedLength(Native(bidi));
+    if (length > 0 && !GuestWritable_nid_no_patch(indexMap, static_cast<std::size_t>(length) * sizeof(*indexMap))) {
+        throw std::runtime_error(__func__);
+    }
+    std::vector<std::int32_t> hostMap(static_cast<std::size_t>(std::max(length, 0)));
+    ubidi_getLogicalMap(Native(bidi), hostMap.data(), &status);
+    if (U_SUCCESS(status) && length > 0 &&
+        !GuestCopyOut_nid_no_patch(indexMap, hostMap.data(), hostMap.size() * sizeof(hostMap[0]))) {
+        throw std::runtime_error(__func__);
+    }
+    LeaveStatus(error, status, previous, __func__);
+}
+
+std::int32_t APS5_VABI ubidi_getVisualIndex_nid_postfix(Icu::BiDi* bidi, std::int32_t index, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return -1;
+    const auto visual = ubidi_getVisualIndex(Native(bidi), index, &status);
+    LeaveStatus(error, status, previous, __func__);
+    return visual;
+}
+
+void APS5_VABI ubidi_getVisualMap_nid_postfix(Icu::BiDi* bidi, std::int32_t* indexMap, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return;
+    const auto length = ubidi_getResultLength(Native(bidi));
+    if (length > 0 && !GuestWritable_nid_no_patch(indexMap, static_cast<std::size_t>(length) * sizeof(*indexMap))) {
+        throw std::runtime_error(__func__);
+    }
+    std::vector<std::int32_t> hostMap(static_cast<std::size_t>(std::max(length, 0)));
+    ubidi_getVisualMap(Native(bidi), hostMap.data(), &status);
+    if (U_SUCCESS(status) && length > 0 &&
+        !GuestCopyOut_nid_no_patch(indexMap, hostMap.data(), hostMap.size() * sizeof(hostMap[0]))) {
+        throw std::runtime_error(__func__);
+    }
+    LeaveStatus(error, status, previous, __func__);
+}
+
+void APS5_VABI ubidi_invertMap_nid_postfix(const std::int32_t* source, std::int32_t* destination,
+                                           std::int32_t length) {
+    if (length <= 0) {
+        ubidi_invertMap(source, destination, length);
+        return;
+    }
+    const auto count = static_cast<std::size_t>(length);
+    std::vector<std::int32_t> hostSource(count);
+    if (!GuestCopyIn_nid_no_patch(hostSource.data(), source, count * sizeof(hostSource[0]))) {
+        throw std::runtime_error(__func__);
+    }
+    if (!GuestWritable_nid_no_patch(destination, count * sizeof(*destination))) throw std::runtime_error(__func__);
+    std::vector<std::int32_t> hostDestination(count);
+    ubidi_invertMap(hostSource.data(), hostDestination.data(), length);
+    if (!GuestCopyOut_nid_no_patch(destination, hostDestination.data(), count * sizeof(hostDestination[0]))) {
+        throw std::runtime_error(__func__);
+    }
+}
+
+void APS5_VABI ubidi_reorderLogical_nid_postfix(const std::uint8_t* levels, std::int32_t length,
+                                                std::int32_t* indexMap) {
+    if (length <= 0) {
+        ubidi_reorderLogical(levels, length, indexMap);
+        return;
+    }
+    const auto count = static_cast<std::size_t>(length);
+    std::vector<std::uint8_t> hostLevels(count);
+    if (!GuestCopyIn_nid_no_patch(hostLevels.data(), levels, count)) throw std::runtime_error(__func__);
+    if (!GuestWritable_nid_no_patch(indexMap, count * sizeof(*indexMap))) throw std::runtime_error(__func__);
+    std::vector<std::int32_t> hostMap(count, Unwritten);
+    ubidi_reorderLogical(hostLevels.data(), length, hostMap.data());
+    if (hostMap[0] != Unwritten &&
+        !GuestCopyOut_nid_no_patch(indexMap, hostMap.data(), count * sizeof(hostMap[0]))) {
+        throw std::runtime_error(__func__);
+    }
+}
+
+std::int32_t APS5_VABI ubidi_writeReordered_nid_postfix(Icu::BiDi* bidi, char16_t* destination,
+                                                        std::int32_t capacity, std::uint16_t options,
+                                                        std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    UErrorCode status = U_ZERO_ERROR;
+    std::int32_t previous = 0;
+    if (!EnterStatus(error, status, previous, __func__)) return 0;
+    if (capacity < 0 || (!destination && capacity > 0)) {
+        ubidi_writeReordered(Native(bidi), destination, capacity, options, &status);
+        LeaveStatus(error, status, previous, __func__);
+        return 0;
+    }
+    std::vector<char16_t> hostDestination(static_cast<std::size_t>(capacity));
+    const auto length = ubidi_writeReordered(Native(bidi), hostDestination.data(), capacity, options, &status);
+    const auto written = std::min<std::int32_t>(capacity, length < capacity ? length + 1 : length);
+    if (written > 0 &&
+        !GuestCopyOut_nid_no_patch(destination, hostDestination.data(), static_cast<std::size_t>(written) * sizeof(char16_t))) {
+        throw std::runtime_error(__func__);
+    }
+    LeaveStatus(error, status, previous, __func__);
+    return length;
+}
+
 }
