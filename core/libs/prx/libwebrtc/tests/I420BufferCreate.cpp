@@ -11,6 +11,12 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
@@ -156,8 +162,9 @@ void TestVirtuals() {
     const std::int32_t types[] = {1};
     RequireRuntimeError([&] { CallIndirect<void*, 10>(buffer, &mapped, WebRtcVideoFrameBufferTypes{types, 1}); }, "GetMappedFrameBuffer");
     void* cropped = nullptr;
-    RequireRuntimeError([&] { CallIndirect<void*, 9>(buffer, &cropped, 0, 0, 6, 5, 3, 2); }, "CropAndScale");
-    Require(mapped == nullptr && cropped == nullptr && buffer->refCount.load() == 1);
+    Require(CallIndirect<void*, 9>(buffer, &cropped, 0, 0, 6, 5, 3, 2) == &cropped && cropped != nullptr && cropped != buffer);
+    Require(Call<int, 5>(cropped) == 3 && Call<int, 6>(cropped) == 2 && Call<std::int32_t, 1>(cropped) == 0);
+    Require(mapped == nullptr && buffer->refCount.load() == 1);
     WebRtcGuestString representation;
     std::memset(&representation, 0xcc, sizeof(representation));
     Require(CallIndirect<WebRtcGuestString, 11>(buffer, &representation) == &representation);
@@ -180,10 +187,45 @@ void TestVirtuals() {
     Require(allocations.empty());
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        Require(address_ != nullptr);
+#else
+        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        address_ = mapped;
+#endif
+    }
+    ~GuardedPage() {
+        if (!address_)
+            return;
+#ifdef _WIN32
+        VirtualFree(address_, 0, MEM_RELEASE);
+#else
+        munmap(address_, 4096);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(address_);
+    }
+
+private:
+    void* address_ = nullptr;
+};
+
 void TestInvalid() {
     constexpr int max = std::numeric_limits<int>::max();
     WebRtcRefCountedI420Buffer* buffer = nullptr;
     RequireThrows<std::invalid_argument>([] { _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(nullptr, 2, 2, 2, 1, 1); });
+    {
+        GuardedPage guarded;
+        RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(guarded.As<WebRtcRefCountedI420Buffer*>(), 2, 2, 2, 1, 1); });
+        Require(allocations.empty());
+    }
     const int cases[][5] = {
         {0, 2, 2, 1, 1}, {-1, 2, 2, 1, 1}, {2, 0, 2, 1, 1}, {2, -3, 2, 1, 1}, {4, 2, 3, 2, 2},
         {2, 2, 2, 0, 1}, {2, 2, 2, 1, 0}, {2, 2, 2, -1, 1}, {1, 1, max - 1, 1, 1}, {1, 2, max / 2, 1, 0},

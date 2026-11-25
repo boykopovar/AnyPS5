@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/shaders/SplitSelect_spv.h"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
@@ -11,12 +12,14 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -30,6 +33,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ReadTrapsOverHostPointerImports.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/IndexedIndirectPatches.hpp"
@@ -49,6 +53,7 @@
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libSceAgcDriver/Execution/include/UpscaleMode.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -115,6 +120,7 @@ void ResetCheckpointSnapshots() noexcept;
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <utility>
 
@@ -231,6 +237,17 @@ void DumpDeviceFaultVendorBinary(VkDevice device, PFN_vkGetDeviceFaultInfoEXT fa
 APS5_RUN_REPORT_COMPONENT("libSceAgcDriver")
 
 namespace {
+
+class RdnaProbeShaders {
+public:
+    RdnaProbeShaders() : gcn(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(false); }
+    ~RdnaProbeShaders() { ShaderRecompiler::SetGcnGuestShaders(gcn); }
+    RdnaProbeShaders(const RdnaProbeShaders&) = delete;
+    RdnaProbeShaders& operator=(const RdnaProbeShaders&) = delete;
+
+private:
+    bool gcn;
+};
 
 std::atomic<unsigned long long> descriptorUse[7 * 4];
 
@@ -658,6 +675,7 @@ struct VulkanDevice::State {
     bool hostPointerImport = false;
     std::size_t drawInputsInPlaceBelow = 0;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -724,6 +742,9 @@ struct VulkanDevice::State {
     VkDescriptorSetLayout workgroupMemoryLayout = VK_NULL_HANDLE;
     std::shared_ptr<WorkgroupMemory> workgroupMemory;
     std::shared_ptr<WorkgroupMemory> splitStateMemory;
+    std::shared_ptr<WorkgroupMemory> splitSelectMemory;
+    VkPipelineLayout splitSelectLayout = VK_NULL_HANDLE;
+    VkPipeline splitSelectPipeline = VK_NULL_HANDLE;
     std::shared_ptr<Graphics::Buffer> splitTargets;
     std::uint64_t splitTargetBytes = 0;
     std::mutex scratchPoolsMutex;
@@ -737,6 +758,8 @@ struct VulkanDevice::State {
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
     std::set<ComputePipelineKey> computePipelinesQueued;
     std::set<ComputePipelineKey> computePipelinesFailed;
+    std::mutex prebuiltGraphicsKeysMutex;
+    std::unordered_set<std::uint64_t> prebuiltGraphicsKeys;
     // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
@@ -1244,6 +1267,9 @@ struct VulkanDevice::State {
             repeatedFills.clear();
             workgroupMemory.reset();
             splitStateMemory.reset();
+            splitSelectMemory.reset();
+            if (splitSelectPipeline != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyPipeline>(deviceProc(device, "vkDestroyPipeline"))(device, splitSelectPipeline, nullptr);
+            if (splitSelectLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyPipelineLayout>(deviceProc(device, "vkDestroyPipelineLayout"))(device, splitSelectLayout, nullptr);
             splitTargets.reset();
             scratchPools.clear();
             if (workgroupMemoryLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(deviceProc(device, "vkDestroyDescriptorSetLayout"))(device, workgroupMemoryLayout, nullptr);
@@ -1986,6 +2012,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
 #endif
         if (state->hostPointerImport) deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+        state->readTrapsOverHostPointerImports = ReadTrapsOverHostPointerImportsUsable(driverProperties.driverID);
 #ifndef _WIN32
         if (state->dmaBufImport) {
             deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
@@ -2614,7 +2641,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     state->queueFamily = family;
-    if (plan.present) {
+    if (plan.present && std::getenv("APS5_NO_PRESENT_QUEUE") == nullptr) {
         state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, plan.presentIndex, &state->presentQueue);
         APS5_LOG_OUT("Presentation queue family=%u index=%u", family, plan.presentIndex);
     }
@@ -2850,6 +2877,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
         }
     }
+    std::optional<RdnaProbeShaders> rdnaProbeShaders(std::in_place);
     if (state->float32FlushToZeroCandidate) {
         const auto probeStart = std::chrono::steady_clock::now();
         state->probingFloatControls = true;
@@ -2893,6 +2921,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    rdnaProbeShaders.reset();
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -2987,6 +3016,22 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
 
 namespace {
 thread_local bool buildingAhead = false;
+
+bool PauseClockForPipelines() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("APS5_PAUSE_CLOCK_FOR_PIPELINES");
+        return value != nullptr && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct PipelineWaitClockPause {
+    const bool paused = !buildingAhead && PauseClockForPipelines();
+    PipelineWaitClockPause() { if (paused) KernelPauseGuestClock_nid_no_patch(); }
+    ~PipelineWaitClockPause() { if (paused) KernelResumeGuestClock_nid_no_patch(); }
+    PipelineWaitClockPause(const PipelineWaitClockPause&) = delete;
+    PipelineWaitClockPause& operator=(const PipelineWaitClockPause&) = delete;
+};
 }
 
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
@@ -4989,6 +5034,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.tessellationPipelineCache = state->tessellationPipelineCache;
     context.hostPointerImport = state->hostPointerImport;
     context.dmaBufImport = state->dmaBufImport;
+    context.readTrapsOverHostPointerImports = state->readTrapsOverHostPointerImports;
     context.sparseBinding = state->sparseBinding;
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
     context.sparseResidencyAliased = state->sparseResidencyAliased;
@@ -5144,6 +5190,24 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     }
     const auto layouts = Graphics::DescribeSetLayouts(context, group);
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
+}
+
+bool VulkanDevice::PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    for (const auto& shader : shaders) key = (key ^ (shader.program != nullptr ? shader.program->variantId : 0ull)) * 0x100000001b3ull;
+    {
+        std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+        if (state->prebuiltGraphicsKeys.count(key) != 0) return false;
+    }
+    bool built = false;
+    try {
+        built = PrebuildGraphicsLibraries(stages, shaders);
+    } catch (const std::exception& error) {
+        APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+    }
+    std::lock_guard keyLock(state->prebuiltGraphicsKeysMutex);
+    state->prebuiltGraphicsKeys.insert(key);
+    return built;
 }
 
 std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const {
@@ -6005,6 +6069,62 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     std::snprintf(groupsText, 40, "%ux%ux%u", record.x, record.y, record.z);
 }
 
+void VulkanDevice::recordSplitSelect(const Graphics::Context& context, VkCommandBuffer commands, VkDescriptorSet stateSet, const SplitSlice& slice, std::uint64_t listBase) {
+    constexpr std::uint32_t PushBytes = 32;
+    Graphics::Require(slice.selectTargets.size() <= SplitSelectMaxTargets && slice.selectTargets.size() <= slice.listTargets, "Vulkan dispatch: a split table call round selects more callees than its group lists hold");
+    Graphics::Require(listBase <= std::numeric_limits<std::uint32_t>::max() && slice.lanesPerGroup != 0u, "Vulkan dispatch: a split table call round's group lists start past 2^32 words");
+    if (state->splitSelectPipeline == VK_NULL_HANDLE) {
+        const std::array<VkDescriptorSetLayout, 2> layouts{state->workgroupMemoryLayout, state->workgroupMemoryLayout};
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes};
+        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layoutInfo.setLayoutCount = static_cast<std::uint32_t>(layouts.size());
+        layoutInfo.pSetLayouts = layouts.data();
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &push;
+        Graphics::Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &state->splitSelectLayout), "vkCreatePipelineLayout split select");
+        const auto module = Graphics::CreateShaderModule(context, SPLIT_SELECT_SPV, sizeof(SPLIT_SELECT_SPV), "vkCreateShaderModule split select");
+        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        pipelineInfo.stage.module = module;
+        pipelineInfo.stage.pName = "main";
+        pipelineInfo.layout = state->splitSelectLayout;
+        const auto created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &state->splitSelectPipeline);
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+        Graphics::Check(created, "vkCreateComputePipelines split select");
+    }
+    if (state->splitSelectMemory == nullptr) state->splitSelectMemory = state->StorageMemory(context, SplitSelectWords * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto selectBuffer = state->splitSelectMemory->buffer->Handle();
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    if (slice.selectBegin) {
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, selectBuffer, 0, SplitSelectWords * sizeof(std::uint32_t), 0u);
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        std::vector<std::uint32_t> targets;
+        for (const auto target : slice.selectTargets) {
+            targets.push_back(static_cast<std::uint32_t>(target));
+            targets.push_back(static_cast<std::uint32_t>(target >> 32u));
+        }
+        context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, selectBuffer, SplitSelectTargetWords * sizeof(std::uint32_t), targets.size() * sizeof(std::uint32_t), targets.data());
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    }
+    context.BindComputePipeline(commands, state->splitSelectPipeline);
+    const std::array<VkDescriptorSet, 2> sets{stateSet, state->splitSelectMemory->set};
+    context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, state->splitSelectLayout, 0, static_cast<std::uint32_t>(sets.size()), sets.data(), 0, nullptr);
+    const auto targets = static_cast<std::uint32_t>(slice.selectTargets.size());
+    std::array<std::uint32_t, 8> parameters{slice.lanesPerGroup, ShaderRecompiler::SplitStateAbi::HeaderDwords + slice.targetSlot * slice.capacity, slice.capacity, targets, static_cast<std::uint32_t>(listBase), slice.groups, slice.groupBase, 0u};
+    static_assert(sizeof(parameters) == PushBytes);
+    const auto pushConstants = context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants");
+    const auto dispatch = context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch");
+    pushConstants(commands, state->splitSelectLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, parameters.data());
+    if (slice.groups != 0u) dispatch(commands, (slice.groups + 63u) / 64u, 1, 1);
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    parameters[7] = 1u;
+    pushConstants(commands, state->splitSelectLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, parameters.data());
+    dispatch(commands, (targets + 1u + 63u) / 64u, 1, 1);
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    state->recorder->Keep(state->splitSelectMemory);
+}
+
 void VulkanDevice::SetSplitSlice(const std::optional<SplitSlice>& slice) {
     splitSlice = slice;
 }
@@ -6091,7 +6211,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (record.resources != nullptr) recorder.KeepBytes(record.resources.get(), record.resources->CopiedBytes());
     if (record.bindings != nullptr) {
         recorder.Keep(record.bindings);
-        for (const auto& snapshot : record.bindings->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+        for (const auto& snapshot : record.bindings->snapshots) {
+            if (snapshot.buffer != nullptr) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+        }
     }
     recordStep(PhaseRecordKeeps);
     if (record.dataRefresh != RecordedDispatch::DataRefresh::None) {
@@ -6136,8 +6258,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             const std::pair<std::uint64_t, std::uint64_t> argumentRange{arguments, arguments + 12};
             recorder.NoteAccess(CommandClass::IndirectArguments, Graphics::Recorder::Access{std::span(&argumentRange, 1), {}, {}, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT});
         }
-        auto reads = resources.InPlaceReads();
-        if (record.bindings != nullptr) reads.insert(reads.end(), record.bindings->inPlaceReads.begin(), record.bindings->inPlaceReads.end());
+        const auto reads = resources.InPlaceReads();
         const auto images = resources.StorageImages();
         recorder.NoteAccess(CommandClass::DispatchLeading, Graphics::Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, resources.HoldsLease()});
     }
@@ -6187,10 +6308,13 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     VkBuffer splitStateBuffer = VK_NULL_HANDLE;
     if (split) {
         const auto& slice = *splitSlice;
-        const std::uint64_t bytes = (static_cast<std::uint64_t>(slice.slots) * slice.capacity + ShaderRecompiler::SplitStateAbi::HeaderDwords) * sizeof(std::uint32_t);
+        const std::uint64_t listBase = static_cast<std::uint64_t>(slice.slots) * slice.capacity + ShaderRecompiler::SplitStateAbi::HeaderDwords;
+        const std::uint64_t bytes = (listBase + (slice.listTargets != 0u ? (slice.listTargets + 1ull) * slice.groups : 0ull)) * sizeof(std::uint32_t);
         auto memory = state->SplitStateFor(context, bytes);
         splitStateBuffer = memory->buffer->Handle();
-        const std::array<std::uint32_t, 5> header{slice.capacity, slice.groupBase, record.x, record.y, record.z};
+        if (!slice.selectTargets.empty()) recordSplitSelect(context, commands, memory->set, slice, listBase);
+        const auto listed = slice.listed >= 0;
+        const std::array<std::uint32_t, 7> header{slice.capacity, slice.groupBase, record.x, record.y, record.z, listed ? 1u : 0u, static_cast<std::uint32_t>(listed ? listBase + static_cast<std::uint64_t>(slice.listed) * slice.groups : 0u)};
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, memory->buffer->Handle(), 0, sizeof(header), header.data());
         if (argumentImport != nullptr) {
@@ -6273,7 +6397,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(faultToken)));
     if (faultToken != 0 && state->bufferMarker != nullptr) state->bufferMarker(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->markerBuffer, 0, faultToken);
     if (split) {
-        if (splitSlice->runs.empty()) {
+        if (splitSlice->listed >= 0) {
+            context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, state->splitSelectMemory->buffer->Handle(), (SplitSelectArgumentWords + 4ull * static_cast<std::uint64_t>(splitSlice->listed)) * sizeof(std::uint32_t));
+        } else if (splitSlice->runs.empty()) {
             if (splitGroups != 0) context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, splitGroups, 1, 1);
         } else {
             const auto dispatchBase = context.Function<PFN_vkCmdDispatchBase>("vkCmdDispatchBase");
@@ -6338,7 +6464,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     recordStep(PhaseRecordBind);
     if (record.htileClear.has_value()) Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
-    resources.MarkGpuWrites(recorder, record.bindings.get());
+    resources.MarkGpuWrites(recorder);
     if (record.htileClear.has_value()) {
         Graphics::QueueHtileDepthClear(record.htileClear->first, record.htileClear->second);
         recorder.NotePendingWrite(record.htileClear->first, record.htileClear->second);
@@ -6465,16 +6591,15 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress) {
     const auto pipelineKey = ComputePipelineKey::Of(shader, pushStages != 0);
     std::promise<std::shared_ptr<ComputePipelineObjects>> building;
+    std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
     if (!pipelineKey.identity.Empty()) {
-        std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
-        {
-            std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
-            if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
-            else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
-        }
-        if (other.valid()) return other.get();
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+        if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
+        else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
     }
+    const PipelineWaitClockPause pause;
+    if (other.valid()) return other.get();
     const auto finish = [&](std::shared_ptr<ComputePipelineObjects> built, std::exception_ptr error) {
         if (pipelineKey.identity.Empty()) return built;
         {
