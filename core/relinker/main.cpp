@@ -71,6 +71,7 @@ public:
     void WriteJson(std::string_view document) const {
         std::ostream output(standardOutput);
         output << document << std::flush;
+        if (!output) throw Domain::RelinkerException("Could not write dry-run JSON to stdout");
     }
 
 private:

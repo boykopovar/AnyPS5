@@ -172,6 +172,18 @@ def check_failures(relinker, root):
     source.write_bytes(main_fixture())
     output = root / "output"
     command = ["--skip-sce-module", source, output]
+    before = snapshot(root)
+    reader, writer = os.pipe()
+    os.close(reader)
+    with os.fdopen(writer, "wb") as destination:
+        failed_write = subprocess.run([str(relinker), "--dry-run-json", *map(str, command)],
+                                      cwd=root, stdout=destination, stderr=subprocess.PIPE, text=True,
+                                      encoding="utf-8", restore_signals=False, timeout=15)
+    assert failed_write.returncode == 2, failed_write.stderr
+    assert "FAIL: Could not write dry-run JSON to stdout" in failed_write.stderr, failed_write.stderr
+    assert "Dry run complete" not in failed_write.stderr and "Conversion complete" not in failed_write.stderr
+    assert snapshot(root) == before, "failed JSON write changed the dry-run fixture"
+
     run(relinker, root, ["--autorun", *command], code=1, error="--dry-run conflicts with --autorun")
     run(relinker, root, ["--autorun", *command], code=1, error="--dry-run-json conflicts with --autorun", json_plan=True)
     run(relinker, root, ["--verify-patches", root / "absent.toml", source], code=1,

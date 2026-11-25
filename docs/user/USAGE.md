@@ -78,7 +78,7 @@ relinker [options] <input.elf> <output>
 
 An explicit `--module-dir` also works when the module parent has no `sce_module`, `sce_modules` or `prx` directory. For a homebrew bundle with shared libraries beside its executable, use `--module-dir .`. No empty standard directory is needed. Without an explicit module directory, the standard-directory requirement remains.
 
-Use `--dry-run-json` in place of `--dry-run` for scripts. A successful conversion plan writes one UTF-8 JSON object to stdout. Progress and warnings go to stderr. Conversion failures keep the dry-run exit code and leave stdout empty.
+Use `--dry-run-json` in place of `--dry-run` for scripts. A successful conversion plan writes one UTF-8 JSON object to stdout. Progress and warnings go to stderr. Conversion failures keep the dry-run exit code and leave stdout empty. Paths in the plan must be valid UTF-8. A stdout write error exits nonzero and may leave a partial JSON document.
 
 - `schemaVersion` is `1`. Check it before reading other fields.
 - `target` is `linux`, `windows` or `macos`.
