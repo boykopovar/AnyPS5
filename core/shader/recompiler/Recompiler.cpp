@@ -1138,6 +1138,12 @@ std::vector<std::byte> specializedCacheKey(const CompiledShaderArtifact& artifac
     put(content.low);
     put(content.high);
     put(artifact.vertexInputPatches.size());
+    for (const auto& patch : artifact.vertexInputPatches) {
+        put((static_cast<std::uint64_t>(patch.location) << 32u) | patch.word);
+        for (const auto value : patch.values) put(value);
+    }
+    put(artifact.stencilReferences.size());
+    for (const auto value : artifact.stencilReferences) put(value);
     put(artifact.vertexInputs.size());
     put(artifact.hostSubgroupSize);
     put(artifact.bdaAbiVersion);
