@@ -831,10 +831,6 @@ int APS5_VABI utrie2_get32FromLeadSurrogateCodeUnit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_686Locale8hashCodeEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4329,10 +4325,6 @@ int APS5_VABI _ZN6icu_6813UnicodeString8foldCaseEj_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getLocaleInternal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7052,10 +7044,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSet20applyPropertyPatternERNS_21RuleCharacterIt
 }
 
 int APS5_VABI _ZN6icu_6810UnicodeSetC1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ures_openAvailableLocales_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
