@@ -3131,11 +3131,20 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     thread_local std::vector<std::pair<VkImage, bool>>* passImagesSlot = nullptr;
     auto& passImages = ShaderRecompiler::ThreadOwned(passImagesSlot);
     resources.StorageImages(passImages);
-    InlineList<std::pair<VkImage, bool>, 16> passAttachments;
-    for (const auto& target : record.targets) {
-        if (target != nullptr) passAttachments.EmplaceBack(target->Image(), true);
+    InlineList<PassAttachment, 16> passAttachments;
+    for (std::size_t index = 0; index < record.targets.size(); ++index) {
+        const auto& target = record.targets[index];
+        if (target == nullptr) continue;
+        if (index < state.colors.size()) {
+            const auto& color = state.colors[index];
+            const std::uint32_t firstSlice = target->ImageDepth() > 1u ? color.depthSlice : color.arraySlice;
+            const std::uint32_t sliceCount = target->ImageDepth() > 1u || color.arrayLastSlice != 0u ? color.layers : 1u;
+            passAttachments.EmplaceBack(PassAttachment{target->Image(), true, color.mip, firstSlice, sliceCount});
+        } else {
+            passAttachments.EmplaceBack(PassAttachment{target->Image(), true, 0u, 0u, 0u});
+        }
     }
-    for (const auto image : record.multisampleImages) passAttachments.EmplaceBack(image, true);
+    for (const auto image : record.multisampleImages) passAttachments.EmplaceBack(PassAttachment{image, true, 0u, 0u, 0u});
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
     const auto drawUse = resources.BeginDrawUse(*recorder);
