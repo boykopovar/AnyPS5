@@ -841,6 +841,10 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertEqual(self.json_output(self.trace, "--stacks", str(self.stacks)), expected)
                 self.assertEqual(trace_digest.load_stacks(self.stacks), expected_stacks)
 
+    def test_unicode_line_separator_is_part_of_a_stack_frame_name(self):
+        self.stacks.write_text("root;module\u2028name+0x1 2\r\n", encoding="utf-8")
+        self.assertEqual(trace_digest.load_stacks(self.stacks), [(["root", "module\u2028name+0x1"], 2)])
+
     def test_summary_is_the_line_of_this_trace(self):
         self.assertEqual(self.result()["summary"]["trace"], "aps5-trace-abc-7.json.gz")
 
@@ -1312,7 +1316,7 @@ class TraceDigestTests(unittest.TestCase):
 
     def test_interval_input_rejects_capture_summary(self):
         path = Path(self.directory.name) / "intervals.jsonl"
-        path.write_text("", encoding="utf-8")
+        path.write_text("invalid interval input", encoding="utf-8")
         summary = Path(self.directory.name) / "capture.jsonl"
         summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
         for output in ([], ["--json"]):

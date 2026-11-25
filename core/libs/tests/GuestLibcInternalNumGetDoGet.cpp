@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -1419,7 +1420,7 @@ void CheckAdditionalEdgeCases() {
 int main(int argc, char** argv) {
     Require(argc == 2, "expected libSceLibcInternal path");
 #ifdef _WIN32
-    g_library = LoadLibraryA(argv[1]);
+    g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif

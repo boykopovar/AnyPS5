@@ -66,7 +66,7 @@ def clean_environment(base_env, extra_env, trace_dir, window_kind, window):
             if (not isinstance(name, str) or not name or "=" in name or "\x00" in name or
                     not isinstance(value, str) or "\x00" in value):
                 raise ValueError("environment must contain valid string names and values")
-            if instrumentation_name(name):
+            if instrumentation_name(name) or name.upper() == "APS5_PAD_RECORD":
                 removed.add(name)
                 continue
             if os.name == "nt":
