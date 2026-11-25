@@ -4077,6 +4077,127 @@ static void TestView() {
     Require(threw);
 }
 
+static void TestBundleData() {
+    auto bundle = NKWebKit::Make<NKWebKit::Bundle>();
+    Require(WKGetTypeID(bundle.Get()) == WKBundleGetTypeID());
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+
+    auto* script = JSStringCreateWithUTF8CString_nid_postfix("new Uint8Array([10, 20, 30, 40])");
+    auto* u8Val = JSEvaluateScript(ctx, script, nullptr, nullptr, 1, nullptr);
+    JSStringRelease_nid_postfix(script);
+    Require(u8Val != nullptr);
+
+    const auto* data = WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, u8Val);
+    Require(data != nullptr);
+    Require(WKGetTypeID(data) == WKDataGetTypeID());
+    Require(WKDataGetSize(data) == 4);
+    const auto* bytes = WKDataGetBytes(data);
+    Require(bytes != nullptr);
+    Require(bytes[0] == 10);
+    Require(bytes[1] == 20);
+    Require(bytes[2] == 30);
+    Require(bytes[3] == 40);
+    WKRelease(data);
+
+    auto* emptyScript = JSStringCreateWithUTF8CString_nid_postfix("new Uint8Array([])");
+    auto* emptyVal = JSEvaluateScript(ctx, emptyScript, nullptr, nullptr, 1, nullptr);
+    JSStringRelease_nid_postfix(emptyScript);
+    Require(emptyVal != nullptr);
+    const auto* emptyData = WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, emptyVal);
+    Require(emptyData != nullptr);
+    Require(WKDataGetSize(emptyData) == 0);
+    WKRelease(emptyData);
+
+    auto* offsetScript = JSStringCreateWithUTF8CString_nid_postfix(
+        "var buf = new ArrayBuffer(8);\n"
+        "var u8 = new Uint8Array(buf);\n"
+        "u8[0] = 1; u8[1] = 2; u8[2] = 3; u8[3] = 4;\n"
+        "u8[4] = 5; u8[5] = 6; u8[6] = 7; u8[7] = 8;\n"
+        "new Uint8Array(buf, 2, 4);");
+    auto* offsetVal = JSEvaluateScript(ctx, offsetScript, nullptr, nullptr, 1, nullptr);
+    JSStringRelease_nid_postfix(offsetScript);
+    Require(offsetVal != nullptr);
+    const auto* offsetData = WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, offsetVal);
+    Require(offsetData != nullptr);
+    Require(WKDataGetSize(offsetData) == 4);
+    const auto* offsetBytes = WKDataGetBytes(offsetData);
+    Require(offsetBytes != nullptr);
+    Require(offsetBytes[0] == 3);
+    Require(offsetBytes[1] == 4);
+    Require(offsetBytes[2] == 5);
+    Require(offsetBytes[3] == 6);
+    WKRelease(offsetData);
+
+    auto* clampedScript = JSStringCreateWithUTF8CString_nid_postfix("new Uint8ClampedArray([5, 15, 25])");
+    auto* clampedVal = JSEvaluateScript(ctx, clampedScript, nullptr, nullptr, 1, nullptr);
+    JSStringRelease_nid_postfix(clampedScript);
+    Require(clampedVal != nullptr);
+    bool threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, clampedVal);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto* numVal = JSValueMakeNumber(ctx, 42.0);
+    threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, numVal);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto* f32Script = JSStringCreateWithUTF8CString_nid_postfix("new Float32Array([1.0, 2.0])");
+    auto* f32Val = JSEvaluateScript(ctx, f32Script, nullptr, nullptr, 1, nullptr);
+    JSStringRelease_nid_postfix(f32Script);
+    threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(bundle.Get(), ctx, f32Val);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(nullptr, ctx, u8Val);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+        WKBundleCreateWKDataFromUInt8Array(wrongObj.Get(), ctx, u8Val);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleCreateWKDataFromUInt8Array(bundle.Get(), nullptr, u8Val);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    JSGlobalContextRelease(ctx);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -4101,6 +4222,7 @@ int main() {
     TestBundlePagination();
     TestBundleFrameForms();
     TestBundleFrameActions();
+    TestBundleData();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

@@ -8183,9 +8183,6 @@ int APS5_VABI WKAccessibilityRootObject() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleCreateWKDataFromUInt8Array() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleFrameCopyChildFrames() {
     NotImplemented_nid_no_patch(__func__);

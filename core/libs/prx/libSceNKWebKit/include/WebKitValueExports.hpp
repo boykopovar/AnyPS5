@@ -101,6 +101,7 @@ void APS5_VABI WKBundleClearHistoryForTesting(const void* bundleRef);
 void APS5_VABI WKBundleClearResourceLoadStatistics(const void* bundleRef);
 std::size_t APS5_VABI WKBundleGetJavaScriptObjectsCount(const void* bundleRef);
 bool APS5_VABI WKBundleIsPageBoxVisible(const void* bundleRef, const void* frameRef, int pageIndex);
+const void* APS5_VABI WKBundleCreateWKDataFromUInt8Array(const void* bundleRef, NKWebKit::JSContextRef contextRef, NKWebKit::JSValueRef valueRef);
 int APS5_VABI WKBundleNumberOfPages(const void* bundleRef, const void* frameRef, double pageWidthInPixels, double pageHeightInPixels);
 void APS5_VABI WKBundleReleaseMemory(const void* bundleRef);
 void APS5_VABI WKBundleRemoveOriginAccessAllowListEntry(const void* bundleRef, const void* sourceOriginRef, const void* destinationProtocolRef, const void* destinationHostRef, bool allowDestinationSubdomains);

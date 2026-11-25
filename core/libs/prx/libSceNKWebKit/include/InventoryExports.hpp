@@ -36,7 +36,6 @@ int APS5_VABI WKBundleBackForwardListItemHasCachedPageExpired();
 int APS5_VABI WKBundleBackForwardListItemIsInBackForwardCache();
 int APS5_VABI WKBundleBackForwardListItemIsSame();
 int APS5_VABI WKBundleBackForwardListItemIsTargetItem();
-int APS5_VABI WKBundleCreateWKDataFromUInt8Array();
 int APS5_VABI WKBundleFileHandleCreateWithPath();
 int APS5_VABI WKBundleFrameCopyChildFrames();
 int APS5_VABI WKBundleFrameCopyName();
