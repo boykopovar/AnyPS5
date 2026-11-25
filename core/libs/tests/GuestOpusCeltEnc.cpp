@@ -421,13 +421,30 @@ void RequireMultistream(int callerApplication) {
     Require(out == 0);
 
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 3) == EncoderError(0x0C));
-    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 1) == 0);
     out = 0;
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
-    Require(out == 2);
+    Require(out == 1);
+    RequireThrows([&] { sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2); });
+    out = 99;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 1);
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, OPUS_AUTO) == 0);
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
     Require(out == 0);
+
+    std::array<std::uint8_t, 1024> coupledState{};
+    coupledState.fill(0x5Au);
+    Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(coupledState), 48000, 2, 2, identity.data(), callerApplication) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(coupledState), OPUS_SET_FORCE_CHANNELS_REQUEST, 2) == 0);
+    out = 0;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(coupledState), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 2);
+    Require(Word(coupledState.data(), 0x9Cu) == 1u);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(coupledState), OPUS_SET_FORCE_CHANNELS_REQUEST, OPUS_AUTO) == 0);
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(coupledState), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 0);
+    Require(coupledState[msStateSize] == 0x5Au);
 
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_SIGNAL_REQUEST, 3003) == EncoderError(0x12));
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_SIGNAL_REQUEST, OPUS_SIGNAL_VOICE) == 0);
@@ -462,6 +479,12 @@ void RequireMultistream(int callerApplication) {
 
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_RESET_STATE) == 0);
     Require(Word(state.data(), 0x9Cu) == 0u);
+    RequireThrows([&] { sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2); });
+    Require(Word(state.data(), 0x9Cu) == 0u);
+    Require(Word(state.data(), 0x38u) == 0u);
+    out = 99;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
+    Require(out == 0);
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_COMPLEXITY_REQUEST, &out) == 0);
     Require(out == 10);
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_VBR_REQUEST, &out) == 0);

@@ -289,6 +289,19 @@ OpusMSEncoder* findMultistreamCodecLocked(const OpusCeltMultistreamEncoder* stat
     return found->second->codec.get();
 }
 
+int applyMultistreamSetter(OpusCeltMultistreamEncoder* state, int request, std::size_t offset, std::uint32_t storedValue, int codecArg) {
+    std::lock_guard lock(multistreamMutex);
+    if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
+    if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
+        if (opus_multistream_encoder_ctl(codec, request, static_cast<opus_int32>(codecArg)) != OPUS_OK) {
+            throw std::runtime_error("OpusCeltEnc: libopus rejected multistream ctl");
+        }
+    }
+    writeGuestStateWord(state, offset, storedValue);
+    writeGuestStateWord(state, multistreamDirtyOffset, 1u);
+    return 0;
+}
+
 int dispatchMultistreamCtl(OpusCeltMultistreamEncoder* state, int request, std::uintptr_t arg0, std::uintptr_t arg1) {
     if (request == requestMinusOne) {
         auto* out0 = reinterpret_cast<std::int32_t*>(arg0);
@@ -325,120 +338,51 @@ int dispatchMultistreamCtl(OpusCeltMultistreamEncoder* state, int request, std::
             const int maxBitrate = (streams <= 5 && streams + coupledStreams <= 8) ? 720000 : 1080000;
             if (intArg < 6000 || intArg > maxBitrate) return encoderError(bitrateErrorOffset);
         }
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamBitrateOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_BITRATE_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
+        return applyMultistreamSetter(state, OPUS_SET_BITRATE_REQUEST, multistreamBitrateOffset, static_cast<std::uint32_t>(intArg), intArg);
     }
     case OPUS_GET_BITRATE_REQUEST:
         return readGuestOutput(multistreamEffectiveBitrateOffset);
-    case OPUS_SET_MAX_BANDWIDTH_REQUEST: {
+    case OPUS_SET_MAX_BANDWIDTH_REQUEST:
         if (!acceptedMultistreamBandwidth(intArg)) return encoderError(maxBandwidthErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamMaxBandwidthOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_MAX_BANDWIDTH_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_MAX_BANDWIDTH_REQUEST, multistreamMaxBandwidthOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_MAX_BANDWIDTH_REQUEST:
         return readGuestOutput(multistreamMaxBandwidthOffset);
-    case OPUS_SET_VBR_REQUEST: {
+    case OPUS_SET_VBR_REQUEST:
         if (static_cast<std::uint32_t>(intArg) > 1u) return encoderError(vbrErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamVbrOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_VBR_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_VBR_REQUEST, multistreamVbrOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_VBR_REQUEST:
         return readGuestOutput(multistreamVbrOffset);
-    case OPUS_SET_BANDWIDTH_REQUEST: {
+    case OPUS_SET_BANDWIDTH_REQUEST:
         if (intArg != OPUS_AUTO && !acceptedMultistreamBandwidth(intArg)) return encoderError(bandwidthErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamBandwidthOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_BANDWIDTH_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_BANDWIDTH_REQUEST, multistreamBandwidthOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_BANDWIDTH_REQUEST:
         return readGuestOutput(multistreamBandwidthOffset);
-    case OPUS_SET_COMPLEXITY_REQUEST: {
+    case OPUS_SET_COMPLEXITY_REQUEST:
         if (static_cast<std::uint32_t>(intArg) > 10u) return encoderError(complexityErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamComplexityOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_COMPLEXITY_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_COMPLEXITY_REQUEST, multistreamComplexityOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_COMPLEXITY_REQUEST:
         return readGuestOutput(multistreamComplexityOffset);
-    case OPUS_SET_PACKET_LOSS_PERC_REQUEST: {
+    case OPUS_SET_PACKET_LOSS_PERC_REQUEST:
         if (static_cast<std::uint32_t>(intArg) > 100u) return encoderError(packetLossErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamPacketLossOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_PACKET_LOSS_PERC_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_PACKET_LOSS_PERC_REQUEST, multistreamPacketLossOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_PACKET_LOSS_PERC_REQUEST:
         return readGuestOutput(multistreamPacketLossOffset);
-    case OPUS_SET_VBR_CONSTRAINT_REQUEST: {
+    case OPUS_SET_VBR_CONSTRAINT_REQUEST:
         if (static_cast<std::uint32_t>(intArg) > 1u) return encoderError(vbrConstraintErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamVbrConstraintOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_VBR_CONSTRAINT_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_VBR_CONSTRAINT_REQUEST, multistreamVbrConstraintOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_VBR_CONSTRAINT_REQUEST:
         return readGuestOutput(multistreamVbrConstraintOffset);
     case OPUS_SET_FORCE_CHANNELS_REQUEST: {
         if (intArg != 1 && intArg != 2 && intArg != OPUS_AUTO) return encoderError(forceChannelsErrorOffset);
         const std::uint32_t stored = (intArg == OPUS_AUTO) ? 0u : static_cast<std::uint32_t>(intArg);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamForceChannelsOffset, stored);
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_FORCE_CHANNELS_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
+        return applyMultistreamSetter(state, OPUS_SET_FORCE_CHANNELS_REQUEST, multistreamForceChannelsOffset, stored, intArg);
     }
     case OPUS_GET_FORCE_CHANNELS_REQUEST:
         return readGuestOutput(multistreamForceChannelsOffset);
     case OPUS_SET_SIGNAL_REQUEST: {
         if (intArg != OPUS_SIGNAL_VOICE && intArg != OPUS_SIGNAL_MUSIC && intArg != OPUS_AUTO) return encoderError(signalErrorOffset);
         const std::uint32_t stored = (intArg == OPUS_AUTO) ? 0u : static_cast<std::uint32_t>(intArg);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamSignalOffset, stored);
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_SIGNAL_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
+        return applyMultistreamSetter(state, OPUS_SET_SIGNAL_REQUEST, multistreamSignalOffset, stored, intArg);
     }
     case OPUS_GET_SIGNAL_REQUEST:
         return readGuestOutput(multistreamSignalOffset);
@@ -452,25 +396,19 @@ int dispatchMultistreamCtl(OpusCeltMultistreamEncoder* state, int request, std::
     case OPUS_RESET_STATE: {
         std::lock_guard lock(multistreamMutex);
         if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        resetMultistreamState(state);
         if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_RESET_STATE);
+            if (opus_multistream_encoder_ctl(codec, OPUS_RESET_STATE) != OPUS_OK) {
+                throw std::runtime_error("OpusCeltEnc: libopus did not reset the multistream encoder");
+            }
         }
+        resetMultistreamState(state);
         return 0;
     }
     case OPUS_GET_SAMPLE_RATE_REQUEST:
         return readGuestOutput(multistreamRateOffset);
-    case OPUS_SET_PREDICTION_DISABLED_REQUEST: {
+    case OPUS_SET_PREDICTION_DISABLED_REQUEST:
         if (static_cast<std::uint32_t>(intArg) > 1u) return encoderError(predictionErrorOffset);
-        std::lock_guard lock(multistreamMutex);
-        if (!hasStateMarker(state, multistreamMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-        writeGuestStateWord(state, multistreamPredictionOffset, static_cast<std::uint32_t>(intArg));
-        writeGuestStateWord(state, multistreamDirtyOffset, 1u);
-        if (OpusMSEncoder* codec = findMultistreamCodecLocked(state)) {
-            opus_multistream_encoder_ctl(codec, OPUS_SET_PREDICTION_DISABLED_REQUEST, static_cast<opus_int32>(intArg));
-        }
-        return 0;
-    }
+        return applyMultistreamSetter(state, OPUS_SET_PREDICTION_DISABLED_REQUEST, multistreamPredictionOffset, static_cast<std::uint32_t>(intArg), intArg);
     case OPUS_GET_PREDICTION_DISABLED_REQUEST:
         return readGuestOutput(multistreamPredictionOffset);
     default:
