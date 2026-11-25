@@ -1,6 +1,8 @@
 import argparse
+from collections import Counter, defaultdict
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -8,6 +10,8 @@ from performance_compare import unique_json_object
 
 
 DIAGNOSTIC_PREVIEW_LIMIT = 5
+MAX_REPORT_COUNT = (1 << 53) - 1
+
 
 def text(value):
     if not isinstance(value, str) or not value:
@@ -46,19 +50,7 @@ def total_count(items, key):
 
 
 def render(report):
-    if (not isinstance(report, dict) or report.get("format") != "anyps5-report"
-            or type(report.get("version")) is not int or report["version"] != 1):
-        raise ValueError("expected an AnyPS5 run report, version 1")
-    for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
-        if not isinstance(report.get(key), dict):
-            raise ValueError(f"report field {key!r} must be an object")
-    for key in ("milestones", "missing", "shaders", "unsupported"):
-        if type(report["coverage"].get(key)) is not bool:
-            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
-    for key in ("recovered", "incomplete"):
-        if type(report["run"].get(key)) is not bool:
-            raise ValueError(f"report field 'run.{key}' must be a boolean")
-
+    validate_report(report)
     game = report["game"]
     system = report["system"]
     run = report["run"]
@@ -156,18 +148,174 @@ def render(report):
     return "\n".join(lines)
 
 
+def validate_report(report):
+    if (not isinstance(report, dict) or report.get("format") != "anyps5-report"
+            or type(report.get("version")) is not int or report["version"] != 1):
+        raise ValueError("expected an AnyPS5 run report, version 1")
+    for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
+        if not isinstance(report.get(key), dict):
+            raise ValueError(f"report field {key!r} must be an object")
+    for key in ("milestones", "missing", "shaders", "unsupported"):
+        if type(report["coverage"].get(key)) is not bool:
+            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
+    for key in ("recovered", "incomplete"):
+        if type(report["run"].get(key)) is not bool:
+            raise ValueError(f"report field 'run.{key}' must be a boolean")
+
+
+def triage_text(section, field, pattern, nullable=False):
+    key = field.rsplit(".", 1)[-1]
+    value = section.get(key, ...)
+    if nullable and value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        raise ValueError(f"invalid report field '{field}'")
+    return value
+
+
+def triage_choice(section, field, choices):
+    value = section.get(field.rsplit(".", 1)[-1])
+    if value not in choices:
+        raise ValueError(f"invalid report field '{field}'")
+    return value
+
+
+def triage_count(value, field, minimum=0):
+    if type(value) is not int or not minimum <= value <= MAX_REPORT_COUNT:
+        raise ValueError(f"invalid report field '{field}'")
+    return value
+
+
+def triage_record(report):
+    validate_report(report)
+    build = report.get("anyps5")
+    if not isinstance(build, dict):
+        raise ValueError("report field 'anyps5' must be an object")
+    modified = build.get("modified", ...)
+    if modified is not None and type(modified) is not bool:
+        raise ValueError("invalid report field 'anyps5.modified'")
+    game = report["game"]
+    identity = (
+        triage_text(game, "game.titleId", r"[A-Z]{4}[0-9]{5}", nullable=True),
+        triage_text(game, "game.contentVersion", r"[0-9A-Za-z._-]{1,32}", nullable=True),
+        triage_text(build, "anyps5.commit", r"[0-9a-f]{40}", nullable=True),
+        triage_text(build, "anyps5.release", r"v[0-9A-Za-z][0-9A-Za-z._-]{0,63}", nullable=True),
+        modified,
+    )
+    run = report["run"]
+    stop = report["stop"]
+    run_id = triage_text(run, "run.id", r"[0-9a-f]{32}")
+    outcome = (
+        triage_choice(run, "run.exit", ("clean", "crash", "abort", "killed")),
+        triage_choice(run, "run.stage", ("unknown", "loads", "starts", "first-draw", "presents")),
+        triage_choice(stop, "stop.kind",
+                      ("none", "missing-function", "unsupported-shader", "unsupported-format", "crash", "assert", "other")),
+        triage_choice(stop, "stop.reason", ("guest-exit", "quit-requested", "runtime-stop", "crash", "unclean-unknown", "other")),
+    )
+    if not report["coverage"]["milestones"] and outcome[1] != "unknown":
+        raise ValueError("report contains a recorded stage with coverage.milestones off")
+    if "functions" not in report["missing"]:
+        raise ValueError("report field 'missing.functions' is required")
+    functions = Counter()
+    for entry in diagnostic_entries(report, "missing", "functions"):
+        library = triage_text(entry, "missing.functions.library", r"[A-Za-z0-9_.-]{1,64}", nullable=True)
+        name = triage_text(entry, "missing.functions.name", r"[A-Za-z0-9_.$]{1,128}")
+        functions[library, name] += triage_count(entry.get("calls"), "missing.functions.calls", minimum=1)
+    omitted = triage_count(report["truncated"].get("functions"), "truncated.functions")
+    if not report["coverage"]["missing"]:
+        if functions or omitted:
+            raise ValueError("report contains missing function data with coverage.missing off")
+        coverage = "not_collected"
+    elif omitted or run["recovered"] or run["incomplete"]:
+        coverage = "partial"
+    else:
+        coverage = "complete"
+    return run_id, identity, (outcome, coverage, run["recovered"], run["incomplete"], functions)
+
+
+def summarize_group(identity, records):
+    outcomes = Counter()
+    coverage = dict.fromkeys(("complete", "complete_without_observations", "partial", "not_collected"), 0)
+    calls = Counter()
+    runs_by_function = Counter()
+    recovered = incomplete = 0
+    for outcome, status, was_recovered, was_incomplete, functions in records:
+        outcomes[outcome] += 1
+        coverage[status] += 1
+        if status == "complete" and not functions:
+            coverage["complete_without_observations"] += 1
+        calls.update(functions)
+        runs_by_function.update(functions.keys())
+        recovered += was_recovered
+        incomplete += was_incomplete
+
+    title_id, content_version, commit, release, modified = identity
+    return {
+        "title_id": title_id, "content_version": content_version,
+        "build_commit": commit, "build_release": release, "build_modified": modified,
+        "runs": len(records), "recovered_runs": recovered, "incomplete_runs": incomplete,
+        "outcomes": [
+            {"exit": exit_kind, "stage": stage, "stop_kind": kind, "stop_reason": reason, "runs": count}
+            for (exit_kind, stage, kind, reason), count in sorted(outcomes.items())
+        ],
+        "missing_function_coverage": coverage,
+        "missing_functions": [
+            {"library": library, "name": name, "observed_calls": calls[library, name], "runs": runs_by_function[library, name]}
+            for library, name in sorted(calls, key=lambda key: (key[0] or "", key[1]))
+        ],
+    }
+
+
+def read_report(path):
+    return json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
+
+
+def triage(paths):
+    seen = {}
+    groups = defaultdict(list)
+    for index, path in enumerate(paths, 1):
+        try:
+            report = read_report(path)
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f"report {index}: could not read the input as UTF-8") from error
+        except (ValueError, RecursionError) as error:
+            raise ValueError(f"report {index}: invalid JSON") from error
+        try:
+            run_id, identity, record = triage_record(report)
+        except ValueError as error:
+            raise ValueError(f"report {index}: {error}") from error
+        previous = seen.get(run_id)
+        if previous is not None:
+            if previous != (identity, record):
+                raise ValueError(f"report {index}: conflicting evidence for an already seen run ID")
+            continue
+        seen[run_id] = (identity, record)
+        groups[identity].append(record)
+    return {
+        "format": "anyps5-run-triage", "version": 1,
+        "input_reports": len(paths), "unique_runs": len(seen), "duplicate_reports": len(paths) - len(seen),
+        "groups": [summarize_group(identity, groups[identity])
+                   for identity in sorted(groups, key=lambda key: tuple(map(str, key)))],
+    }
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Print a readable summary of a local AnyPS5 run report.")
-    parser.add_argument("report", type=Path, help="path to anyps5-report.json")
+    parser.add_argument("--triage", action="store_true", help="summarize multiple reports as JSON")
+    parser.add_argument("report", type=Path, nargs="+", help="path to anyps5-report.json")
     args = parser.parse_args()
+    if not args.triage and len(args.report) != 1:
+        parser.error("multiple report paths require --triage")
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
-        print(render(report))
+        if args.triage:
+            print(json.dumps(triage(args.report), indent=2))
+        else:
+            print(render(read_report(args.report[0])))
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
         return 2
