@@ -1,7 +1,6 @@
 #include "prx/libScePsml_debug/include/Api.hpp"
 #include "prx/libScePsml_debug/include/LaterExports.hpp"
 #include "prx/libkernel/libkernel.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -144,9 +143,7 @@ std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* para
 }
 
 bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
- const int savedErrno = errno;
  const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
- errno = savedErrno;
  return copied;
 }
 
