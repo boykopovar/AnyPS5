@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cfenv>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -45,6 +47,39 @@ int main() {
     Require(Near(cexpl_nid_postfix(Make(0.0L, pi)), -1.0L, 0.0L));
     Require(Near(csinl_nid_postfix(i), 0.0L, std::sinh(1.0L)));
     Require(Near(clogl_nid_postfix(Make(-1.0L, 0.0L)), 0.0L, pi));
+    const auto nearAxis = clogl_nid_postfix(Make(1.0L, -0x1p-80L));
+    Require(__real__ nearAxis == 0x1p-161L && __imag__ nearAxis == -0x1p-80L);
+    const auto nearImaginaryAxis = clogl_nid_postfix(Make(-0x1p-65L, -1.0L));
+    Require(__real__ nearImaginaryAxis == 0x1p-131L && __imag__ nearImaginaryAxis < 0.0L);
+    using Limits = std::numeric_limits<long double>;
+    const long double step = std::ldexp(1.0L, -(Limits::digits / 2));
+    const long double square = step * step;
+    const auto insideCircle = clogl_nid_postfix(Make(1.0L - square, step));
+    Require(std::fabs(__real__ insideCircle + square / 2) <= square * Limits::epsilon());
+    const auto outsideCircle = clogl_nid_postfix(Make(1.0L - 2 * square, 2 * step));
+    Require(__real__ outsideCircle == 2 * square * square);
+    const int originalRounding = std::fegetround();
+    const int modes[] = {FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
+    for (int mode : modes) {
+        Require(std::fesetround(mode) == 0);
+        const auto directed = clogl_nid_postfix(Make(1.0L - 2 * square, 2 * step));
+        Require(std::fegetround() == mode);
+        Require(std::fabs(__real__ directed - 2 * square * square) <= 4 * square * square * Limits::epsilon());
+    }
+    Require(std::fesetround(originalRounding) == 0);
+    const auto belowCut = clogl_nid_postfix(Make(-1.0L, -0.0L));
+    Require(__real__ belowCut == 0.0L && !std::signbit(__real__ belowCut) && __imag__ belowCut == -pi);
+    constexpr int exponent = (Limits::min_exponent - Limits::digits) / 2 + 1;
+    const auto subnormal = clogl_nid_postfix(Make(1.0L, std::ldexp(1.0L, exponent)));
+    Require(__real__ subnormal == std::ldexp(1.0L, 2 * exponent - 1));
+    const long double scales[] = {Limits::max(), Limits::denorm_min()};
+    for (long double scale : scales) {
+        const auto diagonal = clogl_nid_postfix(Make(scale, scale));
+        const long double expected = std::log(scale) + std::log(2.0L) / 2;
+        Require(std::isfinite(__real__ diagonal));
+        Require(std::fabs(__real__ diagonal - expected) <= 2 * std::fabs(expected) * Limits::epsilon());
+        Require(__imag__ diagonal == pi / 4);
+    }
     Require(Near(cpowl_nid_postfix(Make(2.0L, 0.0L), Make(2.0L, 0.0L)), 4.0L, 0.0L));
     Require(Near(cpowl_nid_postfix(i, Make(2.0L, 0.0L)), -1.0L, 0.0L));
     Require(Near(csqrtl_nid_postfix(Make(-4.0L, -0.0L)), 0.0L, -2.0L));

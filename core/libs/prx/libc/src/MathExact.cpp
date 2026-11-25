@@ -23,6 +23,32 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/*-
+ * Copyright (c) 2013 Bruce D. Evans
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/* https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/msun/src/s_clogl.c */
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <array>
@@ -678,6 +704,41 @@ ExtendedPair MultiplyExact(long double a, long double b) {
     return result;
 }
 
+long double LogNearUnitMagnitude(long double a, long double b) {
+    constexpr long double Epsilon = std::numeric_limits<long double>::epsilon();
+    if (a == 1.0L) {
+        if (b <= Epsilon) return (b * 0.5L) * b;
+        return 0.5L * std::log1p(b * b);
+    }
+    if (b < Epsilon * Epsilon) return std::log(a);
+    const int rounding = std::fegetround();
+    if (rounding != FE_TONEAREST) std::fesetround(FE_TONEAREST);
+    volatile long double major = a, minor = b;
+    const ExtendedPair xSquare = MultiplyExact(major, major);
+    const ExtendedPair ySquare = MultiplyExact(minor, minor);
+    const ExtendedPair norm = AddExact(xSquare.hi, ySquare.hi);
+    const ExtendedPair centered = AddExact(norm.hi, -1.0L);
+    const ExtendedPair offset = AddExact(centered.hi, centered.lo + norm.lo);
+    const ExtendedPair residual = AddExact(xSquare.lo, ySquare.lo);
+    const ExtendedPair high = AddExact(offset.hi, residual.hi);
+    const ExtendedPair low = AddExact(offset.lo, residual.lo);
+    const ExtendedPair total = AddExact(high.hi, high.lo + low.hi);
+    volatile long double head = total.hi, tail = low.lo + total.lo;
+    if (rounding != FE_TONEAREST) std::fesetround(rounding);
+    return 0.5L * std::log1p(head + tail);
+}
+
+long double ComplexLogMagnitude(long double x, long double y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return std::log(std::hypot(x, y));
+    const long double ax = std::fabs(x), ay = std::fabs(y);
+    const long double a = std::max(ax, ay), b = std::min(ax, ay);
+    if (a >= 0.5L && a <= 2.0L) return LogNearUnitMagnitude(a, b);
+    const long double logA = std::log(a);
+    if (b == 0.0L || std::ilogb(a) - std::ilogb(b) > std::numeric_limits<long double>::digits) return logA;
+    const long double ratio = b / a;
+    return logA + 0.5L * std::log1p(ratio * ratio);
+}
+
 long double FmaProductDominates(long double x, long double y, long double z, int rounding) {
     std::feraiseexcept(FE_INEXACT);
     constexpr long double Infinity = std::numeric_limits<long double>::infinity();
@@ -744,6 +805,14 @@ long double FmaScaled(long double xs, long double ys, long double zs, int spread
 }
 
 extern "C" {
+
+__complex__ long double APS5_VABI clogl_nid_postfix(__complex__ long double z) {
+    const long double x = __real__ z;
+    const long double y = __imag__ z;
+    __real__ z = ComplexLogMagnitude(x, y);
+    __imag__ z = std::atan2(y, x);
+    return z;
+}
 
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y) { return std::copysign(x, y); }
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y) {
