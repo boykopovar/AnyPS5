@@ -28,6 +28,7 @@ constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format8888SNorm = 57;
 constexpr std::uint32_t FormatBc4UNorm = 175;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t Format8UInt = 5;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
@@ -182,7 +183,8 @@ int main() {
         RequireSame(Sample(*device, Format8888SNorm, FilterPoint, ForceDegamma), forcedPoint, "8_8_8_8_SNORM, point", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
         FillInput(false);
         RequireSame(Sample(*device, Format8888SNorm, FilterBilinear, ForceDegamma), forcedBilinear, "8_8_8_8_SNORM, bilinear", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
-        Reject(*device, Format32UInt, "guest format 20, which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding");
+        RequireSame(Sample(*device, Format32UInt, FilterPoint, ForceDegamma), Sample(*device, Format32UInt, FilterPoint, 0u), "32_UINT, point");
+        Reject(*device, Format8UInt, "guest format 5, which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding");
         std::puts("image sample force degamma tests passed");
         return 0;
     } catch (const std::exception& error) {

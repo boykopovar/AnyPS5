@@ -205,7 +205,7 @@ def changed_paths(path):
     if b"\0" in data:
         return [name for name in data.decode("utf-8").split("\0") if name]
     text = data.decode("utf-8-sig")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return [line for line in re.split(r"\r\n?|\n", text) if line]
 
 
 def dependency_path(data, base):
@@ -463,7 +463,13 @@ def main(argv=None):
     except (OSError, KeyError, ValueError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "targets":
-        _, listed = build.tests("-R", args.regex)
+        try:
+            _, listed = build.tests("-R", args.regex)
+        except json.JSONDecodeError as error:
+            marker = "RegularExpression::compile():"
+            _, found, tail = error.doc.partition(marker)
+            diagnostic = marker + tail.partition("\n")[0] if found else str(error)
+            parser.error(f"ctest -R {args.regex}: {diagnostic}")
         if not listed:
             parser.error(f"no test matches {args.regex}")
         wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}

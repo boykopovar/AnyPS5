@@ -253,14 +253,6 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
-        struct InPlace {
-            std::size_t allocation;
-            VkBuffer buffer;
-            VkDeviceSize offset;
-            std::size_t bytes;
-        };
-        std::vector<InPlace> inPlace;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -271,7 +263,6 @@ public:
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
-        bool dispatchInPlace = false;
     };
     struct DrawUse {
         DrawUse() = default;
@@ -303,7 +294,7 @@ public:
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
     // once the work completed.
-    void MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings = nullptr);
+    void MarkGpuWrites(Recorder& recorder);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
@@ -577,7 +568,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
-    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
+    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry, bool counted = true) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);

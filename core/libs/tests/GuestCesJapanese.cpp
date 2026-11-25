@@ -277,6 +277,11 @@ int main() {
     Require(consumed == 2 && produced == 3 && std::memcmp(utf8, "\xE6\x97\xA5", 3) == 0);
     Require(sceCesSJisToUtf8(sjis, Bytes("\x93\xFA"), 2, &consumed, utf8, 2, &produced) == dstBufferEnd);
 
+    consumed = 0xBBBBBBBB;
+    produced = 0xBBBBBBBB;
+    Require(sceCesSJisToUtf8(sjis, Bytes("\x82\xA0"), 2, &consumed, nullptr, 16, &produced) == invalidDstBuffer);
+    Require(consumed == 2 && produced == 3);
+
     std::uint16_t utf16 = 0;
     Require(sceCesSJisToUtf16(sjis, Bytes("\x82\xA0"), 2, &consumed, &utf16, 1, &produced) == 0 && utf16 == 0x3042 && produced == 1);
     Require(sceCesSJisToUtf16(sjis, Bytes("\x82\xA0"), 2, &consumed, &utf16, 0, &produced) == dstBufferEnd);

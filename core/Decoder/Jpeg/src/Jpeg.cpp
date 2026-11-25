@@ -201,4 +201,44 @@ std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {
     return image;
 }
 
+std::optional<PlanarImage> DecodePlanarYuv(std::span<const std::uint8_t> jpeg, std::uint32_t denominator) {
+    if (denominator != 1 && denominator != 2 && denominator != 4 && denominator != 8) {
+        throw std::invalid_argument("Jpeg::DecodePlanarYuv: the scale must be 1/1, 1/2, 1/4 or 1/8");
+    }
+    if (jpeg.empty() || jpeg.size() > INT_MAX) return std::nullopt;
+
+    Handle handle(TJINIT_DECOMPRESS);
+    if (tj3Set(handle, TJPARAM_STOPONWARNING, 1) < 0) throw std::runtime_error("Jpeg::DecodePlanarYuv: decoder configuration failed");
+    if (tj3DecompressHeader(handle, jpeg.data(), jpeg.size()) < 0) return std::nullopt;
+    const int colorspace = tj3Get(handle, TJPARAM_COLORSPACE);
+    if (colorspace != TJCS_YCbCr && colorspace != TJCS_GRAY) {
+        throw std::runtime_error("Jpeg::DecodePlanarYuv: planar decoding of an image that is not YCbCr or grayscale is not implemented");
+    }
+    const int subsampling = tj3Get(handle, TJPARAM_SUBSAMP);
+    if (subsampling == TJSAMP_UNKNOWN) throw std::runtime_error("Jpeg::DecodePlanarYuv: planar decoding of an unusual chroma subsampling is not implemented");
+    const int width = tj3Get(handle, TJPARAM_JPEGWIDTH);
+    const int height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
+    if (width <= 0 || height <= 0) return std::nullopt;
+    if (tj3SetScalingFactor(handle, tjscalingfactor{1, static_cast<int>(denominator)}) < 0) {
+        throw std::runtime_error("Jpeg::DecodePlanarYuv: the decoder refused the scaling factor");
+    }
+
+    PlanarImage image{ScaledDimension(static_cast<std::uint32_t>(width), denominator), ScaledDimension(static_cast<std::uint32_t>(height), denominator),
+                      subsampling == TJSAMP_GRAY ? 1u : 3u};
+    unsigned char* planes[3]{};
+    int strides[3]{};
+    for (std::uint32_t component = 0; component < image.components; ++component) {
+        const int planeWidth = tj3YUVPlaneWidth(static_cast<int>(component), static_cast<int>(image.width), subsampling);
+        const int planeHeight = tj3YUVPlaneHeight(static_cast<int>(component), static_cast<int>(image.height), subsampling);
+        if (planeWidth <= 0 || planeHeight <= 0) throw std::runtime_error("Jpeg::DecodePlanarYuv: the decoder reported no plane size");
+        image.planeWidths[component] = static_cast<std::uint32_t>(planeWidth);
+        image.planeHeights[component] = static_cast<std::uint32_t>(planeHeight);
+        image.planes[component].resize(static_cast<std::size_t>(planeWidth) * static_cast<std::size_t>(planeHeight));
+        planes[component] = image.planes[component].data();
+        strides[component] = planeWidth;
+    }
+    if (tj3DecompressToYUVPlanes8(handle, jpeg.data(), jpeg.size(), planes, strides) < 0) return std::nullopt;
+    return image;
+}
+
 }  // namespace Decoder::Jpeg
