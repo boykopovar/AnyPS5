@@ -1,7 +1,6 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include <cerrno>
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
-#include "prx/libSceAudioPropagation/MaterialBands.hpp"
 
 #include <array>
 #include <cmath>
@@ -1019,8 +1018,44 @@ int main() {
         attributes(filtered);
         render(filtered);
         const float scale = 1.0f / 34.3f * 0.8125f;
-        Require(within(filtered.out[256] / scale, 1.0f - AudioPropagation::MaterialBandResponses[2][255], 1e-5f) && within(filtered.out[356] / scale, -AudioPropagation::MaterialBandResponses[2][355], 1e-5f), "material band filter centred on the path delay");
+        Require(within(filtered.out[256] / scale, 1.0f - 0.015625019f, 1e-5f) && within(filtered.out[356] / scale, -0.00061584135f, 1e-5f), "material band filter centred on the path delay");
         Require(sceAudioPropagationSystemDestroy(filtered.system) == 0, "render system destroy");
+
+        MeasuredRig portal;
+        make(portal, none);
+        AudioPropagation::AudioPath portalPath{};
+        portalPath.desc = {AudioPropagation::PathId, sizeof(portalPath)};
+        for (auto& point : portalPath.points) {
+            point.desc = {AudioPropagation::PathPointId, sizeof(point)};
+            point.gain = 1.0f;
+        }
+        portalPath.points[0].position[0] = 10.0f;
+        portalPath.points[1].material = portal.material;
+        portalPath.points[1].position[0] = 5.0f;
+        portalPath.pointCount = 3;
+        portalPath.flags = AudioPropagation::PathPortal;
+        Require(sceAudioPropagationSourceSetAudioPath(portal.path, &portalPath, 1.0f) == 0, "portal path");
+        attributes(portal);
+        RequireThrows<std::runtime_error>([&] { render(portal); }, "rendering a portal path that was not measured");
+        Require(sceAudioPropagationSystemDestroy(portal.system) == 0, "render system destroy");
+
+        MeasuredRig unreadable;
+        make(unreadable, none);
+        setPath(unreadable, 10.0f, 5.0f, 0.0f, 1.0f);
+        struct { const void* data; std::uint32_t size, type, reserved[2]; } badPcm{reinterpret_cast<const void*>(0x10), 4096, 0, {}};
+        const AudioPropagation::Attribute badPcmAttribute{4, 0, &badPcm, 24, 0, 0};
+        Require(sceAudioPropagationSourceSetAttributes(unreadable.source, &badPcmAttribute, 1) == 0, "unreadable PCM attribute");
+        RequireThrows<std::runtime_error>([&] { render(unreadable); }, "rendering from unreadable PCM");
+        Require(sceAudioPropagationSystemDestroy(unreadable.system) == 0, "render system destroy");
+
+        MeasuredRig distant;
+        make(distant, none);
+        RequireThrows<std::runtime_error>([&] { setPath(distant, 10.0f, 5000.0f, 0.0f, 1.0f); }, "a path delay beyond the delay history");
+        distant.position[0] = 3.0e38f;
+        distant.position[1] = 3.0e38f;
+        attributes(distant);
+        RequireThrows<std::runtime_error>([&] { setPath(distant, 10.0f, 5.0f, 0.0f, 1.0f); }, "a source distance that overflows");
+        Require(sceAudioPropagationSystemDestroy(distant.system) == 0, "render system destroy");
 
         MeasuredRig ramp;
         make(ramp, none);

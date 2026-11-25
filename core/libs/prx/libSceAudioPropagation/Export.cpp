@@ -1,7 +1,6 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
-#include "MaterialBands.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
@@ -308,6 +307,43 @@ PathState validatedPath(Registry& state, AudioPropagationHandle path, const Audi
     return PathState{replacement, gain};
 }
 
+constexpr std::size_t MaterialBandTaps = 513;
+constexpr std::size_t HistorySize = 1u << 18;
+
+const std::array<std::array<float, MaterialBandTaps>, 6>& materialBandResponses() {
+    static const auto responses = [] {
+        constexpr double Pi = 3.14159265358979323846;
+        constexpr int Grid = 1024;
+        constexpr int Bins = Grid / 2 + 1;
+        std::array<std::array<double, Bins>, 5> lowpass{};
+        for (int edge = 0; edge < 5; ++edge) {
+            const double centre = static_cast<double>((4 << edge) + 1);
+            const double width = (centre - 1.0) / 3.0;
+            for (int bin = 0; bin < Bins; ++bin) {
+                const double u = std::clamp((bin - centre) / width, -1.0, 1.0);
+                lowpass[edge][bin] = 0.5 - 0.5 * std::sin(0.5 * Pi * u);
+            }
+        }
+        std::array<std::array<float, MaterialBandTaps>, 6> out{};
+        for (int band = 0; band < 6; ++band) {
+            std::array<double, Bins> response{};
+            for (int bin = 0; bin < Bins; ++bin) {
+                const double upper = band < 5 ? lowpass[band][bin] : 1.0;
+                const double lower = band > 0 ? lowpass[band - 1][bin] : 0.0;
+                response[bin] = upper - lower;
+            }
+            for (int tap = -256; tap <= 256; ++tap) {
+                double sum = response[0] + response[Bins - 1] * ((tap & 1) != 0 ? -1.0 : 1.0);
+                for (int bin = 1; bin < Bins - 1; ++bin) sum += 2.0 * response[bin] * std::cos(2.0 * Pi * bin * tap / Grid);
+                const double window = 0.54 + 0.46 * std::cos(Pi * tap / 256.0);
+                out[band][static_cast<std::size_t>(tap + 256)] = static_cast<float>(sum / Grid * window);
+            }
+        }
+        return out;
+    }();
+    return responses;
+}
+
 float distanceGain(const SourceInfo& info, float d) {
     const float maxDistance = info.attribute2Values[0];
     const float factor = info.attribute2Values[1];
@@ -356,6 +392,10 @@ void computePathRender(Registry& state, AudioPropagationHandle path, const PathS
         return;
     }
     render.active = true;
+    if ((data.flags & PathPortal) != 0) {
+        render.unsupported = "a portal path";
+        return;
+    }
     if (data.pointCount != 3) {
         render.unsupported = "a path without exactly three points";
         return;
@@ -400,8 +440,11 @@ void computePathRender(Registry& state, AudioPropagationHandle path, const PathS
         render.filtered = true;
     }
     const float sourceDistance = std::sqrt(info.position[0] * info.position[0] + info.position[1] * info.position[1] + info.position[2] * info.position[2]);
+    if (!std::isfinite(sourceDistance) || !std::isfinite(length)) throw std::runtime_error(std::string(__func__) + ": a source position or path length that is not finite is not measured");
     const float speed = system.propagationSpeed;
     render.delay = std::max(0.0f, length - sourceDistance) * 48000.0f / speed + 256.0f + (sourceDistance > 0.0f ? static_cast<float>(system.frameSamples) : 0.0f);
+    const auto maximumDelay = static_cast<float>(HistorySize - system.frameSamples - MaterialBandTaps);
+    if (!std::isfinite(render.delay) || render.delay > maximumDelay) throw std::runtime_error(std::string(__func__) + ": a path delay above " + std::to_string(static_cast<std::uint64_t>(maximumDelay)) + " samples is not supported");
     const float toward[3] = {data.points[1].position[0] - info.position[0], data.points[1].position[1] - info.position[1], data.points[1].position[2] - info.position[2]};
     gain *= distanceGain(info, length) * coneGain(info, toward);
     const auto& arrival = data.points[1].position;
@@ -517,6 +560,9 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
     std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.sourcePaths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.sourceInfos, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
+    std::erase_if(state.sourceRenders, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
+    std::erase_if(state.pathRenders, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
+    std::erase_if(state.materials, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.objects, [&](const auto& entry) {
         if (entry.second.system != system) return false;
         if (entry.second.kind != Kind::Path) state.orphans.insert(entry);
@@ -562,6 +608,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemUnregisterMaterial(AudioPropagat
         return 0;
     }
     requireObject(state, material, Kind::Material, __func__);
+    state.materials.erase(material);
     state.objects.erase(material);
     return 0;
 }
@@ -818,7 +865,6 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         }
         validated.emplace_back(info, anyActive);
     }
-    constexpr std::size_t HistorySize = 1u << 18;
     const std::uint32_t frame = configuration.frameSamples;
     for (const auto& [info, anyActive] : validated) {
         auto& source = state.sourceRenders[info.source];
@@ -826,12 +872,13 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         if (source.hasPcm && source.pcm.data != nullptr) {
             if (source.pcm.type == 1) {
                 std::vector<std::int16_t> raw(std::min<std::size_t>(frame, source.pcm.sizeBytes / 2));
-                if (!raw.empty() && GuestCopyIn_nid_no_patch(raw.data(), source.pcm.data, raw.size() * 2)) {
+                if (!raw.empty()) {
+                    if (!GuestCopyIn_nid_no_patch(raw.data(), source.pcm.data, raw.size() * 2)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
                     for (std::size_t n = 0; n < raw.size(); ++n) input[n] = raw[n] / 32767.0f;
                 }
             } else {
                 const std::size_t samples = std::min<std::size_t>(frame, source.pcm.sizeBytes / 4);
-                if (samples != 0) GuestCopyIn_nid_no_patch(input.data(), source.pcm.data, samples * 4);
+                if (samples != 0 && !GuestCopyIn_nid_no_patch(input.data(), source.pcm.data, samples * 4)) throw std::runtime_error(std::string(__func__) + ": the source PCM could not be read");
             }
         }
         if (source.history.empty()) source.history.assign(HistorySize, 0.0f);
@@ -853,8 +900,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
             std::array<float, MaterialBandTaps> taps{};
             if (path.filtered) {
                 taps[Half] = 1.0f;
+                const auto& responses = materialBandResponses();
                 for (std::size_t band = 0; band < 6; ++band) {
-                    for (std::size_t tap = 0; tap < MaterialBandTaps; ++tap) taps[tap] -= path.absorption[band] * MaterialBandResponses[band][tap];
+                    for (std::size_t tap = 0; tap < MaterialBandTaps; ++tap) taps[tap] -= path.absorption[band] * responses[band][tap];
                 }
             }
             for (std::uint32_t n = 0; n < frame; ++n) {
