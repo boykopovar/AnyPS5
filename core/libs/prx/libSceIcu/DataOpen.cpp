@@ -3,7 +3,6 @@
 #include <unicode/udata.h>
 #include <algorithm>
 #include <bit>
-#include <cerrno>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -37,9 +36,7 @@ const char* CopyText(const char* source, std::string& text, UErrorCode& status, 
     constexpr int GuestNameTooLong = 63;
     constexpr std::size_t maxSize = std::numeric_limits<std::int32_t>::max();
     for (std::size_t size = 256;; size = std::min(size * 2, maxSize)) {
-        const int savedErrno = errno;
         const int error = CopyGuestString_nid_no_patch(source, size, text);
-        errno = savedErrno;
         if (error == 0) return text.c_str();
         if (error == GuestOutOfMemory) {
             status = U_MEMORY_ALLOCATION_ERROR;
@@ -57,9 +54,7 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
                      DataChoice* choice, const char* caller) {
     if (!status) return nullptr;
     std::int32_t incoming = 0;
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&incoming, status, sizeof(incoming));
-    errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(caller);
     if (incoming > 0) return nullptr;
     const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
