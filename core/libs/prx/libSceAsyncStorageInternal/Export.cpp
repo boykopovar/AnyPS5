@@ -1,10 +1,26 @@
 #include "prx/libSceAsyncStorageInternal/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAsyncStorageInternal/include/InventoryExports.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+constexpr int asyncStorageErrorNull = static_cast<int>(0x81860001);
+constexpr int asyncStorageErrorBusy = static_cast<int>(0x8186000d);
+
+std::atomic<void*> g_handlerSlot0{nullptr};
+std::atomic<void*> g_handlerSlot1{nullptr};
+std::mutex g_counterMutex;
+std::uint32_t g_counter = 0;
+std::uint64_t g_valueA = 0;
+std::uint64_t g_valueB = 0;
+
+}
 
 extern "C" {
 
@@ -19,8 +35,16 @@ int APS5_VABI libSceAsyncStorageInternalUnknown__plus_YiZLBbdEy8_nid_no_patch() 
 }
 APS5_EXPORT("+YiZLBbdEy8", libSceAsyncStorageInternalUnknown__plus_YiZLBbdEy8_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_65H7_minus_ohmD9c_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAsyncStorageInternalUnknown_65H7_minus_ohmD9c_nid_no_patch(std::uint32_t* outCount, std::uint32_t reset) {
+    if (outCount == nullptr) {
+        return asyncStorageErrorNull;
+    }
+    std::lock_guard<std::mutex> lock(g_counterMutex);
+    *outCount = g_counter;
+    if (reset != 0u) {
+        g_counter = 0u;
+    }
+    return 0;
 }
 APS5_EXPORT("65H7-ohmD9c", libSceAsyncStorageInternalUnknown_65H7_minus_ohmD9c_nid_no_patch);
 
@@ -34,8 +58,15 @@ int APS5_VABI libSceAsyncStorageInternalUnknown_9zqbh2tZtZg_nid_no_patch() {
 }
 APS5_EXPORT("9zqbh2tZtZg", libSceAsyncStorageInternalUnknown_9zqbh2tZtZg_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_EKjWxMVMPzY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAsyncStorageInternalUnknown_EKjWxMVMPzY_nid_no_patch(void* handler) {
+    if (handler == nullptr) {
+        return asyncStorageErrorNull;
+    }
+    void* expected = nullptr;
+    if (!g_handlerSlot0.compare_exchange_strong(expected, handler, std::memory_order_acq_rel)) {
+        return asyncStorageErrorBusy;
+    }
+    return 0;
 }
 APS5_EXPORT("EKjWxMVMPzY", libSceAsyncStorageInternalUnknown_EKjWxMVMPzY_nid_no_patch);
 
@@ -45,22 +76,44 @@ int APS5_VABI libSceAsyncStorageInternalUnknown_Knldkc0w9lI_nid_no_patch() {
 APS5_EXPORT("Knldkc0w9lI", libSceAsyncStorageInternalUnknown_Knldkc0w9lI_nid_no_patch);
 
 int APS5_VABI libSceAsyncStorageInternalUnknown_TN9xRCVggRw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    g_handlerSlot0.store(nullptr, std::memory_order_release);
+    g_handlerSlot1.store(nullptr, std::memory_order_release);
+    return 0;
 }
 APS5_EXPORT("TN9xRCVggRw", libSceAsyncStorageInternalUnknown_TN9xRCVggRw_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_hP_plus_HenjaOi8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAsyncStorageInternalUnknown_hP_plus_HenjaOi8_nid_no_patch(std::uint64_t* outValue, std::uint32_t reset) {
+    if (outValue == nullptr) {
+        return asyncStorageErrorNull;
+    }
+    std::lock_guard<std::mutex> lock(g_counterMutex);
+    *outValue = g_valueA;
+    if (reset != 0u) {
+        g_valueA = g_valueB;
+    }
+    return 0;
 }
 APS5_EXPORT("hP+HenjaOi8", libSceAsyncStorageInternalUnknown_hP_plus_HenjaOi8_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_iYDbqYNVajM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAsyncStorageInternalUnknown_iYDbqYNVajM_nid_no_patch(std::uint64_t* outValue) {
+    if (outValue == nullptr) {
+        return asyncStorageErrorNull;
+    }
+    std::lock_guard<std::mutex> lock(g_counterMutex);
+    *outValue = g_valueB;
+    return 0;
 }
 APS5_EXPORT("iYDbqYNVajM", libSceAsyncStorageInternalUnknown_iYDbqYNVajM_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_jR1uFCw8qwc_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAsyncStorageInternalUnknown_jR1uFCw8qwc_nid_no_patch(void* handler) {
+    if (handler == nullptr) {
+        return asyncStorageErrorNull;
+    }
+    void* expected = nullptr;
+    if (!g_handlerSlot1.compare_exchange_strong(expected, handler, std::memory_order_acq_rel)) {
+        return asyncStorageErrorBusy;
+    }
+    return 0;
 }
 APS5_EXPORT("jR1uFCw8qwc", libSceAsyncStorageInternalUnknown_jR1uFCw8qwc_nid_no_patch);
 
@@ -74,8 +127,8 @@ int APS5_VABI libSceAsyncStorageInternalUnknown_q4KNqhT5ibk_nid_no_patch() {
 }
 APS5_EXPORT("q4KNqhT5ibk", libSceAsyncStorageInternalUnknown_q4KNqhT5ibk_nid_no_patch);
 
-int APS5_VABI libSceAsyncStorageInternalUnknown_r299OxwCYsY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libSceAsyncStorageInternalUnknown_r299OxwCYsY_nid_no_patch() {
+    return 0;
 }
 APS5_EXPORT("r299OxwCYsY", libSceAsyncStorageInternalUnknown_r299OxwCYsY_nid_no_patch);
 
