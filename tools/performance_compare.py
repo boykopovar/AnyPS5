@@ -103,20 +103,23 @@ def unique_json_object(pairs):
 def load_summary(path, trace=None):
     selected = None
     count = 0
-    with Path(path).open(encoding="utf-8-sig") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line, object_pairs_hook=unique_json_object)
-                if not isinstance(record, dict):
-                    raise ValueError("summary must be an object")
-            except (ValueError, RecursionError) as error:
-                raise ValueError(f"{path}:{line_number}: {error}") from error
-            if trace is None or record.get("trace") == trace:
-                count += 1
-                if count == 1:
-                    selected = (line_number, record)
+    try:
+        with Path(path).open(encoding="utf-8-sig") as source:
+            for line_number, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line, object_pairs_hook=unique_json_object)
+                    if not isinstance(record, dict):
+                        raise ValueError("summary must be an object")
+                except (ValueError, RecursionError) as error:
+                    raise ValueError(f"{path}:{line_number}: {error}") from error
+                if trace is None or record.get("trace") == trace:
+                    count += 1
+                    if count == 1:
+                        selected = (line_number, record)
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path}: {error}") from error
     if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
         raise ValueError(f"{path}: expected one summary{selection}, found {count}; "

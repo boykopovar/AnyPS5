@@ -3954,8 +3954,13 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
     if (!parameter) return fail(NET_EINVAL);
     if (thread && !GuestWritable_nid_no_patch(thread, sizeof(*thread))) return fail(NET_EFAULT);
+    constexpr int DetachDetached = 1;
+    PthreadAttr attribute = nullptr;
+    int result = thread ? 0 : scePthreadAttrInit(&attribute);
+    if (result == 0 && !thread) result = scePthreadAttrSetdetachstate(&attribute, DetachDetached);
     Pthread created = nullptr;
-    const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (result == 0) result = scePthreadCreate(&created, thread ? nullptr : &attribute, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (attribute) scePthreadAttrDestroy(&attribute);
     if (result != 0) return result;
     if (thread && !GuestCopyOut_nid_no_patch(thread, &created, sizeof(created))) return fail(NET_EFAULT);
     return 0;

@@ -1354,6 +1354,10 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         std::array<std::byte, 1> probe;
         AgcDriver::GuestMemory::Read(target.address, probe);
         Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view, "a published native D32S8 owner was retired by its own publication");
+        auto bareWords = DepthSampleWords(target);
+        bareWords[6] &= ~((0xffu << 24u) | (1u << 21u) | (1u << 19u));
+        bareWords[7] = 0u;
+        Require(CachedSampledTexture(context, bareWords) != nullptr, "a native D32S8 owner published whole with expanded HTILE was not sampled without metadata");
         const auto sampledSamples = [&](float base) {
             const auto words = DepthSampleWords(target);
             const auto texture = CachedSampledTexture(context, words);
@@ -2857,6 +2861,11 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
     Require(!DepthRenderControlDrains({target.address, 1u, 1u}), "a single-sample depth clear at the native target's address drains");
     Require(!DepthRenderControlDrains({target.address, 1u, 0x60u}), "a single-sample expand drains");
     Require(!DepthRenderControlDrains({target.address + 65536u, target.samples, 1u}), "a depth clear at another address drains");
+    Require(!DepthRenderControlDrains({target.address, target.samples, 0x20u}), "a stencil-only expand without a clear over the native target drains");
+    Require(DepthRenderControlDrains({target.address, target.samples, 0x21u}), "a depth clear with a stencil-only expand over the native target does not drain");
+    Require(DepthRenderControlDrains({target.address + 65536u, target.samples, 0x40u}), "a depth expand without a registered surface does not drain");
+    refused();
+    NoteRenderControl(target, 0x20u);
     refused();
     if (stencilPlane) {
         NoteRenderControl(target, 0x40u);
@@ -2913,6 +2922,40 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
     bare.reset();
     texture.reset();
     std::printf("Native depth in-place expand gate samples=%u stencil=%u: sampled without metadata only after an expand draw, refused again after an HTILE fill, a clear draw and %s\n", fragments, stencilPlane, stencilPlane ? "a stencil plane fill" : "an HTILE mask clear");
+}
+
+void CheckStencilInHtileExpandGate(Context context, std::uint32_t fragments) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0x5au, metadata.Address(), true, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    DepthSurfaceView(context, target);
+    Require(CachedSampledTexture(context, DepthSampleWords(target)) != nullptr, "native depth with the stencil in HTILE for the stencil expand gate was not imported");
+    NoteDepthSurfaceWrite(context, target);
+    const auto stencilWords = StencilSampleWords(target);
+    const auto refused = [&] { TargetRefuses([&] { CachedSampledTexture(context, stencilWords); }, "native multisample depth sampled metadata or XOR mismatch"); };
+    refused();
+    NoteRenderControl(target, 0x40u);
+    refused();
+    NoteRenderControl(target, 0x60u);
+    const auto bare = CachedSampledTexture(context, stencilWords);
+    Require(bare != nullptr && CachedSampledTexture(context, stencilWords) == bare, "a stencil kept in HTILE was not sampled without metadata after an in-place expand of depth and stencil");
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
+    refused();
+    std::printf("Native stencil in HTILE expand gate samples=%u: after a host write, the stencil plane is sampled without metadata only after an expand of depth and stencil, and refused again after an HTILE fill\n", fragments);
 }
 
 void CheckEligibility(Context context) {
@@ -5783,6 +5826,7 @@ int main(int argc, char** argv) {
                 for (const bool stencilPlane : {false, true}) {
                     if (!supported(samples, stencilPlane)) { ++unavailable; continue; }
                     CheckExpandGate(context, samples, stencilPlane);
+                    if (stencilPlane) CheckStencilInHtileExpandGate(context, samples);
                     ++checked;
                 }
             }
