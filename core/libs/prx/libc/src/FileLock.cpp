@@ -123,7 +123,7 @@ bool AcquireShared(HANDLE handle, int& held, bool nonblocking) {
 }
 
 bool AcquireExclusive(HANDLE handle, int& held, bool nonblocking) {
-    const DWORD gateFlags = LOCKFILE_EXCLUSIVE_LOCK | ((nonblocking && held == 0) ? LOCKFILE_FAIL_IMMEDIATELY : 0);
+    const DWORD gateFlags = LOCKFILE_EXCLUSIVE_LOCK | (nonblocking ? LOCKFILE_FAIL_IMMEDIATELY : 0);
     if (!LockByte(handle, GateByteLow, gateFlags)) return false;
     bool wait = false;
     DWORD error = ERROR_SUCCESS;

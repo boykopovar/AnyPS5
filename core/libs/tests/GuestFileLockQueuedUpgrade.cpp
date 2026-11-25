@@ -101,33 +101,19 @@ static void SoleHolderPriority() {
 }
 
 static void NonblockingProtocolContention() {
-    {
-        const std::string path = Path("transient-gate");
+    for (const auto [suffix, byte, flags] : {
+             std::tuple{"stalled-gate", GateByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY},
+             std::tuple{"stalled-waiter", WaiterByteLow, LOCKFILE_FAIL_IMMEDIATELY},
+         }) {
+        const std::string path = Path(suffix);
         const int holder = Create(path);
         Require(holder >= 0);
         Require(flock_nid_postfix(holder, 1 | 4) == 0);
         const HANDLE stalled = RawOpen(path);
-        Require(RawLock(stalled, GateByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY));
-        auto upgrade = std::async(std::launch::async, [&] { return NonblockingUpgrade(holder); });
-        Require(upgrade.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout);
-        RawUnlock(stalled, GateByteLow);
-        ::CloseHandle(stalled);
-        Require(upgrade.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
-        Require(upgrade.get().first == 0);
-        Require(flock_nid_postfix(holder, 8) == 0);
-        Close(holder);
-        Remove(path);
-    }
-    {
-        const std::string path = Path("stalled-waiter");
-        const int holder = Create(path);
-        Require(holder >= 0);
-        Require(flock_nid_postfix(holder, 1 | 4) == 0);
-        const HANDLE stalled = RawOpen(path);
-        Require(RawLock(stalled, WaiterByteLow, LOCKFILE_FAIL_IMMEDIATELY));
+        Require(RawLock(stalled, byte, flags));
         auto upgrade = std::async(std::launch::async, [&] { return NonblockingUpgrade(holder); });
         const bool bounded = upgrade.wait_for(std::chrono::milliseconds(250)) == std::future_status::ready;
-        RawUnlock(stalled, WaiterByteLow);
+        RawUnlock(stalled, byte);
         ::CloseHandle(stalled);
         Require(upgrade.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
         const auto [result, error] = upgrade.get();
