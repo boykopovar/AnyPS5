@@ -524,7 +524,6 @@
 
 #include <atomic>
 #include <bit>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1126,9 +1125,7 @@ void CheckSignatureMethod(const LibreSsl3Rsa* rsa, const char* function) {
 LibreSslRsa* ParentRsa(const LibreSsl3Rsa* rsa, const char* function) {
     if (!rsa) return nullptr;
     LibreSsl3Rsa copy{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
-    errno = savedErrno;
     if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
     if (!copy.method) return nullptr;
     return reinterpret_cast<LibreSslRsa*>(const_cast<LibreSsl3Rsa*>(rsa));
