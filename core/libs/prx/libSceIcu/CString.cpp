@@ -26,9 +26,7 @@ std::int32_t FormatInteger(char* buffer, TValue value, std::uint32_t radix) {
     } while (magnitude);
     std::reverse(local + firstDigit, local + length);
     local[length] = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(buffer, local, static_cast<std::size_t>(length + 1));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return length;
 }

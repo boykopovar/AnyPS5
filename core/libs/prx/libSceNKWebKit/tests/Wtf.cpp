@@ -8,6 +8,7 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <unistd.h>
 #else
 #include <io.h>
+#include <process.h>
 #endif
 #include <fcntl.h>
 #include <fstream>
@@ -42,6 +44,27 @@ void Require(bool condition) {
     if (!condition) {
         std::abort();
     }
+}
+
+static unsigned long CurrentProcessId() {
+#ifdef _WIN32
+    return static_cast<unsigned long>(_getpid());
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
+
+static std::atomic<unsigned> g_testPathCounter{0};
+
+static std::filesystem::path UniqueTestDirectory(const char* prefix) {
+    const auto name = std::string(prefix) + "-" + std::to_string(CurrentProcessId()) + "-" +
+                      std::to_string(g_testPathCounter++) + "-" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root = std::filesystem::current_path() / name;
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    Require(std::filesystem::create_directory(root, error) && !error);
+    return root;
 }
 
 template <typename Function, typename... Args>
@@ -353,6 +376,12 @@ static void TestTime() {
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.500000000Z", isLocal) == 1577836800500.0);
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5000000000Z", isLocal) == 1577836800500.0);
     Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.250000000000Z", isLocal) == 1577836800250.0);
+    Require(std::abs(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.9223372036854775806Z", isLocal) - 1577836800922.337) < 0.001);
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.9223372036854775807Z", isLocal)));
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.99999999999999999999Z", isLocal)));
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2000-01-01", isLocal) == 946684800000.0);
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("4294969296-01-01", isLocal)));
+    Require(std::isnan(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("-4294965296-01-01", isLocal)));
 
     bool isLocal2 = false;
     double parsedInvalid = _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("not-a-date", isLocal2);
@@ -604,6 +633,25 @@ static void TestWebCorePure() {
     Require(std::abs(around.m_size.m_width - 200.0f) < 1e-3f);
     Require(std::abs(around.m_size.m_height - 200.0f) < 1e-3f);
 
+    const auto rectIs = [](const FloatRect& rect, float x, float y, float width, float height) {
+        return rect.m_location.m_x == x && rect.m_location.m_y == y && rect.m_size.m_width == width && rect.m_size.m_height == height;
+    };
+    const FloatRect flat{FloatPoint{0.0f, 0.0f}, FloatSize{10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, flat), 5.0f, 0.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, flat), 0.0f, -2.5f, 10.0f, 5.0f));
+    const FloatRect offsetFlat{FloatPoint{4.0f, 6.0f}, FloatSize{8.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 8.0f, 6.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 4.0f, -2.0f, 8.0f, 16.0f));
+    const FloatRect empty{FloatPoint{3.0f, 7.0f}, FloatSize{0.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    const FloatRect thin{FloatPoint{1.0f, 2.0f}, FloatSize{0.0f, 10.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, thin), 1.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, thin), -9.0f, 2.0f, 20.0f, 10.0f));
+    const FloatRect mirrored{FloatPoint{0.0f, 0.0f}, FloatSize{-10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, mirrored), 0.0f, 2.5f, -10.0f, -5.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, mirrored), -5.0f, 0.0f, 0.0f, 0.0f));
+
     FloatRect fr{FloatPoint{10.2f, 20.8f}, FloatSize{100.4f, 50.6f}};
     IntRect ir = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(fr);
     Require(ir.m_location.m_x == 10);
@@ -716,8 +764,7 @@ static void TestMappedFiles() {
     readOnly(&mapped, -1, 0, success);
     Require(!success && !mapped.data && !mapped.size);
     destroy(&mapped);
-    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-mapped");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
     auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
@@ -774,7 +821,8 @@ static void TestMappedFiles() {
     close(handle);
 #endif
     RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void TestFileHandles() {
@@ -784,8 +832,7 @@ static void TestFileHandles() {
     const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
     const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
     const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-handles");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
     const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
@@ -866,7 +913,8 @@ static void TestFileHandles() {
     Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
     close(handle);
     RemovePathAlias_nid_no_patch("/nkwebkit-handles");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static NKWebKit::WtfAbi::String GuestPath(const char* path) {
@@ -885,8 +933,7 @@ static void TestFileSystemHelpers() {
     const auto moveFile = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
     const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
     const auto sameVolume = &_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-fs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-fs");
     Require(std::filesystem::create_directory(root / "sub"));
     Require(std::filesystem::create_directory(root / "full"));
     Require(std::filesystem::create_directory(root / "full" / "child"));
@@ -941,7 +988,8 @@ static void TestFileSystemHelpers() {
     Require(!exists(directory));
     Require(deleteFile(other));
     RemovePathAlias_nid_no_patch("/nkwebkit-fs");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void RequireCurrentStackBounds() {
@@ -973,7 +1021,12 @@ static void TestStackBounds() {
 }
 
 static std::string CaptureLog(void (*body)()) {
-    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    const auto name = "nkwebkit_timing_scope_" + std::to_string(CurrentProcessId()) + "_" +
+                      std::to_string(g_testPathCounter++) + "_" +
+                      std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log";
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    std::error_code error;
+    std::filesystem::remove(path, error);
     std::fflush(stdout);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -1004,7 +1057,7 @@ static std::string CaptureLog(void (*body)()) {
     std::ifstream input(path, std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     input.close();
-    std::filesystem::remove(path);
+    std::filesystem::remove(path, error);
     return text;
 }
 
@@ -1053,8 +1106,7 @@ static void TestTimingScope() {
 }
 
 static void TestUniStdExtras() {
-    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-unistd");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
     const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
@@ -1080,7 +1132,8 @@ static void TestUniStdExtras() {
     Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
     Require(*__error_nid_postfix() == 9);
     RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 static void TestSleepSeconds() {
@@ -1111,8 +1164,7 @@ static void TestSleepSeconds() {
 
 static void TestMakeAllDirectories() {
     const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
-    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    const auto root = UniqueTestDirectory("nkwebkit-dirs");
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
     const auto guest = [](const char* text) {
@@ -1149,7 +1201,8 @@ static void TestMakeAllDirectories() {
     Require(!make(nullPath));
     Require(!make(guest("")));
     RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
-    std::filesystem::remove_all(root);
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
 }
 
 int main() {
@@ -1267,6 +1320,15 @@ template<typename T> void Throws(T action) {
 const unsigned char* U8(const char* data) { return reinterpret_cast<const unsigned char*>(data); }
 std::string Bytes(const CString& value) {
     return value.buffer ? std::string(reinterpret_cast<const char*>(value.buffer + 1), value.buffer->length) : std::string();
+}
+std::string Bytes(const NKWebKit::WtfAbi::ExpectedCString& result) {
+    Check(result.has);
+    return Bytes(result.value);
+}
+void Fails(const NKWebKit::WtfAbi::ExpectedCString& result, std::uint32_t error) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&result);
+    Check(!result.has && bytes[8] == 0);
+    Check(result.error == error && bytes[0] == error);
 }
 void Text(const String& value, const char* expected) {
     Check(value.impl != nullptr);
@@ -1419,25 +1481,37 @@ void TestUTFConversions() {
     Throws([&] { UTF8(&malformed, 1); });
     Check(Bytes(Utf8For16(bad, 4, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
-    Throws([&] { Utf8For16(bad, 4, 1); });
+    Fails(Utf8For16(bad, 4, 1), 2);
     char16_t endsWithLead[] = {'a', 0xD800, 0xDBFF};
     Check(Bytes(Utf8For16(endsWithLead, 3, 0)) == "a\xef\xbf\xbd\xed\xaf\xbf");
     Check(Bytes(Utf8For16(endsWithLead, 3, 2)) == "a\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(endsWithLead, 2, 0)) == "a\xed\xa0\x80");
-    Throws([&] { Utf8For16(endsWithLead, 2, 1); });
+    Fails(Utf8For16(endsWithLead, 2, 1), 3);
+    Fails(Utf8For16(endsWithLead, 3, 1), 2);
     auto leadAtEnd = Create16(endsWithLead, 2);
     Check(Bytes(UTF8(&leadAtEnd, 0)) == "a\xed\xa0\x80");
     Check(Bytes(UTF8(&leadAtEnd, 2)) == "a\xef\xbf\xbd");
     char16_t endsWithTrail[] = {'a', 0xDC00};
     Check(Bytes(Utf8For16(endsWithTrail, 2, 0)) == "a\xef\xbf\xbd");
+    Fails(Utf8For16(endsWithTrail, 2, 1), 2);
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
     Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
     Throws([&] { Utf8For16(nullptr, 1, 1); });
+    {
+        const auto converted = Utf8For16(paired, 6, 1);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&converted);
+        Check(sizeof(converted) == 16 && converted.has && bytes[8] == 1);
+        Check(std::memcmp(bytes, &converted.value.buffer, 8) == 0 && converted.value.buffer != nullptr);
+    }
+    Fails(Utf8For16(paired, 715827883, 0), 1);
+    Fails(Utf8For16(paired, 0xFFFFFFFFu, 1), 1);
     Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
     Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
     Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
     Throws([&] { Utf8For8(nullptr, 1); });
+    Fails(Utf8For8(U8("x"), 715827883), 1);
+    Check(Utf8For8(U8("x"), 1).has);
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);

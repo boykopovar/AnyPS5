@@ -149,6 +149,10 @@ void Ngs2ResetFilterHistory(Ngs2Voice& voice) {
     for (auto& filter : voice.filters) std::fill(filter.history.begin(), filter.history.end(), Ngs2FilterHistory{});
 }
 
+void Ngs2ResetCustomFilterHistory(Ngs2Voice& voice) {
+    for (auto& filter : voice.customFilter) std::fill(filter.history.begin(), filter.history.end(), Ngs2FilterHistory{});
+}
+
 void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain) {
     if (filter.location >= 2) {
         const std::size_t target = filter.location - 2;
@@ -157,10 +161,14 @@ void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain) 
             if (port != target && voice.ports[port].dest != nullptr) throw std::runtime_error("NGS2: a PRE_SEND sampler filter on a voice with another patched port is not implemented");
         }
     }
-    for (std::uint32_t channel = 0; channel < voice.channels; channel++) {
+    Ngs2FilterChannels(filter, voice.samples.data(), voice.channels, grain);
+}
+
+void Ngs2FilterChannels(Ngs2Filter& filter, float* buffer, std::uint32_t channels, std::uint32_t grain) {
+    for (std::uint32_t channel = 0; channel < channels; channel++) {
         if (Bypasses(filter, channel)) continue;
         auto& h = filter.history[channel];
-        float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain;
+        float* samples = buffer + static_cast<std::size_t>(channel) * grain;
         for (std::uint32_t k = 0; k < grain; k += 4) {
             const float x[4] = {samples[k], samples[k + 1], samples[k + 2], samples[k + 3]};
             float y[4];

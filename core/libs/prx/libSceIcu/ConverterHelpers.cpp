@@ -1,12 +1,15 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "unicode/ucnv.h"
 #include "ustr_cnv.h"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -18,18 +21,57 @@ std::mutex DefaultConverterMutex;
 std::unordered_set<UConverter*> CheckedOutDefaultConverters;
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guard(destination, bytes);
+    const bool ok = guard.Open() && GuestWritable_nid_no_patch(destination, bytes);
     errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
 }
+
+class GuestNameReader {
+public:
+    GuestNameReader(const char* source, const char* callerName)
+        : cursorAddress(reinterpret_cast<std::uintptr_t>(source)), functionName(callerName) {}
+
+    unsigned char Next() {
+        if (offset == filled) Fill();
+        return chunk[offset++];
+    }
+
+    unsigned char Peek() {
+        if (offset == filled) Fill();
+        return chunk[offset];
+    }
+
+private:
+    void Fill() {
+        constexpr std::uintptr_t Page = 4096;
+        const std::uintptr_t remaining = std::numeric_limits<std::uintptr_t>::max() - cursorAddress;
+        const std::size_t pageRemaining = static_cast<std::size_t>(Page - cursorAddress % Page);
+        const std::size_t maxBytes = remaining < chunk.size() ? static_cast<std::size_t>(remaining) : chunk.size();
+        const std::size_t count = std::max<std::size_t>(1, std::min(maxBytes, pageRemaining));
+        CopyIn(chunk.data(), reinterpret_cast<const void*>(cursorAddress), count, functionName);
+        offset = 0;
+        filled = count;
+        cursorAddress += count;
+    }
+
+    std::uintptr_t cursorAddress;
+    const char* functionName;
+    std::array<unsigned char, 4096> chunk{};
+    std::size_t offset = 0;
+    std::size_t filled = 0;
+};
 
 std::string CopyConverterName(const char* source, const char* caller) {
     constexpr int GuestNameTooLong = 63;
@@ -59,12 +101,12 @@ unsigned char LowerLetter(unsigned char value, bool ebcdic) {
     return ((value >= 0x81 && value <= 0x89) || (value >= 0x91 && value <= 0x99) || (value >= 0xa2 && value <= 0xa9)) ? value : 0;
 }
 
-unsigned char NextNameByte(const unsigned char*& cursor, bool& afterDigit, bool ebcdic) {
+unsigned char NextNameByte(GuestNameReader& reader, bool& afterDigit, bool ebcdic) {
     const unsigned char zero = ebcdic ? 0xf0 : 0x30;
-    while (const auto value = *cursor++) {
+    while (const auto value = reader.Next()) {
         if (IsDigit(value, ebcdic)) {
             if (value != zero) afterDigit = true;
-            else if (!afterDigit && IsDigit(*cursor, ebcdic)) continue;
+            else if (!afterDigit && IsDigit(reader.Peek(), ebcdic)) continue;
             return value;
         }
         afterDigit = false;
@@ -73,13 +115,15 @@ unsigned char NextNameByte(const unsigned char*& cursor, bool& afterDigit, bool 
     return 0;
 }
 
-char* StripName(char* destination, const char* name, bool ebcdic) {
+char* StripName(char* destination, const char* name, bool ebcdic, const char* caller) {
     if (!destination || !name) APS5_INVALID_ARG_EX;
-    auto cursor = reinterpret_cast<const unsigned char*>(name);
-    char* output = destination;
+    GuestNameReader reader(name, caller);
+    std::string output;
     bool afterDigit = false;
-    while (const auto value = NextNameByte(cursor, afterDigit, ebcdic)) *output++ = static_cast<char>(value);
-    *output = 0;
+    while (const auto value = NextNameByte(reader, afterDigit, ebcdic)) output.push_back(static_cast<char>(value));
+    const std::size_t bytes = output.size() + 1;
+    RequireWritable(destination, bytes, caller);
+    CopyOut(destination, output.c_str(), bytes, caller);
     return destination;
 }
 
@@ -118,7 +162,6 @@ UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode)
     if (!errorCode) APS5_INVALID_ARG_EX;
     std::int32_t incoming = 0;
     CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
-    if (incoming > 0) return nullptr;
     const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
     auto status = static_cast<UErrorCode>(entered);
 
@@ -161,8 +204,8 @@ void APS5_VABI ucnv_setDefaultName_nid_postfix(const char* name) {
 
 int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right) {
     if (!left || !right) APS5_INVALID_ARG_EX;
-    auto first = reinterpret_cast<const unsigned char*>(left);
-    auto second = reinterpret_cast<const unsigned char*>(right);
+    GuestNameReader first(left, __func__);
+    GuestNameReader second(right, __func__);
     bool firstAfterDigit = false;
     bool secondAfterDigit = false;
     for (;;) {
@@ -173,11 +216,11 @@ int APS5_VABI ucnv_compareNames_nid_postfix(const char* left, const char* right)
 }
 
 char* APS5_VABI ucnv_io_stripASCIIForCompare_nid_postfix(char* destination, const char* name) {
-    return StripName(destination, name, false);
+    return StripName(destination, name, false, __func__);
 }
 
 char* APS5_VABI ucnv_io_stripEBCDICForCompare_nid_postfix(char* destination, const char* name) {
-    return StripName(destination, name, true);
+    return StripName(destination, name, true, __func__);
 }
 
 const char* APS5_VABI ucnv_detectUnicodeSignature_nid_postfix(const char* source, std::int32_t sourceLength,
