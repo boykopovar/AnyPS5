@@ -2,7 +2,6 @@
 #include "prx/libSceAudioSystem/include/InventoryExports.hpp"
 #include "prx/libSceAudioSystem/include/Api.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -15,9 +14,7 @@ std::atomic<std::int32_t> storedValue{-1};
 std::atomic<std::int32_t> pendingValue{0};
 
 bool CopyOutValue(std::int32_t* dst, std::int32_t value) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
