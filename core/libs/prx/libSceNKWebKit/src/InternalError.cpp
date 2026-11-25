@@ -30,7 +30,6 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -53,9 +52,7 @@ extern "C" {
 
 ResourceError APS5_VABI _ZN7WebCore13internalErrorERKN3WTF3URLE(const NKWebKit::WtfAbi::URL* url) {
     if (!url) throw std::invalid_argument("WebCore::internalError: null WTF::URL");
-    const int savedErrno = errno;
     auto fail = [&](const char* what) {
-        errno = savedErrno;
         throw std::invalid_argument(std::string("WebCore::internalError: ") + what);
     };
     URL guestUrl{};
@@ -74,7 +71,6 @@ ResourceError APS5_VABI _ZN7WebCore13internalErrorERKN3WTF3URLE(const NKWebKit::
     error.type = ResourceErrorType::General;
     error.domain = std::exchange(domain.impl, nullptr);
     error.localizedDescription = std::exchange(description.impl, nullptr);
-    errno = savedErrno;
     return error;
 }
 
