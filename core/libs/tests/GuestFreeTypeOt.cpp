@@ -12,12 +12,15 @@
 #include FT_RENDER_H
 #include FT_TYPE1_TABLES_H
 #include FT_SYNTHESIS_H
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <random>
 #include <vector>
 #ifdef _WIN32
@@ -29,6 +32,18 @@
 using FreeType::GuestOutline;
 using FreeType::GuestOutlineFuncs;
 using FreeType::GuestVector;
+
+extern "C" {
+
+int (APS5_VABI *FreeTypeOtValidatorSetjmpTarget)(std::uint64_t*) = nullptr;
+[[gnu::returns_twice]] int APS5_VABI FreeTypeOtValidatorSetjmp(std::uint64_t* buffer);
+
+}
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("FreeTypeOtValidatorSetjmp")
+    "    jmp *" APS5_ASM_SYMBOL("FreeTypeOtValidatorSetjmpTarget") "(%rip)\n"
+    APS5_ASM_FUNCTION_END("FreeTypeOtValidatorSetjmp"));
 
 namespace {
 
@@ -99,6 +114,54 @@ struct ForwardedExports {
 };
 
 ForwardedExports forwarded;
+
+struct ValidatorFixture {
+    const std::uint8_t* base;
+    const std::uint8_t* limit;
+    std::int32_t level;
+    std::int32_t error;
+    std::uint64_t jumpBuffer[12];
+};
+
+static_assert(offsetof(ValidatorFixture, error) == 20 && offsetof(ValidatorFixture, jumpBuffer) == 24);
+
+void JumpWithValidatorError(decltype(&ft_validator_error_nid_postfix) report, ValidatorFixture& validator,
+                            std::int32_t error) {
+    const int result = FreeTypeOtValidatorSetjmp(validator.jumpBuffer);
+    if (result == 0) {
+        report(&validator, error);
+        Require(false, "validator error must jump to the saved context");
+    }
+    Require(result == 1, "validator error resumes with value 1");
+    Require(validator.error == error, "validator error stores the supplied error");
+}
+
+void ValidatorErrors(decltype(&ft_validator_error_nid_postfix) report) {
+    const std::array<std::uint8_t, 4> table{};
+    const auto* const end = table.data() + table.size();
+    constexpr std::uint64_t canary = 0xa5a5a5a5a5a5a5a5ull;
+    struct {
+        std::uint64_t before;
+        ValidatorFixture validator;
+        std::uint64_t after;
+    } fixture{canary, {table.data(), end, 2, 0, {}}, canary};
+
+    for (const std::int32_t error : {7, -23, 0}) {
+        fixture.validator.error = 42;
+        JumpWithValidatorError(report, fixture.validator, error);
+        Require(fixture.validator.base == table.data() && fixture.validator.limit == end &&
+                fixture.validator.level == 2, "validator error preserves the table bounds and level");
+        Require(fixture.before == canary && fixture.after == canary, "validator error preserves surrounding storage");
+    }
+    for (auto* bad : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) {
+        try {
+            report(bad, 3);
+        } catch (const std::exception&) {
+            continue;
+        }
+        Require(false, "validator error rejects an inaccessible record");
+    }
+}
 
 void* APS5_VABI Allocate(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     ++*static_cast<int*>(memory->user);
@@ -542,6 +605,16 @@ int main(int argc, char** argv) {
     Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
     Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
             "reject a missing library");
+#ifdef _WIN32
+    void* guestLibc = GetModuleHandleA("libc.prx");
+#else
+    void* guestLibc = library;
+#endif
+    Require(guestLibc != nullptr, "locate the guest libc");
+    Resolve(FreeTypeOtValidatorSetjmpTarget, guestLibc, patched, "gNQ1V2vfXDE", "setjmp_nid_postfix");
+    decltype(&ft_validator_error_nid_postfix) validatorError = nullptr;
+    Resolve(validatorError, library, patched, "CfkNVHnT78w", "ft_validator_error_nid_postfix");
+    ValidatorErrors(validatorError);
     if (forwards) {
         Require(dependency != nullptr, "locate libSceFreeType");
         Resolve(forwarded.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
