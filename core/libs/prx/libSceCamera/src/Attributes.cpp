@@ -1,4 +1,3 @@
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include "prx/libc/include/General.hpp"
@@ -70,9 +69,7 @@ extern "C" {
 int APS5_VABI sceCameraGetAttribute(std::int32_t handle, CameraAttribute* attribute) {
     if (handle < 1 || !attribute) return SCE_CAMERA_ERROR_PARAM;
     CameraAttribute localAttr{};
-    const int savedErrno = errno;
     const bool copiedIn = GuestCopyIn_nid_no_patch(&localAttr, attribute, sizeof(localAttr));
-    errno = savedErrno;
     if (!copiedIn || localAttr.sizeThis != sizeof(CameraAttribute) || !Readable(localAttr.channel)) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     const std::uint32_t channel = localAttr.channel;
@@ -88,34 +85,28 @@ int APS5_VABI sceCameraGetAttribute(std::int32_t handle, CameraAttribute* attrib
     localAttr.sharpness = DEFAULT_SHARPNESS;
     localAttr.hue = DEFAULT_HUE;
     const bool copiedOut = GuestCopyOut_nid_no_patch(attribute, &localAttr, sizeof(localAttr));
-    errno = savedErrno;
     if (!copiedOut) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 
 int APS5_VABI sceCameraGetAutoExposureGain(std::int32_t handle, std::uint32_t channel, std::uint32_t* enable, CameraAutoExposureGainTarget* option) {
     if (handle < 1 || !Readable(channel) || !enable) return SCE_CAMERA_ERROR_PARAM;
-    const int savedErrno = errno;
     if (option) {
         std::uint32_t size = 0;
         const bool copiedIn = GuestCopyIn_nid_no_patch(&size, &option->sizeThis, sizeof(size));
-        errno = savedErrno;
         if (!copiedIn || size != sizeof(CameraAutoExposureGainTarget)) return SCE_CAMERA_ERROR_PARAM;
     }
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     const std::uint32_t localEnable = 0;
     if (!GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable))) {
-        errno = savedErrno;
         return SCE_CAMERA_ERROR_PARAM;
     }
     if (option) {
         const CameraAutoExposureGainTarget localOption{};
         if (!GuestCopyOut_nid_no_patch(option, &localOption, sizeof(localOption))) {
-            errno = savedErrno;
             return SCE_CAMERA_ERROR_PARAM;
         }
     }
-    errno = savedErrno;
     return 0;
 }
 
