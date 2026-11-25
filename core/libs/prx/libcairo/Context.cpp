@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cerrno>
 #include <cstddef>
 #include <vector>
 
@@ -39,9 +38,7 @@ CairoContext* Guest(cairo_t* context) {
 template <typename T>
 T ReadGuest(const T* source, const char* caller) {
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
     return value;
@@ -49,31 +46,25 @@ T ReadGuest(const T* source, const char* caller) {
 
 template <typename T>
 void WriteGuest(T* destination, const T& value, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
 }
 
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
 }
 
 void RequireReadable(const double* source, std::size_t count, const char* caller) {
     std::array<double, 4096> probe;
-    const int savedErrno = errno;
     bool ok = true;
     for (std::size_t done = 0; ok && done < count;) {
         const std::size_t chunk = std::min(count - done, probe.size());
         ok = GuestCopyIn_nid_no_patch(probe.data(), source + done, chunk * sizeof(double));
         done += chunk;
     }
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
 }
@@ -261,9 +252,7 @@ void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* off
     aps5_cairo_get_dash(Backend(context), hostDashes.empty() ? nullptr : hostDashes.data(),
                         offset ? &hostOffset : nullptr);
     if (!hostDashes.empty()) {
-        const int savedErrno = errno;
         const bool ok = GuestCopyOut_nid_no_patch(dashes, hostDashes.data(), hostDashes.size() * sizeof(double));
-        errno = savedErrno;
         if (!ok)
             NotImplemented_nid_no_patch(__func__);
     }
