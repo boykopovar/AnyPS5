@@ -23989,10 +23989,6 @@ int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF9MediaTime8toStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore10FileHandlecvbEv() {
     NotImplemented_nid_no_patch(__func__);
 }
