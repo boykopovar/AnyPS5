@@ -23,7 +23,7 @@ std::atomic<std::uint64_t> nowUs = 1000000;
 std::atomic<bool> holdOpen = false;
 std::atomic<bool> openHeld = false;
 int probes = 0;
-int opened = 0;
+std::atomic<int> opened = 0;
 int closed = 0;
 int queuedLive = 0;
 int queuedDead = 0;
@@ -77,6 +77,34 @@ int main(int argc, char** argv) {
     try {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
+        if (mode == "slow_reopen_multiple") {
+            std::array<AudioOutOutputParam, 16> outputs{};
+            std::array<std::int16_t, 256 * 2> samples{};
+            endpointAbsent = true;
+            for (auto& output : outputs) {
+                const int port = sceAudioOutOpen(0x10000000, 0, 0, 256, 48000, 1);
+                Require(port >= 1, "open initially virtual port");
+                output = {port, samples.data()};
+            }
+            Require(opened == 0, "initially absent endpoint");
+            outputDevices = 2;
+            endpointAbsent = false;
+            failOpen = true;
+            holdOpen = true;
+            nowUs += 2000000;
+            const auto start = std::chrono::steady_clock::now();
+            const int result = sceAudioOutOutputs(outputs.data(), outputs.size());
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            holdOpen = false;
+            for (int attempt = 0; attempt < 400 && opened != static_cast<int>(outputs.size()); ++attempt) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            Require(opened == static_cast<int>(outputs.size()), "each port attempted one reopen");
+            for (const auto& output : outputs) Require(sceAudioOutClose(output.handle) == 0, "close virtual port");
+            Require(result == 256, "virtual batch output failed");
+            Require(elapsed < std::chrono::seconds(1), "each port received a separate reopen wait");
+            return 0;
+        }
         if (mode == "startup_retry") {
             driver = "wasapi";
             outputDevices = 0;
