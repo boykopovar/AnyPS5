@@ -9,6 +9,7 @@ void Close(void* search);
 std::int32_t GetMatchedLength(const void* search);
 void Reset(void* search);
 void SetOffset(void* search, std::int32_t position, std::int32_t& status);
+void SetAttribute(void* search, std::int32_t attribute, std::int32_t value, std::int32_t& status);
 
 }
 

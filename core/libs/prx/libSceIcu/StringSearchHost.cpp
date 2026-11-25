@@ -40,4 +40,11 @@ void SetOffset(void* search, std::int32_t position, std::int32_t& status) {
     status = code;
 }
 
+void SetAttribute(void* search, std::int32_t attribute, std::int32_t value, std::int32_t& status) {
+    auto code = static_cast<UErrorCode>(status);
+    usearch_setAttribute(static_cast<UStringSearch*>(search), static_cast<USearchAttribute>(attribute),
+                         static_cast<USearchAttributeValue>(value), &code);
+    status = code;
+}
+
 }

@@ -270,7 +270,9 @@ void PassingStatus(UStringSearch* search, const char16_t* words) {
         for (const auto attribute : {0, 1, 2}) {
             usearch_setAttribute_nid_postfix(nullptr, attribute, 1, &status);
             RequireThrows([&] { usearch_setAttribute_nid_postfix(search, attribute, 1, &status); });
-            RequireThrows([&] { usearch_setAttribute_nid_postfix(search, attribute, AttributeValueCount, &status); });
+            usearch_setAttribute_nid_postfix(search, attribute, AttributeValueCount, &status);
+            Require(status == IllegalArgument);
+            status = incoming;
         }
         for (const auto length : {-1, 4, -2}) {
             RequireThrows([&] { usearch_setPattern_nid_postfix(search, words, length, &status); });
@@ -397,6 +399,13 @@ void Run() {
     status = 0;
     usearch_setOffset_nid_postfix(opened, 9, &status);
     Require(status > 0);
+    status = 0;
+    usearch_setAttribute_nid_postfix(opened, 0, 1, &status);
+    Require(status == 0);
+    usearch_setAttribute_nid_postfix(opened, 0, 0, &status);
+    Require(status == 0);
+    usearch_setAttribute_nid_postfix(opened, 3, 1, &status);
+    Require(status == IllegalArgument);
 }
 
 } // namespace UsearchObject
