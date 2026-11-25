@@ -840,7 +840,9 @@ endfunction()
 
 if(BUILD_TESTING)
     foreach(agcTest IN LISTS agcExecutionTests)
-        if(agcTest STREQUAL "agc_driver_constant_store_tests" OR agcTest STREQUAL "agc_driver_flat_apertures_tests" OR agcTest STREQUAL "agc_driver_pipeline_optimized_readback_tests" OR agcTest STREQUAL "agc_driver_rcp_hardware_tests")
+        if(agcTest STREQUAL "agc_driver_constant_store_tests" OR agcTest STREQUAL "agc_driver_flat_apertures_tests"
+                OR agcTest STREQUAL "agc_driver_image_packed_signed_tests" OR agcTest STREQUAL "agc_driver_pipeline_optimized_readback_tests"
+                OR agcTest STREQUAL "agc_driver_rcp_hardware_tests")
             continue()
         endif()
         agc_add_default_test(${agcTest})
