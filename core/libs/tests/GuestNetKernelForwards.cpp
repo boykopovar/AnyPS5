@@ -267,7 +267,7 @@ static void CheckPollIgnoringEof(bool net) {
     Require(poll_nid_postfix(&entry, 1, 0) == 0 && entry.revents == 0);
     entry.events = In;
     Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & In) != 0);
-    Require(shutdown_nid_postfix(stream.accepted, 2) == 0);
+    Require(shutdown_nid_postfix(stream.accepted, 1) == 0);
     entry.events = static_cast<short>(In | Out | IgnoreEof);
     Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == Out);
     entry.events = static_cast<short>(In | Out);
