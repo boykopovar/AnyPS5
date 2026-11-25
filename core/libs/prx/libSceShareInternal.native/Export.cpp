@@ -1,6 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceShareInternal.native/include/InventoryExports.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -11,9 +10,7 @@ namespace {
 constexpr int ErrorInvalidArgument = static_cast<int>(0x81960002u);
 
 bool CopyFirstByte(char* destination, const char* source) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, 1);
-    errno = savedErrno;
     return copied;
 }
 
