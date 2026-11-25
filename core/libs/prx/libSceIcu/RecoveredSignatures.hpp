@@ -220,9 +220,6 @@ std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem* 
 UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::int32_t* status);
 UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t* status);
 UNumberingSystem* APS5_VABI unumsys_openByName_nid_postfix(const char* name, std::int32_t* status);
-const char* APS5_VABI unumsys_getName_nid_postfix(const UNumberingSystem*);
-std::int8_t APS5_VABI unumsys_isAlgorithmic_nid_postfix(const UNumberingSystem*);
-UEnumeration* APS5_VABI unumsys_openAvailableNames_nid_postfix(std::int32_t*);
 
 void APS5_VABI uplrules_close_nid_postfix(UPluralRules* uplrules);
 UEnumeration* APS5_VABI uplrules_getKeywords_nid_postfix(const UPluralRules* uplrules, std::int32_t* status);
