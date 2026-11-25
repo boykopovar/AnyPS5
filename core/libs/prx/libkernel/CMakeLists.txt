@@ -71,6 +71,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Coredump.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Exception.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
