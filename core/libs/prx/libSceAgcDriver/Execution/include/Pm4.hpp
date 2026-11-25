@@ -105,6 +105,7 @@ bool AccessesMemory(std::uint32_t header);
 // synchronization): such a packet needs a pipeline barrier, not a device drain.
 bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
+bool GcnReleaseRunsAsWritten(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
 std::size_t PredicationBytes(const Predication& predication);

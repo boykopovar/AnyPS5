@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GcnPackets.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -15,6 +16,7 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -43,6 +45,12 @@ struct SegmentCopyStart {
 
 SegmentCopyStart startSegmentCopy(const std::uint32_t* target, std::size_t words) {
     return {GuestMemory::TrackerGeneration(), pendingWriteOver(target, words)};
+}
+
+bool lowerGcnPacket(Submission& submission, std::span<const std::uint32_t> packet) {
+    if (!ShaderRecompiler::GcnGuestShaders() || Pm4::Predicated(packet[0])) return false;
+    if (((packet[0] >> 8u) & 0xffu) == GcnPackets::OpReleaseMem && (packet.size() != 7 || Pm4::GcnReleaseRunsAsWritten(packet))) return false;
+    return GcnPackets::Lower(submission.commands, packet);
 }
 
 void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words, const SegmentCopyStart& copied) {
@@ -306,7 +314,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             return true;
         }
         if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
-        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+        if (!lowerGcnPacket(submission, std::span(guest + cursor, count))) submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
         cursor += count;
     }
     reach(words, words);

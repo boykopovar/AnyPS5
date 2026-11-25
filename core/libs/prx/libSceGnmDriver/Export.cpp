@@ -20,6 +20,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GcnPackets.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
@@ -48,14 +49,6 @@ constexpr std::uint32_t OpAcquireMem = 0x58;
 constexpr std::uint32_t OpSetContextReg = 0x69;
 constexpr std::uint32_t OpSetShReg = 0x76;
 constexpr std::uint32_t OpSetUconfigReg = 0x79;
-constexpr std::uint32_t OpSurfaceSync = 0x43;
-constexpr std::uint32_t OpDmaData = 0x50;
-constexpr std::uint32_t DmaRegisterDestination = 1u << 27;
-constexpr std::uint32_t DmaNoDestinationIncrement = 1u << 29;
-constexpr std::uint32_t CpDmaReadTagsBytes = 0xc08bu * 4;
-constexpr std::uint32_t OpEventWriteEop = 0x47;
-constexpr std::uint32_t OpEventWriteEos = 0x48;
-constexpr std::uint32_t OpReleaseMem = 0x49;
 constexpr std::uint32_t OpRewind = 0x59;
 constexpr std::uint32_t OpLoadConstRam = 0x80;
 constexpr std::uint32_t OpWriteConstRam = 0x81;
@@ -64,11 +57,6 @@ constexpr std::uint32_t OpIncrementCeCounter = 0x84;
 constexpr std::uint32_t OpIncrementDeCounter = 0x85;
 constexpr std::uint32_t OpWaitOnCeCounter = 0x86;
 constexpr std::uint32_t OpWaitOnDeCounterDiff = 0x88;
-constexpr std::uint32_t EventControlMask = 0xf3fu;
-constexpr std::uint32_t EosStoreData = 2;
-constexpr std::uint32_t ReleaseMemData32 = 1u << 29;
-constexpr std::uint32_t ReleaseMemControlMask = 0xe7000000u;
-constexpr std::uint32_t ReleaseMemDestinationMask = 3u << 16;
 constexpr std::uint32_t GfxEndOfPipeEvent = 0x40;
 
 constexpr std::uint32_t HwInitPacketWords = 0x100;
@@ -233,42 +221,12 @@ std::uint32_t Opcode(std::uint32_t header) {
     return (header >> 8) & 0xffu;
 }
 
-void Append(std::vector<std::uint32_t>& out, std::initializer_list<std::uint32_t> words) {
-    out.insert(out.end(), words);
-}
-
 void Lower(std::vector<std::uint32_t>& out, std::span<const std::uint32_t> packet) {
+    if (AgcDriver::GcnPackets::Lower(out, packet)) return;
     switch (Opcode(packet[0])) {
-        case OpEventWriteEop:
-            if (packet.size() != 6) throw std::runtime_error("GnmDriver: invalid EVENT_WRITE_EOP size");
-            Append(out, {Header(OpReleaseMem, 7), packet[1] & EventControlMask, packet[3] & 0xe3000000u, packet[2], packet[3] & 0xffffu, packet[4], packet[5], 0});
-            return;
-        case OpEventWriteEos:
-            if (packet.size() != 5) throw std::runtime_error("GnmDriver: invalid EVENT_WRITE_EOS size");
-            if ((packet[3] >> 29) != EosStoreData) NotImplemented_nid_no_patch("EVENT_WRITE_EOS GDS store");
-            Append(out, {Header(OpReleaseMem, 7), packet[1] & EventControlMask, ReleaseMemData32, packet[2], packet[3] & 0xffffu, packet[4], 0, 0});
-            return;
-        case OpReleaseMem:
-            if (packet.size() != 7) throw std::runtime_error("GnmDriver: invalid RELEASE_MEM size");
-            if ((packet[2] & ReleaseMemDestinationMask) != 0) NotImplemented_nid_no_patch("RELEASE_MEM to a destination other than memory");
-            Append(out, {Header(OpReleaseMem, 7), packet[1] & EventControlMask, packet[2] & ReleaseMemControlMask, packet[3], packet[4] & 0xffffu, packet[5], packet[6], 0});
-            return;
-        case OpSurfaceSync:
-            if (packet.size() != 5) throw std::runtime_error("GnmDriver: invalid SURFACE_SYNC size");
-            Append(out, {Header(OpAcquireMem, 6), packet[1], packet[2], 0, packet[3], 0, packet[4]});
-            return;
         case OpNop:
             out.insert(out.end(), packet.begin(), packet.end());
             if (packet.size() >= 2 && (packet[1] & 0xffff0000u) == 0x68750000u) out[out.size() - packet.size() + 1] = 0;
-            return;
-        case OpDmaData:
-            if (packet.size() == 7 && (packet[6] & DmaRegisterDestination) && (packet[6] & DmaNoDestinationIncrement) && packet[4] == CpDmaReadTagsBytes && packet[5] == 0) {
-                const auto at = out.size();
-                out.resize(at + packet.size());
-                Nop(&out[at], static_cast<std::uint32_t>(packet.size()) - 1);
-                return;
-            }
-            out.insert(out.end(), packet.begin(), packet.end());
             return;
         default:
             out.insert(out.end(), packet.begin(), packet.end());

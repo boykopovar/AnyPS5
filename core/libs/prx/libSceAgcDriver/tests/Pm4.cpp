@@ -1531,6 +1531,59 @@ void testGcnCalledBufferPacketForms() {
     check(std::atomic_ref<std::uint32_t>(target).load() == 0x150, "a called buffer with the GCN packet forms did not run on a compute queue");
 }
 
+void testGcnReachedBufferLowering() {
+    alignas(8) static std::array<std::uint32_t, 6> labels{};
+    const auto load = [](std::size_t index) { return std::atomic_ref<std::uint32_t>(labels[index]).load(); };
+    const auto eop = [](std::uint32_t& label, std::uint32_t value, std::uint32_t interrupt, std::uint32_t flags = 0) {
+        return makePacket(0x47, {0x00038514u, low(&label), (1u << 29u) | (interrupt << 24u) | high(&label), value, 0}, flags);
+    };
+    const auto eos = [](std::uint32_t& label, std::uint32_t value) { return makePacket(0x48, {0x0000062fu, low(&label), (2u << 29u) | high(&label), value}); };
+    const auto release = [](std::uint32_t& label, std::uint32_t value) {
+        return makePacket(0x49, {0x0001062fu, (1u << 29u) | (2u << 24u), low(&label), high(&label), value, 0}, 2u);
+    };
+    const auto surfaceSync = makePacket(0x43, {0x00c58000u, 0xffffffffu, 0, 10});
+    const auto tagRead = makePacket(0x50, {0, 0, 0, 0xc08bu * 4u, 0, (1u << 27u) | (1u << 29u) | 4u});
+    const auto called = joinPackets({eop(labels[0], 0x11, 0), eos(labels[1], 0x22), surfaceSync, tagRead, release(labels[2], 0x33), eop(labels[3], 0x44, 2)});
+    auto refused = indirectBuffer(called);
+    expectFailure([&] { submitWords(refused); }, "guest cache actions, GPU events and interrupt delivery are not implemented");
+    AgcDriverWaitIdle_nid_postfix();
+    check(load(0) == 0, "a rejected PS5 submission ran a called EVENT_WRITE_EOP");
+    struct GcnGuest {
+        GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(true); }
+        ~GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } gcn;
+    for (const auto queue : {0u, 0x20u}) {
+        labels.fill(0);
+        auto words = indirectBuffer(called);
+        submitWords(words, queue);
+        AgcDriverWaitIdle_nid_postfix();
+        check(load(0) == 0x11 && load(1) == 0x22 && load(2) == 0x33 && load(3) == 0x44, "the GCN packets of a called buffer did not run as GNM lowers them");
+        labels.fill(0);
+        const auto tail = release(labels[4], 0x55);
+        const auto chained = joinPackets({eop(labels[0], 0x11, 0), indirectBuffer(tail, true), writeWord(labels[5], 0x66)});
+        words = indirectBuffer(chained);
+        submitWords(words, queue);
+        AgcDriverWaitIdle_nid_postfix();
+        check(load(0) == 0x11 && load(4) == 0x55 && load(5) == 0, "the GCN packets of a chained buffer did not run as GNM lowers them");
+    }
+    labels.fill(0);
+    static std::vector<std::uint32_t> rewound;
+    rewound = joinPackets({eop(labels[0], 0x11, 0), makePacket(0x59, {0}), writeWord(labels[5], 0x66)});
+    auto words = indirectBuffer(rewound);
+    submitWords(words);
+    for (int wait = 0; wait < 200 && load(0) != 0x11; ++wait) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    check(load(0) == 0x11 && load(5) == 0, "a called buffer with a lowered packet did not stop at its REWIND");
+    std::atomic_ref<std::uint32_t>(rewound[7]).store(0x80000000u);
+    AgcDriverWaitIdle_nid_postfix();
+    check(load(5) == 0x66, "the tail of a REWIND in a called buffer did not run once the title released it");
+    auto predicated = indirectBuffer(eop(labels[0], 0x11, 0, 1u));
+    expectFailure([&] { submitWords(predicated); }, "guest cache actions, GPU events and interrupt delivery are not implemented");
+    auto counter = indirectBuffer(makePacket(0x84, {0}));
+    expectFailure([&] { submitWords(counter); }, "separate CE/DE execution and counter synchronization are not implemented");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testMemSemaphore() {
     alignas(8) static std::uint64_t semaphore = 0;
     alignas(8) static std::uint32_t marker = 0;
@@ -3095,6 +3148,7 @@ int main(int argc, char** argv) {
         testReleaseMemDataSelects();
         testGcnReleaseMemSystemCounter();
         testGcnCalledBufferPacketForms();
+        testGcnReachedBufferLowering();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();

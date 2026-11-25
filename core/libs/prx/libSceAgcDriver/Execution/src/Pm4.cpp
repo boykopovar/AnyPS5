@@ -646,6 +646,11 @@ bool IsTagMarker(std::span<const std::uint32_t> packet) {
     return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
+bool GcnReleaseRunsAsWritten(std::span<const std::uint32_t> packet) {
+    const auto interruptSelect = (packet[2] >> 24u) & 7u;
+    return (packet[1] & ~GcnReleaseEventControl) == 0 && (interruptSelect == 0 || interruptSelect == 3);
+}
+
 bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value) {
     const auto masked = value & mask;
     switch (function) {
