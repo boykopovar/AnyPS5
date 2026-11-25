@@ -205,6 +205,10 @@ int CompareObjects(const LibreSslAsn1Object* first, const LibreSslAsn1Object* se
     return std::memcmp(first->data, second->data, static_cast<std::size_t>(first->length));
 }
 
+const LibreSslAsn1Object& ObjectAt(int nid) {
+    return Entry(nid);
+}
+
 const LibreSslAsn1Object* ObjectByNid(int nid) {
     if (nid >= 0 && nid < ObjectCount) {
         const LibreSslAsn1Object& object = Entry(nid);

@@ -45,4 +45,6 @@ int APS5_VABI cairo_surface_set_user_data(CairoSurface* surface, const CairoUser
 int APS5_VABI cairo_surface_status(CairoSurface* surface);
 int APS5_VABI cairo_surface_write_to_png_stream(CairoSurface* surface, CairoWriteFunc write, void* closure);
 
+void CairoSurfaceDestroy_nid_no_patch(CairoSurface* surface);
+
 }

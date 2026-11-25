@@ -179,6 +179,7 @@ int main() {
     UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_device_state-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
+    SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     SpeakerInfoRequiresInitialization();
@@ -201,5 +202,7 @@ int main() {
 
     Require(sceAudioOut2ContextDestroy(context) == 0);
     std::filesystem::remove(path);
+    UnsetEnvironment("SDL_AUDIODRIVER");
+    UnsetEnvironment("SDL_DISKAUDIOFILE");
     return 0;
 }

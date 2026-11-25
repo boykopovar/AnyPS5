@@ -1,6 +1,8 @@
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 
 namespace {
 
@@ -18,6 +20,35 @@ MsgDialog::ParsedParam Parsed(int buttonType, const char* text = "Question?") {
     parsed.buttonType = buttonType;
     parsed.text = text;
     return parsed;
+}
+
+void CheckHostMessageBoxSpec() {
+    ModalDialogRequest empty;
+    Require(!MsgDialog::BuildHostMessageBoxSpec("Empty", empty).has_value(), "empty button list was accepted");
+
+    ModalDialogRequest oversized;
+    oversized.buttons = {u"One", u"Two", u"Three", u"Four"};
+    Require(!MsgDialog::BuildHostMessageBoxSpec("Too many", oversized).has_value(), "oversized button list was accepted");
+
+    ModalDialogRequest outOfRangeFocus;
+    outOfRangeFocus.buttons = {u"Yes", u"No"};
+    outOfRangeFocus.focus = ModalDialogNoButton;
+    outOfRangeFocus.cancel = 1;
+    const auto focusSpec = MsgDialog::BuildHostMessageBoxSpec("Continue?", outOfRangeFocus);
+    Require(focusSpec.has_value(), "valid button list was rejected");
+    Require(focusSpec->buttons.size() == 2, "button count mismatch");
+    Require(focusSpec->buttons[0].label == "Yes" && focusSpec->buttons[0].isFocus && !focusSpec->buttons[0].isCancel, "focus did not fall back to button 0");
+    Require(focusSpec->buttons[1].label == "No" && !focusSpec->buttons[1].isFocus && focusSpec->buttons[1].isCancel, "cancel button flags mismatch");
+
+    ModalDialogRequest validFocus;
+    validFocus.buttons = {u"Yes", u"No"};
+    validFocus.focus = 1;
+    validFocus.cancel = 1;
+    const std::string_view embeddedNul("Hello\0World", 11);
+    const auto nulSpec = MsgDialog::BuildHostMessageBoxSpec(embeddedNul, validFocus);
+    Require(nulSpec.has_value(), "message with embedded NUL was rejected");
+    Require(nulSpec->message == "HelloWorld", "embedded NUL byte was not stripped");
+    Require(!nulSpec->buttons[0].isFocus && nulSpec->buttons[1].isFocus && nulSpec->buttons[1].isCancel, "valid focus was not preserved");
 }
 
 }
@@ -60,4 +91,6 @@ int main() {
     Require(request.message == kept.message && request.buttons == kept.buttons && request.focus == kept.focus, "a refused request changed the output");
 
     Require(MsgDialog::ButtonIdOf(0) == MsgDialog::ButtonIdOk && MsgDialog::ButtonIdOf(1) == MsgDialog::ButtonIdNo, "button ids");
+
+    CheckHostMessageBoxSpec();
 }

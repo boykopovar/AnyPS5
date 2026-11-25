@@ -346,16 +346,23 @@ bool IsAtEnd(GuestLocale::InputIterator& first, const GuestLocale::InputIterator
 }
 
 template<typename TChar>
-int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TChar* ptr) {
+int GuestCharValue(TChar ch) {
+    if constexpr (sizeof(TChar) == 1) {
+        return static_cast<signed char>(ch);
+    } else {
+        return static_cast<std::uint16_t>(ch);
+    }
+}
+
+template<typename TTable, typename TInput = TTable>
+int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TTable* ptr) {
     if (IteratorBuffer(first) == nullptr || ptr == nullptr) {
         return -2;
     }
-    const TChar sep = ptr[0];
-    if (sep == TChar{}) {
-        return -2;
-    }
+    const TTable sep = ptr[0];
+    const bool nulMarked = sep == TTable{};
     std::vector<std::size_t> fieldStarts;
-    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
+    for (std::size_t off = 0; ptr[off] != TTable{}; ++off) {
         if (ptr[off] == sep) {
             if (numFields == SIZE_MAX) {
                 throw std::length_error("string too long");
@@ -368,11 +375,16 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         return -2;
     }
     std::size_t nulOff = 0;
-    while (ptr[nulOff] != TChar{}) {
+    while (ptr[nulOff] != TTable{}) {
         ++nulOff;
     }
     while (fieldStarts.size() < numFields) {
         fieldStarts.push_back(nulOff);
+        if (nulMarked) {
+            do {
+                ++nulOff;
+            } while (ptr[nulOff] != TTable{});
+        }
     }
 
     std::string skip(numFields, '\0');
@@ -385,21 +397,21 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
                 continue;
             }
             const std::size_t charOff = fieldStarts[field] + col;
-            const TChar tableChar = (charOff >= nulOff) ? TChar{} : ptr[charOff];
-            if (tableChar == sep || tableChar == TChar{}) {
+            const TTable tableChar = (charOff >= nulOff) ? TTable{} : ptr[charOff];
+            if (tableChar == sep || tableChar == TTable{}) {
                 skip[field] = static_cast<char>(col);
                 ans = static_cast<int>(field);
-            } else if (IsAtEnd<TChar>(first, last) ||
-                       FoldAscii(tableChar) != FoldAscii(Peek<TChar>(first))) {
+            } else if (IsAtEnd<TInput>(first, last) ||
+                       GuestCharValue(FoldAscii(tableChar)) != GuestCharValue(FoldAscii(Peek<TInput>(first)))) {
                 skip[field] = static_cast<char>(col);
             } else {
                 prefix = true;
             }
         }
-        if (!prefix || IsAtEnd<TChar>(first, last)) {
+        if (!prefix || IsAtEnd<TInput>(first, last)) {
             break;
         }
-        Inc<TChar>(first);
+        Inc<TInput>(first);
         ans = -1;
     }
     return ans;
@@ -810,11 +822,13 @@ struct ScopedClassicLocinfo {
     }
 };
 
-void ConstructWideTimeGetFacet(GuestLocale::Facet* self, const char* localeName, std::size_t refs, const char* caller) {
-    RequireArgument(self != nullptr, caller);
-    ScopedClassicLocinfo locinfo(localeName);
+GuestLocale::Facet MakeFacetHeader(const GuestLocale::FacetVtable* vtable, std::size_t refs) {
+    return {vtable, static_cast<std::uint32_t>(refs), static_cast<std::uint32_t>(static_cast<std::uint64_t>(refs) >> 32)};
+}
+
+void InitWideTimeGetFacet(GuestLocale::Facet* self, std::size_t refs) {
     auto* facet = reinterpret_cast<GuestTimeGetWideFacet*>(self);
-    facet->base = {&g_wideTimeGetVtable.facet, static_cast<std::uint32_t>(refs), 0};
+    facet->base = MakeFacetHeader(&g_wideTimeGetVtable.facet, refs);
     facet->days = kWideDays;
     facet->months = kWideMonths;
     facet->amPm = kWideAmPm;
@@ -822,9 +836,20 @@ void ConstructWideTimeGetFacet(GuestLocale::Facet* self, const char* localeName,
     facet->reserved = 0;
 }
 
+void ConstructWideTimeGetFacet(GuestLocale::Facet* self, const char* localeName, std::size_t refs, const char* caller) {
+    RequireArgument(self != nullptr, caller);
+    ScopedClassicLocinfo locinfo(localeName);
+    InitWideTimeGetFacet(self, refs);
+}
+
+void ConstructWideTimeGetFromLocinfo(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs, const char* caller) {
+    RequireArgument(self != nullptr && info != nullptr, caller);
+    InitWideTimeGetFacet(self, refs);
+}
+
 void InitTimePutCharFacet(GuestLocale::Facet* self, std::size_t refs) {
     auto* facet = reinterpret_cast<GuestTimePutCharFacet*>(self);
-    facet->base = {&g_timePutCharVtable.facet, static_cast<std::uint32_t>(refs), 0};
+    facet->base = MakeFacetHeader(&g_timePutCharVtable.facet, refs);
     facet->names = *_Getptimes_nid_postfix();
 }
 
@@ -840,12 +865,54 @@ void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2EP
     ConstructWideTimeGetFacet(self, localeName, refs, __func__);
 }
 
+void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    ConstructWideTimeGetFacet(self, "C", refs, __func__);
+}
+
+void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    ConstructWideTimeGetFacet(self, "C", refs, __func__);
+}
+
+void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs) {
+    ConstructWideTimeGetFromLocinfo(self, info, refs, __func__);
+}
+
+void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs) {
+    ConstructWideTimeGetFromLocinfo(self, info, refs, __func__);
+}
+
+std::size_t APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    if (facet != nullptr && *facet == nullptr) {
+        RequireArgument(locale != nullptr && *locale != nullptr, __func__);
+        struct FacetGuard {
+            void* ptr;
+            ~FacetGuard() {
+                if (ptr != nullptr) _ZdlPv_nid_postfix(ptr);
+            }
+        } guard{_Znwm_nid_postfix(sizeof(GuestTimeGetWideFacet))};
+        ConstructWideTimeGetFacet(static_cast<GuestLocale::Facet*>(guard.ptr), (*locale)->name, 0, __func__);
+        *facet = static_cast<GuestLocale::Facet*>(guard.ptr);
+        guard.ptr = nullptr;
+    }
+    return 5;
+}
+
 void APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix(GuestLocale::Facet* self) {
     RequireArgument(self != nullptr, __func__);
 }
 
+void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(GuestLocale::Facet* self) {
+    TimeFieldsDeleteWideTimeGet_nid_no_patch(self);
+}
+
 void APS5_VABI _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED2Ev_nid_postfix(GuestLocale::Facet* self) {
     RequireArgument(self != nullptr, __func__);
+}
+
+void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    RequireArgument(self != nullptr, __func__);
+    ScopedClassicLocinfo locinfo("C");
+    InitTimePutCharFacet(self, refs);
 }
 
 void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs) {
@@ -859,13 +926,28 @@ void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em
     InitTimePutCharFacet(self, refs);
 }
 
+void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info) {
+    RequireArgument(self != nullptr && info != nullptr, __func__);
+    reinterpret_cast<GuestTimePutCharFacet*>(self)->names = *_Getptimes_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(GuestLocale::Facet* self) {
+    TimeFieldsDeleteFacet_nid_no_patch(self);
+}
+
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
     RequireArgument(self != nullptr, __func__);
     *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
 }
 
-void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    RequireArgument(self != nullptr, __func__);
+    *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
+}
+
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info) {
+    RequireArgument(self != nullptr && info != nullptr, __func__);
+    self->vtable = &g_timePutWideVtable.facet;
 }
 
 std::int32_t APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype) {
@@ -980,11 +1062,25 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
     return DoGetFmtImpl<std::uint16_t>(self, first, last, stream, state, time, fmtfirst, __func__);
 }
 
-int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator last, std::size_t numFields, const char* ptr) {
-    if (first == nullptr || ptr == nullptr) {
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
         return -2;
     }
-    return GetLocaleText<char>(*first, &last, numFields, ptr);
+    return GetLocaleText<char>(*first, last, numFields, ptr);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    return GetLocaleText<char, std::uint16_t>(*first, last, numFields, ptr);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const std::uint16_t* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    return GetLocaleText<std::uint16_t>(*first, last, numFields, ptr);
 }
 
 }

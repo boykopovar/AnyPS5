@@ -1,15 +1,20 @@
 #include <nid/BinaryPatcherFactory.hpp>
 #include <nid/ExportExclusions.hpp>
 #include <nid/NativePath.hpp>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 namespace {
+
+constexpr int kReplaceAttempts = 20;
+constexpr std::chrono::milliseconds kReplaceDelay{250};
 
 std::vector<std::uint8_t> _readFile(const std::string& path) {
     std::ifstream f(Nid::Internal::NativePath(path), std::ios::binary);
@@ -40,7 +45,11 @@ void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) 
         throw std::runtime_error("cannot preserve permissions: " + path + ": " + permissionError.message());
     }
     std::error_code renamed;
-    std::filesystem::rename(pending, target, renamed);
+    for (int attempt = 1; attempt <= kReplaceAttempts; ++attempt) {
+        std::filesystem::rename(pending, target, renamed);
+        if (!renamed || attempt == kReplaceAttempts) break;
+        std::this_thread::sleep_for(kReplaceDelay);
+    }
     if (renamed) {
         std::filesystem::remove(pending, discarded);
         throw std::runtime_error("cannot write: " + path + ": " + renamed.message());

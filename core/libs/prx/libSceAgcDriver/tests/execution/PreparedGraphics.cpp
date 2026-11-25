@@ -791,10 +791,10 @@ int main(int argc, char** argv) {
         Require(argc <= 2, "invalid test arguments");
         if (argc == 2 && std::string_view(argv[1]).starts_with("--prebuild-")) {
             const auto mode = std::string_view(argv[1]).substr(11u);
-            const auto* value = std::getenv("APS5_NO_LIBRARY_PREBUILD");
+            const auto* value = std::getenv("APS5_LIBRARY_PREBUILD");
             Require(mode == "unset" ? value == nullptr : (mode == "0" || mode == "1") && value != nullptr && mode == value, "prebuild policy test has the wrong startup environment");
             if (!device->Target().registrationModules) return VulkanTestSkipped;
-            PrebuildPolicyReadback(*device, mode == "1");
+            PrebuildPolicyReadback(*device, mode != "1");
             std::cout << "prebuild policy native readback passed\n";
             return 0;
         }
