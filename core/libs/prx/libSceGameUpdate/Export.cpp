@@ -1,8 +1,6 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
-#include <cerrno>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -92,7 +90,6 @@ int APS5_VABI sceGameUpdateAbortRequest(int requestId) {
 }
 
 int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* param, GameUpdateCheckResult* result) {
-    const int savedErrno = errno;
     if (requestId <= 0) {
         return SCE_GAME_UPDATE_ERROR_REQUEST_NOT_FOUND;
     }
@@ -103,25 +100,20 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
     GameUpdateCheckResult localResult{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam)) ||
         !GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult))) {
-        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
     if (localParam.size != sizeof(GameUpdateCheckParam) || localResult.size != sizeof(GameUpdateCheckResult)) {
-        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_SIZE;
     }
     if (localParam.option != 0 || hasNonZeroReserved(&localParam)) {
-        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard lock(stateMutex);
     Request* request = nullptr;
     if (int error = checkRequestId(requestId, &request); error != 0) {
-        errno = savedErrno;
         return error;
     }
     if (request->aborted) {
-        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_ABORTED;
     }
     localResult.found = false;
@@ -129,7 +121,6 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
     const GuestArena::HostWrite guard(result, sizeof(localResult));
     const bool copied = guard.Open() && GuestWritable_nid_no_patch(result, sizeof(localResult)) &&
         GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
-    errno = savedErrno;
     if (!copied) return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -175,14 +166,11 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
         }
     }
     NpUnifiedEntitlementLabel localLabel{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&localLabel, entitlementLabel, sizeof(localLabel))) {
-        errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
     constexpr bool found = false;
     const bool copied = GuestCopyOut_nid_no_patch(&info->found, &found, sizeof(found));
-    errno = savedErrno;
     return copied ? 0 : SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
 }
 
