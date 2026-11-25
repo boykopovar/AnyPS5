@@ -1,5 +1,4 @@
 #include "prx/libSceSulphaDrv/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -13,10 +12,8 @@ constexpr int ErrorInvalidArgument = static_cast<int>(0x804D0003u);
 
 template <typename TValue>
 bool ReadConfigField(const void* config, std::size_t offset, TValue& value) {
-    const int savedErrno = errno;
     const bool copied =
         GuestCopyIn_nid_no_patch(&value, static_cast<const unsigned char*>(config) + offset, sizeof(value));
-    errno = savedErrno;
     return copied;
 }
 
@@ -52,9 +49,7 @@ int APS5_VABI sceSulphaGetConnectedClientCount(void) {
 int APS5_VABI sceSulphaGetDefaultConfig(void* config) {
     if (config == nullptr) return static_cast<int>(0x804D0003u);
     static constexpr std::uint64_t defaults[]{24, 0x400000, 0xFA100000003};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(config, defaults, sizeof(defaults));
-    errno = savedErrno;
     if (!copied) return static_cast<int>(0x804D0003u);
     return 0;
 }
