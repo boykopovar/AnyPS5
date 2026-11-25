@@ -2539,7 +2539,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             oweGrowth(context, state, lease, base, bytes, GrowthBlock::Held, budget);
             return stepDown ? importAllocation(context, state, address, lease, requester, end, evict, bytes / 2) : nullptr;
         }
-        replaced += it->second.pinnedBytes;
+        if (!it->second.label) replaced += it->second.pinnedBytes;
     }
     const bool freed = retireFreesAtOnce(true);
     const auto pinned = pinnedTotal(state);
