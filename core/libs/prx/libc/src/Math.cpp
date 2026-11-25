@@ -1162,10 +1162,7 @@ double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
     return result;
 }
 float APS5_VABI scalbnf_nid_postfix(float x, int exponent) {
-    const int saved_errno = errno;
-    const float result = std::scalbn(x, exponent);
-    errno = saved_errno;
-    return result;
+    return GuestCpu::X87Scale(x, exponent);
 }
 long double APS5_VABI scalbnl_nid_postfix(long double x, int exponent) {
     const int saved_errno = errno;
@@ -4644,10 +4641,7 @@ double APS5_VABI log2_nid_postfix(double x) {
     return (x + f) * ivln2lo + (lo + f) * ivln2hi + hi * ivln2hi + k;
 }
 float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
-    const int saved_errno = errno;
-    const float result = std::scalbn(x, exp);
-    errno = saved_errno;
-    return result;
+    return scalbnf_nid_postfix(x, exp);
 }
 /* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/s_expl.c and k_expl.h: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_expl.c */
 /*-
