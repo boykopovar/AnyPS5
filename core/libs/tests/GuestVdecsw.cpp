@@ -19,6 +19,13 @@
 
 using namespace SceVdecsw;
 
+extern "C" {
+int APS5_VABI sceVideodec2DecodeFirstSlice(const void* decoder, const void* input, SceVideodec2::FrameBuffer* frameBuffer);
+int APS5_VABI sceVideodec2DecodeNextSlice(const void* decoder, const void* input);
+int APS5_VABI sceVideodec2SyncAllSlice(const void* decoder, SceVideodec2::OutputInfo* output, const void* syncResult);
+}
+
+
 static_assert(sizeof(SceVideodec2::Vp9PictureInfo) == 0x58 && offsetof(SceVideodec2::Vp9PictureInfo, ptsData) == 0x10 && offsetof(SceVideodec2::Vp9PictureInfo, profile) == 0x28 && offsetof(SceVideodec2::Vp9PictureInfo, bitDepth) == 0x38 && offsetof(SceVideodec2::Vp9PictureInfo, colorSpace) == 0x3c && offsetof(SceVideodec2::Vp9PictureInfo, renderHeight) == 0x50);
 
 static_assert(sizeof(HevcPictureInfo) == 0xb8 && offsetof(HevcPictureInfo, idrPictureFlag) == 0x93 && offsetof(HevcPictureInfo, frameCroppingFlag) == 0xa5);
@@ -679,6 +686,150 @@ void testHevcMain10() {
     check(info.generalProfileIdc == 2 && info.bitDepthLumaMinus8 == 2 && info.bitDepthChromaMinus8 == 2, "Main 10 HEVC profile or bit depth differs");
 }
 
+
+struct SliceInputTest {
+    std::uint64_t thisSize;
+    const std::uint8_t* auData;
+    std::uint64_t auSize;
+    std::uint64_t ptsData;
+    std::uint64_t dtsData;
+    std::uint64_t attachedData;
+    std::uint32_t field30;
+    std::uint32_t field34;
+    std::uint8_t field38;
+    std::uint8_t reserved39;
+    std::uint8_t reserved3a;
+    std::uint8_t reserved3b;
+    std::uint32_t reserved3c;
+};
+
+static_assert(sizeof(SliceInputTest) == 0x40);
+
+struct SliceSyncResultTest {
+    std::uint64_t thisSize;
+    std::uint32_t field08;
+    std::uint32_t field0c;
+    void* field10;
+};
+
+static_assert(sizeof(SliceSyncResultTest) == 0x18);
+
+void testVideodec2SliceValidation() {
+    constexpr int ErrStructureSize = static_cast<int>(0x811D0101u);
+    constexpr int ErrArgumentPointer = static_cast<int>(0x811D0102u);
+    constexpr int ErrDecoderHandle = static_cast<int>(0x811D0103u);
+    constexpr int ErrFrameBufferSize = static_cast<int>(0x811D0106u);
+    constexpr int ErrFrameBufferPointer = static_cast<int>(0x811D0107u);
+    constexpr int ErrFrameBufferAlignment = static_cast<int>(0x811D0108u);
+    constexpr int ErrSliceInput = static_cast<int>(0x811D01E0u);
+
+    std::array<std::uint8_t, 256> invalidDecoder{};
+    const auto* unmapped = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+
+    errno = 71;
+    check(sceVideodec2DecodeFirstSlice(nullptr, nullptr, nullptr) == ErrDecoderHandle && errno == 71, "DecodeFirstSlice accepted null decoder");
+    check(sceVideodec2DecodeFirstSlice(unmapped, nullptr, nullptr) == ErrDecoderHandle && errno == 71, "DecodeFirstSlice accepted unmapped decoder");
+    check(sceVideodec2DecodeFirstSlice(invalidDecoder.data(), nullptr, nullptr) == ErrDecoderHandle, "DecodeFirstSlice accepted decoder without magic");
+    check(sceVideodec2DecodeNextSlice(nullptr, nullptr) == ErrDecoderHandle && errno == 71, "DecodeNextSlice accepted null decoder");
+    check(sceVideodec2DecodeNextSlice(unmapped, nullptr) == ErrDecoderHandle && errno == 71, "DecodeNextSlice accepted unmapped decoder");
+    check(sceVideodec2DecodeNextSlice(invalidDecoder.data(), nullptr) == ErrDecoderHandle, "DecodeNextSlice accepted decoder without magic");
+    check(sceVideodec2SyncAllSlice(nullptr, nullptr, nullptr) == ErrDecoderHandle && errno == 71, "SyncAllSlice accepted null decoder");
+    check(sceVideodec2SyncAllSlice(unmapped, nullptr, nullptr) == ErrDecoderHandle && errno == 71, "SyncAllSlice accepted unmapped decoder");
+    check(sceVideodec2SyncAllSlice(invalidDecoder.data(), nullptr, nullptr) == ErrDecoderHandle, "SyncAllSlice accepted decoder without magic");
+
+    std::array<std::uint8_t, 256> decoder{};
+    const std::uint64_t magic = 0xA824D9799010A455ull;
+    std::memcpy(decoder.data() + 0x68, &magic, sizeof(magic));
+
+    alignas(256) std::array<std::uint8_t, 512> alignedStorage{};
+    const std::array<std::uint8_t, 4> dummyAu{0, 0, 0, 1};
+    const SliceInputTest validInput{sizeof(SliceInputTest), dummyAu.data(), dummyAu.size(), 1, 2, 3, 1, 16, 1, 0, 0, 0, 0};
+    SceVideodec2::FrameBuffer validFrame{sizeof(SceVideodec2::FrameBuffer), alignedStorage.data(), alignedStorage.size(), false};
+
+    errno = 71;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), nullptr, &validFrame) == ErrArgumentPointer && errno == 71, "DecodeFirstSlice accepted null input");
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), unmapped, &validFrame) == ErrArgumentPointer && errno == 71, "DecodeFirstSlice accepted unmapped input");
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, nullptr) == ErrArgumentPointer, "DecodeFirstSlice accepted null frameBuffer");
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, reinterpret_cast<SceVideodec2::FrameBuffer*>(static_cast<std::uintptr_t>(0x10))) == ErrArgumentPointer && errno == 71, "DecodeFirstSlice accepted unmapped frameBuffer");
+
+    auto badSizeInput = validInput;
+    badSizeInput.thisSize = sizeof(SliceInputTest) - 8;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badSizeInput, &validFrame) == ErrStructureSize, "DecodeFirstSlice accepted invalid input size");
+    auto badSizeFrame = validFrame;
+    badSizeFrame.thisSize = sizeof(SceVideodec2::FrameBuffer) - 8;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, &badSizeFrame) == ErrStructureSize, "DecodeFirstSlice accepted invalid frameBuffer size");
+
+    auto badInput = validInput;
+    badInput.auData = nullptr;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted null auData");
+    badInput = validInput;
+    badInput.auSize = 0;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted zero auSize");
+    badInput = validInput;
+    badInput.field30 = 0;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted zero field30");
+    badInput = validInput;
+    badInput.field34 = 0;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted zero field34");
+    badInput = validInput;
+    badInput.reserved39 = 1;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted non-zero reserved39");
+    badInput = validInput;
+    badInput.reserved3c = 1;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &badInput, &validFrame) == ErrSliceInput, "DecodeFirstSlice accepted non-zero reserved3c");
+
+    auto badFrame = validFrame;
+    badFrame.frameBuffer = nullptr;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, &badFrame) == ErrFrameBufferPointer, "DecodeFirstSlice accepted null frameBuffer pointer");
+    badFrame.frameBuffer = alignedStorage.data() + 1;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, &badFrame) == ErrFrameBufferAlignment, "DecodeFirstSlice accepted unaligned frameBuffer pointer");
+    badFrame = validFrame;
+    badFrame.frameBufferSize = 0;
+    check(sceVideodec2DecodeFirstSlice(decoder.data(), &validInput, &badFrame) == ErrFrameBufferSize, "DecodeFirstSlice accepted zero frameBufferSize");
+
+    errno = 71;
+    check(sceVideodec2DecodeNextSlice(decoder.data(), nullptr) == ErrArgumentPointer && errno == 71, "DecodeNextSlice accepted null input");
+    check(sceVideodec2DecodeNextSlice(decoder.data(), unmapped) == ErrArgumentPointer && errno == 71, "DecodeNextSlice accepted unmapped input");
+    check(sceVideodec2DecodeNextSlice(decoder.data(), &badSizeInput) == ErrStructureSize, "DecodeNextSlice accepted invalid input size");
+    badInput = validInput;
+    badInput.auData = nullptr;
+    check(sceVideodec2DecodeNextSlice(decoder.data(), &badInput) == ErrSliceInput, "DecodeNextSlice accepted null auData");
+    badInput = validInput;
+    badInput.auSize = 0;
+    check(sceVideodec2DecodeNextSlice(decoder.data(), &badInput) == ErrSliceInput, "DecodeNextSlice accepted zero auSize");
+    badInput = validInput;
+    badInput.field30 = 0;
+    check(sceVideodec2DecodeNextSlice(decoder.data(), &badInput) == ErrSliceInput, "DecodeNextSlice accepted zero field30");
+    badInput = validInput;
+    badInput.reserved3a = 1;
+    check(sceVideodec2DecodeNextSlice(decoder.data(), &badInput) == ErrSliceInput, "DecodeNextSlice accepted non-zero reserved3a");
+
+    SceVideodec2::OutputInfo output;
+    const auto rawByteAt = [&](std::size_t offset) {
+        std::uint8_t value = 0;
+        std::memcpy(&value, reinterpret_cast<const std::uint8_t*>(&output) + offset, sizeof(value));
+        return value;
+    };
+    std::memset(&output, 0xa5, sizeof(output));
+    errno = 71;
+    check(sceVideodec2SyncAllSlice(decoder.data(), nullptr, nullptr) == ErrArgumentPointer && errno == 71, "SyncAllSlice accepted null output");
+    check(sceVideodec2SyncAllSlice(decoder.data(), reinterpret_cast<SceVideodec2::OutputInfo*>(static_cast<std::uintptr_t>(0x10)), nullptr) == ErrArgumentPointer && errno == 71, "SyncAllSlice accepted unmapped output");
+    output.thisSize = sizeof(SceVideodec2::OutputInfo) - 8;
+    check(sceVideodec2SyncAllSlice(decoder.data(), &output, nullptr) == ErrStructureSize, "SyncAllSlice accepted invalid output size");
+    check(rawByteAt(offsetof(SceVideodec2::OutputInfo, isValid)) == 0xa5, "SyncAllSlice cleared isValid when output size was invalid");
+
+    std::memset(&output, 0xa5, sizeof(output));
+    output.thisSize = sizeof(SceVideodec2::OutputInfo);
+    check(sceVideodec2SyncAllSlice(decoder.data(), &output, nullptr) == ErrArgumentPointer, "SyncAllSlice accepted null syncResult");
+    check(rawByteAt(offsetof(SceVideodec2::OutputInfo, isValid)) == 0 && rawByteAt(offsetof(SceVideodec2::OutputInfo, isErrorFrame)) == 0xa5 && static_cast<std::uint8_t>(output.pictureCount) == 0xa5, "SyncAllSlice did not clear only isValid before rejecting null syncResult");
+
+    std::memset(&output, 0xa5, sizeof(output));
+    output.thisSize = sizeof(SceVideodec2::OutputInfo);
+    SliceSyncResultTest badSync{0x10, 0, 0, nullptr};
+    check(sceVideodec2SyncAllSlice(decoder.data(), &output, &badSync) == ErrStructureSize, "SyncAllSlice accepted invalid syncResult size");
+    check(rawByteAt(offsetof(SceVideodec2::OutputInfo, isValid)) == 0, "SyncAllSlice did not clear isValid before rejecting syncResult size");
+}
+
 int main() {
     try {
         testGenericPictureInfoValidation();
@@ -700,6 +851,7 @@ int main() {
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();
+        testVideodec2SliceValidation();
         {
             Session session;
             errno = 71;
