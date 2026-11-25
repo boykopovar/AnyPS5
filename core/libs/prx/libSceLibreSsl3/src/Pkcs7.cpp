@@ -67,6 +67,7 @@ constexpr unsigned char ContextTag1 = 0xa1;
 constexpr unsigned char Pkcs7Prefix[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07};
 constexpr unsigned char DataType = 1;
 constexpr unsigned char SignedType = 2;
+constexpr unsigned char DigestType = 5;
 constexpr unsigned char EncryptedType = 6;
 
 void PutError(int reason) {
@@ -318,6 +319,15 @@ void FreeSigned(LibreSsl3Pkcs7Signed* data) {
     free_nid_postfix(data);
 }
 
+void FreeDigest(LibreSsl3Pkcs7Digest* data) {
+    if (!data) return;
+    FreeString(data->version);
+    FreeAlgor_nid_no_patch(data->md);
+    FreePkcs7(data->contents);
+    FreeString(data->digest);
+    free_nid_postfix(data);
+}
+
 int ContentType(const Asn1Object_nid_no_patch* object) {
     if (!object || !object->data || object->length != sizeof(Pkcs7Prefix) + 1) return 0;
     if (std::memcmp(object->data, Pkcs7Prefix, sizeof(Pkcs7Prefix)) != 0) return 0;
@@ -333,10 +343,12 @@ void FreePkcs7(LibreSsl3Pkcs7* pkcs7) {
             FreeString(static_cast<Asn1String*>(pkcs7->d));
         } else if (type == SignedType) {
             FreeSigned(static_cast<LibreSsl3Pkcs7Signed*>(pkcs7->d));
+        } else if (type == DigestType) {
+            FreeDigest(static_cast<LibreSsl3Pkcs7Digest*>(pkcs7->d));
         } else if (type == 0) {
             FreeType(pkcs7->d);
         } else {
-            NotImplemented_nid_no_patch("PKCS7_free: enveloped, digested or encrypted content");
+            NotImplemented_nid_no_patch("PKCS7_free: enveloped, signed-and-enveloped or encrypted content");
         }
     }
     FreeObject(pkcs7->type);
@@ -551,12 +563,50 @@ LibreSsl3Pkcs7Signed* DecodeSigned(std::span<const unsigned char>& input, int de
     return nullptr;
 }
 
+LibreSsl3Pkcs7Digest* DecodeDigest(std::span<const unsigned char>& input, int depth) {
+    if (depth > MaxNesting) {
+        PutError(NestedTooDeep);
+        return nullptr;
+    }
+    Tlv sequence;
+    if (!Next(input, SequenceTag, sequence)) return nullptr;
+    std::span<const unsigned char> body = sequence.content;
+    auto* data = static_cast<LibreSsl3Pkcs7Digest*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7Digest)));
+    if (!data) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    Tlv version;
+    Tlv digest;
+    bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
+              (data->md = DecodeAlgor_nid_no_patch(body)) != nullptr &&
+              (data->contents = DecodePkcs7(body, depth + 1)) != nullptr &&
+              Next(body, OctetStringTag, digest) &&
+              (data->digest = NewString(OctetStringType, digest.content)) != nullptr;
+    if (ok && !body.empty()) {
+        PutError(SequenceLengthMismatch);
+        ok = false;
+    }
+    if (ok) return data;
+    FreeDigest(data);
+    return nullptr;
+}
+
 void* DecodeContent(int type, std::span<const unsigned char> content, int depth) {
     if (type == SignedType) {
         LibreSsl3Pkcs7Signed* data = DecodeSigned(content, depth + 1);
         if (data && !content.empty()) {
             PutError(SequenceLengthMismatch);
             FreeSigned(data);
+            return nullptr;
+        }
+        return data;
+    }
+    if (type == DigestType) {
+        LibreSsl3Pkcs7Digest* data = DecodeDigest(content, depth + 1);
+        if (data && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeDigest(data);
             return nullptr;
         }
         return data;
@@ -568,7 +618,7 @@ void* DecodeContent(int type, std::span<const unsigned char> content, int depth)
         return nullptr;
     }
     if (type == 0) return DecodeAny(value);
-    if (type != DataType) NotImplemented_nid_no_patch("d2i_PKCS7: enveloped, digested or encrypted content");
+    if (type != DataType) NotImplemented_nid_no_patch("d2i_PKCS7: enveloped, signed-and-enveloped or encrypted content");
     if (value.tag == (OctetStringTag | ConstructedFlag)) NotImplemented_nid_no_patch("d2i_PKCS7: constructed OCTET STRING");
     if (value.tag != OctetStringTag) {
         PutError(WrongTag);

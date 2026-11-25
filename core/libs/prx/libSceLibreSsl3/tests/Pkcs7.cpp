@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
@@ -17,8 +18,18 @@
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
+constexpr std::size_t NoFailure = std::numeric_limits<std::size_t>::max();
+std::size_t allocationsUntilFailure = NoFailure;
+
+bool AllocationFails() {
+    if (allocationsUntilFailure == NoFailure) return false;
+    if (allocationsUntilFailure == 0) return true;
+    --allocationsUntilFailure;
+    return false;
+}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
+    if (AllocationFails()) return nullptr;
     void* result = std::malloc(size ? size : 1);
     if (result) allocations.emplace(result, size);
     return result;
@@ -31,6 +42,7 @@ void APS5_VABI Free_nid_no_patch(void* pointer) {
 }
 
 void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) {
+    if (AllocationFails()) return nullptr;
     void* result = std::calloc(count ? count : 1, size ? size : 1);
     if (result) allocations.emplace(result, count * size);
     return result;
@@ -38,6 +50,7 @@ void* APS5_VABI Callocate_nid_no_patch(std::size_t count, std::size_t size) {
 
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
     if (!pointer) return Allocate_nid_no_patch(size);
+    if (AllocationFails()) return nullptr;
     if (allocations.erase(pointer) == 0) std::abort();
     void* result = std::realloc(pointer, size ? size : 1);
     if (result) allocations.emplace(result, size);
@@ -169,6 +182,27 @@ constexpr unsigned char CertificateAndCrl[] = {
 
 constexpr unsigned char DataOid[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01};
 
+constexpr unsigned char DigestedData[] = {
+    0x30, 0x5e, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x05, 0xa0, 0x51, 0x30,
+    0x4f, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+    0x01, 0x05, 0x00, 0x30, 0x19, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01,
+    0xa0, 0x0c, 0x04, 0x0a, 0x70, 0x6b, 0x37, 0x2d, 0x64, 0x69, 0x67, 0x65, 0x73, 0x74, 0x04, 0x20,
+    0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+
+constexpr unsigned char DigestedDetached[] = {
+    0x30, 0x3e, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x05, 0xa0, 0x31, 0x30,
+    0x2f, 0x02, 0x01, 0x00, 0x30, 0x07, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x30, 0x0b, 0x06,
+    0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0x04, 0x14, 0xaa, 0xbb, 0xcc, 0xdd,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x10, 0x11, 0x12, 0x13};
+
+constexpr unsigned char DigestedWithData[] = {
+    0x30, 0x46, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x05, 0xa0, 0x39, 0x30,
+    0x37, 0x02, 0x01, 0x02, 0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+    0x01, 0x30, 0x13, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0xa0, 0x06,
+    0x04, 0x04, 0x6e, 0x65, 0x73, 0x74, 0x04, 0x10, 0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04,
+    0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c};
+
 std::vector<unsigned char> Wrap(unsigned char tag, std::vector<unsigned char> content) {
     std::vector<unsigned char> result{tag};
     if (content.size() < 0x80) {
@@ -234,6 +268,30 @@ T* At(const LibreSsl3Stack* stack, int index) {
     return reinterpret_cast<T*>(stack->data[index]);
 }
 
+std::vector<std::uint64_t> DrainErrors() {
+    std::vector<std::uint64_t> errors;
+    for (std::uint64_t code = ERR_get_error_nid_postfix(); code != 0; code = ERR_get_error_nid_postfix()) errors.push_back(code);
+    return errors;
+}
+
+LibreSsl3Pkcs7* DecodeClean(const std::vector<unsigned char>& der, std::source_location location = std::source_location::current()) {
+    ERR_clear_error_nid_postfix();
+    LibreSsl3Pkcs7* pkcs7 = Decode(der);
+    Require(pkcs7 != nullptr, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+    return pkcs7;
+}
+
+void RequireRefused(const std::vector<unsigned char>& der, unsigned reason, std::source_location location = std::source_location::current()) {
+    const unsigned char* cursor = der.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS7_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size())) == nullptr, location);
+    Require(cursor == der.data(), location);
+    Require(ERR_get_error_nid_postfix() == (0x0dfff000u | reason), location);
+    ERR_clear_error_nid_postfix();
+    Require(allocations.empty(), location);
+}
+
 void TestSignedMessage() {
     const std::vector<unsigned char> der(std::begin(SignedMessage), std::end(SignedMessage));
     LibreSsl3Pkcs7* pkcs7 = Decode(der);
@@ -279,6 +337,132 @@ void TestCertificatesAndCrl() {
     Require(At<LibreSsl3X509Crl>(data->crl, 0)->references == 1);
     PKCS7_free_nid_postfix(pkcs7);
     Require(allocations.empty());
+}
+
+void TestDigestedContent() {
+    const std::vector<unsigned char> data(std::begin(DigestedData), std::end(DigestedData));
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(data);
+    Require(pkcs7 != nullptr && IsPkcs7Type(pkcs7->type, 5));
+    const auto* digest = static_cast<const LibreSsl3Pkcs7Digest*>(pkcs7->d);
+    Require(digest != nullptr && digest->version->length == 1 && digest->version->data[0] == 0);
+    Require(digest->md != nullptr);
+    Require(OBJ_obj2nid_nid_postfix(static_cast<const LibreSslAsn1Object*>(digest->md->algorithm)) == 672);
+    Require(digest->md->parameter != nullptr && digest->md->parameter->type == 5 && digest->md->parameter->value == nullptr);
+    Require(IsPkcs7Type(digest->contents->type, 1));
+    const auto* content = static_cast<const Asn1String*>(digest->contents->d);
+    Require(content != nullptr && content->type == 4 && content->length == 10);
+    Require(std::memcmp(content->data, "pk7-digest", 10) == 0);
+    Require(digest->digest != nullptr && digest->digest->type == 4 && digest->digest->length == 32);
+    const unsigned char expected[] = {
+        0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+    Require(std::memcmp(digest->digest->data, expected, 32) == 0);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+
+    const std::vector<unsigned char> detached(std::begin(DigestedDetached), std::end(DigestedDetached));
+    pkcs7 = DecodeClean(detached);
+    Require(pkcs7 != nullptr && IsPkcs7Type(pkcs7->type, 5));
+    digest = static_cast<const LibreSsl3Pkcs7Digest*>(pkcs7->d);
+    Require(digest != nullptr && digest->version->data[0] == 0);
+    Require(OBJ_obj2nid_nid_postfix(static_cast<const LibreSslAsn1Object*>(digest->md->algorithm)) == 64);
+    Require(digest->md->parameter == nullptr);
+    Require(IsPkcs7Type(digest->contents->type, 1) && digest->contents->d == nullptr);
+    Require(digest->digest->length == 20 && digest->digest->data[0] == 0xaa && digest->digest->data[19] == 0x13);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+
+    const std::vector<unsigned char> withData(std::begin(DigestedWithData), std::end(DigestedWithData));
+    pkcs7 = DecodeClean(withData);
+    Require(pkcs7 != nullptr && IsPkcs7Type(pkcs7->type, 5));
+    digest = static_cast<const LibreSsl3Pkcs7Digest*>(pkcs7->d);
+    Require(digest != nullptr && digest->version->data[0] == 2);
+    Require(OBJ_obj2nid_nid_postfix(static_cast<const LibreSslAsn1Object*>(digest->md->algorithm)) == 672);
+    Require(digest->md->parameter == nullptr);
+    content = static_cast<const Asn1String*>(digest->contents->d);
+    Require(content != nullptr && content->length == 4 && std::memcmp(content->data, "nest", 4) == 0);
+    Require(digest->digest->length == 16 && digest->digest->data[0] == 0xaa && digest->digest->data[15] == 0x0c);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+}
+
+void TestDigestedErrors() {
+    const std::vector<unsigned char> der(std::begin(DigestedData), std::end(DigestedData));
+    std::vector<unsigned char> truncated(der.begin(), der.end() - 1);
+    const unsigned char* cursor = truncated.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS7_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(cursor == truncated.data() && LastReason() == 155);
+    ERR_clear_error_nid_postfix();
+    Require(allocations.empty());
+
+    std::vector<unsigned char> wrongVersion = der;
+    wrongVersion[17] = 0x03;
+    RequireRefused(wrongVersion, 168);
+
+    std::vector<unsigned char> wrongAlgorithm = der;
+    wrongAlgorithm[20] = 0x31;
+    RequireRefused(wrongAlgorithm, 168);
+
+    std::vector<unsigned char> wrongContent = der;
+    wrongContent[13] = 0xa1;
+    RequireRefused(wrongContent, 168);
+
+    std::vector<unsigned char> wrongDigest = der;
+    wrongDigest[62] = 0x02;
+    RequireRefused(wrongDigest, 168);
+
+    std::vector<unsigned char> longDigest = der;
+    longDigest[63] = 0x21;
+    RequireRefused(longDigest, 155);
+}
+
+std::vector<unsigned char> DigestedNested(int levels) {
+    std::vector<unsigned char> nested = ContentInfo(Pkcs7Oid(1), Wrap(0x04, {0x01}));
+    const std::vector<unsigned char> algorithm = Wrap(0x30, Wrap(0x06, {0x2b, 0x0e, 0x03, 0x02, 0x1a}));
+    for (int level = 0; level < levels; ++level) {
+        std::vector<unsigned char> body = Wrap(0x02, {0x00});
+        body.insert(body.end(), algorithm.begin(), algorithm.end());
+        body.insert(body.end(), nested.begin(), nested.end());
+        const std::vector<unsigned char> digest = Wrap(0x04, {0x01});
+        body.insert(body.end(), digest.begin(), digest.end());
+        nested = ContentInfo(Pkcs7Oid(5), Wrap(0x30, body));
+    }
+    return nested;
+}
+
+void TestDigestedNesting() {
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(DigestedNested(14));
+    Require(pkcs7 != nullptr && IsPkcs7Type(pkcs7->type, 5));
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+    RequireRefused(DigestedNested(15), 219);
+}
+
+void TestDigestedOutOfMemory(const std::vector<unsigned char>& der) {
+    for (std::size_t fail = 0; fail != 10000; ++fail) {
+        ERR_clear_error_nid_postfix();
+        allocationsUntilFailure = fail;
+        const unsigned char* cursor = der.data();
+        LibreSsl3Pkcs7* pkcs7 = d2i_PKCS7_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
+        allocationsUntilFailure = NoFailure;
+        if (pkcs7) {
+            Require(cursor == der.data() + der.size());
+            PKCS7_free_nid_postfix(pkcs7);
+            Require(allocations.empty());
+            ERR_clear_error_nid_postfix();
+            return;
+        }
+        Require(cursor == der.data());
+        Require(allocations.empty());
+    }
+    Require(false);
+}
+
+void TestDigestedAllocationFailures() {
+    TestDigestedOutOfMemory(std::vector<unsigned char>(std::begin(DigestedData), std::end(DigestedData)));
+    TestDigestedOutOfMemory(std::vector<unsigned char>(std::begin(DigestedDetached), std::end(DigestedDetached)));
+    TestDigestedOutOfMemory(std::vector<unsigned char>(std::begin(DigestedWithData), std::end(DigestedWithData)));
 }
 
 void TestDataAndOtherTypes() {
@@ -373,30 +557,6 @@ std::vector<unsigned char> Content(const std::vector<unsigned char>& der) {
 std::vector<unsigned char> Joined(std::vector<unsigned char> first, const std::vector<unsigned char>& second) {
     first.insert(first.end(), second.begin(), second.end());
     return first;
-}
-
-std::vector<std::uint64_t> DrainErrors() {
-    std::vector<std::uint64_t> errors;
-    for (std::uint64_t code = ERR_get_error_nid_postfix(); code != 0; code = ERR_get_error_nid_postfix()) errors.push_back(code);
-    return errors;
-}
-
-LibreSsl3Pkcs7* DecodeClean(const std::vector<unsigned char>& der, std::source_location location = std::source_location::current()) {
-    ERR_clear_error_nid_postfix();
-    LibreSsl3Pkcs7* pkcs7 = Decode(der);
-    Require(pkcs7 != nullptr, location);
-    Require(ERR_get_error_nid_postfix() == 0, location);
-    return pkcs7;
-}
-
-void RequireRefused(const std::vector<unsigned char>& der, unsigned reason, std::source_location location = std::source_location::current()) {
-    const unsigned char* cursor = der.data();
-    ERR_clear_error_nid_postfix();
-    Require(d2i_PKCS7_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size())) == nullptr, location);
-    Require(cursor == der.data(), location);
-    Require(ERR_get_error_nid_postfix() == (0x0dfff000u | reason), location);
-    ERR_clear_error_nid_postfix();
-    Require(allocations.empty(), location);
 }
 
 void RequireData(const LibreSsl3Pkcs7* pkcs7, std::source_location location = std::source_location::current()) {
@@ -570,6 +730,10 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     TestSignedMessage();
     TestCertificatesAndCrl();
+    TestDigestedContent();
+    TestDigestedErrors();
+    TestDigestedNesting();
+    TestDigestedAllocationFailures();
     TestDataAndOtherTypes();
     TestOutputAndErrors();
     TestLongFormLengths();
