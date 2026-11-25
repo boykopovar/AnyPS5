@@ -11,7 +11,7 @@
 namespace Elfpatcher::Windows {
 
 PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Domain::SysVDynamicSection& dynamicSection,
-                                              const std::vector<Domain::ProgramHeader>& headers) const {
+                                              const std::vector<Domain::ProgramHeader>& headers, const bool tlsModuleRelocations) const {
     if (dynamicSection.DynSymData.empty() || dynamicSection.DynSymData.size() % 24 != 0)
         throw Domain::RelinkerException("Invalid ELF dynamic symbol table size");
     PeRelocations result;
@@ -48,7 +48,7 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             if (type == 16 || type == 17 || type == 18) {
                 if (symbol != 0)
                     throw Domain::RelinkerException("Imported TLS relocation " + std::to_string(type) + " is not supported for this target", target);
-                if (type == 16)
+                if (type == 16 && !tlsModuleRelocations)
                     throw Domain::RelinkerException("Executable DTPMOD64 relocation is not supported for this target", target);
                 const auto tls = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 7; });
                 if (tls == headers.end() || tls->MemorySize == 0)
@@ -57,6 +57,11 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
                 if (!std::has_single_bit(alignment) || tls->MemorySize > 0x7fff0000u)
                     throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
                 image.RequireWritable(target, 8);
+                if (type == 16) {
+                    image.WritePointer(target, 0);
+                    result.TlsModuleRelocations.push_back(rva);
+                    continue;
+                }
                 image.WritePointer(target, type == 17 ? addend : addend - Io::AlignUp64(tls->MemorySize, alignment));
                 continue;
             }

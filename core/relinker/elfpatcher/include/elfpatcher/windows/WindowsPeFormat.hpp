@@ -60,6 +60,7 @@ struct PeImport {
 struct PeRelocations {
     std::vector<std::uint32_t> BaseRelocations;
     std::vector<PeImport> Imports;
+    std::vector<std::uint32_t> TlsModuleRelocations;
 };
 
 std::uint32_t CheckedRva(std::uint64_t value);
