@@ -570,6 +570,10 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    std::vector<Retained<Object>> punchHoles;
+    bool clientConfigured = false;
+    bool popupMenuClientConfigured = false;
+    std::int32_t popupMenuSelectedIndex = -1;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
