@@ -2,7 +2,6 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
@@ -32,9 +31,7 @@ int APS5_VABI scePlayerReviewDialogTerminate(void) {
 int APS5_VABI scePlayerReviewDialogOpen(const PlayerReviewDialogParam* param) {
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     PlayerReviewDialogParam localParam{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
@@ -71,9 +68,7 @@ int APS5_VABI scePlayerReviewDialogGetResult(CommonDialogResultPrefix* result) {
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
