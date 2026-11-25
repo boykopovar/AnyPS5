@@ -404,6 +404,11 @@ void Run() {
     Require(status == 0);
     usearch_setAttribute_nid_postfix(opened, 0, 0, &status);
     Require(status == 0);
+    for (const auto value : {-1, 2, 3, 4, 100}) {
+        status = 0;
+        usearch_setAttribute_nid_postfix(opened, 0, value, &status);
+        Require(status == 0);
+    }
     usearch_setAttribute_nid_postfix(opened, 3, 1, &status);
     Require(status == IllegalArgument);
 }
