@@ -1,7 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -90,16 +89,12 @@ float Sn3d(std::uint32_t acn, const AudioOut2Position& direction) {
 }
 
 static bool ReadGuest(void* local, const void* guest, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(local, guest, bytes);
-    errno = savedErrno;
     return copied;
 }
 
 static bool WriteGuest(void* guest, const void* local, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(guest, local, bytes);
-    errno = savedErrno;
     return copied;
 }
 
@@ -211,9 +206,7 @@ int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t fl
     for (auto& angle : result.speaker_angle) angle = NoSpeaker;
     result.speaker_angle[0] = {30, 0};
     result.speaker_angle[1] = {-30, 0};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &result, sizeof(result));
-    errno = savedErrno;
     return copied ? 0 : ErrorInvalidPointer;
 }
 
