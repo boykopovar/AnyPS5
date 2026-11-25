@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -163,6 +164,55 @@ class PhaseReport(unittest.TestCase):
             self.report("build selected test targets", 123.4, "12 targets in 2 batches"),
             ("[ci-timing] build selected test targets: 123.4 s (12 targets in 2 batches)\n", 123.4),
         )
+
+
+    def test_start_retains_known_counts_when_the_phase_is_terminated(self):
+        script = """
+import subprocess
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import build_changed_guest_tests as helper
+
+def run(command, **kwargs):
+    phase = sys.argv[3]
+    if (phase == "ctest" and command[0] == "ctest") or (command[0] == "cmake" and command[-1] == phase):
+        Path(sys.argv[2]).touch()
+        sys.stdin.read()
+    return subprocess.CompletedProcess(command, 0)
+
+helper.subprocess.run = run
+helper.ctest_resolutions = lambda *args: {f"test_{i}": ("fixture", i) for i in range(1, 4)}
+helper.ctest_tests = lambda *args: [
+    {"name": f"test_{i}", "command": ["fixture.exe" if i <= 3 else "extra.exe"]}
+    for i in range(1, 6)
+]
+helper.registered_test_commands = lambda *args: {}
+helper.run(Path("build"), ["fixture"], {"fixture": "fixture", "extra": "extra"})
+"""
+        tools = Path(build_changed_guest_tests.__file__).parent
+        phases = (
+            ("libs", "build libs (requested_targets=1)"),
+            ("fixture", "build selected test targets (requested_targets=1, batches=1)"),
+            ("extra", "build additional test owners (requested_targets=1, batches=1)"),
+            ("ctest", "ctest (scheduled_tests=5, selected_indices=3)"),
+        )
+        for target, expected in phases:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                ready = Path(directory) / "ready"
+                with subprocess.Popen([sys.executable, "-c", script, str(tools), str(ready), target],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      text=True) as child:
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                    finally:
+                        if child.poll() is None:
+                            child.kill()
+                        stdout, stderr = child.communicate(timeout=10)
+                    self.assertTrue(ready.exists(), stderr)
+                self.assertEqual(stdout.splitlines()[-1:], [f"[ci-timing] starting {expected}"])
 
 
 class CompilerCacheReport(unittest.TestCase):
@@ -620,7 +670,14 @@ int main(int argc, char **argv) {
         subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja",
                         f"-DCMAKE_C_COMPILER={compiler}"], check=True, capture_output=True)
         targets = {name: name for name in ("producer", "aux_producer", "validator", "verifier", "cleaner", "unrelated")}
-        build_changed_guest_tests.run(build, ["producer"], targets)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            build_changed_guest_tests.run(build, ["producer"], targets)
+        report = output.getvalue()
+        self.assertIn("(owner_targets=5, additional_owner_targets=4)", report)
+        self.assertRegex(report, r"\[ci-timing\] build additional test owners: \d+\.\d s \(requested_targets=4, batches=1\)")
+        self.assertIn("(scheduled_tests=5, selected_indices=3)", report)
+        self.assertRegex(report, r"(?m)^\[ci-timing\] total: \d+\.\d s$")
         for marker in ("artifact", "auxiliary", "validated", "verified", "cleaned"):
             self.assertTrue((build / marker).is_file(), marker)
         self.assertFalse((build / "unrelated").exists())
@@ -820,18 +877,18 @@ class ScheduledTestOwnersTests(unittest.TestCase):
             {"name": "py_beta", "command": ["python", "bin/beta.exe"]},
             {"name": "py_alpha", "command": ["python", "bin/alpha.exe"]},
         ]
-        self.assertEqual(self.owners(tests, {}), {"Alpha", "beta"})
+        self.assertEqual(self.owners(tests, {}), ({"Alpha", "beta"}, 2))
 
     def test_registered_commands_are_used_when_the_listed_command_has_no_owner(self):
         tests = [{"name": "py_beta", "command": ["python", "script.py"]}, {"name": "unbuilt"}]
         tool = (Path.cwd() / "bin/alpha.exe").as_posix()
         registered = {"py_beta": ["python", "bin/beta.exe"], "unbuilt": ["cmake", f"-DTOOL={tool}", "-P", "verify.cmake"]}
-        self.assertEqual(self.owners(tests, registered), {"Alpha", "beta"})
-        self.assertEqual(self.owners(tests, {}), set())
+        self.assertEqual(self.owners(tests, registered), ({"Alpha", "beta"}, 2))
+        self.assertEqual(self.owners(tests, {}), (set(), 2))
 
     def test_owner_is_reported_once(self):
         tests = [{"name": "py_a", "command": ["bin/alpha.exe"]}, {"name": "py_b", "command": ["bin/alpha.exe", "--x"]}]
-        self.assertEqual(self.owners(tests, {}), {"Alpha"})
+        self.assertEqual(self.owners(tests, {}), ({"Alpha"}, 2))
 
 
 class CtestResolutionsTests(unittest.TestCase):

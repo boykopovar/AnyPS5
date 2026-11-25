@@ -26,6 +26,12 @@ PUBLIC_HEADER_INPUTS = {"core/libs/tests/test_public_headers.py", "tools/nid_nam
 HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inl")
 
 
+def phase_start(label, detail=""):
+    suffix = f" ({detail})" if detail else ""
+    print(f"[ci-timing] starting {label}{suffix}", flush=True)
+    return time.perf_counter()
+
+
 def phase_report(label, started, detail=""):
     elapsed = time.perf_counter() - started
     suffix = f" ({detail})" if detail else ""
@@ -106,7 +112,7 @@ def scheduled_test_owners(build_dir, selection, targets_by_name):
             if owner is not None:
                 owners.add(owner)
                 break
-    return owners
+    return owners, len(tests)
 
 
 def guest_test_targets(source_root, targets, changed_paths=None):
@@ -221,57 +227,63 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
 
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     total = time.perf_counter()
-    started = time.perf_counter()
+    libs_detail = "requested_targets=1"
+    started = phase_start("build libs", libs_detail)
     try:
         subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     finally:
-        phase_report("build libs", started)
+        phase_report("build libs", started, libs_detail)
     indices = set()
     if script_tests:
-        started = time.perf_counter()
+        started = phase_start("script test discovery")
         indices = set(script_test_indices(build_dir, script_tests))
-        phase_report("script test discovery", started, f"{len(indices)} tests")
+        phase_report("script test discovery", started, f"selected_indices={len(indices)}")
     selected_names = set(selected)
     if selected:
         batches = list(chunks(selected))
-        started = time.perf_counter()
+        selected_detail = f"requested_targets={len(selected)}, batches={len(batches)}"
+        started = phase_start("build selected test targets", selected_detail)
         try:
             for batch in batches:
                 subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         finally:
-            phase_report("build selected test targets", started, f"{len(selected)} targets in {len(batches)} batches")
-        started = time.perf_counter()
+            phase_report("build selected test targets", started, selected_detail)
+        started = phase_start("ctest discovery")
         resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
-        phase_report("ctest discovery", started, f"{len(resolutions)} tests")
+        phase_report("ctest discovery", started, f"resolved_tests={len(resolutions)}")
         missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         indices.update(index for _, index in resolutions.values())
     if not indices:
         print("No core/libs test sources changed; the libs build still ran")
-        phase_report("total", total, "0 tests")
+        phase_report("total", total)
         return
     with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
-        started = time.perf_counter()
-        additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
-        phase_report("scheduled test owner discovery", started, f"{len(additional)} targets")
+        started = phase_start("scheduled test owner discovery")
+        owners, scheduled_count = scheduled_test_owners(build_dir, selection, targets_by_name)
+        additional = owners - selected_names
+        phase_report("scheduled test owner discovery", started,
+                     f"owner_targets={len(owners)}, additional_owner_targets={len(additional)}")
         if additional:
             batches = list(chunks(sorted(additional, key=str.casefold)))
-            started = time.perf_counter()
+            additional_detail = f"requested_targets={len(additional)}, batches={len(batches)}"
+            started = phase_start("build additional test owners", additional_detail)
             try:
                 for batch in batches:
                     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
             finally:
-                phase_report("build additional test owners", started, f"{len(additional)} targets in {len(batches)} batches")
+                phase_report("build additional test owners", started, additional_detail)
         report_compiler_cache()
-        started = time.perf_counter()
+        ctest_detail = f"scheduled_tests={scheduled_count}, selected_indices={len(indices)}"
+        started = phase_start("ctest", ctest_detail)
         try:
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
                             "--parallel", "4", "--no-tests=error", "-I", selection,
                             *(["--output-log", str(output_log)] if output_log else [])], check=True)
         finally:
-            phase_report("ctest", started, f"{len(indices)} tests")
-    phase_report("total", total, f"{len(selected)} targets, {len(indices)} tests")
+            phase_report("ctest", started, ctest_detail)
+    phase_report("total", total)
 
 
 def main(argv=None):
