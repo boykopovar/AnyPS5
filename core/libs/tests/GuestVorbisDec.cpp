@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -719,6 +720,56 @@ void TestBitrateHalfTies() {
     Require(tested[0] && tested[1]);
 }
 
+void TestGuestPointers(const std::vector<unsigned char>& stream) {
+    {
+        GuestFile guest;
+        Source source{&stream};
+        errno = 71;
+        Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), reinterpret_cast<const char*>(0x10), 64, SeekableCallbacks) == OV_EFAULT);
+        Require(errno == 71);
+    }
+
+    {
+        GuestFile guest;
+        Source source{&stream};
+        Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), nullptr, 0, SeekableCallbacks) == 0);
+        std::array<char, 256> buffer{};
+        int bitstream = 0;
+
+        errno = 71;
+        Require(sceVorbisDecRead(guest.Get(), nullptr, static_cast<int>(buffer.size()), 0, 2, 1, &bitstream) == OV_EFAULT);
+        Require(errno == 71);
+
+        errno = 71;
+        Require(sceVorbisDecRead(guest.Get(), reinterpret_cast<char*>(0x10), static_cast<int>(buffer.size()), 0, 2, 1, &bitstream) == OV_EFAULT);
+        Require(errno == 71);
+
+        errno = 71;
+        Require(sceVorbisDecRead(guest.Get(), buffer.data(), static_cast<int>(buffer.size()), 0, 2, 1, reinterpret_cast<int*>(0x10)) == OV_EFAULT);
+        Require(errno == 71);
+
+        errno = 71;
+        Require(sceVorbisDecReadFilter(guest.Get(), nullptr, static_cast<int>(buffer.size()), 0, 2, 1, &bitstream, nullptr, nullptr) == OV_EFAULT);
+        Require(errno == 71);
+
+        errno = 71;
+        Require(sceVorbisDecReadFilter(guest.Get(), reinterpret_cast<char*>(0x10), static_cast<int>(buffer.size()), 0, 2, 1, &bitstream, nullptr, nullptr) == OV_EFAULT);
+        Require(errno == 71);
+
+        float** pcmChannels = nullptr;
+        errno = 71;
+        Require(sceVorbisDecReadFloat(guest.Get(), reinterpret_cast<float***>(0x10), 64, &bitstream) == OV_EFAULT);
+        Require(errno == 71);
+
+        errno = 71;
+        Require(sceVorbisDecReadFloat(guest.Get(), &pcmChannels, 64, reinterpret_cast<int*>(0x10)) == OV_EFAULT);
+        Require(errno == 71);
+        Require(sceVorbisDecPcmTell(guest.Get()) == 0);
+
+        Require(sceVorbisDecClear(guest.Get()) == 0);
+    }
+}
+
 }
 
 int main() {
@@ -738,6 +789,7 @@ int main() {
     TestThrowingCallbacks(stream);
     TestStreamingBitrates();
     TestBitrateHalfTies();
+    TestGuestPointers(stream);
 
     Require(Throws<std::runtime_error>([] { sceVorbisDecGetDecodePriority(); }));
     Require(Throws<std::runtime_error>([] { sceVorbisDecSetDecodePriority(); }));
