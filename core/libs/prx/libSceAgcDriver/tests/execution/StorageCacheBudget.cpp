@@ -149,6 +149,12 @@ int RetainedBatch(RetainedBatchCase scenario) {
         Require(recorder != nullptr && recorder->Recording(), "the surface dispatch was not left in an open batch");
         if (scenario == RetainedBatchCase::Budget) {
             const auto beforeEviction = recorder->OpenKeptBytes();
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                recorder->KeepBytes(retained.get(), retainedBytes);
+                Require(recorder->OpenKeptBytes() == beforeEviction + retainedBytes, "the batch already counted the newly cached storage image");
+                recorder->ForgetKeptBytes(retained.get());
+            }
             const auto capacity = static_cast<std::uint32_t>(TestBudget / retainedBytes);
             Require(capacity + 1u < MaxSurfaces, "the eviction set exceeds the test storage");
             retained.reset();
