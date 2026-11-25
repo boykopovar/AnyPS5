@@ -83,8 +83,7 @@ std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, co
     const std::size_t displacementSize = mod == ModRmModDisp8 ? Disp8Size : (mod == ModRmModDisp32 || ripRelative || absolute) ? Disp32Size : 0;
     if (cursor + displacementSize != length)
         return std::nullopt;
-    if (addressSize32 && !ripRelative && !absoluteNoIndex)
-        throw CodegenException("32-bit addressed 256-bit store with a base or index may wrap its upper half when split");
+    const bool address32BaseOrIndex = addressSize32 && !ripRelative && !absoluteNoIndex;
     std::int64_t displacement = 0;
     if (displacementSize == Disp8Size) {
         displacement = static_cast<std::int8_t>(data[cursor]);
@@ -118,7 +117,7 @@ std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, co
     }
     const bool address32Absolute = addressSize32 && absoluteNoIndex;
     const auto unsignedHighDisplacement = static_cast<std::uint64_t>(static_cast<std::uint32_t>(displacement)) + kHalfBytes;
-    if (!ripRelative) {
+    if (!ripRelative && !address32BaseOrIndex) {
         if (address32Absolute) {
             if (unsignedHighDisplacement > std::numeric_limits<std::uint32_t>::max())
                 throw CodegenException("256-bit store displacement leaves no room for its upper half");
@@ -140,6 +139,75 @@ std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, co
     if (ripRelative) {
         operands.High.RipDisplacementOffset = highDisplacementOffset;
         operands.High.RipTarget = static_cast<std::int64_t>(length) + displacement + kHalfBytes;
+    }
+    if (address32BaseOrIndex) {
+        std::vector<std::uint8_t> memoryPrefixes;
+        for (std::size_t index = 0; index < vex; ++index) {
+            if (data[index] != PrefixAddressSize)
+                memoryPrefixes.push_back(data[index]);
+        }
+
+        const bool stackSegmentBase = [&] {
+            if (sib) {
+                const auto base = *sib & SibBaseMask;
+                const bool hasBase = mod != ModRmModIndirect || base != 5;
+                return hasBase && (inverted & 0x20) != 0 && (base == 4 || base == 5);
+            }
+            return mod != ModRmModIndirect && rm == 5 && (inverted & 0x20) != 0;
+        }();
+        // RAX would change the default SS segment for ESP/EBP-based memory operands to DS.
+        if (memoryPrefixes.empty() && stackSegmentBase)
+            memoryPrefixes.push_back(0x36);
+
+        const bool stackBase = sib.has_value()
+            && (*sib & SibBaseMask) == 4
+            && (inverted & 0x20) != 0;
+        auto addressMod = mod;
+        auto addressDisplacementSize = displacementSize;
+        auto addressDisplacement = displacement;
+        if (stackBase) {
+            addressMod = ModRmModDisp32;
+            addressDisplacementSize = Disp32Size;
+            // The stub reserves the 128-byte red zone and pushes RAX before evaluating an ESP-based address.
+            addressDisplacement += 128 + sizeof(std::uint64_t);
+        }
+
+        const auto rex = static_cast<std::uint8_t>(0x48
+            | ((inverted & 0x40) == 0 ? 0x02 : 0x00)
+            | ((inverted & 0x20) == 0 ? 0x01 : 0x00));
+        operands.AddressCalculation.assign(data, data + vex);
+        operands.AddressCalculation.push_back(rex);
+        operands.AddressCalculation.push_back(0x8D);
+        operands.AddressCalculation.push_back(static_cast<std::uint8_t>((addressMod << ModRmModShift) | rm));
+        if (sib)
+            operands.AddressCalculation.push_back(*sib);
+        if (addressDisplacementSize == Disp8Size)
+            operands.AddressCalculation.push_back(static_cast<std::uint8_t>(addressDisplacement));
+        else if (addressDisplacementSize == Disp32Size)
+            _appendU32(operands.AddressCalculation, static_cast<std::uint32_t>(addressDisplacement));
+
+        operands.Low.Bytes = memoryPrefixes;
+        const auto vexLength = data[vex] == OneByteVex2 ? std::size_t{2} : std::size_t{3};
+        const auto lowVexOffset = operands.Low.Bytes.size();
+        operands.Low.Bytes.insert(operands.Low.Bytes.end(), data + vex, data + vex + vexLength);
+        if (data[vex] == OneByteVex2) {
+            operands.Low.Bytes[lowVexOffset + 1] &= static_cast<std::uint8_t>(~kVexLength256);
+        } else {
+            operands.Low.Bytes[lowVexOffset + 1] |= 0x60;
+            operands.Low.Bytes[lowVexOffset + 2] &= static_cast<std::uint8_t>(~kVexLength256);
+        }
+        operands.Low.Bytes.push_back(data[pos]);
+        operands.Low.Bytes.push_back(reg);
+
+        operands.High.Bytes = memoryPrefixes;
+        operands.High.Bytes.insert(operands.High.Bytes.end(), {
+            OneByteVex3,
+            static_cast<std::uint8_t>((inverted | 0x60) | Vex3Map0F3A),
+            kVextractf128Payload,
+            kVextractf128,
+            static_cast<std::uint8_t>((ModRmModDisp8 << ModRmModShift) | reg),
+            static_cast<std::uint8_t>(kHalfBytes),
+            kUpperHalf});
     }
     return operands;
 }

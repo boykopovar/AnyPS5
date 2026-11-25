@@ -17,6 +17,7 @@ struct WideStoreHalf {
 struct WideStoreOperands {
     WideStoreHalf Low;
     WideStoreHalf High;
+    std::vector<std::uint8_t> AddressCalculation; // Optional LEA prelude for 32-bit base/index operands.
 };
 
 [[nodiscard]] std::optional<WideStoreOperands> DecodeVexWideStore(const std::uint8_t* data, std::size_t length);
