@@ -195,6 +195,15 @@ class GhidraSymbolsTests(unittest.TestCase):
                                               symbols=[("target", section, symbol_type, CODE_ADDRESS)])
                 rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
                 self.assertFalse(any(row.startswith("elf_init_array") for row in rows))
+
+    def test_absolute_lifecycle_target_needs_a_fixed_address_executable(self):
+        image = lifecycle_array_image(values=(0,), fixups=((0, (1 << 32) | 1, 11),),
+                                      symbols=[("fixed", 0xfff1, 0x01, CODE_ADDRESS)])
+        namer = annotate_module.Namer({})
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer), [])
+        struct.pack_into("<H", image, 16, 2)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer),
+                         ["elf_init_array_0 0x100b f"])
         for fixups in (((0, 8, CODE_ADDRESS), (0, 8, EXPORT_ADDRESS)), ((1, 8, EXPORT_ADDRESS),), ((-8, 36, 0),)):
             image = lifecycle_array_image(values=(CODE_ADDRESS,), fixups=fixups)
             self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
@@ -368,6 +377,15 @@ class GhidraSymbolsTests(unittest.TestCase):
             "sceKernelUsleep 0x100b f", "allocated 0x2700 l", "imp_sceKernelGetProcessTime 0x2800 l"])
         exports, _ = annotate_module.Module(build_module(symbols=symbols)).exports()
         self.assertEqual(exports[0x20], [symbol_name("unallocated")])
+
+    def test_absolute_exports_do_not_claim_image_addresses(self):
+        symbols = [("version", 0xfff1, 0x11, 0), ("at_zero", 1, 0x11, 0),
+                   ("constant", 0xfff1, 0x11, EXPORT_ADDRESS), (EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS),
+                   ("absolute_function", 0xfff1, 0x12, CODE_ADDRESS)]
+        image = append_dynamic_tags(build_module(symbols=symbols, relocations=()), [(12, CODE_ADDRESS)])
+        namer = annotate_module.Namer({nid(row[0]): row[0] for row in symbols})
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer),
+                         ["at_zero 0x0 l", "elf_init 0x1000 f", EXPORT_NAME + " 0x100b f"])
 
     def test_both_hash_tables_export_the_same_symbols(self):
         sysv = self.format_symbols()

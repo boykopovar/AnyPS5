@@ -174,6 +174,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CLocaleHelpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringSearch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
@@ -194,8 +195,10 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
@@ -425,6 +428,16 @@ if(BUILD_TESTING)
     target_link_libraries(guest_memset_extent_tests PRIVATE libc)
     configure_windows_unwind(guest_memset_extent_tests)
     add_test(NAME guest_memset_extent COMMAND guest_memset_extent_tests)
+    add_test_executable(guest_atomic_2_tests ${LIBS_INCLUDE_DIR}/tests/GuestAtomic2.cpp)
+    target_include_directories(guest_atomic_2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_atomic_2_tests PRIVATE libc)
+    configure_windows_unwind(guest_atomic_2_tests)
+    add_test(NAME guest_atomic_2 COMMAND guest_atomic_2_tests)
+    set_tests_properties(guest_atomic_2 PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_atomic_2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(guest_memset_extent PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_memset_extent PROPERTIES ENVIRONMENT_MODIFICATION
@@ -1489,6 +1502,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_std_thread_hardware_concurrency PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_std_thread_hardware_concurrency PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libcxx_thread_state_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxThreadState.cpp)
+    target_include_directories(guest_libcxx_thread_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_thread_state_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libcxx_thread_state_tests)
+    add_test(NAME guest_libcxx_thread_state COMMAND guest_libcxx_thread_state_tests)
+    set_tests_properties(guest_libcxx_thread_state PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_thread_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_libc_shared_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcSharedMutex.cpp)

@@ -484,6 +484,24 @@ std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfa
     return DccKeyCount(surface.tileMode, BytesPerElement(surface.format), surface.width, surface.height, surfaceBytes);
 }
 
+std::size_t DccMipKeySlice(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes) {
+    constexpr std::uint32_t MetaBlockEdge = 512;
+    constexpr std::size_t MetaBlockKeys = 4096;
+    const auto MetaBlockHeight = 1048576u / MetaBlockEdge / elementBytes;
+    const auto pitch = (width + MetaBlockEdge - 1u) / MetaBlockEdge;
+    const auto rows = (height + MetaBlockHeight - 1u) / MetaBlockHeight;
+    return static_cast<std::size_t>(pitch) * rows * MetaBlockKeys;
+}
+
+std::optional<std::size_t> DccMipKeyOffset(std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, std::uint32_t mipCount, std::uint32_t firstTailLevel, std::uint32_t level) {
+    if (level >= mipCount) return std::nullopt;
+    if (level >= firstTailLevel) return std::size_t{0};
+    const auto shiftCeil = [](std::uint32_t extent, std::uint32_t shift) { return std::max<std::uint32_t>((extent + (1u << shift) - 1u) >> shift, 1u); };
+    std::size_t offset = firstTailLevel < mipCount ? 4096u : 0u;
+    for (auto above = firstTailLevel; above-- > level + 1u;) offset += DccMipKeySlice(shiftCeil(width, above), shiftCeil(height, above), elementBytes);
+    return offset;
+}
+
 namespace {
 
 // ReadDccKeys, saying in `memoized` whether the answer came from the pending-store memo rather
@@ -581,6 +599,21 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, st
     Require(keyCount >= DccKeyBytes(surfaceBytes), "a DCC key range covers fewer keys than one per 256 surface bytes");
     bool memoized = false;
     return currentDccKeys(metaAddress, keyCount, memoized);
+}
+
+DccKeys LandedDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    Require(keyCount >= DccKeyBytes(surfaceBytes), "a DCC key range covers fewer keys than one per 256 surface bytes");
+    if (metaAddress == 0 || keyCount == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) {
+        return CurrentDccKeys(metaAddress, surfaceBytes, keyCount);
+    }
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, keyCount)) {
+        return CurrentDccKeys(metaAddress, surfaceBytes, keyCount);
+    }
+    if (AnyShadowedOverlaps(metaAddress, keyCount)) return DccKeys::Unreadable;
+    const auto landed = KeysAfterPendingWrites(*recorder, metaAddress, keyCount);
+    if (landed.mixed || landed.unknown || landed.value < 0) return DccKeys::Unreadable;
+    return ByteKeys(static_cast<std::uint8_t>(landed.value));
 }
 
 std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes) {

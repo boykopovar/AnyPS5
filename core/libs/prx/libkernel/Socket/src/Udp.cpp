@@ -143,6 +143,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
 #endif
 #ifdef __linux__
     bool connectPending = false;
+    int connectsInHost = 0;
 #endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
@@ -292,6 +293,7 @@ int Install(std::shared_ptr<Socket> socket) {
     return number;
 }
 std::atomic<const KernelSocketPoll::Forwards*> socketForwards{nullptr};
+std::atomic<void (*)(int)> g_connectStartForTests{nullptr};
 struct Forwarded {
     const KernelSocketPoll::Forwards* forwards = nullptr;
     int family = 0;
@@ -1102,11 +1104,19 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
     const bool ownFamily = socket.family == 2 && level == 0;
     return ownProtocol || ownFamily ? 42 : 22;
 }
+#ifdef __linux__
+bool HostConnecting(NativeSocket native) {
+    tcp_info info{};
+    socklen_t size = sizeof(info);
+    return ::getsockopt(native, IPPROTO_TCP, TCP_INFO, &info, &size) == 0 && info.tcpi_state == TCP_SYN_SENT;
+}
+#endif
 bool SendBeforeConnect(Socket& socket) {
     if (socket.type != 1) return false;
     std::lock_guard lock(socket.modeMutex);
 #ifdef __linux__
     if (socket.connectPending) {
+        if (socket.connectsInHost > 0) return true;
         pollfd entry{socket.value, POLLOUT, 0};
         int ready;
         do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
@@ -1974,9 +1984,17 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     socket->options.reportedError = 0;
     socket->connectStarted = true;
 #ifdef __linux__
-    if (socket->type == 1) socket->connectPending = true;
+    if (socket->type == 1) {
+        socket->connectPending = true;
+        ++socket->connectsInHost;
+    }
 #endif
     if (socket->type != 2) lock.unlock();
+#ifdef __linux__
+    if (socket->type == 1) {
+        if (const auto hook = g_connectStartForTests.load()) hook(descriptor);
+    }
+#endif
     if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
 #ifdef _WIN32
         if (socket->type == 1) return Fail(NoteConnectError(*socket));
@@ -1984,9 +2002,10 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
 #ifdef __linux__
         const int host = errno;
         const int error = ConnectError();
-        if (socket->type == 1 && host != EINPROGRESS && host != EALREADY && host != EINTR) {
-            std::lock_guard failed(socket->modeMutex);
-            socket->connectPending = false;
+        if (socket->type == 1) {
+            std::lock_guard ended(socket->modeMutex);
+            --socket->connectsInHost;
+            socket->connectPending = host == EINPROGRESS || host == EALREADY || host == EINTR || socket->connectsInHost > 0 || HostConnecting(socket->value);
         }
         return Fail(error);
 #else
@@ -2002,7 +2021,8 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
 #ifdef __linux__
     if (socket->type == 1) {
         std::lock_guard connected(socket->modeMutex);
-        socket->connectPending = false;
+        --socket->connectsInHost;
+        socket->connectPending = socket->connectsInHost > 0;
     }
 #endif
     if (socket->type == 2) socket->localAddressCleared = false;
@@ -3340,6 +3360,10 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
 
 extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
     return ::ReadGuest(destination, source, bytes);
+}
+
+extern "C" void GuestSocketConnectStartForTests_nid_no_patch(void (*hook)(int descriptor)) {
+    g_connectStartForTests.store(hook);
 }
 
 std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {
