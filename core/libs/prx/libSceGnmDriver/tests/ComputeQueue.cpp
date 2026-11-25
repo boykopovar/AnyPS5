@@ -1,5 +1,7 @@
 #include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
 #include "VulkanTestDevice.hpp"
@@ -9,6 +11,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -305,6 +308,45 @@ void TestCalledBuffers() {
     Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
 }
 
+void TestComputeEvents() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "GnmDriver compute events") == 0, "event queue creation failed");
+    int tag = 0;
+    Require(sceGnmAddEqEvent(eq, 4, &tag) == 0, "the release event of compute pipe 4 was not registered");
+    auto owner = EqueuePin_nid_postfix(eq);
+    std::array<KernelEvent, 2> events{};
+    const int other = sceGnmMapComputeQueue(3, 0, memory.ringA, RingWords, &memory.readA);
+    const int own = sceGnmMapComputeQueue(4, 6, memory.ringB, RingWords, &memory.readB);
+    Require(other > 0 && own > 0, "the rings of pipes 3 and 4 were not mapped");
+    auto offset = Put(memory.ringA, 0, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), 11u, 0u});
+    Require(sceGnmDingDong(other, offset) == 0, "sceGnmDingDong on pipe 3 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 11, "the interrupting release on pipe 3 did not store its value");
+    Require(owner->GetTriggeredEvents(events.data(), 2) == 0, "an interrupting release on pipe 3 raised the event of pipe 4");
+    offset = Put(memory.ringB, 0, {Type3(0x49, 6) | 2u, 0x62fu, 0x23000000u, Low(&memory.released), High(&memory.released), 12u, 0u});
+    Require(sceGnmDingDong(own, offset) == 0, "sceGnmDingDong on pipe 4 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 12, "the release on pipe 4 without an interrupt did not store its value");
+    Require(owner->GetTriggeredEvents(events.data(), 2) == 0, "a release without an interrupt raised the event of pipe 4");
+    offset = Put(memory.ringB, offset, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), 13u, 0u});
+    Require(sceGnmDingDong(own, offset) == 0, "sceGnmDingDong on pipe 4 with an interrupting release failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 13, "the interrupting release on pipe 4 did not store its value");
+    Require(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].ident == 4 && events[0].filter == -14 && events[0].udata == &tag && events[0].data == 4,
+        "an interrupting release on queue 6 of pipe 4 did not raise the pipe's event with its id");
+    Require(owner->GetTriggeredEvents(events.data(), 2) == 0, "the compute release event was not cleared");
+    Require(sceGnmDeleteEqEvent(eq, 4) == 0, "the release event of compute pipe 4 was not deleted");
+    offset = Put(memory.ringB, offset, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), 14u, 0u});
+    Require(sceGnmDingDong(own, offset) == 0, "sceGnmDingDong on pipe 4 after the deletion failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 14 && owner->GetTriggeredEvents(events.data(), 2) == 0, "a deleted compute release event was raised");
+    Require(sceGnmUnmapComputeQueue(own) == 0 && sceGnmUnmapComputeQueue(other) == 0, "the rings of pipes 3 and 4 were not unmapped");
+    owner.reset();
+    Require(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
+}
+
 }
 
 int main() {
@@ -315,6 +357,7 @@ int main() {
         TestComputeQueues();
         TestCalledBuffers();
         TestWorkloadDingDong();
+        TestComputeEvents();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {

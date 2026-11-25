@@ -663,7 +663,9 @@ void APS5_VABI sceGnmFlushGarlic() {
 }
 
 int APS5_VABI sceGnmAddEqEvent(KernelEqueue eq, std::uint64_t id, void* udata) {
-    if (id != GfxEndOfPipeEvent) NotImplemented_nid_no_patch("sceGnmAddEqEvent for a compute queue event");
+    if (id < ComputePipes)
+        return AgcDriverAddQueueRangeEqEvent_nid_postfix(eq, FirstComputeQueue + static_cast<std::uint32_t>(id) * QueuesPerPipe, QueuesPerPipe, static_cast<std::uintptr_t>(id), udata);
+    if (id != GfxEndOfPipeEvent) NotImplemented_nid_no_patch("sceGnmAddEqEvent for an event other than the graphics end of pipe and the releases of the seven compute pipes");
     return AgcDriverAddQueueEqEvent_nid_postfix(eq, 0, static_cast<std::uintptr_t>(id), udata);
 }
 

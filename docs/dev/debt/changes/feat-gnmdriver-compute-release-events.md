@@ -1,0 +1,5 @@
+# libSceGnmDriver
+
+## add Unknown function info
+
+- [sceGnmAddEqEvent](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - ids 0 to 6 register the release event of that compute pipe: an interrupting `RELEASE_MEM` on any of the pipe's eight queues raises it, with the id as the event's ident and data. In `libSceGnmDriver.sprx` of PS4 firmware 13.52 (0x2280, read from disassembly, not run) the function checks nothing and calls `kevent` with filter -14 (graphics core), `EV_ADD`, ident and data the id, and the caller's udata; which interrupt raises which id is the kernel's, and ids 0 to 6 as the compute pipes and 0x40 as the graphics end of pipe follow shadPS4 (`Compute0RelMem` to `Compute6RelMem`, `GfxEop`), which raises a compute pipe's id with the id as data. What the console's kernel writes into the data when the interrupt comes is not known; CUSA24767 01.71 reads its events through `sceKernelGetEventId` and `sceKernelGetEventFilter` and does not import `sceKernelGetEventData`. Any other id still throws.

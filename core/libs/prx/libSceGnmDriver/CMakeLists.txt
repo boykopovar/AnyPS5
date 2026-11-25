@@ -87,7 +87,7 @@ if(BUILD_TESTING)
             ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
             ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
     )
-    target_link_libraries(gnm_driver_compute_queue_tests PRIVATE libSceGnmDriver libSceAgcDriver SDL2-static libc)
+    target_link_libraries(gnm_driver_compute_queue_tests PRIVATE libSceGnmDriver libSceAgcDriver libkernel SDL2-static libc)
     set_target_properties(gnm_driver_compute_queue_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(gnm_driver_compute_queue_tests)
     add_test(NAME gnm_driver_compute_queue COMMAND gnm_driver_compute_queue_tests)
