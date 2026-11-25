@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/include/specifics/itanium/UnwindAbi.hpp"
@@ -1312,6 +1313,7 @@ char* APS5_VABI dirname_nid_postfix(const char* path);
 std::size_t APS5_VABI strnlen_nid_postfix(const char* text, std::size_t limit);
 std::size_t APS5_VABI strnlen_s_nid_postfix(const char* text, std::size_t limit);
 char* APS5_VABI strsep_nid_postfix(char** text, const char* delimiters);
+int APS5_VABI strtofflags_nid_postfix(char** stringp, std::uint64_t* setp, std::uint64_t* clrp);
 char* APS5_VABI strncat_nid_postfix(char* destination, const char* source, std::size_t limit);
 char* APS5_VABI strpbrk_nid_postfix(const char* text, const char* accept);
 std::size_t APS5_VABI strcspn_nid_postfix(const char* text, const char* reject);
