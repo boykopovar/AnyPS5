@@ -1,5 +1,6 @@
 add_library(libSceVideoDecoderArbitration SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVideoDecoderArbitration PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVideoDecoderArbitration PRIVATE libSceVideoArbitration)
 configure_windows_unwind(libSceVideoDecoderArbitration)
 
 if(BUILD_TESTING)
@@ -10,6 +11,6 @@ if(BUILD_TESTING)
     add_test(NAME guest_video_decoder_arbitration COMMAND guest_video_decoder_arbitration_tests)
     if(WIN32)
         set_tests_properties(guest_video_decoder_arbitration PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoDecoderArbitration>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoDecoderArbitration>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoArbitration>")
     endif()
 endif()
