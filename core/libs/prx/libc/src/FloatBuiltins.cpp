@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 #include "prx/libc/include/General.hpp"
 
@@ -788,13 +789,52 @@ __complex__ float APS5_VABI csqrtf_nid_postfix(__complex__ float z) {
 }
 
 __complex__ float APS5_VABI ctanf_nid_postfix(__complex__ float z) {
-    const auto result = std::tan(std::complex<float>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
+    const auto rotated = ctanhf_nid_postfix(MakeComplex(__imag__ z, __real__ z));
+    return MakeComplex(__imag__ rotated, __real__ rotated);
+}
+
+static std::pair<double, double> ComplexTangentSinCos(float value) {
+    double angle = value;
+    int quadrant = 0;
+    if (std::abs(angle) > 0x1.921fb54442d18p-1 && std::abs(angle) < 0x1p21) {
+        constexpr double invHalfPi = 0x1.45f306dc9c883p-1;
+        constexpr double halfPiHigh = 0x1.921fb54442d18p+0;
+        constexpr double halfPiLow = 0x1.1a62633145c07p-54;
+        const double turns = std::round(angle * invHalfPi);
+        angle = std::fma(-turns, halfPiHigh, angle);
+        angle = std::fma(-turns, halfPiLow, angle);
+        quadrant = static_cast<int>(turns) & 3;
+    }
+    double sine, cosine;
+    sincos_nid_postfix(angle, &sine, &cosine);
+    switch (quadrant) {
+        case 1: return {cosine, -sine};
+        case 2: return {-sine, -cosine};
+        case 3: return {-cosine, sine};
+        default: return {sine, cosine};
+    }
 }
 
 __complex__ float APS5_VABI ctanhf_nid_postfix(__complex__ float z) {
-    const auto result = std::tanh(std::complex<float>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
+    const float real = __real__ z;
+    const float imaginary = __imag__ z;
+    if (imaginary == 0.0f) return MakeComplex(static_cast<float>(tanh_nid_postfix(real)), imaginary);
+    if (!std::isfinite(imaginary) || std::isnan(real)) {
+        if (std::isinf(real)) return MakeComplex(std::copysign(1.0f, real), 0.0f);
+        const float nan = real + (imaginary - imaginary);
+        return MakeComplex(real == 0.0f ? real : nan, nan);
+    }
+    const auto [sine, cosine] = ComplexTangentSinCos(imaginary);
+    if (real == 0.0f) return MakeComplex(real, static_cast<float>(sine / cosine));
+    const double sinCos = sine * cosine;
+    if (std::isinf(real)) return MakeComplex(std::copysign(1.0f, real), static_cast<float>(std::copysign(0.0, sinCos)));
+    const double exponent = -2.0 * std::abs(static_cast<double>(real));
+    const double decay = exp_nid_postfix(exponent);
+    const double gap = exponent > -1.0 ? -expm1_nid_postfix(exponent) : 1.0 - decay;
+    const double denominator = gap * gap + 4.0 * decay * cosine * cosine;
+    const double magnitude = gap * (1.0 + decay) / denominator;
+    const double phase = 4.0 * decay * sinCos / denominator;
+    return MakeComplex(static_cast<float>(std::copysign(magnitude, real)), static_cast<float>(phase));
 }
 
 __complex__ float APS5_VABI cpowf_nid_postfix(__complex__ float x, __complex__ float y) {
