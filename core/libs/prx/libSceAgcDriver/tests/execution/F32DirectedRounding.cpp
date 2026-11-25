@@ -42,13 +42,25 @@ struct Measured {
     std::uint32_t expected;
 };
 
-constexpr std::array<Measured, 6> MeasuredRows{{
+constexpr std::array<Measured, 18> MeasuredRows{{
     {0u, 1u, 3u, 0x3f800000u, 0x33800000u, 0x00000000u, 0x3f800001u},
     {0u, 2u, 3u, 0xbf800000u, 0xb3800000u, 0x00000000u, 0xbf800001u},
     {0u, 1u, 3u, 0x3f800000u, 0x7f7fffffu, 0x00000000u, 0x7f800000u},
     {0u, 2u, 3u, 0x3f800000u, 0x7f7fffffu, 0x00000000u, 0x7f7fffffu},
     {4u, 1u, 3u, 0x3f800001u, 0x3f800001u, 0xbf800000u, 0x34800001u},
     {4u, 2u, 3u, 0xbf800001u, 0x3f800001u, 0x3f800000u, 0xb4800001u},
+    {3u, 0u, 0u, 0x091027c4u, 0x36e34f73u, 0x00000000u, 0x00800000u},
+    {3u, 1u, 0u, 0x091027c4u, 0x36e34f73u, 0x00000000u, 0x00800000u},
+    {3u, 2u, 0u, 0x091027c4u, 0x36e34f73u, 0x00000000u, 0x00000000u},
+    {3u, 3u, 0u, 0x091027c4u, 0x36e34f73u, 0x00000000u, 0x00000000u},
+    {3u, 0u, 0u, 0x1ee12e76u, 0x211184a7u, 0x00000000u, 0x00000000u},
+    {3u, 1u, 0u, 0x1ee12e76u, 0x211184a7u, 0x00000000u, 0x00800000u},
+    {3u, 1u, 0u, 0x1f8741c7u, 0x207243cbu, 0x00000000u, 0x00800000u},
+    {3u, 1u, 0u, 0x891027c4u, 0x36e34f73u, 0x00000000u, 0x80000000u},
+    {3u, 2u, 0u, 0x891027c4u, 0x36e34f73u, 0x00000000u, 0x80800000u},
+    {3u, 2u, 0u, 0x9f8741c7u, 0x207243cbu, 0x00000000u, 0x80800000u},
+    {3u, 1u, 0u, 0x3f7fffffu, 0x00800000u, 0x00000000u, 0x00000000u},
+    {4u, 1u, 0u, 0x00800000u, 0x3f7fffffu, 0x807fffffu, 0x00000000u},
 }};
 
 const char* Names[Ops] = {
@@ -109,7 +121,20 @@ std::uint32_t Fma(std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32
     const float picked = rounding == 1u ? above : (rounding == 2u ? below : (negative ? above : below));
     std::uint32_t result = Bits(picked);
     if (Magnitude(result) == 0u) result = negative ? 0x80000000u : 0u;
-    if ((denorm & 2u) == 0u && Magnitude(result) < 0x00800000u) result &= 0x80000000u;
+    if ((denorm & 2u) == 0u) {
+        const double magnitude = std::abs(hi + err);
+        if (magnitude < 0x1.0p-126) {
+            const double edge = 0x1.fffffep-127;
+            bool keep;
+            switch (rounding) {
+            case 0u: keep = magnitude >= edge + 0x1p-151; break;
+            case 1u: keep = !negative && magnitude > edge; break;
+            case 2u: keep = negative && magnitude > edge; break;
+            default: keep = false;
+            }
+            result = keep ? (result & 0x80000000u) | 0x00800000u : result & 0x80000000u;
+        }
+    }
     return result;
 }
 
@@ -117,18 +142,6 @@ std::uint32_t Expected(std::uint32_t op, std::uint32_t a, std::uint32_t b, std::
     constexpr std::uint32_t one = 0x3f800000u;
     constexpr std::uint32_t constant = 0x33800000u;
     const std::uint32_t inner = rounding == 0u ? denorm : 3u;
-    if (rounding != 0u && (denorm & 2u) == 0u && (op == 3u || op == 4u)) {
-        const std::uint32_t fa = (denorm & 1u) == 0u ? Flush(a) : a;
-        const std::uint32_t fb = (denorm & 1u) == 0u ? Flush(b) : b;
-        const std::uint32_t fc = (denorm & 1u) == 0u ? Flush(c) : c;
-        const auto finiteNonZero = [](std::uint32_t value) {
-            const std::uint32_t biased = value & 0x7f800000u;
-            return biased != 0u && biased != 0x7f800000u;
-        };
-        if (finiteNonZero(fa) && finiteNonZero(fb) && std::abs(F32(fa) * F32(fb)) < 0x1.0p-126 && (op == 3u || Magnitude(fc) == 0u)) {
-            return (fa ^ fb) & 0x80000000u;
-        }
-    }
     switch (op) {
     case 0u: return Fma(a, one, b, rounding, denorm, ieee);
     case 1u: return Fma(a, one, b ^ 0x80000000u, rounding, denorm, ieee);
