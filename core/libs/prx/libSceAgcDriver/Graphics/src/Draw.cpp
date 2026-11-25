@@ -3290,9 +3290,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, cb, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
-<<<<<<< HEAD
-    static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
-    auto eachDrawTiming = Recorder::NoTiming;
     if (timeEachDraw && Recorder::GpuTimingEnabled()) {
         if (Recorder::DrawStageTimingEnabled()) {
             std::vector<std::pair<std::uint32_t, std::uint64_t>> stages;
@@ -3306,12 +3303,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
                 if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
             }
             eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
-=======
-    if (timeEachDraw) {
-        std::uint64_t key = 0;
-        for (const auto& shader : shaders) {
-            if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
->>>>>>> 967a12dc60 (feat(agc): record depth-only draws on a recording pool behind APS5_PARALLEL_ATLAS)
         }
     }
     noteDrawFaultToken(context, *recorder, cb, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);

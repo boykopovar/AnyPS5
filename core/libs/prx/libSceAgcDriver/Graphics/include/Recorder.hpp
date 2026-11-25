@@ -192,14 +192,9 @@ public:
         bool barrier = true;
         PassBreak reason = PassBreak::Continued;
     };
-<<<<<<< HEAD
-    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
-    void AfterRenderPass(std::function<void(Recorder&)> work);
-=======
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool secondaryContents = false);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {}, bool secondaryContents = false);
->>>>>>> 967a12dc60 (feat(agc): record depth-only draws on a recording pool behind APS5_PARALLEL_ATLAS)
+    void AfterRenderPass(std::function<void(Recorder&)> work);
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
