@@ -406,6 +406,7 @@ bool APS5_VABI WKPageGetAddsVisitedLinks(const void* pageRef);
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef);
 const void* APS5_VABI WKPageGetInspector(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetMediaState(const void* pageRef);
+bool APS5_VABI WKPageHasMediaSessionWithActiveMediaElements(const void* pageRef);
 double APS5_VABI WKPageGetPageLength(const void* pageRef);
 double APS5_VABI WKPageGetPageZoomFactor(const void* pageRef);
 bool APS5_VABI WKPageGetPaginationBehavesLikeColumns(const void* pageRef);

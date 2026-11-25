@@ -8,6 +8,11 @@ std::uint32_t APS5_VABI WKPageGetMediaState(const void* pageRef) {
     return page->mediaState;
 }
 
+bool APS5_VABI WKPageHasMediaSessionWithActiveMediaElements(const void* pageRef) {
+    const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    return page->hasMediaSessionWithActiveMediaElements;
+}
+
 void APS5_VABI WKPageSetMayStartMediaWhenInWindow(const void* pageRef, bool mayStartMedia) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     page->mayStartMediaWhenInWindow = mayStartMedia;

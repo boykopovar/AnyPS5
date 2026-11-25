@@ -34,9 +34,15 @@ int main() {
     const void* pageRef = NKWebKit::ToRef(page);
 
     Require(WKPageGetMediaState(pageRef) == 0);
+    Require(!WKPageHasMediaSessionWithActiveMediaElements(pageRef));
     Require(page->mediaVolume == 1.0f);
     Require(page->mutedState == 0);
     Require(page->mayStartMediaWhenInWindow);
+
+    page->hasMediaSessionWithActiveMediaElements = true;
+    Require(WKPageHasMediaSessionWithActiveMediaElements(pageRef));
+    page->hasMediaSessionWithActiveMediaElements = false;
+    Require(!WKPageHasMediaSessionWithActiveMediaElements(pageRef));
 
     WKPageSetMediaVolume(pageRef, 0.5f);
     Require(page->mediaVolume == 0.5f);
@@ -64,6 +70,9 @@ int main() {
 
     RequireInvalidArgument([] { WKPageGetMediaState(nullptr); });
     RequireInvalidArgument([prefsRef] { WKPageGetMediaState(prefsRef); });
+
+    RequireInvalidArgument([] { WKPageHasMediaSessionWithActiveMediaElements(nullptr); });
+    RequireInvalidArgument([prefsRef] { WKPageHasMediaSessionWithActiveMediaElements(prefsRef); });
 
     RequireInvalidArgument([] { WKPageSetMayStartMediaWhenInWindow(nullptr, false); });
     RequireInvalidArgument([prefsRef] { WKPageSetMayStartMediaWhenInWindow(prefsRef, false); });

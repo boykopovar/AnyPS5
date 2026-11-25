@@ -3753,10 +3753,6 @@ int APS5_VABI _ZN7WebCore11DisplayList13ClipOutToPathD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageHasMediaSessionWithActiveMediaElements() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17DOMImplementation18createDocumentTypeERKN3WTF6StringES4_S4_() {
     NotImplemented_nid_no_patch(__func__);
 }
