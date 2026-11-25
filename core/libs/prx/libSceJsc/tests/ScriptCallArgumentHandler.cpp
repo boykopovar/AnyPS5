@@ -109,11 +109,28 @@ void TestAppend() {
     Require(Throws<std::invalid_argument>([] { _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEx(nullptr, 0); }));
 }
 
+void TestAppendDoubleRounding() {
+    ScriptCallArgumentHandler handler;
+    _ZN10Deprecated25ScriptCallArgumentHandlerC1EPN3JSC14JSGlobalObjectE(&handler, nullptr);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEm(&handler, 9007199254740992ull);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEm(&handler, 9007199254740993ull);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEm(&handler, 9007199254740994ull);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEl(&handler, -9007199254740992ll);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEl(&handler, -9007199254740993ll);
+    _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEl(&handler, -9007199254740994ll);
+    const std::uint64_t expected[6] = {0x4342000000000000ull, 0x4342000000000000ull, 0x4342000000000001ull, 0xc342000000000000ull, 0xc342000000000000ull, 0xc342000000000001ull};
+    Require(handler.arguments.size == 6);
+    Require(handler.arguments.buffer == handler.arguments.inlineBuffer);
+    Require(std::memcmp(handler.arguments.inlineBuffer, expected, sizeof(expected)) == 0);
+    _ZN10Deprecated25ScriptCallArgumentHandlerD1Ev(&handler);
+}
+
 } // namespace
 
 int main() {
     TestConstructAndDestroy();
     TestAppend();
+    TestAppendDoubleRounding();
     std::puts("ScriptCallArgumentHandler tests passed");
     return 0;
 }

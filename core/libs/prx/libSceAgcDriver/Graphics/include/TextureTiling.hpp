@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -89,6 +90,11 @@ std::uint32_t FullMipChainLevels(std::uint32_t width, std::uint32_t height, std:
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
 std::uint64_t DescribeSurfaceGuestBytes(const GuestTextureResource& descriptor);
 std::uint64_t SurfaceGuestBytes(const GuestTextureResource& descriptor);
+struct MinLodResidency {
+    std::uint32_t levels = 0;
+    std::uint64_t bytes = 0;
+};
+std::optional<MinLodResidency> MinLodResidentLevels(const GuestTextureResource& descriptor);
 std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral = false, std::uint32_t layers = 1, bool volume = false, std::uint32_t samples = 1);
 inline constexpr std::uint32_t GcnSampleShift = 28u;
 struct GcnTileGeometry {

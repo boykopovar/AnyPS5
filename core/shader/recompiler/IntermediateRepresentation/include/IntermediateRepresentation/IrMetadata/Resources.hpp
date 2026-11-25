@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCES_HPP
 
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
+#include "ImageOverwrite.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
@@ -133,6 +134,7 @@ struct ImageResource {
     TableOperation tableOperation = TableOperation::Supported;
     std::uint8_t levelUses = 0;
     bool targetMerge = false;
+    ImageOverwrite overwrite;
 
     bool operator==(const ImageResource& other) const = default;
 };

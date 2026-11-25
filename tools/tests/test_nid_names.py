@@ -5,6 +5,7 @@ import io
 import json
 import os
 import socket
+import socketserver
 import subprocess
 import tempfile
 import sys
@@ -16,6 +17,12 @@ from urllib.error import URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nid_names
+
+
+class LocalHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def download_response(payload, error=None):
@@ -46,7 +53,7 @@ class DatabaseCacheTests(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = LocalHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         thread.start()
         try:
@@ -164,30 +171,30 @@ class DatabaseCacheTests(unittest.TestCase):
             for option in ("--name", "--symbol", "--na", "--sym"):
                 for json_output in (False, True):
                     with self.subTest(option=option, json_output=json_output):
-                        result = subprocess.run(
-                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
-                             *(["--json"] if json_output else [])], capture_output=True, text=True)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(result.stderr, "")
+                        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                                contextlib.redirect_stderr(io.StringIO()) as error:
+                            code = nid_names.main([option, "--db", directory, *(["--json"] if json_output else [])])
+                        self.assertEqual(code, 0, error.getvalue())
+                        self.assertEqual(error.getvalue(), "")
                         if json_output:
-                            self.assertEqual(json.loads(result.stdout), {"symbols": []})
+                            self.assertEqual(json.loads(output.getvalue()), {"symbols": []})
                         else:
-                            self.assertEqual(result.stdout.split(), ["NAME", "NID"])
+                            self.assertEqual(output.getvalue().split(), ["NAME", "NID"])
 
     def test_empty_nid_filters_do_not_open_database(self):
         with tempfile.TemporaryDirectory() as directory:
             for option in ("--nid", "--ni"):
                 for json_output in (False, True):
                     with self.subTest(option=option, json_output=json_output):
-                        result = subprocess.run(
-                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
-                             *(["--json"] if json_output else [])], capture_output=True, text=True, timeout=5)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(result.stderr, "")
+                        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                                contextlib.redirect_stderr(io.StringIO()) as error:
+                            code = nid_names.main([option, "--db", directory, *(["--json"] if json_output else [])])
+                        self.assertEqual(code, 0, error.getvalue())
+                        self.assertEqual(error.getvalue(), "")
                         if json_output:
-                            self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
+                            self.assertEqual(json.loads(output.getvalue()), {"db_entries": 0, "rows": []})
                         else:
-                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", result.stdout)
+                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", output.getvalue())
 
     def test_environment_variable_selects_the_database_and_help_names_it(self):
         script = str(Path(nid_names.__file__))
@@ -319,7 +326,7 @@ class DatabaseCacheTests(unittest.TestCase):
                 release.wait(3)
             def log_message(self, *args):
                 pass
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = LocalHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01))
         thread.start()
         try:
@@ -944,6 +951,54 @@ class NidEncodingTests(unittest.TestCase):
             path.write_text("\ufeff# header\nAAAAAAAAAAA first # note\nAAAAAAAAAAA second\nBBBBBBBBBBB\nCCCCCCCCCCC third\n", encoding="utf-8")
             db = nid_names.read_db(path)
             self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
+
+class PureHelperTests(unittest.TestCase):
+    def test_strip_nid_postfix_removes_the_postfix_and_disambiguator(self):
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("plain"), "plain")
+
+    def test_option_name_matches_exact_and_unique_abbreviated_options(self):
+        options = ("--nid", "--name", "-h")
+        self.assertEqual(nid_names.option_name("-h", options), "-h")
+        self.assertEqual(nid_names.option_name("--nid=abc", options), "--nid")
+        self.assertEqual(nid_names.option_name("--na", options), "--name")
+
+    def test_option_name_ignores_values_and_ambiguous_prefixes(self):
+        options = ("--nid", "--name", "-h")
+        self.assertIsNone(nid_names.option_name("abc", options))
+        self.assertIsNone(nid_names.option_name("-", options))
+        self.assertIsNone(nid_names.option_name("--unknown", options))
+        self.assertEqual(nid_names.option_name("--n", options), "--n")
+class SourceScanHelperTests(unittest.TestCase):
+    def test_source_files_lists_cpp_files_outside_test_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("a.cpp", "sub/d.cpp", "test/b.cpp", "Tests/c.cpp", "e.h"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            found = [path.relative_to(root).as_posix() for path in nid_names.source_files(root)]
+            self.assertEqual(found, ["a.cpp", "sub/d.cpp"])
+
+    def test_source_assembly_definitions_yield_the_quoted_function_name(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("sceFoo")\n')), ["sceFoo"])
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_SIGNAL_ASM_FUNCTION("sceBar")\n')), ["sceBar"])
+
+    def test_source_assembly_definitions_ignore_invalid_names_and_other_macros(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("bad name")\n')), [])
+        self.assertEqual(list(nid_names.source_assembly_definitions('OTHER_MACRO("sceFoo")\n')), [])
+
+    def test_read_db_prefers_a_verified_duplicate_in_either_order(self):
+        symbol = "sceKernelUsleep"
+        nid = nid_names.compute_nid(symbol)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nids.txt"
+            for names in ((symbol, "guess"), ("guess", symbol, "later_guess")):
+                with self.subTest(names=names):
+                    path.write_text("".join(f"{nid}#A#A {name}#A#A\n" for name in names), encoding="utf-8")
+                    self.assertEqual(nid_names.read_db(path), {nid: symbol})
 
 
 if __name__ == "__main__":

@@ -190,7 +190,9 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(timeoutMicros), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &completed.front(), sizeof(*requestId));
+    const GuestArena::HostWrite guard(requestId, sizeof(*requestId));
+    const bool copied = guard.Open() && GuestWritable_nid_no_patch(requestId, sizeof(*requestId)) &&
+        GuestCopyOut_nid_no_patch(requestId, &completed.front(), sizeof(*requestId));
     errno = savedErrno;
     if (!copied) {
         completion.NotifyOne();

@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -23,6 +25,7 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type3D = 10;
 constexpr std::uint32_t TypeCube = 11;
 constexpr std::uint32_t Type2DArray = 13;
+constexpr std::uint32_t Type2DMsaa = 14;
 alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
 alignas(256) std::array<std::uint8_t, 65536> Texels{};
 
@@ -34,6 +37,7 @@ alignas(256) constexpr auto Query1D = Code(0u);
 alignas(256) constexpr auto Query3D = Code(2u);
 alignas(256) constexpr auto QueryCube = Code(3u);
 alignas(256) constexpr auto Query2DArray = Code(5u);
+alignas(256) constexpr auto Query2DMsaa = Code(6u);
 
 std::array<std::uint32_t, 9> MipCode(std::uint32_t dim, std::uint32_t mip) {
     return {0x34060084u, 0x7e0202ffu, mip, 0xf0380f00u | (dim << 3u), 0x00010a01u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u};
@@ -44,15 +48,15 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> Descriptor(std::uint32_t type, std::uint32_t depth, std::uint32_t levels = 1u) {
+std::array<std::uint32_t, 8> Descriptor(std::uint32_t type, std::uint32_t depth, std::uint32_t lastLevel = 0u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32Float << 20u) | (((Size - 1u) & 3u) << 30u),
         ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
-        0xfacu | ((levels - 1u) << 16u) | (type << 28u),
+        0xfacu | (lastLevel << 16u) | ((lastLevel != 0u ? 9u : 0u) << 20u) | (type << 28u),
         depth - 1u,
-        (levels - 1u) << 4u,
+        lastLevel << 4u,
         0u,
         0u,
     };
@@ -117,9 +121,18 @@ int main() {
         Check(*device, QueryCube, Descriptor(TypeCube, 6u), "cube", {Size, Size, 6u, 1u}, {Size, Size, 0u, 1u});
         Check(*device, Query3D, Descriptor(Type3D, 4u), "3D", {Size, Size, 4u, 1u}, {Size, Size, 4u, 1u});
         Check(*device, Query2DArray, Descriptor(Type2DArray, 3u), "2D array", {Size, Size, 3u, 1u}, {Size, Size, 0u, 1u});
-        CheckMips(*device, 1u, Descriptor(Type2D, 1u, 4u), "2D", 0u);
-        CheckMips(*device, 1u, Descriptor(Type2D, 1u, 1u), "single-level 2D", 0u);
-        CheckMips(*device, 5u, Descriptor(Type2DArray, 3u, 2u), "2D array", 3u);
+        CheckMips(*device, 1u, Descriptor(Type2D, 1u, 3u), "2D", 0u);
+        CheckMips(*device, 1u, Descriptor(Type2D, 1u, 0u), "single-level 2D", 0u);
+        CheckMips(*device, 5u, Descriptor(Type2DArray, 3u, 1u), "2D array", 3u);
+        for (std::uint32_t log2Fragments = 1; log2Fragments <= 3; ++log2Fragments) {
+            const auto msaa = Descriptor(Type2DMsaa, 1u, log2Fragments);
+            try {
+                Check(*device, Query2DMsaa, msaa, "2D MSAA", {Size, Size, 0u, 1u}, {Size, Size, 0u, 1u});
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("%u-fragment 2D MSAA resinfo skipped, the device lacks %u-sample color attachments\n", 1u << log2Fragments, 1u << log2Fragments);
+            }
+        }
         std::puts("image resinfo dimension tests passed");
         return 0;
     } catch (const std::exception& error) {
