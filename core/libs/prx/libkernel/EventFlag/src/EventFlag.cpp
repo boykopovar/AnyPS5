@@ -1,5 +1,4 @@
 #include "prx/libkernel/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -159,9 +158,7 @@ static int CopyEventFlagName(const char* name, std::string& copy) {
 }
 
 static bool StoreWaitCount(int* destination, int value) {
-    const int savedErrno = errno;
     const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
     return stored;
 }
 
