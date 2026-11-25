@@ -811,6 +811,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
+        add_test(NAME native_prx_manifest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_native_prx_manifest.py)
+        set_tests_properties(native_prx_manifest PROPERTIES TIMEOUT 30)
         add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
         add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
