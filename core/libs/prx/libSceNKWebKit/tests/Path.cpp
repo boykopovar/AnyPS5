@@ -23,18 +23,12 @@ void Require(const bool condition, const std::source_location location = std::so
     }
 }
 
-Path EmptyPath() {
-    Path path{};
-    path.m_path = nullptr;
-    path.m_elements = {nullptr, 0, 0};
-    path.m_elementsEngaged = true;
-    return path;
-}
-
 struct OwnedPath {
-    OwnedPath() = default;
+    OwnedPath() {
+        _ZN7WebCore4PathC1Ev(&path);
+    }
 
-    Path path{EmptyPath()};
+    Path path{};
 
     ~OwnedPath() {
         _ZN7WebCore4PathD1Ev(&path);
@@ -175,6 +169,19 @@ void TestCopyAndMove() {
     Require(_ZNK7WebCore4Path12elementCountEv(&moved.path) == 2);
     Require(source.path.m_path == nullptr);
     Require(_ZNK7WebCore4Path12elementCountEv(&source.path) == 0);
+
+    OwnedPath constructorSource;
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&constructorSource.path, &move);
+    _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(&constructorSource.path, &line);
+    alignas(8) unsigned char storage[sizeof(Path)];
+    auto* constructed = reinterpret_cast<Path*>(storage);
+    _ZN7WebCore4PathC1EOS0_(constructed, &constructorSource.path);
+    Require(_ZNK7WebCore4Path12elementCountEv(constructed) == 2);
+    Require(ElementsOf(*constructed).size() == 2);
+    Require(constructorSource.path.m_path == nullptr);
+    Require(constructorSource.path.m_elements.buffer == nullptr);
+    Require(_ZNK7WebCore4Path12elementCountEv(&constructorSource.path) == 0);
+    _ZN7WebCore4PathD1Ev(constructed);
 }
 
 void TestClear() {

@@ -5,9 +5,13 @@
 
 extern "C" {
 
+void APS5_VABI _ZN7WebCore4PathC1Ev(NKWebKit::PathAbi::Path* self);
+void APS5_VABI _ZN7WebCore4PathC2Ev(NKWebKit::PathAbi::Path* self);
 void APS5_VABI _ZN7WebCore4PathC1ERKS0_(NKWebKit::PathAbi::Path* self, const NKWebKit::PathAbi::Path* other);
 NKWebKit::PathAbi::Path& APS5_VABI _ZN7WebCore4PathaSERKS0_(NKWebKit::PathAbi::Path* self, const NKWebKit::PathAbi::Path* other);
 NKWebKit::PathAbi::Path& APS5_VABI _ZN7WebCore4PathaSEOS0_(NKWebKit::PathAbi::Path* self, NKWebKit::PathAbi::Path* other);
+void APS5_VABI _ZN7WebCore4PathC1EOS0_(NKWebKit::PathAbi::Path* self, NKWebKit::PathAbi::Path* other);
+void APS5_VABI _ZN7WebCore4PathC2EOS0_(NKWebKit::PathAbi::Path* self, NKWebKit::PathAbi::Path* other);
 void APS5_VABI _ZN7WebCore4PathD1Ev(NKWebKit::PathAbi::Path* self);
 void APS5_VABI _ZN7WebCore4Path6moveToERKNS_10FloatPointE(NKWebKit::PathAbi::Path* self, const WebCore::FloatPoint* point);
 void APS5_VABI _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(NKWebKit::PathAbi::Path* self, const WebCore::FloatPoint* point);

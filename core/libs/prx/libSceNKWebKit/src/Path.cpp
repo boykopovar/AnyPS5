@@ -168,13 +168,17 @@ Path& AssignPath(Path& to, const Path& from) {
     return to;
 }
 
+void MovePath(Path& to, Path& from) {
+    to.m_path = std::exchange(from.m_path, nullptr);
+    to.m_elements = std::exchange(from.m_elements, {nullptr, 0, 0});
+    to.m_elementsEngaged = from.m_elementsEngaged;
+}
+
 Path& MoveAssignPath(Path& to, Path& from) {
     if (&to == &from) return to;
     if (to.m_path) CairoDestroy_nid_no_patch(static_cast<CairoContext*>(to.m_path));
     FreeElements(to);
-    to.m_path = std::exchange(from.m_path, nullptr);
-    to.m_elements = std::exchange(from.m_elements, {nullptr, 0, 0});
-    to.m_elementsEngaged = from.m_elementsEngaged;
+    MovePath(to, from);
     return to;
 }
 
@@ -314,6 +318,22 @@ void ApplyCairoPath(const Path& path, const PathElementFunction& function) {
 }  // namespace
 
 extern "C" {
+
+void APS5_VABI _ZN7WebCore4PathC1Ev(Path* self) {
+    Initialize(Checked(self, "WebCore::Path::Path"));
+}
+
+void APS5_VABI _ZN7WebCore4PathC2Ev(Path* self) {
+    Initialize(Checked(self, "WebCore::Path::Path"));
+}
+
+void APS5_VABI _ZN7WebCore4PathC1EOS0_(Path* self, Path* other) {
+    MovePath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"));
+}
+
+void APS5_VABI _ZN7WebCore4PathC2EOS0_(Path* self, Path* other) {
+    MovePath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"));
+}
 
 void APS5_VABI _ZN7WebCore4PathC1ERKS0_(Path* self, const Path* other) {
     CopyPath(Checked(self, "WebCore::Path::Path"), Checked(other, "WebCore::Path::Path"));

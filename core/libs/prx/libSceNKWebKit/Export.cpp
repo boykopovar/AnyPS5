@@ -3434,10 +3434,6 @@ int APS5_VABI _ZN7WebCore11DisplayList23FillRectWithRoundedHoleC2ERKNS_9FloatRec
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore4PathC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SharedBufferD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4672,10 +4668,6 @@ int APS5_VABI _ZN7WebCore12JSAudioTrackC2EPN3JSC9StructureERNS_17JSDOMGlobalObje
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore4PathC2EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_bK7G4c3cHbY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4982,10 +4974,6 @@ int APS5_VABI _ZN7WebCore11DisplayList14DrawingContextC1ERKNS_9FloatSizeEPNS0_8R
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI _ZN7WebCore4PathC1EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore33pageConfigurationWithEmptyClientsEN3PAL9SessionIDE() {
     NotImplemented_nid_no_patch(__func__);
@@ -6064,10 +6052,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_maq9mh6nNTE_nid_no_patch() {
 APS5_EXPORT("maq9mh6nNTE", libSceNKWebKitLegacyUnknown_maq9mh6nNTE_nid_no_patch);
 
 int APS5_VABI _ZNK7WebCore22CSSAnimationController17animationIntervalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore4PathC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
