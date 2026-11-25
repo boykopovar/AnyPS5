@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +14,8 @@ static void Require(bool condition) {
 }
 
 static void SetBlockSize(const char* value) {
-#ifdef _WIN32
-    _putenv_s("BLOCKSIZE", value == nullptr ? "" : value);
-#else
-    if (value == nullptr) unsetenv("BLOCKSIZE");
-    else setenv("BLOCKSIZE", value, 1);
-#endif
+    if (value == nullptr) unsetenv_nid_postfix("BLOCKSIZE");
+    else setenv_nid_postfix("BLOCKSIZE", value, 1);
 }
 
 static void Check(const char* value, const char* header, std::int64_t blocksize) {
