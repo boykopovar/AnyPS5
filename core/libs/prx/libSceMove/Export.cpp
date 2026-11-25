@@ -1,5 +1,4 @@
 #include "prx/libSceMove/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -106,9 +105,7 @@ int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* da
     const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && countValid);
     if (result == MOVE_ERROR_INVALID_HANDLE) {
         const int32_t none = 0;
-        const int savedErrno = errno;
         GuestCopyOut_nid_no_patch(outCount, &none, sizeof(none));
-        errno = savedErrno;
     }
     if (result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
