@@ -922,7 +922,7 @@ void InvalidSeiAndSliceSyntax() {
         bytes.insert(bytes.end(), secondSlice.begin(), secondSlice.end());
         Videodec2Hevc::State state;
         const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
-        Require(!metadata.unsupported.empty(), "suffix SEI between two slices was accepted");
+        Require(metadata.unsupported.empty(), "suffix SEI between two slices was rejected");
     }
     for (const std::uint8_t reservedType : {std::uint8_t{10}, std::uint8_t{22}}) {
         Videodec2Hevc::State state;

@@ -334,7 +334,7 @@ std::vector<std::uint8_t> PictureTiming(std::span<const std::uint8_t> bytes, Vid
             if (type == 0) flags.bufferingPeriodPresent = 1;
             else if (type == 45) flags.framePackingPresent = 1;
         } else if (type == 132) {
-            if (!suffix || !afterLastSlice) throw std::runtime_error("unsupported HEVC suffix SEI placement");
+            if (!suffix || !afterFirstSlice) throw std::runtime_error("unsupported HEVC suffix SEI placement");
         } else if (type == 147) {
             if (suffix || afterFirstSlice) {
                 transferAmbiguous = true;
@@ -351,7 +351,7 @@ std::vector<std::uint8_t> PictureTiming(std::span<const std::uint8_t> bytes, Vid
         }
         position += size;
     }
-    if (suffix ? !afterLastSlice : afterLastSlice) throw std::runtime_error("unsupported HEVC SEI placement");
+    if (suffix ? !afterFirstSlice : afterLastSlice) throw std::runtime_error("unsupported HEVC SEI placement");
     return timing;
 }
 
