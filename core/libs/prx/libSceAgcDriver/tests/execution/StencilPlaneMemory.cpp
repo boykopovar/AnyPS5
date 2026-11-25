@@ -205,11 +205,12 @@ void CheckRewatchAfterStencilWrite(AgcDriver::VulkanDevice& device, const DepthF
     Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x2bu)}) == PlaneTexels, "the divergent rewatch stencil draw did not cover the plane");
     device.WaitIdle();
 
-    if (mode != 0) {
+    const bool watched = AgcDriver::GuestMemory::WriteWatched() && AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes);
+    if (mode != 0 && watched) {
         Fill(stencil, mode == 1 ? 0x18u : 0x77u);
         Require(AgcDriver::GuestMemory::CollectWrites(stencilBase, StencilBytes) != 0, "the rewatch stencil guest write was not collected");
     }
-    if (AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes)) {
+    if (watched) {
         AgcDriver::GuestMemory::Unwatch(stencilBase, StencilBytes);
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{stencilBase, stencilBase + StencilBytes}}};
         AgcDriver::GuestMemory::Rewatch(span);
@@ -217,8 +218,9 @@ void CheckRewatchAfterStencilWrite(AgcDriver::VulkanDevice& device, const DepthF
     Require(draw({.depthTest = false, .stencilTest = false}) == PlaneTexels, "the read-only rebind after a stencil rewatch did not cover the plane");
     static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes));
     device.WaitIdle();
-    const auto expected = mode == 0 ? 0x2bu : mode == 1 ? 0x18u : 0x77u;
-    Require(Holding(stencil, expected) == StencilBytes, mode == 0 ? "a rewatch alone was treated as a guest stencil write" : mode == 1 ? "a genuine same-value stencil write before a rewatch was lost" : "a changed-value stencil write before a rewatch was lost");
+    const auto expected = !watched || mode == 0 ? 0x2bu : mode == 1 ? 0x18u : 0x77u;
+    const char* failure = !watched ? "a stencil plane without write tracking kept the wrong GPU result" : mode == 0 ? "a rewatch alone was treated as a guest stencil write" : mode == 1 ? "a genuine same-value stencil write before a rewatch was lost" : "a changed-value stencil write before a rewatch was lost";
+    Require(Holding(stencil, expected) == StencilBytes, failure);
 }
 
 void CheckReusedStencilPlane(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle) {
@@ -279,7 +281,7 @@ void CheckReusedStencilPlane(AgcDriver::VulkanDevice& device, const DepthFastCle
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -301,6 +303,11 @@ int main() {
         device->WaitIdle();
         Require(Holding(stencilPlane, 0x18u) == StencilBytes, "a read of the stencil plane after a draw wrote stencil 0x18 does not see it in guest memory");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a second read of the stored stencil plane stored it again");
+
+        if (argc == 2 && std::string(argv[1]) == "--rewatch-only") {
+            for (int mode = 0; mode != 3; ++mode) CheckRewatchAfterStencilWrite(*device, shaders, swizzle, mode);
+            return 0;
+        }
 
         CheckConsumedStencilClear(*device, shaders, swizzle, true);
         CheckConsumedStencilClear(*device, shaders, swizzle, false);
