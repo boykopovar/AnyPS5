@@ -1,0 +1,10 @@
+add_test_executable(guest_standard_exception_members_tests ${LIBS_INCLUDE_DIR}/tests/GuestStandardExceptionMembers.cpp)
+target_include_directories(guest_standard_exception_members_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_standard_exception_members_tests PRIVATE libc)
+configure_windows_unwind(guest_standard_exception_members_tests)
+add_test(NAME guest_standard_exception_members COMMAND guest_standard_exception_members_tests)
+set_tests_properties(guest_standard_exception_members PROPERTIES TIMEOUT 10)
+if(WIN32)
+    set_tests_properties(guest_standard_exception_members PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
