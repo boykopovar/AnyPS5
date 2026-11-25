@@ -88,13 +88,14 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         return std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) { return run.first < base + bytes && run.second > base; });
     };
     const auto taken = [&](std::uint32_t index) { return ((variant.relocatableWords | variant.valueWords | variant.calleeWords) >> index & 1u) != 0; };
+    const auto takenNonDecode = [&](std::uint32_t index) { return taken(index) && (variant.decodePointerWords >> index & 1u) == 0; };
     if (ShaderRecompiler::GcnGuestShaders() && program.binary.stage == ShaderRecompiler::ShaderStage::Vertex) {
         for (const auto instruction : program.binary.code) {
             if ((instruction & 0xff80ff00u) != 0xbe802100u) continue;
             const auto target = instruction & 0xffu;
             if (target < program.firstUserSgpr) continue;
             const auto index = program.hiddenUserWords + target - program.firstUserSgpr;
-            if (index + 1 >= users || taken(index) || taken(index + 1)) continue;
+            if (index + 1 >= users || takenNonDecode(index) || takenNonDecode(index + 1)) continue;
             const auto low = program.userData[index];
             const auto address = static_cast<std::uint64_t>(low) | static_cast<std::uint64_t>(program.userData[index + 1]) << 32u;
             if (address == 0 || address % 4u != 0 || bound(low) != 0 || elsewhere(index, low)) continue;
@@ -238,6 +239,7 @@ void Driver::learnPendingRelocation() {
                 word.reads.emplace_back(0, length);
                 word.high = program.userData[index + 1];
             }
+            if ((variant.decodePointerWords >> index & 1u) != 0 && index + 1 < program.userData.size()) word.high = program.userData[index + 1];
             const auto base = (static_cast<std::uint64_t>(word.high) << 32) + AlignedWord(program.userData[index]);
             for (std::size_t run = 0; run < variant.runs.size() && run < variant.runBases.size(); ++run) {
                 if (variant.runBases[run] != static_cast<std::int8_t>(index)) continue;
@@ -310,6 +312,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->valueSlots = variant->valueSlots;
             copy->calleeWords = variant->calleeWords;
             copy->calleeReads = variant->calleeReads;
+            copy->decodePointerWords = variant->decodePointerWords;
             copy->donor = variant->donor != nullptr ? variant->donor : variant;
             copy->words = variant->words;
             copy->forgetSerial = variant->forgetSerial;
