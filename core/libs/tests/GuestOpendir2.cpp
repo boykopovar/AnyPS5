@@ -111,7 +111,16 @@ int main() {
     _seekdir_nid_postfix(unlockedDir, bookmark);
     auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir, 1);
     Require(entryAfterSeek != nullptr && bookmarkedName == entryAfterSeek->name);
+    *__error_nid_postfix() = 0;
+    _reclaim_telldir_nid_postfix(unlockedDir);
+    Require(*__error_nid_postfix() == 0);
+    _seekdir_nid_postfix(unlockedDir, bookmark);
+    auto* entryAfterReclaim = _readdir_unlocked_nid_postfix(unlockedDir, 1);
+    Require(entryAfterReclaim != nullptr && bookmarkedName == entryAfterReclaim->name);
     Require(closedir_nid_postfix(unlockedDir) == 0);
+    *__error_nid_postfix() = 0;
+    _reclaim_telldir_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 9);
 
     s_fakeOffset = 0;
     void* fakeDir = OpenDescriptorDirectory_nid_no_patch("/virtual", 100, FakeClose, 0, FakeRead, FakeSeek);
