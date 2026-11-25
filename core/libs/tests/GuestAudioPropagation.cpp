@@ -485,6 +485,11 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationPathGetNumPoints(path, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path points output");
     Require(errno == 71, "errno preserved on unwritable path points output");
+    std::uint32_t unknownPoints = 7;
+    Require(sceAudioPropagationPathGetNumPoints(0, &unknownPoints) == AudioPropagation::ErrorInvalidHandle && unknownPoints == 7, "points of path handle 0");
+    Require(sceAudioPropagationPathGetNumPoints(static_cast<AudioPropagationHandle>(-1), &unknownPoints) == AudioPropagation::ErrorInvalidHandle && unknownPoints == 7, "points of path handle -1");
+    Require(sceAudioPropagationPathGetNumPoints(0, nullptr) == AudioPropagation::ErrorInvalidHandle, "points of path handle 0, null output");
+    Require(sceAudioPropagationPathGetNumPoints(0, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorInvalidHandle, "points of path handle 0, unmapped output");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(source, &count); }, "source used as a path");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, nullptr); }, "null point-count output");
     AudioPropagationHandle pathMaterial = 0;
@@ -739,7 +744,7 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, source); }, "source destroy with another system");
     Require(sceAudioPropagationPortalDestroy(system, portal) == 0, "portal destroy failed");
     Require(sceAudioPropagationSourceDestroy(system, source) == 0, "source destroy failed");
-    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, &count); }, "path survived source destruction");
+    Require(sceAudioPropagationPathGetNumPoints(path, &count) == AudioPropagation::ErrorInvalidHandle, "path survived source destruction");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAudioPath(lastPath, &configured, 1.0f); }, "path update after source destruction");
     Require(sceAudioPropagationRoomDestroy(system, rooms[0]) == 0, "room destroy failed");
 
@@ -750,7 +755,7 @@ int main() {
     Require(sceAudioPropagationSourceGetAudioPath(lateSource, 0, &latePath) == 0 && latePath != path, "path handle reuse");
     Require(sceAudioPropagationSystemRegisterMaterial(system, material, &lateMaterial) == 0, "late material register failed");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "system destroy failed");
-    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(latePath, &count); }, "path survived system destruction");
+    Require(sceAudioPropagationPathGetNumPoints(latePath, &count) == AudioPropagation::ErrorInvalidHandle, "path survived system destruction");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceSetAttributes(lateSource, &attribute, 1); }, "source used after its system");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationRoomDestroy(system, lateSource); }, "orphan destroyed as the wrong kind");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, lateSource); }, "orphan destroyed with another system");

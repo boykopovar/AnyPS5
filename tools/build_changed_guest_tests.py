@@ -281,7 +281,7 @@ def main(argv=None):
     parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
-        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        changed_paths = host_only.read_changed_paths(args.changed_paths) if args.changed_paths else None
         if changed_paths is not None:
             listed = {Path(path).as_posix() for path in changed_paths if path}
             if not reaches_libs(listed) and not script_test_patterns(listed):

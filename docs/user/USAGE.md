@@ -12,6 +12,10 @@ Select or drop multiple app ZIP archives to convert them into one ZIP bundle. Th
 
 For **Save ZIP to disk**, Cancel is available until the browser starts committing the completed ZIP.
 
+### Browser conversion receipt
+
+Each exported app includes `anyps5-conversion.json` next to the executable. The receipt records the release `tag` and full commit `revision`, the `target`, and whether the Intel translation option was enabled (`toIntel`). A batch ZIP has one receipt in each numbered app folder. The receipt contains no paths or input filenames. The converter also shows the release tag and revision when it finishes. If the release manifest has no valid revision, the receipt records `null` for `revision`.
+
 ## Verify a release download
 
 Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
@@ -615,7 +619,7 @@ Besides the recompiled shaders, the shader cache directory holds `pipelines.jour
 
 ### Draw pipeline
 
-`APS5_DRAW_PIPELINE=1` (off by default) moves more of each draw off the thread that reads the title's command buffers: a second thread finishes each draw while the next one is read, the thread that records draws skips work whose inputs did not change, and checks that a draw's resources are still current are reused until the title or the GPU writes memory. It is meant with `APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1`. The picture does not change; if it does, that is a bug, and a run without the switch shows whether it is the cause. `APS5_VERIFY_DRAW_PIPELINE=1` runs the full checks next to the reused ones, at a cost in speed, and prints `[epoch-proofs]` lines with how many differed (any nonzero count is a bug). `APS5_PROFILE_DRAW=1` finishes every draw on the reading thread, so a run with it does not measure this switch. To see the hand-off without that, set `APS5_PIPELINE_STATS` (any value; `1` also turns on Vulkan pipeline statistics, which cost time): every 10 s a `[finisher]` line counts the draws handed to the second thread and those finished on the reading thread, and `[finisher-held]` lines count the draws held back by why their writes are not known.
+`APS5_DRAW_PIPELINE` (off when unset; setting it to any value, including `0`, turns it on, and `=1` is the usual form) moves more of each draw off the thread that reads the title's command buffers: a second thread finishes each draw while the next one is read, the thread that records draws skips work whose inputs did not change, and checks that a draw's resources are still current are reused until the title or the GPU writes memory. It is meant with `APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1`. The picture does not change; if it does, that is a bug, and a run without the switch shows whether it is the cause. `APS5_VERIFY_DRAW_PIPELINE=1` runs the full checks next to the reused ones, at a cost in speed, and prints `[epoch-proofs]` lines with how many differed (any nonzero count is a bug). `APS5_PROFILE_DRAW=1` finishes every draw on the reading thread, so a run with it does not measure this switch. To see the hand-off without that, set `APS5_PIPELINE_STATS` (any value; `1` also turns on Vulkan pipeline statistics, which cost time): every 10 s a `[finisher]` line counts the draws handed to the second thread and those finished on the reading thread, and `[finisher-held]` lines count the draws held back by why their writes are not known.
 
 ### Texture cache budget
 

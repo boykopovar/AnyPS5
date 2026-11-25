@@ -100,6 +100,18 @@ def unique_json_object(pairs):
     return result
 
 
+def check_finite_json(record):
+    pending = list(record.values())
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("summary contains a non-finite JSON number")
+
+
 def load_summary(path, trace=None):
     selected = None
     count = 0
@@ -127,7 +139,9 @@ def load_summary(path, trace=None):
                          "or provide a file containing one summary line")
     line_number, record = selected
     try:
-        return validate(record)
+        validate(record)
+        check_finite_json(record)
+        return record
     except ValueError as error:
         raise ValueError(f"{path}:{line_number}: {error}") from error
 
