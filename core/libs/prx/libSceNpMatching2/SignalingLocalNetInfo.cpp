@@ -36,9 +36,7 @@ int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo(NpMatching2SignalingNetInfo
         return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     }
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &info->size, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != SIGNALING_NET_INFO_SIZE) {
         return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     }

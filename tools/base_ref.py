@@ -1,6 +1,6 @@
 import subprocess
 
-CANDIDATES = ("upstream/main", "origin/main", "main")
+CANDIDATES = ("refs/remotes/upstream/main", "refs/remotes/origin/main", "refs/heads/main")
 
 
 def resolve(repo, name=None):

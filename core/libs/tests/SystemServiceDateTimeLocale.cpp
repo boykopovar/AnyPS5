@@ -118,6 +118,9 @@ void RequireLdmlDates() {
     RequireLdmlDate("d/M/yyyy", DATE_FORMAT_DDMMYYYY);
     RequireLdmlDate("dd.MM.y", DATE_FORMAT_DDMMYYYY);
     RequireLdmlDate("yyyy-MM-dd", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("r\xE5\xB9\xB4MMMd", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("r. M. d.", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("M/d/r", DATE_FORMAT_MMDDYYYY);
     RequireLdmlDate("yyyy/MM/dd", DATE_FORMAT_YYYYMMDD);
     RequireLdmlDate("y. MM. dd.", DATE_FORMAT_YYYYMMDD);
     RequireLdmlDate("yyyy. MM. dd.", DATE_FORMAT_YYYYMMDD);

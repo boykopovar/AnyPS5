@@ -138,6 +138,13 @@ void CheckVgtControl() {
     Require(sceGnmResetVgtControl(nullptr, 3) == -1);
 }
 
+void CheckUnwritableOutputs() {
+    auto* const unwritable = reinterpret_cast<std::uint32_t*>(0x10);
+    Require(sceGnmDrawIndexMultiInstanced(unwritable, 13, 36, 5, 0x1234567890ull, 0xab00001200ull, 0x20000001u) == -1);
+    Require(sceGnmDrawOpaqueAuto(unwritable, 7, 0xe0000001u) == -1);
+    Require(sceGnmGetCoredumpMode(unwritable) == 1);
+}
+
 } // namespace
 
 int main() {
@@ -146,4 +153,5 @@ int main() {
     CheckIndirectDraws();
     CheckComputeWaits();
     CheckVgtControl();
+    CheckUnwritableOutputs();
 }

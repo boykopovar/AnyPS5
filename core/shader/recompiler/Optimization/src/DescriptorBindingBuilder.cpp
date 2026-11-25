@@ -515,7 +515,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& buffer = info.buffers[index];
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         const auto format = (fields.word3 >> 12u) & 0x7fu;
-        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (fields.known && format == 0u))) fail("buffer specialization has an unsupported format");
+        if (buffer.descriptorFormatted && format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) fail("buffer specialization has an unsupported format");
         const auto misalignment = fields.misalignment;
         auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
         if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
@@ -673,6 +673,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
+                physical.imageOverwrites.push_back(image.overwrite);
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {

@@ -20,9 +20,7 @@ std::u16string ReadText(const char16_t* source, const char* caller, const char* 
         char16_t chunk[0x800];
         const auto address = reinterpret_cast<std::uintptr_t>(source + text.size());
         const std::size_t count = (std::max)(std::size_t{1}, (0x1000 - address % 0x1000) / sizeof(char16_t));
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, source + text.size(), count * sizeof(char16_t));
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable " + name);
         for (std::size_t index = 0; index < count; ++index) {
             if (chunk[index] == 0) return text;

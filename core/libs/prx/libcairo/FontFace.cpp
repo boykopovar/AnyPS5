@@ -108,9 +108,7 @@ extern "C" {
 CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
     if (!face) NotImplemented_nid_no_patch(__func__);
     std::int64_t faceIndex{};
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&faceIndex, &face->face_index, sizeof(faceIndex));
-    errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(__func__);
     CairoFtFontFaceKey key;
     key.fromFace = true;

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/urename.h"
 #include "unicode/uvernum.h"
@@ -40,6 +41,7 @@ std::int32_t APS5_VABI uloc_addLikelySubtags_nid_postfix(const char* locale, cha
     if (!Writable(status, sizeof(std::int32_t)) || !Writable(result, capacity > 0 ? static_cast<std::size_t>(capacity) : 0u)) {
         return 0;
     }
+    if (!locale) locale = Icu::DefaultLocaleName();
     return uloc_addLikelySubtags(locale, result, capacity, status);
 }
 
@@ -48,6 +50,7 @@ std::int32_t APS5_VABI uloc_minimizeSubtags_nid_postfix(const char* locale, char
     if (!Writable(status, sizeof(std::int32_t)) || !Writable(result, capacity > 0 ? static_cast<std::size_t>(capacity) : 0u)) {
         return 0;
     }
+    if (!locale) locale = Icu::DefaultLocaleName();
     return uloc_minimizeSubtags(locale, result, capacity, status);
 }
 
@@ -56,6 +59,7 @@ std::int32_t APS5_VABI uloc_getName_nid_postfix(const char* localeID, char* name
     if (!Writable(status, sizeof(std::int32_t)) || !Writable(name, capacity > 0 ? static_cast<std::size_t>(capacity) : 0u)) {
         return 0;
     }
+    if (!localeID) localeID = Icu::DefaultLocaleName();
     return uloc_getName(localeID, name, capacity, status);
 }
 

@@ -38,6 +38,7 @@ public:
     void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    void TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point);
     IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
     void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 
@@ -73,11 +74,7 @@ private:
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
-    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
-    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources);
-    IrF32 clampF16Result(const RdnaOperand& operand, IrF32 value);
-    IrF32 scaleF16Result(std::uint32_t omod, IrF32 value);
-    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits);
+    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
@@ -85,12 +82,15 @@ private:
     bool nativeFloat16Mode() const { return nativeFloat16 && (!floatMode.has_value() || (floatMode->floatMode & 0xccu) == 0xc0u); }
     bool hostFloat16Nans(const RdnaInstruction& inst, std::uint32_t count, bool accumulator);
     IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
-    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
+    IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits, bool followsRoundMode = true);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
+    std::uint32_t floatRoundMode(std::uint32_t roundShift) const;
+    bool keepsDenormalResults(std::uint32_t keepBit) const;
+    IrValue& roundedLimit(std::uint32_t rounding, IrU32 sign, IrValue& away, IrValue& towardZero);
     IrU32 flushF16Bits(IrU32 bits, std::uint32_t keepBit);
     IrU32 flushF16Input(IrU32 bits);
     IrU32 flushF16Result(IrU32 bits);
@@ -120,6 +120,7 @@ private:
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
+    IrF32 mixNanSourceF32(const RdnaOperand& operand, IrF32 value);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
     IrU32 readU16LaneAsU32(const RdnaOperand& operand, bool highLane, bool signExtend);
     IrU32 readU16AsU32(const RdnaOperand& operand, bool signExtend);

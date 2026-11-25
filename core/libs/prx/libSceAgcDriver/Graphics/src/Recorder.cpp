@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -8,6 +9,7 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DrawStageTimingKeys.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -1588,6 +1590,7 @@ std::uint32_t CommandState::DynamicSlots(std::span<const VkDynamicState> states)
         case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: slots |= Mask(WriteMaskFront) | Mask(WriteMaskBack); break;
         case VK_DYNAMIC_STATE_STENCIL_REFERENCE: slots |= Mask(ReferenceFront) | Mask(ReferenceBack); break;
         case VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT: slots |= Mask(ColorWriteMask); break;
+        case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE: slots |= Mask(DepthBiasEnable); break;
         default: throw std::runtime_error("AGC graphics: a pipeline declares a dynamic state the command tracker does not follow");
         }
     }
@@ -1681,6 +1684,10 @@ void CommandState::SetFrontFace(const Context& context, VkFrontFace face) {
 
 void CommandState::SetDepthTestEnable(const Context& context, VkBool32 enable) {
     apply(DepthTest, &CommandState::depthTest, enable, std::equal_to<>{}, [&] { context.tracked(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, enable); });
+}
+
+void CommandState::SetDepthBiasEnable(const Context& context, VkBool32 enable) {
+    apply(DepthBiasEnable, &CommandState::depthBiasEnable, enable, std::equal_to<>{}, [&] { context.tracked(&DeviceFunctions::cmdSetDepthBiasEnable, "vkCmdSetDepthBiasEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetDepthWriteEnable(const Context& context, VkBool32 enable) {
@@ -2099,7 +2106,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         return {open->commands, true, false, PassBreak::Continued};
     }
     const auto reason = PassBreakFor(hazard);
-    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
+    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass && pass.afterEnd.empty();
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(reason, !merge);
     const auto commands = Commands();
@@ -2119,6 +2126,11 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+}
+
+void Recorder::AfterRenderPass(std::function<void(Recorder&)> work) {
+    Require(RenderPassOpen(), "work after a render pass without an open render pass");
+    open->renderPass.afterEnd.push_back(std::move(work));
 }
 
 void Recorder::SealPassWriteOnly() {
@@ -2144,9 +2156,19 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
+    auto after = std::move(pass.afterEnd);
     pass = {};
     pass.closedBy = by;
     PerformanceTrace::Amount(PassBreakScopeNames[static_cast<std::size_t>(by)], 1);
+    std::exception_ptr failure;
+    for (auto& work : after) {
+        try {
+            work(*this);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
@@ -2250,6 +2272,11 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        retentionCount = 0;
+        if (++retentionEpoch == 0) {
+            for (auto& slot : retention) slot = {};
+            ++retentionEpoch;
+        }
         open->predictedSerial = submissions + 1;
         try {
             if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
@@ -2371,7 +2398,7 @@ bool Recorder::closeStoreRun(bool atSubmit) {
         // A label says the work before it is done: the queued key stores (results of that work)
         // land ahead of every store of the run, and the pass a draw left open ends.
         if (!open->keyStores.empty()) recordKeyStores(true);
-        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass;
+        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass && open->renderPass.afterEnd.empty();
         if (open->renderPass.open) endOpenRenderPass(PassBreak::Label);
         const auto commands = open->commands;
         run.timing = beginTiming(ClassKey(CommandClass::LabelRun));
@@ -2702,8 +2729,34 @@ std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
 
 std::string Recorder::TimingKeyLabel(std::uint64_t key) {
     char text[32];
+    if (DrawStageTimingEnabled() && (key & (DrawTimingFlag | DrawStageTimingFlag)) == (DrawTimingFlag | DrawStageTimingFlag)) {
+        std::snprintf(text, sizeof(text), "drawset 0x%llx", static_cast<unsigned long long>(key & ~(DrawTimingFlag | DrawStageTimingFlag)));
+        return text;
+    }
     std::snprintf(text, sizeof(text), (key & DrawTimingFlag) != 0 ? "draw 0x%llx" : "0x%llx", static_cast<unsigned long long>(key & ~DrawTimingFlag));
     return text;
+}
+
+bool Recorder::DrawStageTimingEnabled() {
+    static const bool enabled = std::getenv("APS5_PROFILE_GPU_DRAW_STAGES") != nullptr;
+    return enabled;
+}
+
+std::uint64_t Recorder::DrawStageTimingKey(std::span<const std::pair<std::uint32_t, std::uint64_t>> stages) {
+    static auto* keys = new DrawStageTimingKeys;
+    const auto [key, inserted] = keys->Intern(stages);
+    if (inserted) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "[drawstages] drawset 0x%llx", static_cast<unsigned long long>(key));
+        std::string line = text;
+        for (const auto& [stage, variant] : stages) {
+            std::snprintf(text, sizeof(text), " %u:0x%llx", stage, static_cast<unsigned long long>(variant));
+            line += text;
+        }
+        line += '\n';
+        AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
+    }
+    return key | DrawTimingFlag | DrawStageTimingFlag;
 }
 
 std::uint32_t Recorder::BeginInPassGpuTiming(std::uint64_t key) {
@@ -3235,7 +3288,7 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address, std::u
     return true;
 }
 
-bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules) {
+bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules) {
     constexpr std::uint32_t PushBytes = 48;
     if (meshArgumentState == 0) {
         meshArgumentState = -1;
@@ -3271,7 +3324,7 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
         VkDeviceAddress record;
         VkDeviceAddress arguments;
         std::array<std::uint32_t, 8> rules;
-    } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], 0u}};
+    } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], rules[7]}};
     static_assert(sizeof(parameters) == PushBytes);
     function(cmdPushConstants, "vkCmdPushConstants")(commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
@@ -3576,6 +3629,36 @@ std::shared_ptr<DeviceBuffer> Recorder::UploadScratchBuffer(UploadScratch kind, 
     return scratch;
 }
 
+void Recorder::ReserveRetention(std::size_t additional) {
+    ensureOpen();
+    if (additional > open->kept.max_size() - open->kept.size()) throw std::length_error("recorded owner count exceeds the batch capacity");
+    prepareRetention(additional);
+    const auto needed = open->kept.size() + additional;
+    if (needed <= open->kept.capacity()) return;
+    const auto grown = open->kept.capacity() <= open->kept.max_size() / 2 ? open->kept.capacity() * 2 : open->kept.max_size();
+    open->kept.reserve(std::max(needed, grown));
+}
+
+void Recorder::prepareRetention(std::size_t additional) {
+    if (additional > retention.max_size() / 2 - retentionCount) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+    const auto needed = (retentionCount + additional) * 2;
+    if (needed <= retention.size()) return;
+    auto capacity = std::max<std::size_t>(64, retention.size());
+    while (capacity < needed) {
+        if (capacity > retention.max_size() / 2) throw std::length_error("recorded owner lookup exceeds the batch capacity");
+        capacity *= 2;
+    }
+    std::vector<RetentionSlot> grown(capacity);
+    const auto mask = grown.size() - 1;
+    for (const auto& slot : retention) {
+        if (slot.epoch != retentionEpoch) continue;
+        auto index = retentionHash(slot.object) & mask;
+        while (grown[index].epoch == retentionEpoch) index = (index + 1) & mask;
+        grown[index] = slot;
+    }
+    retention.swap(grown);
+}
+
 void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));
@@ -3704,6 +3787,20 @@ void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t byte
     if (unwrittenSnapshots.size() >= UnwrittenSnapshotEntries || bytes > DrawSnapshotBudget - unwrittenBytes) return;
     unwrittenSnapshots.emplace(address, UnwrittenSnapshot{bytes, std::move(buffer), offset});
     unwrittenBytes += bytes;
+}
+
+bool Recorder::ShorterDrawSnapshotKept(std::uint64_t address, std::size_t bytes, SnapshotUse use) const {
+    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    for (auto entry = drawSnapshots.lower_bound({address, use, 0}); entry != drawSnapshots.end() && std::get<0>(entry->first) == address && std::get<1>(entry->first) == use && std::get<2>(entry->first) < bytes; ++entry) {
+        const auto kept = std::get<2>(entry->first);
+        const auto from = entry->second.from;
+        if (entry->second.owned.words.empty() && entry->second.registryGeneration == registry && GuestMemory::UnchangedSince(address + from, kept - from, entry->second.generation)) return true;
+    }
+    return false;
+}
+
+bool Recorder::GuestWritesPendingIn(std::uint64_t address, std::size_t bytes) const {
+    return PendingWriteOverlaps(address, bytes) || PendingLabelIn(address, bytes) || QueuedStoreOverlaps(address, bytes) || (QueuedLabelsOnThread::Get() && QueuedLabelOverlaps(address, bytes));
 }
 
 std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset, std::size_t from, std::uint32_t* lowest, bool mirrored) {
@@ -4700,6 +4797,10 @@ void Recorder::HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value) {
     submitHoldValue = value;
 }
 
+bool Recorder::SubmitHeld() const {
+    return submitHold != VK_NULL_HANDLE || (heldSerial != 0 && unsignaled(heldSerial));
+}
+
 void Recorder::FailNextSubmitsForTest(unsigned count) {
     injectedSubmitFailures.store(count, std::memory_order_relaxed);
 }
@@ -4797,6 +4898,7 @@ void Recorder::Submit() {
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
+    if (hold != VK_NULL_HANDLE) heldSerial = batch->serial;
     batch->submittedAt = std::chrono::steady_clock::now();
     CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
