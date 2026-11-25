@@ -1,5 +1,4 @@
 #include "prx/libSceAvPlayerStreaming/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -32,9 +31,7 @@ int APS5_VABI MvpHttpGet_nid_postfix(void) {
 int APS5_VABI MvpHttpGetLastError_nid_postfix(const void* context) {
     if (context == nullptr) return -1;
     std::int32_t error = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&error, static_cast<const unsigned char*>(context) + 0x30, sizeof(error));
-    errno = savedErrno;
     if (!copied) return -1;
     return error;
 }
@@ -179,15 +176,12 @@ int APS5_VABI sceTsReleaseBuffer(void* ts, void* b) {
     if (b == nullptr) {
         return 0;
     }
-    const int savedErrno = errno;
     std::uint64_t zero64 = 0;
     std::uint32_t zero32 = 0;
     if (!GuestCopyOut_nid_no_patch(b, &zero64, sizeof(zero64)) ||
         !GuestCopyOut_nid_no_patch(static_cast<char*>(b) + 8, &zero32, sizeof(zero32))) {
-        errno = savedErrno;
         return -1;
     }
-    errno = savedErrno;
     return 0;
 }
 
