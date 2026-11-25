@@ -976,6 +976,22 @@ class CheckRegistrationCliTests(unittest.TestCase):
                 names = check_test_registration.built(build)
                 self.assertEqual(names, {"dummy_tests"})
 
+    def test_cache_values_keep_unicode_line_separators(self):
+        program = "/opt/nin\u2028ja\x0c/ninja"
+        source = "/src/any\u2028ANYPS5_ENABLE_ASAN:BOOL=ON\x1cps5"
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CMakeCache.txt").write_text(
+                f"CMAKE_MAKE_PROGRAM:FILEPATH={program}\nCMAKE_GENERATOR:INTERNAL=Ninja\n"
+                f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8")
+            self.assertEqual(check_test_registration.source_directory(build), Path(source))
+            self.assertEqual(check_test_registration.skipped_libraries(build), set())
+            output = "tests/dummy_tests: EXECUTABLE\n"
+            with patch.object(check_test_registration.subprocess, "run", side_effect=lambda command, **kwargs: SimpleNamespace(
+                    stdout="Build file encoding: UTF-8\n" if command[-1] == "wincodepage" else output)) as run:
+                self.assertEqual(check_test_registration.built(build), {"dummy_tests"})
+            self.assertEqual(run.call_args[0][0][0], program)
+
     def test_scripts_outside_a_git_checkout_is_a_usage_error(self):
         error = subprocess.CalledProcessError(128, ["git", "ls-files"], stderr="fatal: not a git repository")
         for output in ([], ["--json"]):

@@ -162,7 +162,7 @@ def cpp_source(text, keep_strings=False):
 def ninja(build):
     program, generator = None, None
     configurations = []
-    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
             program = line.partition("=")[2]
         elif line.startswith("CMAKE_GENERATOR:"):
@@ -226,7 +226,7 @@ def compiled(build):
 
 def skipped_libraries(build):
     enabled = False
-    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").split("\n"):
         name, _, value = line.partition(":")
         on = value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
         if name in ("ANYPS5_RELINKER_ONLY", "ANYPS5_BUILD_WASM") and on:
@@ -238,7 +238,7 @@ def skipped_libraries(build):
 
 def source_directory(build):
     cache = Path(build) / "CMakeCache.txt"
-    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+    for line in cache.read_text(encoding="utf-8-sig").split("\n"):
         name, _, value = line.partition("=")
         if name == "CMAKE_HOME_DIRECTORY:INTERNAL" and value:
             return Path(value)
