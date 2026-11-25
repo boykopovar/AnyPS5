@@ -166,6 +166,12 @@ int APS5_VABI FT_Get_SubGlyph_InfoForward_nid_no_patch(FreeType::GuestGlyphSlotR
 }
 APS5_EXPORT("vOhW2Wdz0t4", FT_Get_SubGlyph_InfoForward_nid_no_patch);
 
+int APS5_VABI FT_Get_Track_KerningForward_nid_no_patch(FreeType::GuestFaceRec* face, std::int64_t pointSize,
+                                                     std::int32_t degree, std::int64_t* kerning) {
+    return FT_Get_Track_Kerning_nid_postfix(face, pointSize, degree, kerning);
+}
+APS5_EXPORT("e2KoMPOAdZg", FT_Get_Track_KerningForward_nid_no_patch);
+
 std::int32_t APS5_VABI FT_Get_TrueType_Engine_TypeForward_nid_no_patch(FreeType::GuestLibrary* library) {
     return FT_Get_TrueType_Engine_Type_nid_postfix(library);
 }
