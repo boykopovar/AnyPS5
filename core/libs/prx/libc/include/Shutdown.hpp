@@ -6,6 +6,7 @@
 class ProcessShutdown final {};
 
 extern "C" void LibcRegisterShutdown_nid_postfix(void (*callback)());
+extern "C" void LibcRegisterShutdownWaitHook_nid_no_patch(void (*beforeWait)(), void (*afterWait)());
 extern "C" void LibcRunShutdown_nid_postfix();
 extern "C" std::stop_token LibcShutdownToken_nid_postfix();
 extern "C" void LibcRequestShutdown_nid_postfix();

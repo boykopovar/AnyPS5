@@ -214,8 +214,12 @@ if(BUILD_TESTING)
     target_link_libraries(audio_out_ex_tests PRIVATE libSceAudioOut libc)
     configure_windows_unwind(audio_out_ex_tests)
     add_test(NAME audio_out_ex COMMAND audio_out_ex_tests)
+    add_test(NAME audio_out_ex_foreign_shutdown COMMAND audio_out_ex_tests --foreign-shutdown)
+    set_tests_properties(audio_out_ex_foreign_shutdown PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(audio_out_ex PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+        set_tests_properties(audio_out_ex_foreign_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -34,7 +35,76 @@ static bool Throws(Call call) {
     return false;
 }
 
-int main() {
+namespace {
+
+std::atomic<bool> g_allowForeignShutdown{false};
+
+void ReleaseForeignShutdownCaller() {
+    g_allowForeignShutdown.store(true);
+}
+
+int RunForeignShutdownRegression() {
+    std::atomic<bool> foreignEntered{false};
+    std::atomic<bool> foreignShutdownReturned{false};
+    std::atomic<bool> workerEntered{false};
+    std::atomic<bool> workerDone{false};
+
+    std::thread foreignCaller([&] {
+        {
+            const AudioOutCall outerForeignCall;
+            const AudioOutCall innerForeignCall;
+            Require(AudioOutCall::ThreadDepth() == 2, "foreign caller expected depth 2 inside nested AudioOutCall");
+            foreignEntered.store(true);
+            while (!g_allowForeignShutdown.load()) std::this_thread::yield();
+            LibcRunShutdown_nid_postfix();
+            foreignShutdownReturned.store(true);
+            Require(AudioOutCall::ThreadDepth() == 2, "foreign caller depth changed across shutdown wait");
+            Require(AudioOutCall::ActiveCount() >= 2, "foreign caller active count was not restored after shutdown wait");
+        }
+        Require(AudioOutCall::ThreadDepth() == 0, "foreign caller depth leaked after AudioOutCall exit");
+    });
+
+    while (!foreignEntered.load()) std::this_thread::yield();
+
+    std::thread worker([&] {
+        const AudioOutCall workerCall;
+        workerEntered.store(true);
+        while (!g_allowForeignShutdown.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        workerDone.store(true);
+    });
+
+    while (!workerEntered.load()) std::this_thread::yield();
+    Require(AudioOutCall::ThreadDepth() == 0, "primary shutdown caller must be outside AudioOutCall");
+    Require(AudioOutCall::ActiveCount() == 3, "expected 3 active AudioOutCall guards before shutdown");
+
+    LibcRegisterShutdown_nid_postfix(ReleaseForeignShutdownCaller);
+    LibcRunShutdown_nid_postfix();
+    Require(workerDone.load(), "shutdown returned before non-shutdown worker AudioOutCall exited");
+
+    foreignCaller.join();
+    worker.join();
+    Require(foreignShutdownReturned.load(), "foreign shutdown caller did not complete");
+    Require(AudioOutCall::ActiveCount() == 0, "foreign AudioOutCall guard leaked after shutdown");
+    Require(AudioOutCall::ThreadDepth() == 0, "primary caller depth non-zero after shutdown");
+
+    bool shutdownThrown = false;
+    try {
+        const AudioOutCall afterShutdown;
+    } catch (const ProcessShutdown&) {
+        shutdownThrown = true;
+    }
+    Require(shutdownThrown, "AudioOutCall after foreign shutdown throws ProcessShutdown");
+    Require(AudioOutCall::ActiveCount() == 0, "failed AudioOutCall after shutdown leaked active count");
+    return failed ? 1 : 0;
+}
+
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--foreign-shutdown") == 0) {
+        return RunForeignShutdownRegression();
+    }
     Require(sceAudioOutExOpen(SYSTEM_USER, 5) == ERROR_EX_INVALID_MODE, "mode 5 (Linear PCM) is refused");
     Require(sceAudioOutExOpen(SYSTEM_USER, 7) == ERROR_EX_INVALID_MODE, "mode 7 is outside mask 0x61F");
     Require(sceAudioOutExOpen(SYSTEM_USER, 11) == ERROR_EX_INVALID_MODE, "mode 11 is above 10");
@@ -86,6 +156,7 @@ int main() {
         shutdownThrown = true;
     }
     Require(shutdownThrown, "AudioOutCall after shutdown throws ProcessShutdown");
+    Require(AudioOutCall::ActiveCount() == 0, "AudioOutCall active count leaked after same-thread shutdown");
 
     return failed ? 1 : 0;
 }
