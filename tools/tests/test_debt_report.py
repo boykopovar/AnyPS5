@@ -227,5 +227,18 @@ class DebtFilesTests(unittest.TestCase):
             self.assertEqual(debt_report.debt_files(Path(name)), [])
 
 
+class DebtFileTests(unittest.TestCase):
+    def test_debt_files_lists_the_top_file_and_library_files_and_filters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / debt_report.DEBT).parent.mkdir(parents=True, exist_ok=True)
+            (root / debt_report.DEBT).write_text('# top\n', encoding='utf-8')
+            (root / debt_report.DEBT_DIR).mkdir(parents=True, exist_ok=True)
+            (root / debt_report.DEBT_DIR / 'libA.md').write_text('# A\n', encoding='utf-8')
+            (root / debt_report.DEBT_DIR / 'libB.md').write_text('# B\n', encoding='utf-8')
+            self.assertEqual(debt_report.debt_files(root), [root / debt_report.DEBT, root / debt_report.DEBT_DIR / 'libA.md', root / debt_report.DEBT_DIR / 'libB.md'])
+            self.assertEqual(debt_report.debt_files(root, {'libA'}), [root / debt_report.DEBT_DIR / 'libA.md'])
+
+
 if __name__ == "__main__":
     unittest.main()

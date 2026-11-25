@@ -26,6 +26,16 @@ double VolumeFromLevel(std::int32_t level) {
     return std::clamp(static_cast<double>(level) / LevelScale, 0.0, 1.0);
 }
 
+bool IsValidGuestWrite(void* pointer, std::size_t size) {
+    if (pointer == nullptr) {
+        return false;
+    }
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
+    errno = savedErrno;
+    return writable;
+}
+
 }
 
 extern "C" {
@@ -51,7 +61,7 @@ int APS5_VABI sceCustomMusicAudioOutFinalize(void) {
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetVolume(double* out) {
-    if (out == nullptr) {
+    if (!IsValidGuestWrite(out, sizeof(*out))) {
         return ErrorInvalidArgument;
     }
     if (!g_initialized) {
@@ -77,7 +87,7 @@ int APS5_VABI sceCustomMusicAudioOutSetVolume(double v) {
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetMuted(bool* out) {
-    if (out == nullptr) {
+    if (!IsValidGuestWrite(out, sizeof(*out))) {
         return ErrorInvalidArgument;
     }
     if (!g_initialized) {
@@ -102,7 +112,7 @@ int APS5_VABI sceCustomMusicAudioOutSetMuted(bool m) {
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetAllMusicVolume(double* out) {
-    if (out == nullptr) {
+    if (!IsValidGuestWrite(out, sizeof(*out))) {
         return ErrorInvalidArgument;
     }
     if (!g_initialized) {
@@ -129,7 +139,7 @@ int APS5_VABI sceCustomMusicAudioOutSetAllMusicVolume(double v) {
 }
 
 int APS5_VABI sceCustomMusicAudioOutGetLastOutputTime(void* out) {
-    if (out == nullptr) {
+    if (!IsValidGuestWrite(out, 1)) {
         return ErrorInvalidArgument;
     }
     if (!g_initialized) {

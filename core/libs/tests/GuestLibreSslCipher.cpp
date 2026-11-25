@@ -175,5 +175,39 @@ int main() {
     Rejects([&] { SSL_CIPHER_get_name_nid_postfix(badCipher); });
     Rejects([&] { SSL_CIPHER_get_version_nid_postfix(badCipher); });
     Require(bits == 999 && *readOnlyBits == 555, "faulting calls leave outputs untouched");
+
+    {
+        std::size_t pageSize = 0;
+        unsigned char* mappedBase = nullptr;
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        mappedBase = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(mappedBase != nullptr, "straddling VirtualAlloc");
+        DWORD prevProtect = 0;
+        Require(VirtualProtect(mappedBase, pageSize, PAGE_NOACCESS, &prevProtect) != 0, "straddling VirtualProtect");
+#else
+        const long pageBytes = sysconf(_SC_PAGESIZE);
+        Require(pageBytes > 0, "straddling page size");
+        pageSize = static_cast<std::size_t>(pageBytes);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != nullptr && mapped != MAP_FAILED, "straddling mmap");
+        mappedBase = static_cast<unsigned char*>(mapped);
+        Require(mprotect(mappedBase, pageSize, PROT_NONE) == 0, "straddling mprotect");
+#endif
+        unsigned char* readablePage = mappedBase + pageSize;
+        constexpr std::int32_t expectedAlgorithmBits = 256;
+        std::memcpy(readablePage, &expectedAlgorithmBits, sizeof(expectedAlgorithmBits));
+        const void* partialCipher = readablePage - offsetof(RawCipher, algorithm);
+        std::int32_t partialOut = 0x12345678;
+        Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(partialCipher, &partialOut); });
+        Require(partialOut == 0x12345678, "partial cipher fault leaves algorithmBits unchanged");
+#ifdef _WIN32
+        VirtualFree(mappedBase, 0, MEM_RELEASE);
+#else
+        munmap(mappedBase, pageSize * 2);
+#endif
+    }
     return 0;
 }

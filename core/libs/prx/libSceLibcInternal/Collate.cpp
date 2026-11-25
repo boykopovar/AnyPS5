@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
@@ -109,5 +110,10 @@ std::int64_t APS5_VABI sceLibcInternalCollateHash_nid_no_patch(const GuestLocale
     return FacetCollate(self, "collate::hash").hash(self, first, last);
 }
 APS5_EXPORT("6vYXzFD-mrk", sceLibcInternalCollateHash_nid_no_patch);
+
+int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collvec) {
+    (void)collvec;
+    return sceLibcInternalCollateDoCompare_nid_no_patch(nullptr, first1, last1, first2, last2);
+}
 
 }
