@@ -401,5 +401,29 @@ class SubjectNameTests(unittest.TestCase):
         self.assertEqual(facts.test_patterns, {'t${Y}'})
 
 
+class CommandErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def tool(self, command):
+        return subprocess.run([sys.executable, str(TOOL), command], cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_outside_a_git_checkout_is_a_controlled_error(self):
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a git repository", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_registration_file_is_a_controlled_error(self):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.root, check=True, capture_output=True)
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(LISTS, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

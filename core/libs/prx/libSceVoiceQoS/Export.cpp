@@ -24,6 +24,8 @@ constexpr int SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT = static_cast<int>(0x804E0907);
 constexpr int SCE_VOICE_ERROR_LIBVOICEQOS_INITIALIZED = static_cast<int>(0x804E0905);
 constexpr std::int32_t VOICE_PORT_IN_DEVICE = 0;
 constexpr std::int32_t VOICE_PORT_OUT_DEVICE = 5;
+constexpr std::int32_t VOICE_PORT_IN_VOICE = 2;
+constexpr std::uint16_t VOICE_PORT_THRESHOLD = 100;
 constexpr std::int32_t VOICE_DEVICE_INPUT = 0;
 constexpr std::int32_t VOICE_DEVICE_OUTPUT = 2;
 constexpr int GUEST_CLOCK_MONOTONIC = 4;
@@ -169,6 +171,7 @@ int APS5_VABI sceVoiceQoSEnd() {
             sceVoiceDeletePort(endpoint.inPort);
             sceVoiceDeletePort(endpoint.outPort);
         }
+        for (const auto& [id, endpoint] : qos.remotes) sceVoiceDeletePort(endpoint.inPort);
         qos.connections.clear();
         qos.locals.clear();
         qos.remotes.clear();
@@ -228,20 +231,50 @@ int APS5_VABI sceVoiceQoSDeleteLocalEndpoint(int32_t localId) {
 }
 
 int APS5_VABI sceVoiceQoSCreateRemoteEndpoint(int32_t* remoteId) {
-    return Locked([&](QoS& qos) { return CreateEndpoint(remoteId, qos.remotes, qos.endpointLimit); });
+    return Locked([&](QoS& qos) -> int {
+        if (!remoteId) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        std::int32_t slot = -1;
+        for (std::int32_t id = 0; id < qos.endpointLimit; ++id) {
+            if (!qos.remotes.contains(id)) {
+                slot = id;
+                break;
+            }
+        }
+        if (slot < 0) {
+            const std::int32_t invalidId = -1;
+            return CopyOut(remoteId, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
+        VoicePortParam param{};
+        param.port_type = VOICE_PORT_IN_VOICE;
+        param.threshold = VOICE_PORT_THRESHOLD;
+        param.volume = 1.0f;
+        param.voice.bitrate = ConnectionBitrateCap(qos);
+        std::uint32_t inPort = 0;
+        const int result = sceVoiceCreatePort(&inPort, &param);
+        if (result != 0) return result;
+        const int created = CreateEndpoint(remoteId, qos.remotes, qos.endpointLimit);
+        if (created != 0) {
+            sceVoiceDeletePort(inPort);
+            return created;
+        }
+        qos.remotes[slot].inPort = inPort;
+        return 0;
+    });
 }
 
 int APS5_VABI sceVoiceQoSDeleteRemoteEndpoint(int32_t remoteId) {
-    return Locked([&](QoS& qos) {
+    return Locked([&](QoS& qos) -> int {
+        const auto found = qos.remotes.find(remoteId);
+        if (found == qos.remotes.end()) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        sceVoiceDeletePort(found->second.inPort);
         const int result = DeleteEndpoint(remoteId, qos.remotes);
-        if (result != 0) return result;
         for (auto it = qos.connections.begin(); it != qos.connections.end(); ++it) {
             if (it->second.remote == remoteId) {
                 qos.connections.erase(it);
                 break;
             }
         }
-        return 0;
+        return result;
     });
 }
 
@@ -315,7 +348,11 @@ int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(int32_t localId, int32_t attr
 int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute(int32_t remoteId, int32_t attributeId, const void* value, int32_t size) {
     return Locked([&](QoS& qos) -> int {
         if (remoteId < 0 || remoteId >= qos.endpointLimit || !value || attributeId != 7 || size != 1) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-        throw std::runtime_error("sceVoiceQoSSetRemoteEndpointAttribute: voice port attributes are not implemented");
+        const auto found = qos.remotes.find(remoteId);
+        if (found == qos.remotes.end()) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        std::uint8_t mute = 0;
+        if (!CopyIn(&mute, value, sizeof(mute))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        return sceVoiceSetMuteFlag(found->second.inPort, mute);
     });
 }
 
@@ -372,12 +409,12 @@ int APS5_VABI sceVoiceQoSGetLocalEndpointAttribute(int32_t localId, int32_t attr
 }
 
 int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(int32_t remoteId, int32_t attributeId, void* value, int32_t size) {
-    (void)remoteId;
-    (void)attributeId;
-    (void)value;
-    (void)size;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([&](QoS& qos) -> int {
+        if (!value || remoteId < 0 || remoteId >= qos.endpointLimit || attributeId != 7 || size != 1) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const auto found = qos.remotes.find(remoteId);
+        if (found == qos.remotes.end()) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        return sceVoiceGetMuteFlag(found->second.inPort, static_cast<bool*>(value));
+    });
 }
 
 int APS5_VABI sceVoiceQoSGetConnectionAttribute(int32_t connectionId, int32_t attributeId, void* value, int32_t size) {
