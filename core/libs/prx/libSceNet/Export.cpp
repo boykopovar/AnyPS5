@@ -1988,6 +1988,10 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
         if (entry.length == 0) continue;
         if (!destinations.emplace_back(entry.base, static_cast<std::size_t>(entry.length)).Open()) return fail(NET_EFAULT);
     }
+    const std::uint32_t nameBytes = header.name ?
+        std::min<std::uint32_t>(header.name_length, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
+    const GuestArena::HostWrite nameOutput(nameBytes == 0 ? nullptr : header.name, nameBytes);
+    if (!nameOutput.Open()) return fail(NET_EFAULT);
     const bool datagram = socket.type != NET_SOCK_STREAM;
 #if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, total == 0, flags)) {
@@ -2032,7 +2036,11 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
         std::memcpy(entry.base, buffer.data() + offset, count);
         offset += count;
     }
-    if (header.name && !native_to_guest_address(peer, header.name, &header.name_length)) header.name_length = 0;
+    if (header.name) {
+        std::array<std::uint8_t, 28> bytes{};
+        if (!native_to_guest_address(peer, bytes.data(), &header.name_length)) header.name_length = 0;
+        else if (!GuestCopyOut_nid_no_patch(header.name, bytes.data(), header.name_length)) return fail(NET_EFAULT);
+    }
     header.control_length = 0;
     *msg = header;
     return received;
