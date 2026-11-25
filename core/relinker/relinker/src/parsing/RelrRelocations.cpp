@@ -33,6 +33,8 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
         throw Domain::RelinkerException("Invalid DT_RELRSZ: expected a multiple of 8 bytes");
     if (*size == 0) return {};
 
+    if (*size > std::numeric_limits<std::uint64_t>::max() - *address)
+        throw Domain::RelinkerException("RELR table exceeds file-backed load segment", *address);
     for (const auto& header : headers) {
         if (header.Type != PT_LOAD) continue;
         if (header.FileSize > header.MemorySize || header.Offset > bytes.size() || header.FileSize > bytes.size() - header.Offset
@@ -51,8 +53,6 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
         if (!found) throw Domain::RelinkerException(file ? "RELR table exceeds file-backed load segment" : "RELR target exceeds load segment", target);
         return *found;
     };
-    const auto& table = loadAt(*address, *size, true);
-    const auto tableOffset = table.Offset + (*address - table.MappedAddress);
     const auto readWord = [&](const std::uint64_t offset) {
         std::uint64_t result = 0;
         for (std::size_t index = 0; index < 8; ++index)
@@ -75,7 +75,10 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
     };
     std::optional<std::uint64_t> cursor;
     for (std::uint64_t offset = 0; offset < *size; offset += 8) {
-        const auto entry = readWord(tableOffset + offset);
+        const auto tableAddress = *address + offset;
+        const auto& table = loadAt(tableAddress, 8, true);
+        const auto tableOffset = table.Offset + (tableAddress - table.MappedAddress);
+        const auto entry = readWord(tableOffset);
         if ((entry & 1) == 0) {
             append(entry);
             cursor = entry + 8;
