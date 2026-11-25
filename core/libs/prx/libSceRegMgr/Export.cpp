@@ -1,7 +1,6 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -51,9 +50,7 @@ public:
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         const int32_t val = it->second.intVal;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(out, &val, sizeof(val));
-        errno = savedErrno;
         if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
@@ -65,9 +62,7 @@ public:
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         if (static_cast<size_t>(len) <= it->second.strVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(out, it->second.strVal.c_str(), it->second.strVal.size() + 1);
-        errno = savedErrno;
         if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
@@ -79,9 +74,7 @@ public:
         if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
         if (it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         if (static_cast<size_t>(size) < it->second.binVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(out, it->second.binVal.data(), it->second.binVal.size());
-        errno = savedErrno;
         if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         return 0;
     }
@@ -107,11 +100,9 @@ public:
         if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         std::array<char, 256> bytes{};
         std::string text;
-        const int savedErrno = errno;
         const auto address = reinterpret_cast<std::uintptr_t>(value);
         for (std::size_t offset = 0; offset < length;) {
             if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE || offset > UINTPTR_MAX - address) {
-                errno = savedErrno;
                 return SCE_REG_MGR_ERROR_INVALID_PARAM;
             }
             const std::size_t count = std::min({length - offset, bytes.size(),
@@ -129,7 +120,6 @@ public:
                     char character = 0;
                     if (index > UINTPTR_MAX - current || !GuestCopyIn_nid_no_patch(&character,
                             reinterpret_cast<const void*>(current + index), 1)) {
-                        errno = savedErrno;
                         return SCE_REG_MGR_ERROR_INVALID_PARAM;
                     }
                     if (character == '\0') {
@@ -142,7 +132,6 @@ public:
                 offset += count;
             }
         }
-        errno = savedErrno;
         if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         const bool changed = it == entries_.end() || it->second.strVal != text;
         RegEntry& entry = entries_[key];
@@ -161,9 +150,7 @@ public:
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
         if (size > SCE_REG_MGR_MAX_BINARY_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::vector<std::uint8_t> bytes(size);
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), value, size);
-        errno = savedErrno;
         if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         const bool changed = it == entries_.end() || it->second.binVal.size() != size ||
                              (size != 0 && std::memcmp(it->second.binVal.data(), bytes.data(), size) != 0);
