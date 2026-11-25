@@ -20,8 +20,11 @@ enum class Register : std::uint8_t {
     Leaf1Edx,
     Leaf7Ebx,
     Leaf7Ecx,
+    Leaf7Sub1Eax,
+    Leaf7Sub1Edx,
     LeafDSub1Eax,
     Leaf80000001Ecx,
+    Leaf80000001Edx,
     Leaf80000008Ebx
 };
 
@@ -51,20 +54,27 @@ constexpr FeatureBit kFeatures[] = {
     {"AVX2", Register::Leaf7Ebx, 5, true, HostCpuFeatureBits::Avx2},
     {"FMA", Register::Leaf1Ecx, 12, true, HostCpuFeatureBits::Fma},
     {"F16C", Register::Leaf1Ecx, 29, true, HostCpuFeatureBits::F16c},
-    {"AES", Register::Leaf1Ecx, 25, false, 0},
-    {"PCLMULQDQ", Register::Leaf1Ecx, 1, false, 0},
-    {"RDRAND", Register::Leaf1Ecx, 30, false, 0},
-    {"RDSEED", Register::Leaf7Ebx, 18, false, 0},
-    {"ADX", Register::Leaf7Ebx, 19, false, 0},
-    {"SHA", Register::Leaf7Ebx, 29, false, 0},
-    {"CLFLUSHOPT", Register::Leaf7Ebx, 23, false, 0},
-    {"CLWB", Register::Leaf7Ebx, 24, false, 0},
-    {"RDPID", Register::Leaf7Ecx, 22, false, 0},
-    {"XSAVEOPT", Register::LeafDSub1Eax, 0, false, 0},
-    {"XSAVEC", Register::LeafDSub1Eax, 1, false, 0},
-    {"SSE4A", Register::Leaf80000001Ecx, 6, false, 0},
+    {"AES", Register::Leaf1Ecx, 25, false, HostCpuFeatureBits::Aes},
+    {"PCLMULQDQ", Register::Leaf1Ecx, 1, false, HostCpuFeatureBits::Pclmul},
+    {"RDRAND", Register::Leaf1Ecx, 30, false, HostCpuFeatureBits::Rdrand},
+    {"FSGSBASE", Register::Leaf7Ebx, 0, false, HostCpuFeatureBits::Fsgsbase},
+    {"RDSEED", Register::Leaf7Ebx, 18, false, HostCpuFeatureBits::Rdseed},
+    {"ADX", Register::Leaf7Ebx, 19, false, HostCpuFeatureBits::Adx},
+    {"SHA", Register::Leaf7Ebx, 29, false, HostCpuFeatureBits::Sha},
+    {"CLFLUSHOPT", Register::Leaf7Ebx, 23, false, HostCpuFeatureBits::Clflushopt},
+    {"CLWB", Register::Leaf7Ebx, 24, false, HostCpuFeatureBits::Clwb},
+    {"RDPID", Register::Leaf7Ecx, 22, false, HostCpuFeatureBits::Rdpid},
+    {"AVX-VNNI", Register::Leaf7Sub1Eax, 4, false, HostCpuFeatureBits::AvxVnni},
+    {"AVX-IFMA", Register::Leaf7Sub1Eax, 23, false, HostCpuFeatureBits::AvxIfma},
+    {"AVX-VNNI-INT8", Register::Leaf7Sub1Edx, 4, false, HostCpuFeatureBits::AvxVnniInt8},
+    {"AVX-NE-CONVERT", Register::Leaf7Sub1Edx, 5, false, HostCpuFeatureBits::AvxNeConvert},
+    {"XSAVEOPT", Register::LeafDSub1Eax, 0, false, HostCpuFeatureBits::Xsaveopt},
+    {"XSAVEC", Register::LeafDSub1Eax, 1, false, HostCpuFeatureBits::Xsavec},
+    {"XSAVES", Register::LeafDSub1Eax, 3, false, HostCpuFeatureBits::Xsaves},
+    {"SSE4A", Register::Leaf80000001Ecx, 6, false, HostCpuFeatureBits::Sse4a},
     {"PREFETCHW", Register::Leaf80000001Ecx, 8, false, 0},
-    {"CLZERO", Register::Leaf80000008Ebx, 0, false, 0},
+    {"RDTSCP", Register::Leaf80000001Edx, 27, false, HostCpuFeatureBits::Rdtscp},
+    {"CLZERO", Register::Leaf80000008Ebx, 0, false, HostCpuFeatureBits::Clzero},
 };
 
 constexpr unsigned kOsxsaveBit = 27;
@@ -80,10 +90,16 @@ std::uint32_t Value(const HostCpuRegisters& registers, const Register source) {
         return registers.Leaf7Ebx;
     case Register::Leaf7Ecx:
         return registers.Leaf7Ecx;
+    case Register::Leaf7Sub1Eax:
+        return registers.Leaf7Sub1Eax;
+    case Register::Leaf7Sub1Edx:
+        return registers.Leaf7Sub1Edx;
     case Register::LeafDSub1Eax:
         return registers.LeafDSub1Eax;
     case Register::Leaf80000001Ecx:
         return registers.Leaf80000001Ecx;
+    case Register::Leaf80000001Edx:
+        return registers.Leaf80000001Edx;
     case Register::Leaf80000008Ebx:
         return registers.Leaf80000008Ebx;
     }
@@ -124,6 +140,9 @@ HostCpuRegisters ReadHostCpuRegisters() {
         __cpuid_count(7, 0, eax, ebx, ecx, edx);
         registers.Leaf7Ebx = ebx;
         registers.Leaf7Ecx = ecx;
+        __cpuid_count(7, 1, eax, ebx, ecx, edx);
+        registers.Leaf7Sub1Eax = eax;
+        registers.Leaf7Sub1Edx = edx;
     }
     if (basic >= 0xD) {
         __cpuid_count(0xD, 1, eax, ebx, ecx, edx);
@@ -133,6 +152,7 @@ HostCpuRegisters ReadHostCpuRegisters() {
     if (extended >= 0x80000001) {
         __cpuid(0x80000001, eax, ebx, ecx, edx);
         registers.Leaf80000001Ecx = ecx;
+        registers.Leaf80000001Edx = edx;
     }
     if (extended >= 0x80000008) {
         __cpuid(0x80000008, eax, ebx, ecx, edx);

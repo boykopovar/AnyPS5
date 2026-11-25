@@ -11,8 +11,11 @@ struct HostCpuRegisters {
     std::uint32_t Leaf1Edx = 0;
     std::uint32_t Leaf7Ebx = 0;
     std::uint32_t Leaf7Ecx = 0;
+    std::uint32_t Leaf7Sub1Eax = 0;
+    std::uint32_t Leaf7Sub1Edx = 0;
     std::uint32_t LeafDSub1Eax = 0;
     std::uint32_t Leaf80000001Ecx = 0;
+    std::uint32_t Leaf80000001Edx = 0;
     std::uint32_t Leaf80000008Ebx = 0;
     std::uint64_t Xcr0 = 0;
 };

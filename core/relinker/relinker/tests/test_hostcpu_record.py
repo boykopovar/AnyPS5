@@ -11,9 +11,11 @@ from test_guest_intel_trampolines import main_fixture, pe_sections
 PT_OS_HOSTCPU = 0x61000002
 FMA = bytes.fromhex("c4 e2 71 98 c1")
 AVX2 = bytes.fromhex("c5 f5 fe c2")
-TEXT = FMA + AVX2 + b"\x90\xc3"
+RDSEED = bytes.fromhex("0f c7 f8")
+TEXT = FMA + AVX2 + RDSEED + b"\x90\xc3"
 MAGIC = b"APS5HCP1"
 FMA_BIT = 1 << 5
+RDSEED_BIT = 1 << 8
 
 
 def program_headers(elf):
@@ -45,7 +47,7 @@ def check_linux(relinker, work):
     stored = linux[offset:offset + 16]
     assert stored[:8] == MAGIC, stored
     mask, = struct.unpack_from("<Q", stored, 8)
-    assert mask == FMA_BIT, hex(mask)
+    assert mask == FMA_BIT | RDSEED_BIT, hex(mask)
     loads = [header for header in program_headers(linux) if header[0] == 1]
     assert any(load[3] <= address and address + 16 <= load[3] + load[5] for load in loads), (address, loads)
 
@@ -66,7 +68,7 @@ def check_windows(relinker, work):
     stored = windows[raw_offset:raw_offset + 16]
     assert stored[:8] == MAGIC, stored
     mask, = struct.unpack_from("<Q", stored, 8)
-    assert mask == FMA_BIT, hex(mask)
+    assert mask == FMA_BIT | RDSEED_BIT, hex(mask)
 
 
 def main():

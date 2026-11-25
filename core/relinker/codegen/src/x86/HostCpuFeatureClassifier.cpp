@@ -99,6 +99,19 @@ bool isAvx2Vector128(const std::uint8_t map, const std::uint8_t prefix, const st
 }
 
 std::uint64_t classifyVex(const Instruction& instruction) {
+    if (instruction.Map == Map0F38) {
+        if (instruction.Prefix == Prefix66 && instruction.Opcode >= 0x50 && instruction.Opcode <= 0x53)
+            return HostCpuFeatureBits::AvxVnni;
+        if (instruction.Prefix != Prefix66 && instruction.Opcode >= 0x50 && instruction.Opcode <= 0x51)
+            return HostCpuFeatureBits::AvxVnniInt8;
+        if (instruction.Prefix == Prefix66 && instruction.Wide && (instruction.Opcode == 0xB4 || instruction.Opcode == 0xB5))
+            return HostCpuFeatureBits::AvxIfma;
+        if (instruction.Opcode == 0xB0) return HostCpuFeatureBits::AvxNeConvert;
+        if (instruction.Opcode == 0xB1 && (instruction.Prefix == Prefix66 || instruction.Prefix == PrefixF3))
+            return HostCpuFeatureBits::AvxNeConvert;
+        if (instruction.Opcode == 0x72 && instruction.Prefix == PrefixF3)
+            return HostCpuFeatureBits::AvxNeConvert;
+    }
     if (instruction.Map == Map0F38 && instruction.Prefix == Prefix66) {
         if ((instruction.Opcode >= 0x96 && instruction.Opcode <= 0x9F) ||
             (instruction.Opcode >= 0xA6 && instruction.Opcode <= 0xAF) ||
@@ -134,6 +147,84 @@ std::uint64_t classifyVex(const Instruction& instruction) {
     return 0;
 }
 
+std::uint64_t classifyLegacy(const std::uint8_t* data, const std::size_t length) {
+    std::size_t position = 0;
+    bool operandSize = false;
+    bool repeat = false;
+    bool repeatNot = false;
+    while (position < length) {
+        const std::uint8_t byte = data[position];
+        if (byte == 0xF3) repeat = true;
+        if (byte == 0xF2) repeatNot = true;
+        if (byte == 0x66) operandSize = true;
+        if (!isLegacyPrefix(byte) && (byte < 0x40 || byte > 0x4F)) break;
+        ++position;
+    }
+    if (position + 1 >= length || data[position] != 0x0F) return 0;
+    const std::uint8_t first = data[position + 1];
+    if (repeat && first == 0xBC) return HostCpuFeatureBits::Bmi1;
+    if (repeat && first == 0xBD) return HostCpuFeatureBits::Lzcnt;
+
+    const bool plain = !operandSize && !repeat && !repeatNot;
+    if (first == 0x38 || first == 0x3A) {
+        if (position + 2 >= length) return 0;
+        const std::uint8_t opcode = data[position + 2];
+        if (first == 0x38) {
+            if (!repeat && !repeatNot && (opcode == 0xF0 || opcode == 0xF1)) return HostCpuFeatureBits::Movbe;
+            if (plain && opcode >= 0xC8 && opcode <= 0xCD) return HostCpuFeatureBits::Sha;
+            if (operandSize && !repeat && !repeatNot) {
+                if (opcode >= 0xDB && opcode <= 0xDF) return HostCpuFeatureBits::Aes;
+                if (opcode == 0xF6) return HostCpuFeatureBits::Adx;
+            }
+            if (repeat && !repeatNot && opcode == 0xF6) return HostCpuFeatureBits::Adx;
+            return 0;
+        }
+        if (operandSize && !repeat && !repeatNot) {
+            if (opcode == 0x44) return HostCpuFeatureBits::Pclmul;
+            if (opcode == 0xDF) return HostCpuFeatureBits::Aes;
+        }
+        if (plain && opcode == 0xCC) return HostCpuFeatureBits::Sha;
+        return 0;
+    }
+
+    if (position + 2 >= length) return 0;
+    const std::uint8_t modrm = data[position + 2];
+    const unsigned reg = (modrm >> 3) & 7u;
+    const bool registerForm = (modrm >> 6) == 3;
+    if (first == 0xAE) {
+        if (operandSize && !repeat && !repeatNot) {
+            if (registerForm) return 0;
+            if (reg == 6) return HostCpuFeatureBits::Clwb;
+            if (reg == 7) return HostCpuFeatureBits::Clflushopt;
+            return 0;
+        }
+        if (plain) {
+            if (registerForm) return 0;
+            return reg == 6 ? HostCpuFeatureBits::Xsaveopt : 0;
+        }
+        if (repeat && !repeatNot && registerForm && reg <= 3) return HostCpuFeatureBits::Fsgsbase;
+        return 0;
+    }
+    if (first == 0xC7 && !repeatNot) {
+        if (registerForm) {
+            if (reg == 6) return HostCpuFeatureBits::Rdrand;
+            if (reg == 7) return repeat ? HostCpuFeatureBits::Rdpid : HostCpuFeatureBits::Rdseed;
+            return 0;
+        }
+        if (reg == 3 || reg == 5) return HostCpuFeatureBits::Xsaves;
+        return reg == 4 ? HostCpuFeatureBits::Xsavec : 0;
+    }
+    if (first == 0x01 && plain) {
+        if (modrm == 0xF9) return HostCpuFeatureBits::Rdtscp;
+        return modrm == 0xFC ? HostCpuFeatureBits::Clzero : 0;
+    }
+    if ((first == 0x78 || first == 0x79) && !repeat && (operandSize != repeatNot))
+        return HostCpuFeatureBits::Sse4a;
+    if (first == 0x2B && !operandSize && (repeat != repeatNot))
+        return HostCpuFeatureBits::Sse4a;
+    return 0;
+}
+
 }
 
 std::uint64_t RequiredHostCpuFeatures(const std::uint8_t* data, const std::size_t length) {
@@ -151,25 +242,7 @@ std::uint64_t RequiredHostCpuFeatures(const std::uint8_t* data, const std::size_
         return 0;
     }
 
-    std::size_t position = 0;
-    bool repeat = false;
-    bool repeatNot = false;
-    while (position < length) {
-        const std::uint8_t byte = data[position];
-        if (byte == 0xF3) repeat = true;
-        if (byte == 0xF2) repeatNot = true;
-        if (!isLegacyPrefix(byte) && (byte < 0x40 || byte > 0x4F)) break;
-        ++position;
-    }
-    if (position + 1 >= length || data[position] != 0x0F) return 0;
-    const std::uint8_t first = data[position + 1];
-    if (repeat && first == 0xBC) return HostCpuFeatureBits::Bmi1;
-    if (repeat && first == 0xBD) return HostCpuFeatureBits::Lzcnt;
-    if (first == 0x38 && !repeat && !repeatNot && position + 2 < length) {
-        const std::uint8_t second = data[position + 2];
-        if (second == 0xF0 || second == 0xF1) return HostCpuFeatureBits::Movbe;
-    }
-    return 0;
+    return classifyLegacy(data, length);
 }
 
 }
