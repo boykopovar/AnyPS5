@@ -4,7 +4,6 @@
 #include "prx/libSceGameCustomDataDialog/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -149,16 +148,12 @@ std::atomic<void*> g_callbackArg{nullptr};
 
 template <typename T>
 bool CopyIn(T& destination, const void* source) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     return copied;
 }
 
@@ -169,9 +164,7 @@ bool AllZero(const std::uint8_t (&bytes)[N]) {
 
 int CheckString(const char* text, std::size_t minimum, std::size_t maximum, std::string& copy) {
     if (text == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    const int savedErrno = errno;
     const int copied = CopyGuestString_nid_no_patch(text, maximum + 1, copy);
-    errno = savedErrno;
     if (copied == GUEST_STRING_TOO_LONG) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     if (copied != 0) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (copy.size() < minimum) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
