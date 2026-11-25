@@ -1,6 +1,5 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAvcap2mvr/include/InventoryExports.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -20,9 +19,7 @@ bool HasEngine() {
 template <typename T>
 T ReadStream(const void* stream, std::size_t offset) {
     T value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(stream) + offset, sizeof(value));
-    errno = savedErrno;
     if (!copied) {
         throw std::invalid_argument("libSceAvcap2mvr: unreadable stream");
     }
