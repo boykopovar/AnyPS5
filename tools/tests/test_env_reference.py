@@ -64,6 +64,16 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
+    def test_computed_names_use_the_exclusive_loop_bound(self):
+        for start, bound, expected in ((2, 4, {"ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"}),
+                                       (2, 2, set()), (0, 0, set())):
+            with self.subTest(start=start, bound=bound):
+                root = self.fixture(f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                self.assertEqual(set(env_reference.reads([root / "core"], BOTH)), expected)
+
     def test_a_computed_name_no_reader_uses_is_not_a_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
