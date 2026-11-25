@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 
 namespace {
 
@@ -28,6 +27,16 @@ void CheckDestroy(int (*destroy)(void*), const char* name) {
     }
 }
 
+void CheckDestroySw2WithCodec() {
+    for (const int expectedErrno : {0, 7, 42}) {
+        errno = expectedErrno;
+        Decoder decoder{0x1111, 0x2222, 0x3333, 0x4444};
+        Require(sceSdecDestroySw2(decoder.data()) == 0, "sceSdecDestroySw2 must clear non-null codec and workspace");
+        Require(decoder[0] == 0x1111 && decoder[1] == 0 && decoder[2] == 0 && decoder[3] == 0x4444, "sceSdecDestroySw2 must zero offsets 0x08 and 0x10");
+        Require(errno == expectedErrno, "sceSdecDestroySw2 must preserve errno with codec");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -37,4 +46,6 @@ int main() {
         CheckDestroy([](void* decoder) { return sceSdecDestroySw2(decoder); }, "sceSdecDestroySw2");
         Require(errno == expectedErrno, "Destroy must not change errno");
     }
+    CheckDestroySw2WithCodec();
+    return 0;
 }
