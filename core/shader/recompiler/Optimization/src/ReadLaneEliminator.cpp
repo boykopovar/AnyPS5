@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <list>
 #include <map>
+#include <optional>
 #include <set>
 #include <queue>
 #include <stdexcept>
@@ -331,14 +332,42 @@ IrValue* getRealValue(IrProgram& program, PhiMap& phiMap, IrValue* source, std::
 struct LaneValues {
     std::unordered_set<IrValue*> values;
     std::unordered_set<IrValue*> visited;
+    std::uint32_t compactionWrites = 0;
+    std::size_t visitLimit = 4096u;
     bool failed = false;
 };
+
+// `v_writelane v, v_readlane(w, s_lane), s_count` in a loop: lane compaction. Each iteration appends one distinct
+// value of `w` to the low lanes of `v`, with the running count as the lane. The count is a loop-carried phi, stepped
+// by immediates where the body is unrolled. A write to any other non-immediate lane is not this pattern.
+bool isLaneCompactionWrite(const IrValue& write) {
+    const IrValue* written = write.Argument(0)->Resolve();
+    if (written->Opcode() != IrOpcode::ReadLane || isImmediateU32(*written->Argument(1)->Resolve())) return false;
+    const IrValue* count = write.Argument(1)->Resolve();
+    while (count->Opcode() == IrOpcode::IAdd32) {
+        const IrValue* left = count->Argument(0)->Resolve();
+        const IrValue* right = count->Argument(1)->Resolve();
+        if (isImmediateU32(*right)) count = left;
+        else if (isImmediateU32(*left)) count = right;
+        else return false;
+    }
+    return count->IsPhi();
+}
+
+bool hasLaneCompactionWrite(const IrProgram& program) {
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() == IrOpcode::WriteLane && !isImmediateU32(*inst->Argument(1)->Resolve()) && isLaneCompactionWrite(*inst)) return true;
+        }
+    }
+    return false;
+}
 
 void collectLaneValues(IrValue* value, std::uint32_t lane, std::uint32_t waveSize, bool throughPhi, LaneValues& out) {
     if (out.failed) return;
     value = value->Resolve();
     if (!out.visited.insert(value).second) return;
-    if (out.visited.size() > 4096u) {
+    if (out.visited.size() > out.visitLimit) {
         out.failed = true;
         return;
     }
@@ -346,6 +375,15 @@ void collectLaneValues(IrValue* value, std::uint32_t lane, std::uint32_t waveSiz
     case IrOpcode::WriteLane: {
         IrValue* selector = value->Argument(1)->Resolve();
         if (!isImmediateU32(*selector)) {
+            // A lane-compaction write cannot be matched against `lane`. Gran Turismo 7 compacts into a vector that
+            // also holds SGPR spills at immediate lanes, and reads a spill back after the loop. The write is read as
+            // not touching `lane`, which holds when the count never reaches that lane while the spill is live; the IR
+            // cannot prove it, so Eliminate keeps one real read of the lane and faults if it disagrees with the fold.
+            if (isLaneCompactionWrite(*value)) {
+                out.compactionWrites++;
+                collectLaneValues(value->Argument(2), lane, waveSize, throughPhi, out);
+                return;
+            }
             out.failed = true;
             return;
         }
@@ -486,6 +524,7 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
     WindowFlows flows;
     flows.program = &program;
     std::vector<std::pair<IrValue*, std::uint32_t>> folded;
+    std::optional<bool> laneCompaction;
     struct FlowScope {
         ~FlowScope() { windowFlows = nullptr; }
     } flowScope;
@@ -511,10 +550,29 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
             }
             if (!chain.value->IsPhi() || !isPossibleToEliminate(chain.value, lane, waveSize)) {
                 LaneValues values;
+                // The web of a vector that is both compacted into and spilled to is larger than the usual spill web
+                // (about 6,200 nodes in Gran Turismo 7), so the walk gets a larger budget only in such a program.
+                if (!laneCompaction.has_value()) laneCompaction = hasLaneCompactionWrite(program);
+                if (*laneCompaction) values.visitLimit = 65536u;
                 collectLaneValues(inst->Argument(0), lane, waveSize, false, values);
                 if (values.failed || values.values.empty()) continue;
                 if (IrValue* unique = uniqueLaneValue(inst, values.values); unique != nullptr && !dependsOn(unique, inst)) {
-                    inst->ReplaceUsesWith(LaneValueAtBlocks(program, unique).At(inst->Parent(), inst), true);
+                    IrValue* vector = inst->Argument(0);
+                    IrValue* replacement = LaneValueAtBlocks(program, unique).At(inst->Parent(), inst);
+                    if (values.compactionWrites != 0u) {
+                        // The walk stepped over lane-compaction writes, so the fold rests on their count never
+                        // reaching `lane` while the spill is live. Keep one real read of the lane next to the fold
+                        // and record a ReadLaneFold fault if it ever differs from the folded scalar.
+                        IrValue& actual = program.CreateValue(IrOpcode::ReadLane, IrType::U32);
+                        for (IrValue* argument : {vector, &immediate(program, lane)}) actual.AddArgument(argument);
+                        IrValue& guard = program.CreateValue(IrOpcode::ReadLaneGuard, IrType::Void);
+                        for (IrValue* argument : {&actual, replacement, &immediate(program, lane)}) guard.AddArgument(argument);
+                        block->InsertInstructionBefore(inst, &actual);
+                        block->InsertInstructionBefore(inst, &guard);
+                        program.Info().usesFaultBuffer = true;
+                        stats.compactionFolds++;
+                    }
+                    inst->ReplaceUsesWith(replacement, true);
                     stats.rewrittenReads++;
                 }
                 continue;

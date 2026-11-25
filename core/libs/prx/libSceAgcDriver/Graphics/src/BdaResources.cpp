@@ -522,6 +522,10 @@ void BdaResources::checkFault(const BdaResources& record) const {
         message << "shader stage " << report.stage << ": a split table call part resumed a lane whose s" << report.bytes << " holds 0x" << std::hex << (report.address & 0xffffffffu) << ", but the part was compiled for the value 0x" << (report.address >> 32u) << " that the program sets before the loop, because only callees write that register";
         throw std::runtime_error(message.str());
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ReadLaneFold) {
+        message << "shader stage " << report.stage << ": lane " << (report.address >> 32u) << " of a vector held 0x" << std::hex << (report.address & 0xffffffffu) << " where a v_readlane_b32 across a lane-compaction loop was replaced with the spilled scalar 0x" << report.bytes << std::dec;
+        throw std::runtime_error(message.str());
+    }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::WindowLaneSpill) {
         message << "shader stage " << report.stage << ": a relative write stored " << report.bytes << " in lane " << (report.address >> 32u) << " of vector window slot " << (report.address & 0xffffffffu) << ", which holds a scalar spilled with v_writelane_b32 that a later v_readlane_b32 was replaced with";
         throw std::runtime_error(message.str());

@@ -325,6 +325,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
         case IrOpcode::WindowLaneGuard: return Invoke(EmitWindowLaneGuard, ctx, inst);
         case IrOpcode::DescriptorFault: return Invoke(EmitDescriptorFault, ctx, inst);
+        case IrOpcode::ReadLaneGuard: return Invoke(EmitReadLaneGuard, ctx, inst);
         case IrOpcode::SplitStateGuard: return Invoke(EmitSplitStateGuard, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
@@ -1532,6 +1533,15 @@ void EmitSplitStateGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
     auto& state = ctx.state;
     if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks an assumed split state register without a fault buffer");
     EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, saved, current, reg, ConstantU32(state, 0u), BdaAbi::FaultReason::SplitState); });
+}
+
+// ReadLaneEliminator replaced a v_readlane_b32 of a spilled lane with the spilled scalar across a lane-compaction loop;
+// `actual` is a real read of that lane kept next to the fold. They differ only if the compaction reached the lane.
+void EmitReadLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t actual, std::uint32_t folded, std::uint32_t lane) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks a folded lane read without a fault buffer");
+    const auto differs = Binary(state, spv::OpINotEqual, TypeBool(state), actual, folded);
+    EmitIfCondition(state, differs, [&] { RecordBdaFaultWords(state, actual, lane, folded, ConstantU32(state, 0u), BdaAbi::FaultReason::ReadLaneFold); });
 }
 
 void EmitControlNop(SpirvValueEmitContext& context) {

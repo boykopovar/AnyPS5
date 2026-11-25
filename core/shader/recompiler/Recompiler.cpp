@@ -337,6 +337,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         dumpIr("fold");
 
         const auto readLaneStats = readLaneEliminator.Eliminate(program, translateOptions.waveSize);
+        // Debug aid: APS5_TRACE_READLANE=1 prints one line per program with what the eliminator rewrote.
+        static const bool traceReadLanes = std::getenv("APS5_TRACE_READLANE") != nullptr;
+        if (traceReadLanes) std::fprintf(stderr, "[readlane] 0x%llx rewrote %u reads, %u of them across lane-compaction writes (each with a ReadLaneGuard)\n", static_cast<unsigned long long>(request.shader.codeAddress), readLaneStats.rewrittenReads, readLaneStats.compactionFolds);
         if (readLaneStats.rewrittenReads != 0u) {
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
@@ -931,7 +934,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.windowLaneGuards = 0;
-    for (const auto& block : program.Blocks()) result.windowLaneGuards += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::WindowLaneGuard; }));
+    for (const auto& block : program.Blocks()) result.windowLaneGuards += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::WindowLaneGuard || value->Opcode() == IrOpcode::ReadLaneGuard; }));
     result.descriptorFaults = 0;
     for (const auto& block : program.Blocks()) result.descriptorFaults += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::DescriptorFault; }));    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();

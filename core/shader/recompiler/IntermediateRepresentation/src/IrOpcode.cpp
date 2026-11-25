@@ -117,6 +117,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("UnlinkedCall", Void, U32, U32, U32),
     makeMeta("WindowLaneGuard", Void, U32, U32, U32, U32, U32),
     makeMeta("DescriptorFault", Void, U1, U32, U32, U32),
+    makeMeta("ReadLaneGuard", Void, U32, U32, U32),
     makeMeta("SplitStateGuard", Void, U1, U32, U32, U32),
     makeMeta("GetUserData", U32, ScalarReg),
     makeMeta("GetShaderBase", U64),
@@ -920,6 +921,7 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::UnlinkedCall:
         case IrOpcode::WindowLaneGuard:
         case IrOpcode::DescriptorFault:
+        case IrOpcode::ReadLaneGuard:
         case IrOpcode::SplitStateGuard:
         case IrOpcode::SetTessellationAttribute:
         case IrOpcode::InterpolateHostP2:
