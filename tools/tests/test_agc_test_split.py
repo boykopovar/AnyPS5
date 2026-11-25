@@ -145,6 +145,13 @@ class SplitTextTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_top_level_bracket_comments_do_not_turn_into_commands(self):
+        text = "  #[=[\nset(COMMENTED hidden)\n]=]\nset(A visible)\n"
+        command, = agc_test_split.commands(text)
+        self.assertEqual((command.name, command.arguments, command.first), ("set", ["A", "visible"], 3))
+        with self.assertRaisesRegex(agc_test_split.SplitError, "line 1: unterminated bracket comment"):
+            agc_test_split.commands("#[=[\nset(A hidden)\n")
+
     def test_long_bracket_delimiters(self):
         equals = "=" * 40
         for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
