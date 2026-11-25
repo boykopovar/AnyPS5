@@ -282,8 +282,12 @@ if(BUILD_TESTING)
     add_test(NAME guest_sce_net COMMAND guest_sce_net_tests)
     add_test(NAME guest_net_inet_pton_source_faults COMMAND guest_sce_net_tests --inet-pton-source-faults)
     set_tests_properties(guest_net_inet_pton_source_faults PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_net_recvmsg_name_faults COMMAND guest_sce_net_tests --recvmsg-name-faults)
+    set_tests_properties(guest_net_recvmsg_name_faults PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_net_inet_pton_source_faults PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")
+        set_tests_properties(guest_net_recvmsg_name_faults PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")
     endif()
     add_test_executable(guest_sce_net_reuseport_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceNetReusePort.cpp)

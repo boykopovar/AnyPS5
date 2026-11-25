@@ -316,6 +316,67 @@ int main(int argc, char** argv) {
         Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload),
             "a rejected message preserves queued data");
         Require(sceKernelMprotect(twin, page, 3) == 0, "restore receive message write permission");
+        std::int64_t namePhysical = 0;
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &namePhysical) == 0,
+            "allocate receive name memory");
+        void* nameMapping = nullptr;
+        Require(sceKernelMapDirectMemory(&nameMapping, page, 3, 0, namePhysical, 0) == 0,
+            "map receive name memory");
+        auto* nameOutput = static_cast<unsigned char*>(nameMapping) + 16;
+        {
+            const GuestArena::HostWrite destination(nameOutput, 16);
+            Require(destination.Open(), "initialize the receive name");
+            std::memset(nameOutput, 0xa5, 16);
+        }
+        Require(sceKernelMprotect(nameMapping, page, 1) == 0, "make the receive name read-only");
+        const NetMsghdr named{static_cast<unsigned char*>(nameMapping) + 16, 16, vectors, 3, nullptr, 123, -1};
+        {
+            const GuestArena::HostWrite destination(message, sizeof(*message));
+            Require(destination.Open(), "initialize the named receive message");
+            std::memcpy(message, &named, sizeof(named));
+        }
+        reset();
+        collect();
+        send();
+        waitForPacket();
+        *error = 0;
+        Require(sceNetRecvmsg(receiver, message, 0) == static_cast<int>(0x8041010eu) && *error == 14,
+            "read-only receive name fails with EFAULT");
+        Require(message->flags == -1 && message->control_length == 123 && message->name_length == 16,
+            "rejected receive name leaves the message unchanged");
+        Require(std::all_of(nameOutput, nameOutput + 16, [](unsigned char value) { return value == 0xa5; }),
+            "rejected receive name is unchanged");
+        Require(std::all_of(buffer - 1, buffer + capacity + 1, [](char value) { return value == '!'; }),
+            "a rejected receive name leaves every destination unchanged");
+        std::array<char, capacity> nameRecovery{};
+        Require(receive(nameRecovery.data(), nameRecovery.size(), 0, nullptr, nullptr) == sizeof(payload) &&
+            std::memcmp(nameRecovery.data(), payload, sizeof(payload)) == 0,
+            "a rejected receive name preserves queued data");
+        Require(sceKernelMprotect(nameMapping, page, 3) == 0, "restore receive name write permission");
+        {
+            const GuestArena::HostWrite destination(nameOutput, 16);
+            Require(destination.Open(), "arm the receive name for the success control");
+            std::memset(nameOutput, 0xa5, 16);
+        }
+        {
+            const GuestArena::HostWrite destination(message, sizeof(*message));
+            Require(destination.Open(), "initialize the success receive message");
+            std::memcpy(message, &named, sizeof(named));
+        }
+        reset();
+        collect();
+        send();
+        waitForPacket();
+        *error = 123;
+        Require(sceNetRecvmsg(receiver, message, 0) == static_cast<std::int64_t>(sizeof(payload)) && *error == 123,
+            "writable receive name succeeds and preserves errno");
+        Require(message->name_length == senderAddress.size() && message->flags == 0 && message->control_length == 0,
+            "successful receive name updates the message");
+        Require(std::memcmp(nameOutput, senderAddress.data(), senderAddress.size()) == 0,
+            "receive name receives the sender address");
+        Require(std::memcmp(buffer, payload, sizeof(payload)) == 0, "successful receive name writes the destination");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(nameMapping), page) == 0, "unmap receive name memory");
+        Require(sceKernelReleaseDirectMemory(namePhysical, page) == 0, "release receive name memory");
         reset();
         collect();
     }

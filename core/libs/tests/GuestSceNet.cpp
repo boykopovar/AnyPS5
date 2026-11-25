@@ -1488,6 +1488,83 @@ static void CheckEmptyReceiveVectors(int receiver, int sender, const std::array<
     Require(source[0] == 16 && source[1] == 2 && source[4] == 127 && source[7] == 1);
 }
 
+static void CheckRecvmsgNameFaults() {
+    constexpr std::size_t page = 0x4000;
+    const int receiver = sceNetSocket("recvmsg-name-receiver", 2, 2, 17);
+    const int sender = sceNetSocket("recvmsg-name-sender", 2, 2, 17);
+    Require(receiver >= 0 && sender >= 0);
+    const int nonblocking = 1;
+    Require(sceNetSetsockopt(receiver, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(receiver, address.data(), &size) == 0);
+    std::array<std::uint8_t, 16> destination = address;
+    const char payload[] = "recvmsg-name";
+    const auto send = [&] {
+        Require(sceNetSendto(sender, payload, sizeof(payload), 0, destination.data(), destination.size()) == sizeof(payload));
+    };
+    const auto waitForPacket = [&] {
+        char peek[sizeof(payload)]{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        std::int64_t result = -1;
+        do {
+            result = sceNetRecv(receiver, peek, sizeof(peek), 2);
+            if (result == static_cast<std::int64_t>(sizeof(payload))) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < deadline);
+        Require(result == static_cast<std::int64_t>(sizeof(payload)));
+    };
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page, 3, 0, physical, 0) == 0);
+    auto* name = static_cast<std::uint8_t*>(mapping) + 16;
+    std::memset(name, 0xa5, 16);
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    char buffer[32]{};
+    NetIovec vectors[]{{buffer, sizeof(buffer)}};
+    NetMsghdr message{name, 16, vectors, 1, nullptr, 0, -1};
+    Require(Failed(sceNetRecvmsg(receiver, &message, 0), 35));
+    Require(message.name_length == 16 && message.flags == -1);
+    send();
+    waitForPacket();
+    Require(Failed(sceNetRecvmsg(receiver, &message, 0), 14));
+    Require(message.name_length == 16 && message.flags == -1);
+    Require(std::all_of(name, name + 16, [](std::uint8_t byte) { return byte == 0xa5; }));
+    send();
+    waitForPacket();
+    message.name = reinterpret_cast<void*>(0x10);
+    Require(Failed(sceNetRecvmsg(receiver, &message, 0), 14));
+    Require(message.name_length == 16 && message.flags == -1);
+    message.name = name;
+    message.name_length = 0;
+    send();
+    waitForPacket();
+    Require(sceNetRecvmsg(receiver, &message, 0) == static_cast<std::int64_t>(sizeof(payload)));
+    Require(message.name_length == 0 && message.flags == 0 && std::memcmp(buffer, payload, sizeof(payload)) == 0);
+    message.name = nullptr;
+    message.name_length = 16;
+    send();
+    waitForPacket();
+    Require(sceNetRecvmsg(receiver, &message, 0) == static_cast<std::int64_t>(sizeof(payload)));
+    Require(message.name_length == 16 && message.flags == 0 && std::memcmp(buffer, payload, sizeof(payload)) == 0);
+    Require(sceKernelMprotect(mapping, page, 3) == 0);
+    std::memset(name, 0xa5, 16);
+    message.name = name;
+    message.name_length = 16;
+    send();
+    waitForPacket();
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetRecvmsg(receiver, &message, 0) == static_cast<std::int64_t>(sizeof(payload)));
+    Require(*sceNetErrnoLoc() == 123);
+    Require(message.name_length == 16 && message.flags == 0 && std::memcmp(buffer, payload, sizeof(payload)) == 0);
+    Require(name[0] == 16 && name[1] == 2 && name[4] == 127 && name[7] == 1);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page) == 0);
+    Require(sceNetSocketClose(receiver) == 0 && sceNetSocketClose(sender) == 0);
+}
+
 static void CheckEpollWritable() {
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
     const int receiver = sceNetSocket("epoll-receiver", 2, 2, 17);
@@ -3139,6 +3216,10 @@ int main(int argc, char** argv) {
         CheckEtherPointerFaults();
         return 0;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--recvmsg-name-faults") == 0) {
+        CheckRecvmsgNameFaults();
+        return 0;
+    }
     CheckEtherAddress();
     CheckEtherNtostrErrors();
     CheckEtherPointerFaults();
@@ -3433,6 +3514,7 @@ int main(int argc, char** argv) {
     CheckMessages(udp_receiver, udp_sender, address);
     CheckOverlappingReceiveVectors(udp_receiver, udp_sender, address);
     CheckEmptyReceiveVectors(udp_receiver, udp_sender, address);
+    CheckRecvmsgNameFaults();
     Require(sceNetSocketClose(udp_sender) == 0);
     Require(sceNetSocketClose(udp_receiver) == 0);
 
