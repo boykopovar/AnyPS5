@@ -275,7 +275,7 @@ void PassingStatus(UStringSearch* search, const char16_t* words) {
             Require(status == IllegalArgument);
             status = incoming;
         }
-        for (const auto length : {-1, 4, -2}) {
+        for (const auto length : {-1, 4}) {
             RequireThrows([&] { usearch_setPattern_nid_postfix(search, words, length, &status); });
         }
         for (const auto length : {-1, 8}) {
@@ -305,6 +305,7 @@ void PassingStatus(UStringSearch* search, const char16_t* words) {
         illegalPattern(nullptr, nullptr, 0);
         illegalPattern(search, words, 0);
         illegalPattern(search, Empty, -1);
+        illegalPattern(search, words, -2);
 
         const auto illegalText = [&](UStringSearch* target, const char16_t* text, std::int32_t length) {
             status = incoming;
@@ -420,6 +421,10 @@ void Run() {
     status = 0;
     usearch_setAttribute_nid_postfix(opened, 3, 1, &status);
     Require(status == IllegalArgument);
+    status = 0;
+    usearch_setPattern_nid_postfix(opened, u"nan", -1, &status);
+    Require(status == 0);
+    Require(usearch_getMatchedLength_nid_postfix(opened) == 0);
 }
 
 } // namespace UsearchObject

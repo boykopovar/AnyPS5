@@ -252,15 +252,22 @@ void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t
 
 void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t* status) {
     if (!Succeeded(status, __func__)) return;
-    if (search == nullptr || pattern == nullptr) {
+    if (search == nullptr || pattern == nullptr || patternLength < -1) {
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    if (patternLength == -1 ? CopyIn<char16_t>(pattern, __func__) == 0 : patternLength == 0) {
+    auto replacement = CopyUnits(pattern, patternLength, __func__);
+    if (replacement.empty()) {
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetPattern(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
+    state->pattern.swap(replacement);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t* text, std::int32_t textLength, std::int32_t* status) {

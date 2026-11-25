@@ -51,4 +51,10 @@ void SetAttribute(void* search, std::int32_t attribute, std::int32_t value, std:
     status = code;
 }
 
+void SetPattern(void* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t& status) {
+    auto code = static_cast<UErrorCode>(status);
+    usearch_setPattern(static_cast<UStringSearch*>(search), pattern, patternLength, &code);
+    status = code;
+}
+
 }
