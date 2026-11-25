@@ -64,6 +64,16 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
+    def test_computed_names_use_the_exclusive_loop_bound(self):
+        for start, bound, expected in ((2, 4, {"ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"}),
+                                       (2, 2, set()), (0, 0, set())):
+            with self.subTest(start=start, bound=bound):
+                root = self.fixture(f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                self.assertEqual(set(env_reference.reads([root / "core"], BOTH)), expected)
+
     def test_a_computed_name_no_reader_uses_is_not_a_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
@@ -138,6 +148,27 @@ class ComputedEnvironmentTests(unittest.TestCase):
 
 
 class EnvReferenceTests(unittest.TestCase):
+    def test_python_comments_do_not_create_reads(self):
+        root = self.fixture()
+        (root / "core" / "Sample.cpp").unlink()
+        source = root / "core" / "settings.py"
+        source.write_text('import os\n'
+                          'message = "hash # is part of a string\u2028also here"\n'
+                          '# getenv("APS5_COMMENT")\n'
+                          'value = os.getenv("APS5_REAL")  # getenv("APS5_INLINE")\n'
+                          'generated = \'\'\'\nstd::getenv("APS5_GENERATED");\n\'\'\'\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(set(found), {"APS5_REAL", "APS5_GENERATED"})
+        self.assertEqual(found["APS5_REAL"][0][1], 4)
+        self.assertEqual(found["APS5_GENERATED"][0][1], 6)
+
+    def test_invalid_python_tokens_report_the_source(self):
+        root = self.fixture()
+        source = root / "core" / "broken.py"
+        source.write_text('value = getenv("APS5_REAL"\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "cannot tokenize .*broken.py"):
+            env_reference.reads([root / "core"])
+
     def test_reader_identifiers_require_a_token_boundary(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
@@ -244,7 +275,10 @@ class EnvReferenceTests(unittest.TestCase):
                  ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
                  ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
                  ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
-                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"),
+                 ('std::getenv("ANYPS5_K") ? 1 : -1L', "string", "-1"),
+                 ('std::getenv("ANYPS5_L") ? 1 : - 0x20', "string", "-0x20"),
+                 ('std::getenv("ANYPS5_M") ? 1 : +64', "string", "+64"))
         source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
         found = env_reference.reads([root / "core"])
         for index, (line, kind, default) in enumerate(lines):

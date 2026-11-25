@@ -54,6 +54,23 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def file_signature(path):
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def cached_sha256(path, cache):
+    signature = file_signature(path)
+    previous = cache.get(path)
+    if previous is not None and previous[0] == signature:
+        return previous[1]
+    digest = sha256(path)
+    if file_signature(path) != signature:
+        raise ValueError(f"{path}: file changed during hashing")
+    cache[path] = (signature, digest)
+    return digest
+
+
 def command_line(arguments):
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
@@ -195,6 +212,8 @@ def validate_entry(directory, entry):
         raise ValueError("patch file has no valid targets")
     if set(targets) != {item["target"] for item in patches}:
         raise ValueError("target hashes must cover exactly the patch targets")
+    if type(parsed.get("format")) is not int or parsed["format"] != 1:
+        raise ValueError("patch file must have format 1")
     return patch, {name: digest.lower() for name, digest in targets.items()}, metadata
 
 
@@ -275,6 +294,7 @@ def main(argv=None):
             confined(root, executable)
         catalog = resolve_path(args.catalog)
         matches = []
+        hash_cache = {}
         entries = load_catalog(catalog, title, version)
         if not entries:
             emit(f"{prefix}: no catalog entry for {title} {version}.")
@@ -294,7 +314,7 @@ def main(argv=None):
             for name, expected in targets.items():
                 try:
                     source = resolve_path(args.input) if name == args.input.name else confined(root, name)
-                    actual = sha256(source)
+                    actual = cached_sha256(source, hash_cache)
                     if actual != expected:
                         errors.append(f"{name}: SHA-256 mismatch ({actual})")
                 except (OSError, ValueError) as error:

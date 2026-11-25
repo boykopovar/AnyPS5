@@ -130,6 +130,24 @@ int main() {
     }
 
     {
+        std::array<Record, 6> table = records;
+        const auto untouched = table;
+        std::size_t nel = table.size();
+        calls = 0;
+        Require(lfind_nid_postfix(&key, table.data(), &nel, 0, Compare) == nullptr && nel == table.size());
+        Require(lfind_nid_postfix(nullptr, nullptr, &nel, 0, nullptr) == nullptr && nel == table.size());
+        Require(lsearch_nid_postfix(&key, table.data(), &nel, 0, Compare) == table.data() && nel == table.size() + 1);
+        Require(lsearch_nid_postfix(nullptr, table.data(), &nel, 0, nullptr) == table.data() && nel == table.size() + 2);
+        Require(lsearch_nid_postfix(nullptr, nullptr, &nel, 0, nullptr) == nullptr && nel == table.size() + 3);
+        std::size_t empty = 0;
+        Require(lsearch_nid_postfix(&key, table.data(), &empty, 0, Compare) == table.data() && empty == 1);
+        std::size_t huge = std::numeric_limits<std::size_t>::max();
+        Require(lfind_nid_postfix(&key, table.data(), &huge, 0, Compare) == nullptr && huge == std::numeric_limits<std::size_t>::max());
+        Require(lsearch_nid_postfix(&key, table.data(), &huge, 0, Compare) == table.data() && huge == 0);
+        Require(calls == 0 && std::memcmp(table.data(), untouched.data(), sizeof(table)) == 0);
+    }
+
+    {
 #ifdef _WIN32
         const std::size_t pageSize = 4096;
         void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);

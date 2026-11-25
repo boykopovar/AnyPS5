@@ -204,6 +204,11 @@ int APS5_VABI scePadVrControllerSetTriggerEffects(std::int32_t leftHandle, std::
 int APS5_VABI scePadIsRemoteController(int handle, bool* remote);
 int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled);
 int APS5_VABI scePadUnknown_n3kSX62fgNo();
+int APS5_VABI scePadInternalSetAssignLed();
+int APS5_VABI scePadIsChargingCableConnected();
+int APS5_VABI scePadSetVibrationRawStrength();
+int APS5_VABI scePadVirtualDeviceInsertTriggerState();
+int APS5_VABI scePadAstonGetDeviceInformation();
 int APS5_VABI scePadVrControllerGetTriggerEffectStates(std::int32_t leftHandle, std::int32_t rightHandle, PadTriggerEffectStateInformation* states);
 int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* state);
 int APS5_VABI scePadSetTriggerEffectExt(std::int32_t handle, const PadTriggerEffectExtended* effect);
