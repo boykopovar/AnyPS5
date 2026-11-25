@@ -1,5 +1,4 @@
 #include <limits>
-#include <cerrno>
 #include <mutex>
 #include <unordered_set>
 #include <stdexcept>
@@ -85,14 +84,11 @@ int APS5_VABI sceCameraStopByHandle(std::int32_t handle) {
 
 int APS5_VABI sceCameraGetFrameData(std::int32_t handle, CameraFrameData* frameData) {
     if (!frameData) return SCE_CAMERA_ERROR_PARAM;
-    const int savedErrno = errno;
     const std::uint32_t status[2] = {UINT32_MAX, UINT32_MAX};
     const bool writeOk = GuestCopyOut_nid_no_patch(frameData->status, status, sizeof(status));
-    errno = savedErrno;
     if (!writeOk) return SCE_CAMERA_ERROR_PARAM;
     std::uint32_t sizeThis = 0;
     const bool readOk = GuestCopyIn_nid_no_patch(&sizeThis, &frameData->sizeThis, sizeof(sizeThis));
-    errno = savedErrno;
     if (!readOk || handle < 1 || sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
     return SCE_CAMERA_ERROR_NOT_OPEN;
 }
