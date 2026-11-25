@@ -933,9 +933,12 @@ extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const
 }
 
 extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, std::uint16_t, const GuestTm* time, char format, char modifier) {
-    const auto specifier = static_cast<unsigned char>(format);
-    const auto prefix = static_cast<unsigned char>(modifier);
-    if (specifier > 0x7f || prefix > 0x7f) NotImplemented_nid_no_patch(__func__);
+    const auto widen = [](char value) {
+        const auto byte = static_cast<unsigned char>(value);
+        return static_cast<std::uint16_t>(byte | (byte >= 0x80 ? 0xff00 : 0));
+    };
+    const auto specifier = widen(format);
+    const auto prefix = widen(modifier);
     const std::uint16_t conversion = prefix != 0 ? prefix : specifier;
     const std::uint16_t modified = prefix != 0 ? specifier : 0;
     const std::uint16_t pattern[] = {'!', '%', conversion, modified, 0};
@@ -945,9 +948,22 @@ extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const G
         text.resize(text.size() + grow);
         length = wcsftime_nid_postfix(text.data(), text.size(), pattern, time);
     }
-    if (length == 1) NotImplemented_nid_no_patch(__func__);
     for (std::size_t index = 1; index < length; ++index) PutWideElement(out, text[index]);
     return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcPutWideElements_nid_no_patch(GuestLocale::OutputIterator out, const std::uint16_t* elements, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) PutWideElement(out, elements[index]);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcRepeatWideElement_nid_no_patch(GuestLocale::OutputIterator out, std::uint16_t element, std::size_t count) {
+    for (; count != 0; --count) PutWideElement(out, element);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    return PutInteger(out, stream, fill, digits, count);
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
@@ -1368,6 +1384,31 @@ alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24clogE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[0x400] {};
+unsigned char _ZSt10adopt_lock_nid_postfix = 0;
+unsigned char _ZSt10defer_lock_nid_postfix = 0;
+unsigned char _ZSt11try_to_lock_nid_postfix = 0;
+unsigned char _ZSt6ignore_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_1E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_2E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_3E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_4E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_5E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_6E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_7E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_8E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_9E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_10E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_11E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_12E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_13E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_14E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_15E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_16E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_17E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_18E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_19E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_20E_nid_postfix = 0;
+void (*_ZSt14_Raise_handler_nid_postfix)() = nullptr;
 unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix = _ZNSt8__sce_v23cinE_nid_postfix;
 unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix = _ZNSt8__sce_v24coutE_nid_postfix;
 unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix = _ZNSt8__sce_v24cerrE_nid_postfix;

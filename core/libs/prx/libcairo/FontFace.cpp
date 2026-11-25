@@ -1,5 +1,6 @@
 #include "prx/libcairo/include/FontFace.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libfontconfig/libfontconfig.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -7,15 +8,13 @@
 #include <map>
 #include <mutex>
 #include <new>
-#include <tuple>
 #include <vector>
 
 namespace {
 
 constexpr int kSuccess = 0;
 constexpr int kNoMemory = 1;
-
-using CacheKey = std::tuple<const FreeType::GuestFaceRec*, std::int64_t, unsigned>;
+constexpr int kFileNotFound = 18;
 
 }
 
@@ -29,7 +28,8 @@ struct CairoFontFaceState {
     bool immortal{};
     bool finalizing{};
     int status{kSuccess};
-    CacheKey key{};
+    CairoFtFontFaceKey key{};
+    FcPattern* pattern{};
     std::vector<UserDataSlot> userData;
 };
 
@@ -40,8 +40,8 @@ std::mutex& CacheMutex() {
     return *mutex;
 }
 
-std::map<CacheKey, CairoFontFaceState*>& Cache() {
-    static auto* cache = new std::map<CacheKey, CairoFontFaceState*>;
+std::map<CairoFtFontFaceKey, CairoFontFaceState*>& Cache() {
+    static auto* cache = new std::map<CairoFtFontFaceKey, CairoFontFaceState*>;
     return *cache;
 }
 
@@ -53,12 +53,8 @@ CairoFontFace* Handle(CairoFontFaceState* state) {
     return reinterpret_cast<CairoFontFace*>(state);
 }
 
-CairoFontFace* NilFace() {
-    static CairoFontFaceState nil{.immortal = true, .status = kNoMemory};
-    return Handle(&nil);
-}
-
 void Finalize(CairoFontFaceState* state) {
+    if (state->pattern) FcPatternDestroy_nid_postfix(state->pattern);
     for (std::size_t slot = state->userData.size(); slot-- > 0;) {
         const auto& entry = state->userData[slot];
         if (entry.data && entry.destroy) entry.destroy(entry.data);
@@ -68,16 +64,17 @@ void Finalize(CairoFontFaceState* state) {
 
 }
 
-extern "C" {
+CairoFontFace* CairoFontFaceNilNoMemory() {
+    static CairoFontFaceState nil{.immortal = true, .status = kNoMemory};
+    return Handle(&nil);
+}
 
-CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
-    if (!face) NotImplemented_nid_no_patch(__func__);
-    std::int64_t faceIndex{};
-    const int savedErrno = errno;
-    const bool readable = GuestCopyIn_nid_no_patch(&faceIndex, &face->face_index, sizeof(faceIndex));
-    errno = savedErrno;
-    if (!readable) NotImplemented_nid_no_patch(__func__);
-    const CacheKey key{face, faceIndex, static_cast<unsigned>(loadFlags)};
+CairoFontFace* CairoFontFaceNilFileNotFound() {
+    static CairoFontFaceState nil{.immortal = true, .status = kFileNotFound};
+    return Handle(&nil);
+}
+
+CairoFontFace* CairoFtFontFaceFind(const CairoFtFontFaceKey& key) {
     std::lock_guard lock(CacheMutex());
     auto& cache = Cache();
     if (const auto found = cache.find(key); found != cache.end()) {
@@ -85,15 +82,40 @@ CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFa
         return Handle(found->second);
     }
     auto* state = new (std::nothrow) CairoFontFaceState;
-    if (!state) return NilFace();
-    state->key = key;
+    if (!state) return CairoFontFaceNilNoMemory();
     try {
-        cache.emplace(key, state);
+        state->key = key;
+        cache.emplace(state->key, state);
     } catch (const std::bad_alloc&) {
         delete state;
-        return NilFace();
+        return CairoFontFaceNilNoMemory();
     }
     return Handle(state);
+}
+
+CairoFontFace* CairoFtFontFaceForPattern(FcPattern* duplicate) {
+    auto* state = new (std::nothrow) CairoFontFaceState;
+    if (!state) {
+        FcPatternDestroy_nid_postfix(duplicate);
+        return CairoFontFaceNilNoMemory();
+    }
+    state->pattern = duplicate;
+    return Handle(state);
+}
+
+extern "C" {
+
+CairoFontFace* APS5_VABI cairo_ft_font_face_create_for_ft_face(FreeType::GuestFaceRec* face, int loadFlags) {
+    if (!face) NotImplemented_nid_no_patch(__func__);
+    std::int64_t faceIndex{};
+    const bool readable = GuestCopyIn_nid_no_patch(&faceIndex, &face->face_index, sizeof(faceIndex));
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    CairoFtFontFaceKey key;
+    key.fromFace = true;
+    key.face = face;
+    key.id = faceIndex;
+    key.loadFlags = loadFlags;
+    return CairoFtFontFaceFind(key);
 }
 
 CairoFontFace* APS5_VABI cairo_font_face_reference(CairoFontFace* fontFace) {
@@ -113,7 +135,8 @@ void APS5_VABI cairo_font_face_destroy(CairoFontFace* fontFace) {
         if (state->finalizing) NotImplemented_nid_no_patch(__func__);
         state->finalizing = true;
         auto& cache = Cache();
-        if (const auto found = cache.find(state->key); found != cache.end() && found->second == state) cache.erase(found);
+        if (!state->pattern)
+            if (const auto found = cache.find(state->key); found != cache.end() && found->second == state) cache.erase(found);
     }
     Finalize(state);
 }

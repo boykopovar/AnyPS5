@@ -3,6 +3,32 @@
 #include <cstddef>
 #include <stdexcept>
 
+namespace {
+
+void SyncCharmapPointers(FreeType::GuestFace& face) {
+    auto& rec = face.rec;
+    const auto host = face.host;
+    face.charmapPointers.resize(static_cast<std::size_t>(host->num_charmaps));
+    rec.charmap = nullptr;
+    for (std::size_t index = 0; index < face.charmapPointers.size(); ++index) {
+        const FT_CharMap charmap = host->charmaps[index];
+        const auto custom = face.customCharmaps.find(charmap);
+        FreeType::GuestCharMapRec* guest = nullptr;
+        if (custom == face.customCharmaps.end()) {
+            auto& builtin = face.charmaps[charmap];
+            builtin.clazz = face.nativeCharmapClass;
+            guest = &builtin.charmap;
+        } else {
+            guest = custom->second;
+        }
+        *guest = {&rec, static_cast<std::int32_t>(charmap->encoding), charmap->platform_id, charmap->encoding_id};
+        face.charmapPointers[index] = guest;
+        if (charmap == host->charmap) rec.charmap = guest;
+    }
+}
+
+}
+
 namespace FreeType {
 
 GuestFace* FaceOf(const GuestFaceRec* face) {
@@ -31,15 +57,7 @@ void SyncFace(GuestFace& face) {
     }
     rec.num_fixed_sizes = host->num_fixed_sizes;
     rec.available_sizes = face.fixedSizes.empty() ? nullptr : face.fixedSizes.data();
-    face.charmaps.resize(static_cast<std::size_t>(host->num_charmaps));
-    face.charmapPointers.resize(face.charmaps.size());
-    rec.charmap = nullptr;
-    for (std::size_t index = 0; index < face.charmaps.size(); ++index) {
-        const FT_CharMap charmap = host->charmaps[index];
-        face.charmaps[index] = {&rec, static_cast<std::int32_t>(charmap->encoding), charmap->platform_id, charmap->encoding_id};
-        face.charmapPointers[index] = &face.charmaps[index];
-        if (charmap == host->charmap) rec.charmap = &face.charmaps[index];
-    }
+    SyncCharmapPointers(face);
     rec.num_charmaps = host->num_charmaps;
     rec.charmaps = face.charmapPointers.empty() ? nullptr : face.charmapPointers.data();
     rec.bbox = {host->bbox.xMin, host->bbox.yMin, host->bbox.xMax, host->bbox.yMax};
@@ -126,6 +144,14 @@ void SyncSlot(GuestFace& face) {
     slot.lsb_delta = host->lsb_delta;
     slot.rsb_delta = host->rsb_delta;
     slot.other = host->other;
+}
+
+extern "C" void FreeTypeSyncCharmaps_nid_no_patch(GuestFace& face) {
+    SyncCharmapPointers(face);
+    auto& rec = face.rec;
+    const auto host = face.host;
+    rec.num_charmaps = host->num_charmaps;
+    rec.charmaps = face.charmapPointers.empty() ? nullptr : face.charmapPointers.data();
 }
 
 }

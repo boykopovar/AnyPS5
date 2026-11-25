@@ -8,6 +8,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_image_memory_accounting COMMAND agc_image_memory_tests --memory-accounting)
     set_tests_properties(agc_image_memory_accounting PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1" TIMEOUT 30)
     set_tests_properties(agc_image_memory PROPERTIES TIMEOUT 30)
+    set_property(TEST agc_image_memory agc_image_memory_accounting APPEND PROPERTY ENVIRONMENT "APS5_IMAGE_SLABS=1")
     if(WIN32)
         set_tests_properties(agc_image_memory agc_image_memory_accounting PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

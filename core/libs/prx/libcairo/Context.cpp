@@ -4,6 +4,8 @@
 
 #include <CairoBackend.h>
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cerrno>
 #include <cstddef>
@@ -62,6 +64,20 @@ void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
         NotImplemented_nid_no_patch(caller);
 }
 
+void RequireReadable(const double* source, std::size_t count, const char* caller) {
+    std::array<double, 4096> probe;
+    const int savedErrno = errno;
+    bool ok = true;
+    for (std::size_t done = 0; ok && done < count;) {
+        const std::size_t chunk = std::min(count - done, probe.size());
+        ok = GuestCopyIn_nid_no_patch(probe.data(), source + done, chunk * sizeof(double));
+        done += chunk;
+    }
+    errno = savedErrno;
+    if (!ok)
+        NotImplemented_nid_no_patch(caller);
+}
+
 template <typename Fn>
 void WriteExtents(CairoContext* context, double* x1, double* y1, double* x2, double* y2, Fn call, const char* caller) {
     for (double* bound : {x1, y1, x2, y2})
@@ -77,6 +93,25 @@ void WriteExtents(CairoContext* context, double* x1, double* y1, double* x2, dou
     if (y1) WriteGuest(y1, ly1, caller);
     if (x2) WriteGuest(x2, lx2, caller);
     if (y2) WriteGuest(y2, ly2, caller);
+}
+
+template <typename Fn>
+void TransformCoordinates(CairoContext* context, double* x, double* y, Fn transform, const char* caller) {
+    if (x == y) {
+        double value = ReadGuest(x, caller);
+        RequireWritable(x, sizeof(value), caller);
+        transform(Backend(context), &value, &value);
+        WriteGuest(x, value, caller);
+        return;
+    }
+
+    double localX = ReadGuest(x, caller);
+    double localY = ReadGuest(y, caller);
+    RequireWritable(x, sizeof(localX), caller);
+    RequireWritable(y, sizeof(localY), caller);
+    transform(Backend(context), &localX, &localY);
+    WriteGuest(x, localX, caller);
+    WriteGuest(y, localY, caller);
 }
 
 }
@@ -141,19 +176,19 @@ void APS5_VABI cairo_identity_matrix(CairoContext* context) {
 }
 
 void APS5_VABI cairo_user_to_device(CairoContext* context, double* x, double* y) {
-    aps5_cairo_user_to_device(Backend(context), x, y);
+    TransformCoordinates(context, x, y, aps5_cairo_user_to_device, __func__);
 }
 
 void APS5_VABI cairo_user_to_device_distance(CairoContext* context, double* dx, double* dy) {
-    aps5_cairo_user_to_device_distance(Backend(context), dx, dy);
+    TransformCoordinates(context, dx, dy, aps5_cairo_user_to_device_distance, __func__);
 }
 
 void APS5_VABI cairo_device_to_user(CairoContext* context, double* x, double* y) {
-    aps5_cairo_device_to_user(Backend(context), x, y);
+    TransformCoordinates(context, x, y, aps5_cairo_device_to_user, __func__);
 }
 
 void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, double* dy) {
-    aps5_cairo_device_to_user_distance(Backend(context), dx, dy);
+    TransformCoordinates(context, dx, dy, aps5_cairo_device_to_user_distance, __func__);
 }
 
 void APS5_VABI cairo_set_antialias(CairoContext* context, int antialias) {
@@ -204,28 +239,17 @@ double APS5_VABI cairo_get_miter_limit(CairoContext* context) {
     return aps5_cairo_get_miter_limit(Backend(context));
 }
 
-constexpr int MaxDashCount = 4096;
-
 void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes, int numDashes, double offset) {
-    if (numDashes <= 0) {
-        aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
-        return;
+    if (numDashes > 0) {
+        if (!dashes)
+            NotImplemented_nid_no_patch(__func__);
+        RequireReadable(dashes, static_cast<std::size_t>(numDashes), __func__);
     }
-    if (!dashes || numDashes > MaxDashCount)
-        NotImplemented_nid_no_patch(__func__);
-    std::vector<double> hostDashes(static_cast<std::size_t>(numDashes));
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(hostDashes.data(), dashes, hostDashes.size() * sizeof(double));
-    errno = savedErrno;
-    if (!ok)
-        NotImplemented_nid_no_patch(__func__);
-    aps5_cairo_set_dash(Backend(context), hostDashes.data(), numDashes, offset);
+    aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
 }
 
 void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset) {
     const int count = aps5_cairo_get_dash_count(Backend(context));
-    if (dashes && count > MaxDashCount)
-        NotImplemented_nid_no_patch(__func__);
     std::vector<double> hostDashes(dashes && count > 0 ? static_cast<std::size_t>(count) : 0);
     if (!hostDashes.empty())
         RequireWritable(dashes, hostDashes.size() * sizeof(double), __func__);

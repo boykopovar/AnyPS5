@@ -871,6 +871,10 @@ void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t 
     WindowsMappings::Get().ForgetKnownZero(address, bytes);
 }
 
+std::uint64_t GuestArenaKnownZeroMarks_nid_no_patch() {
+    return WindowsMappings::Get().KnownZeroMarks();
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
@@ -904,7 +908,7 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 #if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)); error != 0)
         throw std::system_error(error, std::generic_category(), "guest arena protection failed");
 #else
@@ -1036,6 +1040,7 @@ namespace {
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
 std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
+std::atomic<SharedBackingHostFallback> sharedBackingHostFallback{nullptr};
 
 }
 
@@ -1064,6 +1069,15 @@ void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolv
 bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
     const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
+}
+
+void GuestArenaSetSharedBackingHostFallback_nid_no_patch(SharedBackingHostFallback fallback) {
+    sharedBackingHostFallback.store(fallback, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingHostFallback_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    const auto fallback = sharedBackingHostFallback.load(std::memory_order_acquire);
+    return fallback != nullptr && fallback(address, bytes);
 }
 
 bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
