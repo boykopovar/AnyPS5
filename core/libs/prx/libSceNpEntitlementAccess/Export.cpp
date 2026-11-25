@@ -5,7 +5,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,16 +25,12 @@ static constexpr std::int32_t USER_ID_INVALID = -1;
 namespace {
 
 bool CopyGuestInPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
 bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return copied;
 }
 
@@ -148,10 +143,8 @@ int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitPara
     if (init_param == nullptr || boot_param == nullptr) return errorParameter;
     NpEntitlementAccessInitParam localInit;
     NpEntitlementAccessBootParam localBoot;
-    const int savedErrno = errno;
     const bool copiedInit = GuestCopyIn_nid_no_patch(&localInit, init_param, sizeof(localInit));
     const bool copiedBoot = GuestCopyIn_nid_no_patch(&localBoot, boot_param, sizeof(localBoot));
-    errno = savedErrno;
     if (!copiedInit || !copiedBoot) return errorParameter;
     if (!std::all_of(std::begin(localInit.reserved), std::end(localInit.reserved), [](char value) { return value == 0; })) return errorParameter;
     if (!std::all_of(std::begin(localBoot.reserved), std::end(localBoot.reserved), [](char value) { return value == 0; })) return errorParameter;
