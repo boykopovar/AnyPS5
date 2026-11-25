@@ -217,6 +217,23 @@ void CheckScanNot(Fixture& first, Fixture& second, WideVtable& firstTable) {
     Require(sceLibcInternalWideCtypeDoScanNot_nid_no_patch(AsFacet(first), ClassA, text.data() + 2, text.data() + 2) == text.data() + 2, "empty scan range returns its end");
 }
 
+void CheckScanIs(Fixture& first, Fixture& second, WideVtable& firstTable) {
+    const std::array<char16_t, 4> text{u'!', u'B', u'A', u'A'};
+    const auto* end = text.data() + text.size();
+    const auto before = first.overrideCalls;
+    StoreFunction(firstTable, 4, DoIsFunction(OverrideDoIs));
+    Require(sceLibcInternalWideCtypeDoScanIs_nid_no_patch(AsFacet(first), ClassA, text.data(), end) == text.data() + 1,
+            "scan_is stops at the first match from the virtual do_is callback");
+    Require(first.overrideCalls == before + 2, "scan_is only calls do_is for examined characters");
+    StoreFunction(firstTable, 4, DoIsFunction(sceLibcInternalWideCtypeDoIs_nid_no_patch));
+    Require(sceLibcInternalWideCtypeDoScanIs_nid_no_patch(AsFacet(second), ClassA, text.data(), end) == text.data() + 2,
+            "scan_is uses the facet's classification table");
+    Require(sceLibcInternalWideCtypeDoScanIs_nid_no_patch(AsFacet(second), 0, text.data(), end) == end,
+            "scan_is returns the original end pointer when no character matches");
+    Require(sceLibcInternalWideCtypeDoScanIs_nid_no_patch(nullptr, ClassA, end, end) == end,
+            "empty scan_is range returns without reading the facet");
+}
+
 void CheckUpper(Fixture& first) {
     first.upper.fill(0);
     first.upper[static_cast<unsigned char>('a')] = -2;
@@ -338,6 +355,7 @@ int main() {
     Initialize(second, secondTable, false);
     CheckClassification(first, second);
     CheckScanNot(first, second, firstTable);
+    CheckScanIs(first, second, firstTable);
     CheckUpper(first);
     CheckGuestPointers(first);
     CheckChunkedRanges(first);

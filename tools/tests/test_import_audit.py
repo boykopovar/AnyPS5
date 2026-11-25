@@ -1124,6 +1124,39 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(data["stops"][0]["nid"], nid)
         self.assertEqual(data["references"], 1)
 
+    def test_bundled_libc_falls_back_to_the_host_libc_the_relinker_appends(self):
+        nid, other, library = "AAAAAAAAAAA", "BBBBBBBBBBB", "libc.prx"
+        internal = ["libkernel.prx", "libc.prx", "libSceLibcInternal.prx"]
+        cases = (({other: [library]}, {nid: [library]}, {}, internal, "implemented", [library]),
+                 ({other: [library]}, {nid: [library]}, {(library, nid): "stdio"}, internal, "stub", [library]),
+                 ({other: [library]}, {nid: [library]}, {}, ["libkernel.prx", "libc.prx"], "absent", []),
+                 ({other: [library]}, {nid: ["libSceOther.prx"]}, {}, internal, "absent", []),
+                 ({nid: [library]}, {nid: [library]}, {(library, nid): "stdio"}, internal, "module", [library]))
+        for guest_exports, host_exports, stubs, needed, expected, providers in cases:
+            for imported in (library, "libc.sprx"):
+                with self.subTest(guest=guest_exports, hosts=host_exports, stubs=stubs, needed=needed, library=imported):
+                    records, _ = import_audit.audit(
+                        [(nid, imported, False)], host_exports, stubs, {library, "libSceOther.prx", "libSceLibcInternal.prx"},
+                        import_audit.ModuleNames({library}), {}, guest_exports, needed_libraries=needed)
+                    self.assertEqual(records[0]["class"], expected)
+                    self.assertEqual(records[0]["providers"], providers)
+        records, _ = import_audit.audit(
+            [(nid, "libSceSynthetic.prx", False)], {nid: ["libSceSynthetic.prx"]}, {}, {"libSceSynthetic.prx"},
+            import_audit.ModuleNames({"libSceSynthetic.prx"}), {}, {other: ["libSceSynthetic.prx"]},
+            needed_libraries=["libSceLibcInternal.prx", "libSceSynthetic.prx"])
+        self.assertEqual(records[0]["class"], "absent")
+
+    def test_bundled_libc_internal_keeps_the_host_libc_out(self):
+        nid, other = "AAAAAAAAAAA", "BBBBBBBBBBB"
+        needed = ["libkernel.prx", "libc.prx", "libSceLibcInternal.prx"]
+        for internal in ("libSceLibcInternal.prx", "libSceLibcInternal.sprx"):
+            with self.subTest(internal=internal):
+                records, _ = import_audit.audit(
+                    [(nid, "libc.prx", False)], {nid: ["libc.prx"]}, {}, {"libc.prx", "libSceLibcInternal.prx"},
+                    import_audit.ModuleNames({"libc.prx", internal}), {}, {other: ["libc.prx"]}, needed_libraries=needed)
+                self.assertEqual(records[0]["class"], "absent")
+                self.assertEqual(records[0]["providers"], [])
+
     def test_exact_guest_dependency_precedes_suffix_export(self):
         work = self.work
         name, nid = "sceSynthetic", nid_names.compute_nid("sceSynthetic")

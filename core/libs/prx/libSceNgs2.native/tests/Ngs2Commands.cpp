@@ -66,6 +66,7 @@ constexpr int InvalidOutAddress = static_cast<int>(0x804a8010u);
 constexpr int InvalidOutSize = static_cast<int>(0x804a8011u);
 constexpr int InvalidOptionSize = static_cast<int>(0x804a8013u);
 constexpr int InvalidBufferInfo = static_cast<int>(0x804a8020u);
+constexpr int InvalidBufferSize = static_cast<int>(0x804a8021u);
 constexpr int InvalidBufferAllocator = static_cast<int>(0x804a8023u);
 constexpr int InvalidStreamCommands = static_cast<int>(0x804a8030u);
 constexpr int InvalidStreamQueryId = static_cast<int>(0x804a8031u);
@@ -323,8 +324,16 @@ void TestStreamExports() {
     Ngs2ContextBufferInfo emptyHost{};
     Require(sceNgs2StreamCreate(system, &opt, &emptyHost, &streamHandle) == InvalidBufferInfo);
     bufInfo.host_buffer = reinterpret_cast<void*>(0x1000);
+    bufInfo.host_buffer_size = 0x106c0;
     Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreate(system, &opt, &bufInfo, nullptr) == InvalidOutAddress);
+    Ngs2ContextBufferInfo shortBuffer = bufInfo;
+    shortBuffer.host_buffer_size = 0x106bf;
+    Require(sceNgs2StreamCreate(0xdead, &opt, &shortBuffer, &streamHandle) == InvalidBufferSize);
+    Require(sceNgs2StreamCreate(system, &badBlocks, &shortBuffer, &streamHandle) == InvalidNumBlocks);
+    StreamOption guarded = opt;
+    guarded.flags = 0x80000000u;
+    Require(sceNgs2StreamCreate(system, &guarded, &bufInfo, &streamHandle) == InvalidBufferSize);
     Require(sceNgs2StreamCreate(0xdead, &opt, &bufInfo, &streamHandle) == InvalidSystemHandle);
     AssertThrows([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
 

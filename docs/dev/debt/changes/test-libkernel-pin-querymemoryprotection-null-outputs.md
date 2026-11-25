@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelQueryMemoryProtection and sceKernelIsStack]
+
+- [sceKernelQueryMemoryProtection and sceKernelIsStack](../../../core/libs/prx/libkernel/DirectMemory/Export.cpp) (libkernel) copy each optional output with `GuestCopyOut`: a null output is skipped and an unmapped or unwritable one returns `SCE_KERNEL_ERROR_EFAULT` as a host-safety fallback. Outputs are written in order (`start`, `end`, protection), so earlier ones are already written when a later one faults. For `sceKernelIsStack`, a payload process on a PS5 (firmware 11.60) returned `EINVAL` for the address -1 and `EACCES` for 0 and for an unmapped page, as here, and faulted with SIGSEGV on an unmapped or `0x1` output pointer where this returns `SCE_KERNEL_ERROR_EFAULT` (run `2026-11-12T085513Z_F_libkernel_isstack`). That payload process returned 0 from `sceKernelQueryMemoryProtection` for a NULL `start`, `end` or protection and for all three NULL, writing only the outputs passed, as here (run `2026-11-08T072536Z_F_libkernel_misc5`); which addresses return `EINVAL` there is unknown.

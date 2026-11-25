@@ -86,7 +86,7 @@ void FillTexture() {
     }
 }
 
-std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale, std::uint32_t swizzle = 0xfacu) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale, std::uint32_t swizzle = 0xfacu, bool spillImageData = false) {
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
 
@@ -126,8 +126,24 @@ std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_
         target,
         PixelPushLayout(vertexPush, target)
     };
+    const auto hasShaderDataBinding = [](const ShaderRecompiler::RecompileResult& result) {
+        return std::any_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) {
+            return binding.role == ShaderRecompiler::DescriptorRole::ShaderData;
+        });
+    };
+    if (spillImageData) {
+        const auto full = ShaderRecompiler::Recompile(fragment);
+        const auto bytes = full.shaderDataDwords * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        Require(full.runtimeImageCount > 0u, "the fixture did not emit runtime image metadata");
+        Require(bytes > 0u && bytes <= fragment.layout.pushConstantSizeBytes, "the fixture's complete image data does not fit its fragment slot");
+        Require(full.pushConstants.size() == bytes && !hasShaderDataBinding(full), "image metadata that fits the fragment slot must use push constants");
+        fragment.layout.pushConstantSizeBytes = bytes - sizeof(std::uint32_t);
+    }
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     Require(!target.registrationModules || pixelResult.registrationModule, "line swizzle did not exercise its requested registration module");
+    if (spillImageData) {
+        Require(pixelResult.runtimeImageCount > 0u && pixelResult.pushConstants.empty() && hasShaderDataBinding(pixelResult), "image metadata that exceeds the fragment slot must use the shader data binding");
+    }
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
@@ -210,6 +226,10 @@ int main() {
             const auto artifact = Draw(*device, PixelCode, scale, swizzle);
             Require(!device->Target().registrationModules || artifact == original, "constant swizzle changes did not reuse their registered fragment artifact");
             Check(0u, swizzle);
+        }
+        if (device->Target().registrationModules) {
+            Draw(*device, PixelCode, scale, 0xfa9u, true);
+            Check(0u, 0xfa9u);
         }
         const auto restored = Draw(*device, PixelCode, scale);
         Require(!device->Target().registrationModules || restored == original, "line swizzle did not restore its original registered artifact");

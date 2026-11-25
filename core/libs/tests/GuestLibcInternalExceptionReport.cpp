@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -105,7 +106,7 @@ void CheckReport(const std::string& message, bool boundary) {
 int main(int argc, char** argv) {
     Require(argc == 2, "library path argument");
 #ifdef _WIN32
-    auto module = LoadLibraryA(argv[1]);
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(module != nullptr, "load library");
     report = reinterpret_cast<Report>(GetProcAddress(module, "libSceLibcInternalInventory_245_nid_no_patch"));
 #else
