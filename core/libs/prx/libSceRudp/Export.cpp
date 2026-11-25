@@ -1,4 +1,5 @@
 #include "prx/libSceRudp/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -28,7 +29,6 @@ constexpr int RUDP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80770004u);
 constexpr int RUDP_ERROR_INVALID_OPTION = static_cast<int>(0x80770005u);
 constexpr int RUDP_ERROR_INVALID_MUXMODE = static_cast<int>(0x80770006u);
 constexpr int RUDP_ERROR_MEMORY = static_cast<int>(0x80770007u);
-constexpr int RUDP_ERROR_CONN_RESET = static_cast<int>(0x80770009u);
 constexpr int RUDP_ERROR_CONN_REFUSED = static_cast<int>(0x8077000Au);
 constexpr int RUDP_ERROR_NOT_ACCEPTABLE = static_cast<int>(0x80770011u);
 constexpr int RUDP_ERROR_NOT_BOUND = static_cast<int>(0x80770013u);
@@ -37,6 +37,7 @@ constexpr int RUDP_ERROR_INVALID_VPORT = static_cast<int>(0x80770015u);
 constexpr int RUDP_ERROR_WOULDBLOCK = static_cast<int>(0x80770016u);
 constexpr int RUDP_ERROR_VPORT_IN_USE = static_cast<int>(0x80770017u);
 constexpr int RUDP_ERROR_VPORT_EXHAUSTED = static_cast<int>(0x80770018u);
+constexpr int RUDP_ERROR_INVALID_SOCKET = static_cast<int>(0x80770019u);
 constexpr int RUDP_ERROR_ALREADY_BOUND = static_cast<int>(0x8077001Du);
 constexpr int RUDP_ERROR_INVALID_POLL_ID = static_cast<int>(0x8077001Fu);
 constexpr int RUDP_ERROR_TOO_MANY_CONTEXTS = static_cast<int>(0x80770020u);
@@ -521,26 +522,47 @@ int APS5_VABI sceRudpGetSizeReadable(int ctx_id) {
 }
 
 int APS5_VABI sceRudpWrite(int ctx_id, const void* data, uint32_t len, int flags) {
-    (void)data;
-    (void)len;
     (void)flags;
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
-    return valid_ctx(ctx_id) ? RUDP_ERROR_CONN_RESET : RUDP_ERROR_INVALID_CONTEXT_ID;
+    if (ctx_id < 0 || data == nullptr || len == 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(ctx_id)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpRead(int ctx_id, void* data, uint32_t len, int flags, void* status) {
-    (void)data;
     (void)len;
     (void)flags;
-    (void)status;
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
-    return valid_ctx(ctx_id) ? RUDP_ERROR_CONN_RESET : RUDP_ERROR_INVALID_CONTEXT_ID;
+    if (ctx_id < 0 || data == nullptr) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    std::uint8_t statusSize = 0;
+    if (status != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&statusSize, status, sizeof(statusSize)) || statusSize > 0x0c) {
+            return RUDP_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    if (!valid_ctx(ctx_id)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    if (statusSize != 0) {
+        std::uint8_t report[0x0c] = {};
+        report[0] = statusSize;
+        if (!GuestCopyOut_nid_no_patch(status, report, statusSize)) {
+            return RUDP_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpNetFlush(void) {
@@ -562,7 +584,20 @@ int APS5_VABI sceRudpProcessEvents(std::uint64_t timeout) {
 
 int APS5_VABI sceRudpNetReceived(int socketId, const void* data, std::size_t dataSize, const void* sourceAddress, std::uint32_t sourceAddressSize) {
     std::lock_guard<std::mutex> lk(g_mutex);
-    return g_inited ? 0 : RUDP_ERROR_NOT_INITIALIZED;
+    if (!g_inited) return RUDP_ERROR_NOT_INITIALIZED;
+    if (socketId < 0) return RUDP_ERROR_INVALID_SOCKET;
+    if (!data) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (dataSize == 0) return 0;
+    if (!sourceAddress) return RUDP_ERROR_INVALID_ARGUMENT;
+
+    std::uint8_t address[0x22];
+    const auto family = reinterpret_cast<const void*>(reinterpret_cast<std::uintptr_t>(sourceAddress) + 1);
+    const auto length = std::min<std::size_t>(sourceAddressSize, sizeof(address));
+    const bool readable = GuestCopyIn_nid_no_patch(&address[1], family, 1) &&
+                          GuestCopyIn_nid_no_patch(address, sourceAddress, length);
+    if (!readable) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (!g_sockets.contains(socketId)) return RUDP_ERROR_INVALID_SOCKET;
+    return 0;
 }
 
 int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {
@@ -781,7 +816,7 @@ int APS5_VABI sceRudpListen(int ctxId, int backlog) {
     if (!context.bound || context.muxMode != RUDP_MUXMODE_SERVER) {
         return RUDP_ERROR_NOT_ACCEPTABLE;
     }
-    if (context.activated) NotImplemented_nid_no_patch(__func__);
+    if (context.activated) return RUDP_ERROR_NOT_ACCEPTABLE;
     if (context.listening) {
         return RUDP_ERROR_IN_PROGRESS;
     }

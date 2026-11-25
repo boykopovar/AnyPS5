@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
@@ -12,6 +13,15 @@
 #include <new>
 #include <stdexcept>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 extern "C" std::uint32_t JxrBitIoReference_nid_no_patch(int operation, void* state, std::uint32_t value, std::uint32_t bits);
 
@@ -492,6 +502,37 @@ void RunZeroBits(Ring& ring) {
             "32-bit store bytes");
 }
 
+class NoAccessPage {
+    static constexpr std::size_t Size = 4096;
+    void* page;
+
+public:
+    NoAccessPage() {
+#ifdef _WIN32
+        page = VirtualAlloc(nullptr, Size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+        Require(page != nullptr, "allocate the no-access page");
+#else
+        page = mmap(nullptr, Size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "allocate the no-access page");
+#endif
+        std::array<std::byte, sizeof(Jxr::BitIo)> probe{};
+        Require(!GuestCopyIn_nid_no_patch(probe.data(), page, probe.size()), "qualify the no-access page");
+    }
+    NoAccessPage(const NoAccessPage&) = delete;
+    NoAccessPage& operator=(const NoAccessPage&) = delete;
+    ~NoAccessPage() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, Size);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(page);
+    }
+};
+
 void RunEdges() {
     for (std::uint32_t qp = 0; qp < 256; ++qp)
         Require(dquantBits_nid_postfix(static_cast<std::uint8_t>(qp)) ==
@@ -550,6 +591,33 @@ void RunEdges() {
     edge.mask = ReadMask;
     edge.current = nullptr;
     RequireInvalidArgument([&] { getBit16_nid_postfix(&edge, 1); }, "null current pointer");
+
+    const NoAccessPage noAccess;
+    auto* unmappedIo = noAccess.As<Jxr::BitIo>();
+    auto* unmappedStream = noAccess.As<Jxr::Stream>();
+    Jxr::Stream okStream{};
+    okStream.getPosition = &AttachmentPosition;
+    static const std::uint16_t roWord = 0;
+    static const Jxr::BitIo readOnlyIo{0, 0, 1, WriteMask, nullptr, const_cast<std::uint8_t*>(reinterpret_cast<const std::uint8_t*>(&roWord)), nullptr, 0};
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(unmappedIo, &okStream); }, "unmapped io in attachISWrite");
+    Require(errno == 71, "attachISWrite unmapped io changed errno");
+    auto validIo = Attach(ring, 0, 0, 0);
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(&validIo, unmappedStream); }, "unmapped stream in attachISWrite");
+    Require(errno == 71, "attachISWrite unmapped stream changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { putBit16z_nid_postfix(unmappedIo, 1, 1); }, "unmapped io in putBit16z");
+    Require(errno == 71, "putBit16z unmapped io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { putBit16z_nid_postfix(const_cast<Jxr::BitIo*>(&readOnlyIo), 1, 1); }, "read-only io in putBit16z");
+    Require(errno == 71, "putBit16z read-only io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { fillToByte_nid_postfix(unmappedIo); }, "unmapped io in fillToByte");
+    Require(errno == 71, "fillToByte unmapped io changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { fillToByte_nid_postfix(const_cast<Jxr::BitIo*>(&readOnlyIo)); }, "read-only io in fillToByte");
+    Require(errno == 71, "fillToByte read-only io changed errno");
 }
 
 } // namespace
