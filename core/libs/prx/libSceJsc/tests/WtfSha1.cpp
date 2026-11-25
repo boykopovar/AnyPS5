@@ -155,7 +155,7 @@ PersistenceDecoder Decoder(const std::vector<std::uint8_t>& bytes) {
 
 bool Hashed(const PersistenceDecoder& decoder, const std::vector<std::uint8_t>& bytes) {
     return decoder.sha1.cursor == bytes.size() && decoder.sha1.totalBytes == bytes.size() &&
-        std::memcmp(decoder.sha1.buffer, bytes.data(), bytes.size()) == 0;
+        (bytes.empty() || std::memcmp(decoder.sha1.buffer, bytes.data(), bytes.size()) == 0);
 }
 
 OptionalCString DecodeCString(PersistenceDecoder& decoder) {

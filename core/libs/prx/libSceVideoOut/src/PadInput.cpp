@@ -412,15 +412,16 @@ void PadInput::applyOutput() {
     }
 }
 
-void PadInput::applyMappingSnapshot() {
+bool PadInput::applyMappingSnapshot() {
     auto snapshot = mappings.Snapshot();
-    if (snapshot == appliedMapping) return;
+    if (snapshot == appliedMapping) return false;
     appliedMapping = snapshot;
     keyboardMouse.Replace(*snapshot);
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) slots[slot].state = sampleController(slot);
     }
     static_cast<void>(keyboardMouse.PadChordRequests(slots[0].state.buttons));
+    return true;
 }
 
 void PadInput::reloadInputMapping() {
@@ -523,7 +524,7 @@ PadInputState PadInput::sampleController(int slot) const {
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
-    applyMappingSnapshot();
+    if (applyMappingSnapshot()) publish(window.FrameNumber(), 0);
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -610,7 +611,7 @@ void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocu
 }
 
 void PadInput::Update(const DisplayWindow& window) {
-    applyMappingSnapshot();
+    const bool mappingChanged = applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;
@@ -644,7 +645,7 @@ void PadInput::Update(const DisplayWindow& window) {
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
     const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
     const bool captureChanged = std::exchange(padCaptured, captured) != captured;
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged || mappingChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {

@@ -335,6 +335,16 @@ class SanitizerReportTests(unittest.TestCase):
                       "| `plain` |  |\n"
                       "| `ub` | /a.cpp:1:2: runtime error: shift exponent 64 |\n", stdout)
 
+    def test_reports_include_junit_failure_and_error_diagnostics(self):
+        summary = "SUMMARY: AddressSanitizer: example"
+        for tag in ("failure", "error"):
+            for element in (f'<{tag} message="{summary}"/>', f"<{tag}>{summary}</{tag}>"):
+                with self.subTest(element=element):
+                    junit = self.write(suite(case("unit", "fail", element)))
+                    code, stdout, _ = self.run_main(junit, "--json")
+                    self.assertEqual(code, 1)
+                    self.assertEqual(json.loads(stdout)["tests"][0]["report"], summary)
+
     def test_failed_tests_without_reports_keep_the_single_column_table(self):
         code, stdout, _ = self.run_main(self.write(suite(case("plain", "fail", '<failure message=""/><system-out>FAIL</system-out>'))))
         self.assertEqual(code, 1)
