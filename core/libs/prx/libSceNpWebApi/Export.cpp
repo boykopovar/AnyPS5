@@ -5,7 +5,6 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -161,16 +160,12 @@ RequestLookup findRequest(std::int64_t requestId) {
 }
 
 bool copyIn(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
     const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = saved;
     return ok;
 }
 
 bool copyOut(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
     const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = saved;
     return ok;
 }
 
@@ -369,9 +364,7 @@ int APS5_VABI sceNpWebApiGetMemoryPoolStats(int libCtxId, NpWebApiMemoryPoolStat
     const auto context = contexts.find(libCtxId);
     if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
     const NpWebApiMemoryPoolStats localStats{context->second.poolSize, 0, 0};
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
-    errno = savedErrno;
     if (!copied) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     return 0;
 }
