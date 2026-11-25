@@ -12,9 +12,7 @@ constexpr int ReasonConnectionTypeNotSet = 144;
 template <typename T>
 T CopyIn(const T* source, const char* function) {
     T value{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }

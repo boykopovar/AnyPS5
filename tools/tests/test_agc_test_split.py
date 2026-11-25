@@ -66,6 +66,13 @@ def original(blocks=(ALPHA, BETA), items="agc_gamma_tests", tweaks="", image=Tru
 
 
 class SplitTextTests(unittest.TestCase):
+    def test_split_moves_properties_for_a_multiline_bracket_test_name(self):
+        property_call = "set_tests_properties([=[\nagc_alpha]=] PROPERTIES TIMEOUT 20)"
+        alpha = ALPHA.replace("set_tests_properties(agc_alpha PROPERTIES TIMEOUT 20)", property_call)
+        lists, fragments = agc_test_split.migrated(original(blocks=(alpha, BETA)), EXECUTION)
+        self.assertIn(property_call, fragments["agc_alpha_tests"])
+        self.assertNotIn(property_call, lists)
+
     def test_refactor_registers_default_tests_through_a_function(self):
         text = agc_test_split.refactor(original())
         self.assertIn("function(agc_add_default_test agcTest)", text)
@@ -138,6 +145,15 @@ class SplitTextTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_long_bracket_delimiters(self):
+        equals = "=" * 40
+        for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
+            with self.subTest(prefix=prefix):
+                text = f"set(A {prefix}[{equals}[x y]{equals}] tail)"
+                arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
+                self.assertEqual(arguments, expected)
+                self.assertEqual(end, len(text))
+
     def test_bracket_comment_ends_at_its_closing_bracket(self):
         text = "set(A #[[c]]x)\n"
         arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
@@ -158,6 +174,20 @@ class ArgumentTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("line 1: unterminated", result.stdout)
+
+    def test_bracket_arguments_ignore_only_the_first_immediate_newline(self):
+        values = (("\npath", "path"), ("\n\npath", "\npath"), ("\n path", " path"),
+                  (" \npath", " \npath"), (r"\npath", r"\npath"), ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"set(A [{equals}[{content}]{equals}] tail)"
+                    current, following = agc_test_split.commands(command + "\nset(B next)\n")
+                    self.assertEqual(current.arguments, ["A", expected, "tail"])
+                    self.assertEqual(current.last, command.count("\n"))
+                    self.assertEqual(following.first, current.last + 1)
+        quoted, = agc_test_split.commands('set(A "\npath" tail)\n')
+        self.assertEqual(quoted.arguments, ["A", "\npath", "tail"])
 
 
 class ResolveTests(unittest.TestCase):
@@ -307,6 +337,113 @@ class ExecutionTargetsTests(unittest.TestCase):
             root = Path(name)
             (root / agc_test_split.EXECUTION).mkdir(parents=True)
             self.assertEqual(agc_test_split.execution_targets(root), [])
+
+class DedentTests(unittest.TestCase):
+    def test_dedent_removes_the_amount_only_where_present(self):
+        self.assertEqual(agc_test_split.dedent(["    a", "  b", "c"], 2), ["  a", "b", "c"])
+
+
+class LoopListTests(unittest.TestCase):
+    def test_loop_list_returns_the_items_after_items(self):
+        self.assertEqual(agc_test_split.loop_list("FOREACH(ITEMS a b)"), ["a", "b"])
+
+
+class FindLoopTests(unittest.TestCase):
+    def test_find_loop_returns_none_or_refuses_duplicates(self):
+        lines = ["x", "y"]
+        self.assertIsNone(agc_test_split.find_loop(lines, lambda index, text: False, "marker"))
+        with self.assertRaises(agc_test_split.SplitError):
+            agc_test_split.find_loop(lines, lambda index, text: True, "marker")
+class TokenHelperTests(unittest.TestCase):
+    def test_until_returns_the_arguments_before_the_first_keyword(self):
+        self.assertEqual(agc_test_split.until(["a", "--", "b"], {"--"}), ["a"])
+        self.assertEqual(agc_test_split.until(["a", "b"], {"--"}), ["a", "b"])
+
+    def test_literal_refuses_names_with_variables_or_generator_expressions(self):
+        self.assertTrue(agc_test_split.literal("abc"))
+        self.assertFalse(agc_test_split.literal("${X}"))
+        self.assertFalse(agc_test_split.literal("$<CONFIG>"))
+
+    def test_expand_substitutes_every_listed_value(self):
+        self.assertEqual(agc_test_split.expand("lib${X}", {"X": ["a", "b"]}), ["liba", "libb"])
+        self.assertEqual(agc_test_split.expand("plain", {}), ["plain"])
+
+    def test_expand_yields_nothing_for_an_unknown_variable(self):
+        self.assertEqual(agc_test_split.expand("lib${Y}", {"X": ["a"]}), [])
+
+    def test_leading_walks_back_over_comment_lines_only(self):
+        self.assertEqual(agc_test_split.leading(["x", "# a", "# b", "code"], 3), 1)
+        self.assertEqual(agc_test_split.leading(["code", "y"], 1), 1)
+class GraphHelperTests(unittest.TestCase):
+    def test_union_find_joins_sets_transitively(self):
+        find, join = agc_test_split.union_find(4)
+        join(0, 1)
+        join(2, 3)
+        self.assertEqual(find(0), find(1))
+        self.assertNotEqual(find(0), find(2))
+        join(1, 3)
+        self.assertEqual(find(0), find(2))
+
+    def test_flatten_yields_each_branch_header_before_its_children(self):
+        header = agc_test_split.Command("if", [], 1, 1)
+        inner = agc_test_split.Command("set", [], 2, 2)
+        other_header = agc_test_split.Command("else", [], 3, 3)
+        other = agc_test_split.Command("unset", [], 4, 4)
+        end = agc_test_split.Command("endif", [], 5, 5)
+        block = agc_test_split.Block(header)
+        block.branches = [(header, [inner]), (other_header, [other])]
+        block.end = end
+        self.assertEqual(list(agc_test_split.flatten(block)), [header, inner, other_header, other, end])
+        self.assertEqual(list(agc_test_split.flatten(inner)), [inner])
+class ReadSetTests(unittest.TestCase):
+    def test_reads_uses_defines_and_accumulates(self):
+        class Facts:
+            def __init__(self, uses, defines, accumulates):
+                self.uses, self.defines, self.accumulates = set(uses), set(defines), set(accumulates)
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, set(), set())), {'a'})
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, {'a'}, set())), set())
+        self.assertEqual(agc_test_split.reads(Facts(set(), {'a'}, {'b'})), {'b'})
+class SubjectNameTests(unittest.TestCase):
+    class Facts:
+        def __init__(self):
+            self.subject_targets, self.subject_tests, self.dynamic, self.test_patterns = set(), set(), set(), set()
+
+    def test_subject_records_literal_targets_and_variable_uses(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['libA', 'lib${X}'], 'target')
+        self.assertEqual(facts.subject_targets, {'libA'})
+        self.assertEqual(facts.dynamic, {'X'})
+
+    def test_subject_keeps_a_variable_test_name_as_a_pattern(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['t${Y}'], 'test')
+        self.assertEqual(facts.subject_tests, set())
+        self.assertEqual(facts.dynamic, {'Y'})
+        self.assertEqual(facts.test_patterns, {'t${Y}'})
+
+
+class CommandErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def tool(self, command):
+        return subprocess.run([sys.executable, str(TOOL), command], cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_outside_a_git_checkout_is_a_controlled_error(self):
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a git repository", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_registration_file_is_a_controlled_error(self):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.root, check=True, capture_output=True)
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(LISTS, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

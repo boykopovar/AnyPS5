@@ -148,6 +148,10 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+### Automated title runs
+
+`tools/title_run.py` queues a title timeline only after both the `after_s` minimum delay and a fresh recording sample from controller port 0. This keeps a timeline queued during startup from being discarded as an old command at the first controller read. For scripted input, an absent or empty `APS5_PAD_RECORD` defaults to `pad-record.txt` in the run trace directory. Nonempty overrides are preserved; relative paths resolve in the title work directory. Warmup and capture each wait for a new sample, and `pad_queued_s` stays null if the process ends before readiness.
+
 ## Recording and replaying controller input
 
 Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
@@ -209,7 +213,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`, and is at most 32 characters (`MaxTitleIdLength`). A longer ID, or one with other characters, selects no per-game file, and no message is logged for it. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -270,7 +274,7 @@ Controls, Configuration and Help are separate views; switching views preserves b
 
 The translation button selects one of 22 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
 
-Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
+Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `74be4c2836da0940f0144d0d97852606f9ab11e9`, the commit `3rdparty/SDL2` is pinned to. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
 For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
 

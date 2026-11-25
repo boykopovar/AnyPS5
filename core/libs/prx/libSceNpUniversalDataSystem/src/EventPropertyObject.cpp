@@ -29,9 +29,7 @@ extern "C" {
 int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject** new_object) {
     if (new_object == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     auto* created = objects().Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(new_object, &created, sizeof(created));
-    errno = savedErrno;
     if (!copied) {
         objects().Release(created);
         return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
@@ -129,9 +127,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyObject{});
     if (value_ptr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(value_ptr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     }
     object->Set(key, std::move(child));
@@ -148,9 +144,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyArray{});
     if (value_ptr != nullptr) {
         auto* pointer = child.get();
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(value_ptr, &pointer, sizeof(pointer));
-        errno = savedErrno;
         if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     }
     object->Set(key, std::move(child));

@@ -17,10 +17,9 @@ static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 static std::uint32_t Sdk = 0x06000000;
+static std::uint32_t processParameters[]{0, 0, 0, 0, 0x06000000};
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
-    static std::uint32_t words[]{0, 0, 0, 0, 0};
-    words[4] = Sdk;
-    return words;
+    return processParameters;
 }
 struct GuestTrace { std::map<void*, std::size_t> live; std::size_t generation = 0; };
 static void* APS5_VABI AllocateTracked(void*, std::size_t bytes, void* context) {
@@ -132,6 +131,7 @@ static void Check(Failure failure, unsigned target) {
 int main() {
     for (auto sdk : {0x05000000u, 0x06000000u}) {
         Sdk = sdk;
+        processParameters[4] = sdk;
         Check(Failure::None, 0);
         for (auto failure : {Failure::AttributeException, Failure::MutexException})
             for (unsigned target = 1; target <= (sdk < 0x06000000 ? 1u : 2u); ++target) Check(failure, target);

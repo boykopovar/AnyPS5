@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import math
 import os
@@ -106,7 +107,8 @@ def sample_summary(path, title_id, commit):
     if not isinstance(built_commit, str) or not 7 <= len(built_commit) <= 40 or not commit.startswith(built_commit) or build.get("dirty") is not False:
         raise ValueError(f"{path}: measured build is not the requested clean commit {commit}")
     machine = summary.get("machine")
-    title = summary.get("titles", {}).get(title_id)
+    titles = summary.get("titles")
+    title = titles.get(title_id) if isinstance(titles, dict) else None
     if not isinstance(machine, dict) or not isinstance(title, dict):
         raise ValueError(f"{path}: title runner summary is missing machine or title data")
     run_list = title.get("runs")
@@ -114,12 +116,14 @@ def sample_summary(path, title_id, commit):
         raise ValueError(f"{path}: expected exactly one measured title run")
     run = run_list[0]
     fps = run.get("fps")
-    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not math.isfinite(fps) or fps <= 0:
+    if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not 0 < fps <= sys.float_info.max:
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
     identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
-    if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
-        raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    invalid = [key for key in ("os", "gpu", "driver", "cpu", "title")
+               if not isinstance(identity[key], str) or not identity[key].strip()]
+    if invalid:
+        raise ValueError(f"{path}: measurement is missing machine or title identity text for {', '.join(invalid)}")
     content_version = identity["content_version"]
     if not isinstance(content_version, str) or not content_version.strip():
         raise ValueError(f"{path}: measurement is missing a valid content version")
@@ -234,6 +238,16 @@ def measure_commit(repo, worktree, results_root, recipe, commit):
     return result
 
 
+def _hardlinks_unavailable(error):
+    if isinstance(error, NotImplementedError):
+        return True
+    unsupported = {
+        getattr(errno, name, None)
+        for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+    } - {None}
+    return error.errno in unsupported or getattr(error, "winerror", None) in (1, 5)
+
+
 def write_report(path, report):
     output = Path(path)
     if output.exists():
@@ -245,7 +259,18 @@ def write_report(path, report):
                                          prefix=output.name + ".", suffix=".tmp", delete=False) as file:
             temporary = Path(file.name)
             file.write(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
-        os.link(temporary, output)
+        try:
+            os.link(temporary, output)
+        except (OSError, NotImplementedError) as error:
+            if not _hardlinks_unavailable(error):
+                raise
+            if os.name == "nt":
+                os.rename(temporary, output)
+            else:
+                if output.exists():
+                    raise ValueError(f"report already exists: {output}") from error
+                os.replace(temporary, output)
+            temporary = None
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
