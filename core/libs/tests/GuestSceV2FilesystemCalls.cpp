@@ -1,5 +1,7 @@
 #include "AppArchiveFixture.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FilesystemForwards.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <cstdint>
@@ -17,6 +19,7 @@ constexpr int TypeNotFound = -1;
 constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
 constexpr int NoSuchFile = 2;
+constexpr int IoError = 5;
 constexpr int NotDirectory = 20;
 constexpr int IsDirectory = 21;
 constexpr int Invalid = 22;
@@ -25,6 +28,7 @@ constexpr int NoSystemCall = 78;
 constexpr int NotSupported = 45;
 constexpr std::uint32_t KernelNoSuchFile = 0x80020002u;
 constexpr std::uint32_t KernelNotDirectory = 0x80020014u;
+constexpr std::int32_t KernelTryAgain = static_cast<std::int32_t>(0x80020023u);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -176,6 +180,32 @@ void TestUnsupported() {
     Require(space[0] == UINT64_MAX && space[1] == UINT64_MAX && space[2] == UINT64_MAX && space[3] == 4, "statvfs reports unknown space and writes three fields");
     Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix("/") == 0, "the root stays the current directory");
     for (const char* path : {"", ".", "d", "//", "/d", "f/"}) Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(path) == NotSupported, "any other current directory is not supported");
+    Require(_ZNSt8__sce_v210filesystem8_StatvfsEPKcRNS0_10space_infoE_nid_postfix("f", reinterpret_cast<std::uint64_t*>(0x10)) == 14, "an unwritable space output is a bad address");
+    Require(_ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(reinterpret_cast<const char*>(0x10)) == 14, "an unreadable current directory is a bad address");
+}
+
+int copyWriteAttempts = 0;
+
+std::int64_t APS5_VABI CopyWriteWithoutProgress(int descriptor, const void* buffer, std::size_t size) {
+    ++copyWriteAttempts;
+    if (copyWriteAttempts == 1 && size > 1) return sceKernelWrite(descriptor, buffer, 1);
+    if (copyWriteAttempts == 2) return 0;
+    return KernelTryAgain;
+}
+
+void TestCopyWithoutWriteProgress() {
+    Prepare();
+    static const FilesystemForwards_nid_no_patch forwards{
+        .open = sceKernelOpen,
+        .read = sceKernelRead,
+        .write = CopyWriteWithoutProgress,
+        .close = sceKernelClose,
+    };
+    RegisterFilesystemForwards_nid_no_patch(&forwards);
+    const int result = _ZNSt8__sce_v210filesystem10_Copy_fileEPKcS2__nid_postfix("f", "copy");
+    RegisterFilesystemForwards_nid_no_patch(nullptr);
+    Require(copyWriteAttempts == 2 && result == IoError, "a zero-byte write reports EIO without retrying");
+    Require(Read("copy") == Read("f").substr(0, 1), "the failed copy leaves the bytes already written");
 }
 
 }
@@ -189,6 +219,7 @@ int main() {
     TestEntries();
     TestCopy();
     TestUnsupported();
+    TestCopyWithoutWriteProgress();
     Prepare();
     std::error_code ignored;
     std::filesystem::current_path(std::filesystem::temp_directory_path(), ignored);

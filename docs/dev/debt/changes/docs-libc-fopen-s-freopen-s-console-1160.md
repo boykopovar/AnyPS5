@@ -1,0 +1,9 @@
+# libc
+
+## change [fopen_s]
+
+- [fopen_s](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) - a null or unwritable `FILE **` calls the constraint handler with "fopen_s: bad FILE ** argument" and returns `EINVAL` (22) as a host-safety fallback (a payload process on firmware 11.60 got the same message and `EINVAL` from the console for a null `FILE **`, without a fault; an unwritable one is unmeasured), and a null filename or mode with "fopen_s: bad argument", each with `EINVAL` and a null pointer, as the `libc.prx` PPSA07923 and PPSA05916 ship does. A failed open returns the errno of the failure (2 for a missing folder on the console, firmware 11.60), as C11 K.3.5.2.1 leaves the nonzero value open and Microsoft's CRT returns errno; the titles' paths that open a file are not compared
+
+## change [freopen_s]
+
+- [freopen_s](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) follows C11 K.3.5.2.2 through `freopen`: a null or unwritable result, or a null mode or stream returns `EINVAL` (22) with `*result` set to null when writable (returning `EINVAL` and calling the constraint handler for an unwritable result is a host-safety fallback; console fault handling is unmeasured), and calls the constraint handler with `EINVAL`, a null pointer and the titles' `fopen_s` text: "fopen_s: bad FILE ** argument" for a bad result, "fopen_s: bad argument" for a null mode or stream. A null name is passed to `freopen`, which reports mode-only reopening as unsupported (`ENOTSUP`, 45) with `*result` null and no handler call. A successful reopen stores the stream in `*result` and returns 0, and a failed one stores null and returns the errno `freopen` left, closing the stream as `freopen` does. The 11.60 console gave 0 with the stream in `*result` for a valid one and 22 with that message for a null stream/mode

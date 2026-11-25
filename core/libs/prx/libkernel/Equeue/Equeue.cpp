@@ -1,11 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -38,7 +40,7 @@ static UnreadFile UnreadFileBytes(int file) {
 }
 
 static bool RegularFile(int descriptor) {
-    if (File::IsHostStream(descriptor)) {
+    if (File::IsHostStream(descriptor) || IsKsemDescriptor_nid_no_patch(descriptor)) {
         return false;
     }
     FileStat status{};
@@ -753,7 +755,12 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
 
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
     const auto fail = [out](int error) {
-        if (out != nullptr) *out = 0;
+        if (out != nullptr) {
+            const int zero = 0;
+            const int savedErrno = errno;
+            GuestCopyOut_nid_no_patch(out, &zero, sizeof(zero));
+            errno = savedErrno;
+        }
         return error;
     };
     if (num < 1) {
@@ -769,22 +776,54 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
     if (out == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    KernelUseconds localTimo{};
+    if (timo != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localTimo, timo, sizeof(localTimo));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
     const auto waitStart = std::chrono::steady_clock::now();
     int result = 0;
-    if (timo == nullptr) {
-        result = owner->WaitForEvents(ev, num, 0);
-    } else if (*timo == 0) {
-        result = owner->GetTriggeredEvents(ev, num);
-    } else {
-        result = owner->WaitForEvents(ev, num, *timo);
+    constexpr int STACK_EVENTS = 64;
+    constexpr int MAX_WAIT_EVENTS = 1024;
+    KernelEvent stackEvents[STACK_EVENTS];
+    std::unique_ptr<KernelEvent[]> heapEvents;
+    const int capacity = std::min(num, MAX_WAIT_EVENTS);
+    KernelEvent* target = stackEvents;
+    if (capacity > STACK_EVENTS) {
+        heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(capacity));
+        target = heapEvents.get();
     }
-    if (timo == nullptr || *timo != 0) {
+    if (timo == nullptr) {
+        result = owner->WaitForEvents(target, capacity, 0);
+    } else if (localTimo == 0) {
+        result = owner->GetTriggeredEvents(target, capacity);
+    } else {
+        result = owner->WaitForEvents(target, capacity, localTimo);
+    }
+    if (timo == nullptr || localTimo != 0) {
         KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), result == 0);
     }
     if (result == SCE_KERNEL_ERROR_EBADF) {
         return fail(SCE_KERNEL_ERROR_EBADF);
     }
-    *out = result;
+    if (result > 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(ev, target, static_cast<std::size_t>(result) * sizeof(KernelEvent));
+        errno = savedErrno;
+        if (!copied) {
+            return fail(SCE_KERNEL_ERROR_EFAULT);
+        }
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     if (result == 0) {
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
@@ -950,6 +989,7 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
 }
 
 int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_READ);
 }
 
@@ -958,6 +998,7 @@ int APS5_VABI sceKernelDeleteReadEvent(KernelEqueue eq, int fd) {
 }
 
 int APS5_VABI sceKernelAddWriteEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_WRITE);
 }
 

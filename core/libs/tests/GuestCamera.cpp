@@ -153,6 +153,8 @@ void CheckFrames() {
     errno = 71;
     Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
     Require(errno == 71, "errno preserved");
+    Require(sceCameraGetFrameData(1, reinterpret_cast<CameraFrameData*>(0x10)) == ErrorParam, "unwritable frame data must be rejected");
+    Require(errno == 71, "caller errno must be preserved on unwritable frame data");
 }
 
 void CheckClose() {
@@ -192,14 +194,15 @@ void CheckClose() {
 
 int main() {
     Require(sceCameraIsAttached(0) == 0, "camera 0 must be reported as not attached");
-    Require(sceCameraIsAttached(1) == ErrorParam, "camera index 1 must be rejected");
+    Require(sceCameraIsAttached(1) == 0, "camera 1 must be reported as not attached");
+    Require(sceCameraIsAttached(2) == ErrorParam, "camera index 2 must be rejected");
     Require(sceCameraIsAttached(-1) == ErrorParam, "a negative camera index must be rejected");
     CheckClosed();
     CheckOpen();
     CheckStart();
     CheckFrames();
     CheckClose();
-    RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
+    Require(sceCameraSetVideoSync() == ErrorParam, "set video sync before open must report PARAM");
     RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
     return 0;
 }

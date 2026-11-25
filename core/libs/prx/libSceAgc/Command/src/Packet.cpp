@@ -2,12 +2,17 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
+#include <array>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace Agc::Command {
@@ -53,6 +58,56 @@ std::uint32_t available(const CommandBuffer& buffer, const char* function) {
     return static_cast<std::uint32_t>(count - buffer.reserved_dw);
 }
 
+struct Growing {
+    const CommandBuffer* buffer;
+    std::thread::id thread;
+    std::uint32_t depth;
+};
+
+struct AllocationStripe {
+    std::mutex mutex;
+    std::condition_variable grown;
+    std::vector<Growing> growing;
+
+    std::vector<Growing>::iterator find(const CommandBuffer* buffer) {
+        return std::find_if(growing.begin(), growing.end(), [buffer](const Growing& entry) { return entry.buffer == buffer; });
+    }
+};
+
+AllocationStripe& allocationStripe(const CommandBuffer* buffer) {
+    static std::array<AllocationStripe, 64> stripes;
+    return stripes[(reinterpret_cast<std::uintptr_t>(buffer) >> 4u) % stripes.size()];
+}
+
+class GrowScope {
+public:
+    GrowScope(AllocationStripe& stripe, std::unique_lock<std::mutex>& lock, const CommandBuffer* buffer) : stripe(stripe), lock(lock), buffer(buffer) {
+        if (const auto entry = stripe.find(buffer); entry != stripe.growing.end()) {
+            ++entry->depth;
+        } else {
+            stripe.growing.push_back({buffer, std::this_thread::get_id(), 1});
+        }
+        lock.unlock();
+    }
+
+    ~GrowScope() {
+        lock.lock();
+        const auto entry = stripe.find(buffer);
+        if (--entry->depth == 0) {
+            stripe.growing.erase(entry);
+            stripe.grown.notify_all();
+        }
+    }
+
+    GrowScope(const GrowScope&) = delete;
+    GrowScope& operator=(const GrowScope&) = delete;
+
+private:
+    AllocationStripe& stripe;
+    std::unique_lock<std::mutex>& lock;
+    const CommandBuffer* buffer;
+};
+
 }
 
 void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
@@ -66,7 +121,24 @@ void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
 }
 
 std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* function) {
-    Reserve(buffer, count, function);
+    Require(buffer != nullptr && count != 0, function, "null command buffer or empty allocation");
+    auto& stripe = allocationStripe(buffer);
+    std::unique_lock serialized(stripe.mutex);
+    stripe.grown.wait(serialized, [&] {
+        const auto entry = stripe.find(buffer);
+        return entry == stripe.growing.end() || entry->thread == std::this_thread::get_id();
+    });
+    if (available(*buffer, function) < count) {
+        Require(buffer->callback != nullptr, function, "command buffer exhausted");
+        Require(count <= std::numeric_limits<std::uint32_t>::max() - buffer->reserved_dw, function, "command buffer allocation overflow");
+        bool grew = false;
+        {
+            const GrowScope growing(stripe, serialized, buffer);
+            grew = buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data);
+        }
+        Require(grew, function, "command buffer allocation callback failed");
+        Require(available(*buffer, function) >= count, function, "command buffer allocation callback returned insufficient space");
+    }
     auto* result = buffer->cursor_up;
     AgcDriverPrepareCommandWrite_nid_no_patch(reinterpret_cast<std::uint64_t>(result), static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     buffer->cursor_up += count;
@@ -152,9 +224,8 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
 
 std::uint32_t* WriteIndirectRegisters(CommandBuffer* buffer, std::uint32_t opcode, const volatile ShaderRegister* registers, std::uint32_t count, const char* function) {
     const auto address = reinterpret_cast<std::uintptr_t>(registers);
-    if (address != 0 || count != 0) CheckAddress(address, 4, function);
-    CheckBits(count, 0x3fffu, function);
-    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count}, function);
+    Require(address != 0 || count == 0, function, "null register list with a count");
+    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address) & ~3u, static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count & 0x3fffu}, function);
 }
 
 void PatchIndirectAddress(std::uint32_t* packet, std::uint32_t opcode, const volatile ShaderRegister* registers, const char* function) {
