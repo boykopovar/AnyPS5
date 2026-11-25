@@ -337,7 +337,6 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
 
 std::uint32_t byteBuffers(SpirvEmitterState& state) {
     if (state.storageBufferU8Variable != 0u) return state.storageBufferU8Variable;
-    if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
     if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageBuffer8BitAccess)) == state.supportedCapabilities.end()) return 0u;
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     const auto binding = std::find_if(layout.descriptors.begin(), layout.descriptors.end(), [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::Buffers; });
@@ -348,8 +347,9 @@ std::uint32_t byteBuffers(SpirvEmitterState& state) {
     const auto type = state.module.Type(spv::OpTypeArray, TypeStorageBufferU8Block(state), count);
     const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
     state.module.AddName(variable, "buffers_u8");
-    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
-    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(state.program.Resources().stage, DescriptorBindingKind::Buffers));
+    const auto stage = state.program.Resources().stage;
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, state.fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(stage, DescriptorBindingKind::Buffers));
     state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
     if (state.storageBufferU64Variable == 0u && state.storageBufferCoherentVariable == 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationAliased);
     if (state.requirements.coherentBuffers) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);

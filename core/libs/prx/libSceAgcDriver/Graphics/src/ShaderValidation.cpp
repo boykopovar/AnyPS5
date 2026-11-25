@@ -369,7 +369,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     terminateExtension = true;
                     break;
                 }
-                Require(extension == "SPV_KHR_float_controls" || (fmaFloat16 && extension == "SPV_KHR_fma") || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (atomicLockTable && extension == "SPV_KHR_physical_storage_buffer") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || (fragment && !shader.stencilReferences.empty() && extension == "SPV_KHR_physical_storage_buffer") || (geometry && state.tessellationCapture && extension == "SPV_KHR_physical_storage_buffer") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
+                Require(extension == "SPV_KHR_float_controls" || (fmaFloat16 && extension == "SPV_KHR_fma") || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (atomicLockTable && extension == "SPV_KHR_physical_storage_buffer") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || (fragment && !shader.stencilReferences.empty() && extension == "SPV_KHR_physical_storage_buffer") || (geometry && state.tessellationCapture && extension == "SPV_KHR_physical_storage_buffer") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || extension == "SPV_KHR_8bit_storage" || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && extension == "SPV_KHR_physical_storage_buffer"), "unsupported SPIR-V extension");
                 break;
             }
             case spv::OpTerminateInvocation:
@@ -637,7 +637,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(words.size() == 3 && (words[0] & 0xffffu) == spv::OpTypeRuntimeArray, "descriptor block member must be a runtime array");
             const auto& element = module.Type(words[2]);
             const bool unsignedInteger = element.size() == 4 && (element[0] & 0xffffu) == spv::OpTypeInt && element[3] == 0u;
-            Require(unsignedInteger && (element[2] == 32u || (array && decoration.aliased && element[2] == 64u)), "descriptor block member must be a runtime array of u32, or of u64 in an aliased guest buffer view");
+            Require(unsignedInteger && (element[2] == 32u || (array && decoration.aliased && (element[2] == 64u || element[2] == 8u))), "descriptor block member must be a runtime array of u32, or of u64 or u8 in an aliased guest buffer view");
             const auto member = module.offsets.find({blockId, 0});
             Require(member != module.offsets.end() && member->second == 0, "descriptor block member must have offset zero");
         }

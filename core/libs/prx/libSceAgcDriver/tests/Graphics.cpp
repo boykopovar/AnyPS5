@@ -11890,9 +11890,10 @@ void aliasedBufferViewTests() {
     const auto code = [](std::uint32_t store, std::uint32_t resource) {
         return std::array<std::uint32_t, 9>{0xe0000000u, 0x80010a00u, 0xbf8c3f70u, store, resource, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
     };
-    const std::array<std::pair<std::array<std::uint32_t, 9>, std::set<std::string>>, 2> cases{{
+    const std::array<std::pair<std::array<std::uint32_t, 9>, std::set<std::string>>, 3> cases{{
         {code(0xe0104000u, 0x80010a00u), {"buffers", "buffers_coherent"}},
         {code(0xe1480000u, 0x80010a00u), {"buffers", "buffers_u64"}},
+        {code(0xe0100000u, 0x80020a00u), {"buffers", "buffers_u8"}},
     }};
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
