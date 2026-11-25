@@ -393,10 +393,7 @@ static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
 static bool CompressorKnee(float knee) {
     if (knee == 0.0f) return false;
     if (!PS4_LIBRARY) return true;
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, processParameters + 0x10, sizeof(sdkVersion));
-    return sdkVersion >= 0x1700000;
+    return ApplicationCompiledSdkVersion() >= 0x1700000;
 }
 
 static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
