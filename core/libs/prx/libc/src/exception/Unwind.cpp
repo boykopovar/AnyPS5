@@ -165,6 +165,8 @@ int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
         query.fde = nullptr;
         query.fdeBegin = nullptr;
         query.fdeEnd = nullptr;
+        query.cieBegin = nullptr;
+        query.cieEnd = nullptr;
         return 1;
     }
     const Word fdeAddr = Word(query.fde);
@@ -175,12 +177,16 @@ int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
         if (fdeAddr >= start && fdeAddr - start < ph.p_memsz) {
             query.fdeBegin = reinterpret_cast<const Byte*>(start);
             query.fdeEnd = reinterpret_cast<const Byte*>(start + ph.p_memsz);
+            query.cieBegin = query.fdeBegin;
+            query.cieEnd = query.fdeEnd;
             return 1;
         }
     }
     query.fde = nullptr;
     query.fdeBegin = nullptr;
     query.fdeEnd = nullptr;
+    query.cieBegin = nullptr;
+    query.cieEnd = nullptr;
     return 1;
 }
 
@@ -235,6 +241,8 @@ void LookupInObject(const Byte* header, const ObjectBases& bases, Lookup& query)
         query.fde = nullptr;
         query.fdeBegin = nullptr;
         query.fdeEnd = nullptr;
+        query.cieBegin = nullptr;
+        query.cieEnd = nullptr;
         return;
     }
     const Word fdeAddr = Word(query.fde);
@@ -242,12 +250,16 @@ void LookupInObject(const Byte* header, const ObjectBases& bases, Lookup& query)
         if (fdeAddr >= load.start && fdeAddr - load.start < load.size) {
             query.fdeBegin = reinterpret_cast<const Byte*>(load.start);
             query.fdeEnd = reinterpret_cast<const Byte*>(load.start + load.size);
+            query.cieBegin = query.fdeBegin;
+            query.cieEnd = query.fdeEnd;
             return;
         }
     }
     query.fde = nullptr;
     query.fdeBegin = nullptr;
     query.fdeEnd = nullptr;
+    query.cieBegin = nullptr;
+    query.cieEnd = nullptr;
 }
 
 bool FindFrameFast(Lookup& query) {
@@ -324,7 +336,7 @@ const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte
             const Byte* cursor;
             const char* augmentation;
             Byte lsdaEncoding;
-            if (DecodeRange(candidate, Lookup {0, record, 0, 0, 0, end, begin}, cursor, augmentation, lsdaEncoding))
+            if (DecodeRange(candidate, Lookup {0, record, 0, 0, 0, end, begin, begin, end}, cursor, augmentation, lsdaEncoding))
                 index.emplace_back(candidate.start, record);
         }
         p = next;
@@ -490,6 +502,8 @@ bool TryCompactDwarf(std::uint32_t ehOffset, void* user) {
     attempt->query->fde = attempt->eh + ehOffset;
     attempt->query->fdeBegin = attempt->eh;
     attempt->query->fdeEnd = attempt->ehEnd;
+    attempt->query->cieBegin = attempt->eh;
+    attempt->query->cieEnd = attempt->ehEnd;
     attempt->query->text = attempt->base;
     attempt->query->data = attempt->base;
     Frame decoded {};
@@ -497,6 +511,8 @@ bool TryCompactDwarf(std::uint32_t ehOffset, void* user) {
         attempt->query->fde = nullptr;
         attempt->query->fdeBegin = nullptr;
         attempt->query->fdeEnd = nullptr;
+        attempt->query->cieBegin = nullptr;
+        attempt->query->cieEnd = nullptr;
         return false;
     }
     *attempt->frame = decoded;
@@ -574,6 +590,8 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
                 query.fde = record;
                 query.fdeBegin = begin;
                 query.fdeEnd = end;
+                query.cieBegin = begin;
+                query.cieEnd = end;
                 frame = {};
                 if (DecodeCandidate(context, frame, query)) return true;
             }
@@ -611,8 +629,12 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
                 query.fde = nullptr;
                 query.fdeBegin = nullptr;
                 query.fdeEnd = nullptr;
+                query.cieBegin = nullptr;
+                query.cieEnd = nullptr;
                 return false;
             }
+            query.cieBegin = query.fdeBegin;
+            query.cieEnd = query.fdeEnd;
             return DecodeCandidate(context, frame, query);
         }
         if (std::memcmp(section.Name, ".ehfram", 8) != 0) continue;
@@ -624,6 +646,8 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
         query.fde = std::prev(found)->second;
         query.fdeBegin = frames;
         query.fdeEnd = frames + section.Misc.VirtualSize;
+        query.cieBegin = frames;
+        query.cieEnd = frames + section.Misc.VirtualSize;
         frame = {};
         if (DecodeCandidate(context, frame, query)) return true;
     }

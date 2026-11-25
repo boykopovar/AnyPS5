@@ -189,7 +189,7 @@ inline unsigned TryEncodingSize(Byte encoding) {
     }
 }
 
-struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; Word segment {}; const Byte* fdeEnd {}; const Byte* fdeBegin {}; };
+struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; Word segment {}; const Byte* fdeEnd {}; const Byte* fdeBegin {}; const Byte* cieBegin {}; const Byte* cieEnd {}; };
 
 inline bool SearchEhFrameHeader(const Byte* header, const Byte* headerEnd, Lookup& query) {
     if (!header || !headerEnd || headerEnd < header || static_cast<std::size_t>(headerEnd - header) < 4) return false;
@@ -261,18 +261,22 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     if (!TryRead(p, frame.end, cieOffset)) return false;
     if (!cieOffset || Word(ciePointer) < Word(cieOffset)) return false;
     const Byte* cie = ciePointer - cieOffset;
-    if (query.fdeBegin && cie < query.fdeBegin) return false;
+    const Byte* const cieBegin = query.cieBegin ? query.cieBegin : query.fdeBegin;
+    const Byte* const cieEnd = query.cieEnd ? query.cieEnd : query.fdeEnd;
+    if (cieBegin && cie < cieBegin) return false;
+    if (cie >= query.fde) return false;
     const Byte* c = cie;
     std::uint32_t cieLength {};
-    if (query.fdeEnd) {
-        if (c >= query.fdeEnd || !TryRead(c, query.fdeEnd, cieLength)) return false;
+    if (cieEnd) {
+        if (c >= cieEnd || !TryRead(c, cieEnd, cieLength)) return false;
     } else {
         cieLength = Read<std::uint32_t>(c);
     }
     if (cieLength < 4 || cieLength == 0xffffffff) return false;
     if (Word(c) > ~Word(0) - cieLength) return false;
-    if (query.fdeEnd && static_cast<std::size_t>(query.fdeEnd - c) < cieLength) return false;
+    if (cieEnd && static_cast<std::size_t>(cieEnd - c) < cieLength) return false;
     frame.cieEnd = c + cieLength;
+    if (frame.cieEnd > query.fde) return false;
     std::uint32_t cieId {};
     if (!TryRead(c, frame.cieEnd, cieId) || cieId != 0) return false;
     Byte version {};

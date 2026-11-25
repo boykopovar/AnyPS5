@@ -33,7 +33,7 @@ public:
                 const Byte* cursor = nullptr;
                 const char* augmentation = nullptr;
                 Byte lsdaEncoding = 0;
-                if (LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{0, record, 0, 0, 0, framesEnd, frames}, cursor, augmentation, lsdaEncoding)) index.emplace_back(frame.start, record);
+                if (LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{0, record, 0, 0, 0, framesEnd, frames, frames, framesEnd}, cursor, augmentation, lsdaEncoding)) index.emplace_back(frame.start, record);
             }
             p = next;
         }
@@ -102,7 +102,7 @@ private:
         const Byte* p = nullptr;
         const char* augmentation = nullptr;
         Byte lsdaEncoding = 0;
-        if (!LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{pc, std::prev(found)->second, 0, 0, 0, framesEnd, framesBegin}, p, augmentation, lsdaEncoding)) return Step::Failed;
+        if (!LibcUnwind::DecodeRange(frame, LibcUnwind::Lookup{pc, std::prev(found)->second, 0, 0, 0, framesEnd, framesBegin, framesBegin, framesEnd}, p, augmentation, lsdaEncoding)) return Step::Failed;
         if (pc < frame.start || pc - frame.start >= frame.length) return Step::NoRecord;
         if (!LibcUnwind::DecodeFdeAugmentation(frame, LibcUnwind::Lookup{pc}, p, augmentation, lsdaEncoding)) return Step::Failed;
         frame.begin = p;

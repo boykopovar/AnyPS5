@@ -448,6 +448,48 @@ void UnwindBounds() {
         truncCieQuery.fdeEnd = truncHdr;
         Require(!LibcUnwind::DecodeRange(badFrame, truncCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE extending past fdeEnd");
 
+        auto overlapCieBuf = ehBuf;
+        overlapCieBuf[0] = 0x18;
+        LibcUnwind::Lookup overlapCieQuery = query;
+        overlapCieQuery.fde = &overlapCieBuf[24];
+        overlapCieQuery.fdeBegin = overlapCieBuf.data();
+        overlapCieQuery.fdeEnd = &overlapCieBuf[52];
+        const std::int32_t overlapFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&overlapCieBuf[32]));
+        std::memcpy(&overlapCieBuf[32], &overlapFdeStartRel, sizeof(overlapFdeStartRel));
+        Require(!LibcUnwind::DecodeRange(badFrame, overlapCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE overlapping FDE within fdeEnd");
+
+        std::array<LibcUnwind::Byte, 56> splitBuf = {
+            0x14, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 'L',
+            0x00, 0x01, 0x78, 0x10,
+            0x02, 0x1b, 0x03, 0x0c,
+            0x07, 0x08, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0x20, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00,
+            0x04, 0x44, 0x33, 0x22,
+            0x11, 0x44, 0x0e, 0x10,
+            0x00, 0x00, 0x00, 0x00
+        };
+        const std::int32_t splitFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&splitBuf[36]));
+        std::memcpy(&splitBuf[36], &splitFdeStartRel, sizeof(splitFdeStartRel));
+        LibcUnwind::Lookup validSplitQuery{targetPc + 4, &splitBuf[28], 0, 0, 0, splitBuf.data() + splitBuf.size(), &splitBuf[28], splitBuf.data(), &splitBuf[24]};
+        LibcUnwind::Frame splitFrame{};
+        Require(LibcUnwind::DecodeRange(splitFrame, validSplitQuery, p, augmentation, lsdaEncoding), "DecodeRange failed on valid split CIE/FDE sections");
+
+        auto crossCieBuf = splitBuf;
+        crossCieBuf[0] = 0x18;
+        const std::int32_t crossFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&crossCieBuf[36]));
+        std::memcpy(&crossCieBuf[36], &crossFdeStartRel, sizeof(crossFdeStartRel));
+        LibcUnwind::Lookup crossCieQuery{targetPc + 4, &crossCieBuf[28], 0, 0, 0, crossCieBuf.data() + crossCieBuf.size(), &crossCieBuf[28], crossCieBuf.data(), &crossCieBuf[24]};
+        Require(!LibcUnwind::DecodeRange(badFrame, crossCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE crossing cieEnd before fdeEnd");
+
+        LibcUnwind::Lookup shortCieQuery{targetPc + 4, &splitBuf[28], 0, 0, 0, splitBuf.data() + splitBuf.size(), &splitBuf[28], splitBuf.data(), &splitBuf[2]};
+        Require(!LibcUnwind::DecodeRange(badFrame, shortCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE with fewer than 4 bytes before cieEnd");
+
         auto badFdeAugBuf = ehBuf;
         badFdeAugBuf[40] = 0x20;
         LibcUnwind::Lookup badAugQuery{targetPc + 4, &badFdeAugBuf[24], 0, 0, 0, &badFdeAugBuf[52], badFdeAugBuf.data()};
