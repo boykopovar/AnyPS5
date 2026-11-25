@@ -152,7 +152,9 @@ extern "C" {
 
 UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search) {
     if (search == nullptr) return nullptr;
-    NotImplemented_nid_no_patch(__func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    return static_cast<UCollator*>(Icu::StringSearchHost::GetCollator(state->search));
 }
 
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search) {

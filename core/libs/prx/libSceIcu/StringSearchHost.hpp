@@ -15,6 +15,7 @@ void SetPattern(void* search, const char16_t* pattern, std::int32_t patternLengt
 void FailNextPatternAllocation();
 void SetText(void* search, const char16_t* text, std::int32_t textLength, std::int32_t& status);
 std::int32_t Next(void* search, std::int32_t& status);
+void* GetCollator(const void* search);
 
 }
 

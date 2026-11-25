@@ -457,6 +457,7 @@ void Run() {
     Require(status <= 0);
     usearch_reset_nid_postfix(opened);
     Require(usearch_next_nid_postfix(opened, &status) == 2);
+    Require(usearch_getCollator_nid_postfix(opened) != nullptr);
 }
 
 } // namespace UsearchObject

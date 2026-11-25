@@ -119,4 +119,8 @@ std::int32_t Next(void* search, std::int32_t& status) {
     return result;
 }
 
+void* GetCollator(const void* search) {
+    return usearch_getCollator(static_cast<const UStringSearch*>(search));
+}
+
 }
