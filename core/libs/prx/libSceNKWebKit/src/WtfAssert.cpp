@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -111,9 +110,7 @@ constexpr std::size_t ReportTextLimit = 65536;
 std::string GuestText(const char* text) {
     std::string copied;
     if (text == nullptr) return copied;
-    const int savedErrno = errno;
     if (CopyGuestString_nid_no_patch(text, ReportTextLimit, copied) != 0) copied.clear();
-    errno = savedErrno;
     return copied;
 }
 
@@ -460,10 +457,8 @@ void APS5_VABI WTFGetBacktrace(void** stack, int* size) {
     if (!stack || !size) {
         return;
     }
-    const int savedErrno = errno;
     int requested = 0;
     bool copied = GuestCopyIn_nid_no_patch(&requested, size, sizeof(requested));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("WTFGetBacktrace: unreadable size");
     if (requested <= 0) {
         return;
@@ -473,11 +468,9 @@ void APS5_VABI WTFGetBacktrace(void** stack, int* size) {
     std::vector<void*> frames(std::min<std::size_t>(static_cast<std::size_t>(requested), std::numeric_limits<USHORT>::max()));
     captured = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(frames.size()), frames.data(), nullptr));
     copied = GuestCopyOut_nid_no_patch(stack, frames.data(), static_cast<std::size_t>(captured) * sizeof(void*));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("WTFGetBacktrace: unwritable stack");
 #endif
     copied = GuestCopyOut_nid_no_patch(size, &captured, sizeof(captured));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument("WTFGetBacktrace: unwritable size");
 }
 
