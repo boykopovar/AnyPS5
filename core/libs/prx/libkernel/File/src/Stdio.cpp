@@ -672,10 +672,17 @@ static int DeviceFilesystem(KernelStatfs* fs) {
 }
 
 #ifdef _WIN32
+static std::filesystem::path VerbatimLookupPath(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    return error ? path : verbatim;
+}
+
 static std::wstring VolumeLookupPath(const std::filesystem::path& path) {
-    const HANDLE handle = ::CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+    const auto openPath = VerbatimLookupPath(path);
+    const HANDLE handle = ::CreateFileW(openPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return path.native();
+    if (handle == INVALID_HANDLE_VALUE) return openPath.native();
     std::wstring final(MAX_PATH, L'\0');
     auto length = ::GetFinalPathNameByHandleW(handle, final.data(), static_cast<DWORD>(final.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     if (length >= final.size()) {
@@ -683,7 +690,7 @@ static std::wstring VolumeLookupPath(const std::filesystem::path& path) {
         length = ::GetFinalPathNameByHandleW(handle, final.data(), length, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     }
     ::CloseHandle(handle);
-    if (length == 0 || length >= final.size()) return path.native();
+    if (length == 0 || length >= final.size()) return openPath.native();
     final.resize(length);
     return final;
 }
@@ -1240,10 +1247,14 @@ int PosixStatfs_nid_no_patch(const char* path, KernelStatfs* buf) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     AppArchiveRefuseOnly_nid_no_patch(native, path, "statfs");
 #ifdef _WIN32
+    const auto lookupPath = VerbatimLookupPath(native);
     std::error_code error;
-    const auto status = std::filesystem::status(native, error);
+    const auto status = std::filesystem::status(lookupPath, error);
     if (const int failure = PathLookupFailure(error)) return PosixResult(failure);
-    if (!std::filesystem::exists(status)) return PosixFailure(NotFoundError_nid_no_patch(native));
+    if (!std::filesystem::exists(status)) return PosixFailure(NotFoundError_nid_no_patch(lookupPath));
+    if ((!lookupPath.has_filename() || FinalPathComponentIsDot_nid_no_patch(path)) && !std::filesystem::is_directory(status)) {
+        return PosixFailure(GUEST_ENOTDIR);
+    }
 #endif
     KernelStatfs result{};
     result.f_version = KERNEL_STATFS_VERSION;
@@ -1440,7 +1451,6 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
 const bool g_libcWriteHookRegistered = (LibcSetGuestWriteHook_nid_no_patch(&_write_nid_postfix), true);
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
-    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
@@ -1448,7 +1458,6 @@ int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
 }
 
 int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
-    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();

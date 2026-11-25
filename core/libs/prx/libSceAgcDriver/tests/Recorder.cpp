@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ReadTrapsOverHostPointerImports.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
@@ -529,6 +530,7 @@ public:
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
                 context.dmaBufImport = true;
             }
+            context.readTrapsOverHostPointerImports = AgcDriver::ReadTrapsOverHostPointerImportsUsable(driverProperties.driverID);
             VkPhysicalDeviceImageViewMinLodFeaturesEXT minLod{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
             if (hasExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLod};
@@ -2686,6 +2688,20 @@ bool deferredSettleTests(const Device& device) {
         unregisterRange(large);
         HostImportFor(context, largeAddress, settledBytes);
         return false;
+    }
+    {
+        constexpr std::size_t pairBytes = 2 * unit;
+        void* pair = AllocateWatched(pairBytes, unit);
+        struct ReleasePair {
+            void* pair;
+            ~ReleasePair() { ReleaseWatched(pair, pairBytes); }
+        } releasePair{pair};
+        const auto pairAddress = reinterpret_cast<std::uint64_t>(pair);
+        registerRange(pair, pairBytes);
+        const auto* pairImport = HostImportFor(context, pairAddress, pairBytes);
+        Require(pairImport != nullptr && !pairImport->unwatched && Watched(pairAddress, pairBytes), "(d) a 128 KiB import did not settle at the import");
+        unregisterRange(pair);
+        HostImportFor(context, pairAddress, pairBytes);
     }
     const auto address = reinterpret_cast<std::uint64_t>(small);
     std::memset(small, 0x11, unit);
@@ -6425,6 +6441,148 @@ void paddedVertexSnapshotTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(address, padded, Recorder::SnapshotUse::Vertex) == nullptr, "a padded copy served an unpadded vertex input");
 }
 
+bool drawInputHolds(const Context& context, Recorder& recorder, const std::shared_ptr<Buffer>& buffer, std::uint64_t address, std::size_t bytes);
+
+void growingVertexCopyTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyDrawInput;
+    using AgcDriver::Graphics::KeepDrawInput;
+    constexpr std::size_t bytes = 4 * 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: growing vertex copies not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    Recorder cache(device.GetContext());
+    auto context = device.GetContext();
+    context.recorder = &cache;
+    auto* guest = static_cast<std::byte*>(block);
+    for (std::size_t i = 0; i < bytes; ++i) guest[i] = static_cast<std::byte>(i * 7u);
+    CollectWrites(address, bytes);
+    const auto copyOf = [&](std::size_t requested, std::size_t limit, Recorder::SnapshotUse use) {
+        auto copy = CopyDrawInput(context, &cache, address, requested, 1, use, 0, false, limit);
+        KeepDrawInput(&cache, address, copy, use, 0);
+        return copy;
+    };
+    const auto matches = [&](const DrawInputCopy& copy) {
+        const auto held = copy.buffer->Bytes();
+        return std::memcmp(held.data(), guest, held.size()) == 0;
+    };
+    const auto vertex = Recorder::SnapshotUse::Vertex;
+    const auto first = copyOf(120000, bytes, vertex);
+    Require(!first.reused && first.buffer->Bytes().size() == 120000 && matches(first), "a first vertex copy took headroom");
+    guest[150000] = std::byte{0x5a};
+    const auto grown = copyOf(131072, bytes, vertex);
+    Require(!grown.reused && grown.buffer->Bytes().size() == 131072 + 131072 / 4 && matches(grown), "a vertex copy past an unchanged shorter one took no headroom");
+    const auto inside = CopyDrawInput(context, &cache, address, 160000, 1, vertex, 0, true, bytes);
+    Require(inside.reused && inside.buffer == grown.buffer, "a longer vertex read inside the headroom was copied again");
+    const auto drawn = CopyDrawInput(context, &cache, address, 160000, 1, vertex, 0, false, bytes);
+    Require(drawn.reused && drawInputHolds(context, cache, drawn.buffer, address, 160000), "a draw's longer vertex read inside the headroom was copied again");
+    cache.NotePendingWrite(address + 180000, 16);
+    const auto pending = copyOf(163841, bytes, vertex);
+    Require(!pending.reused && pending.buffer->Bytes().size() == 163841 && matches(pending), "a vertex copy grew over a pending GPU write");
+    cache.Sync();
+    const auto beyond = copyOf(163842, bytes, vertex);
+    Require(!beyond.reused && beyond.buffer->Bytes().size() == 163842 + 163842 / 4 && matches(beyond), "a vertex read past the headroom did not grow again");
+    const auto capped = copyOf(210000, 220000, vertex);
+    Require(!capped.reused && capped.buffer->Bytes().size() == 220000 && matches(capped), "a vertex copy's headroom passed its limit");
+    guest[16] = std::byte{0x33};
+    const auto changed = copyOf(230000, bytes, vertex);
+    Require(!changed.reused && changed.buffer->Bytes().size() == 230000 && matches(changed), "a vertex copy grew past a changed shorter one");
+    const auto unlimited = copyOf(235000, 0, vertex);
+    Require(!unlimited.reused && unlimited.buffer->Bytes().size() == 235000 && matches(unlimited), "a vertex copy without a limit took headroom");
+    constexpr std::size_t windowAt = 8192;
+    constexpr std::size_t windowFrom = 16000;
+    const auto windowOf = [&](std::size_t requested) {
+        auto copy = CopyDrawInput(context, &cache, address + windowAt, requested, 1, vertex, windowFrom, false, bytes - windowAt);
+        KeepDrawInput(&cache, address + windowAt, copy, vertex, 0);
+        return copy;
+    };
+    const auto windowMatches = [&](const DrawInputCopy& copy) {
+        const auto held = copy.buffer->Bytes();
+        return std::memcmp(held.data() + windowFrom, guest + windowAt + windowFrom, held.size() - windowFrom) == 0;
+    };
+    const auto window = windowOf(40000);
+    Require(!window.reused && window.buffer->Bytes().size() == 40000 && windowMatches(window), "a first vertex window took headroom");
+    guest[windowAt + 100] = std::byte{0x44};
+    const auto grownWindow = windowOf(50000);
+    Require(!grownWindow.reused && grownWindow.buffer->Bytes().size() == 50000 + 50000 / 4 && windowMatches(grownWindow), "a store below a kept vertex window stopped a longer window from growing");
+    const auto index = Recorder::SnapshotUse::Index16;
+    copyOf(65536, bytes, index);
+    const auto longerIndex = copyOf(70000, bytes, index);
+    Require(!longerIndex.reused && longerIndex.buffer->Bytes().size() == 70000 && matches(longerIndex), "an index copy took headroom");
+}
+
+void grownVertexCopyShadowTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyDrawInput;
+    using AgcDriver::Graphics::KeepDrawInput;
+    auto context = device.GetContext();
+    if (!UnitShadowEnabled() || context.hostImportAlignment == 0) {
+        std::cout << "unit shadows or host imports unavailable: vertex copy headroom over a unit shadow not tested\n";
+        return;
+    }
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 64 * unit;
+    void* block = AllocateWatched(bytes, 65536);
+    Require(block != nullptr, "unit shadows are on without write watching");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* guest = static_cast<std::byte*>(block);
+    for (std::size_t i = 0; i < bytes; ++i) guest[i] = static_cast<std::byte>(i * 5u);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{context, block, address};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr || !Watched(address, bytes)) {
+        std::cout << "the test block is not imported and watched: vertex copy headroom over a unit shadow not tested\n";
+        return;
+    }
+    CollectWritesUncached(address, bytes);
+    {
+        const auto destination = ShadowDestinationFor(context, *import, address + 2 * unit, address + 3 * unit);
+        Require(destination.has_value(), "the shadow test unit got no slab");
+        const ShadowedRange range{address + 2 * unit, address + 3 * unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+    }
+    Require(AnyShadowedOverlaps(address + 2 * unit, unit) && !AnyShadowedOverlaps(address, 2 * unit), "the shadow test unit is not the only shadowed one");
+    Recorder cache(context);
+    context.recorder = &cache;
+    const auto copyOf = [&](std::size_t requested) {
+        auto copy = CopyDrawInput(context, &cache, address, requested, 1, Recorder::SnapshotUse::Vertex, 0, false, 4 * unit);
+        KeepDrawInput(&cache, address, copy, Recorder::SnapshotUse::Vertex, 0);
+        return copy;
+    };
+    copyOf(80000);
+    const auto before = copyOf(100000);
+    Require(!before.reused && before.buffer->Bytes().size() == 125000 && std::memcmp(before.buffer->Bytes().data(), guest, 125000) == 0, "a vertex copy whose headroom ends before a unit shadow took none");
+    const auto over = copyOf(126000);
+    Require(!over.reused && over.buffer->Bytes().size() == 126000 && std::memcmp(over.buffer->Bytes().data(), guest, 126000) == 0, "a vertex copy's headroom took bytes of a unit shadow");
+    guest[2 * unit] = std::byte{0x6d};
+    CollectWritesUncached(address, bytes);
+}
+
 void containingSnapshotTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 131072;
@@ -8260,14 +8418,30 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
 }
 
 #ifdef __APPLE__
-vm_prot_t HostPageProtection(const void* page) {
+bool PageInaccessible(const void* page) {
     mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(page);
     mach_vm_size_t size = 0;
     vm_region_basic_info_data_64_t info{};
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object = MACH_PORT_NULL;
     Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= reinterpret_cast<mach_vm_address_t>(page), "cannot read the protection of a page");
-    return info.protection & (VM_PROT_READ | VM_PROT_WRITE);
+    return (info.protection & (VM_PROT_READ | VM_PROT_WRITE)) == VM_PROT_NONE;
+}
+#elif defined(__linux__)
+bool PageInaccessible(const void* page) {
+    const auto address = reinterpret_cast<std::uintptr_t>(page);
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        char* parsed = nullptr;
+        const auto first = static_cast<std::uintptr_t>(std::strtoull(line.c_str(), &parsed, 16));
+        if (parsed == nullptr || *parsed != '-') continue;
+        const auto last = static_cast<std::uintptr_t>(std::strtoull(parsed + 1, &parsed, 16));
+        if (address < first || address >= last || parsed == nullptr || std::strlen(parsed) < 3) continue;
+        return parsed[1] != 'r' && parsed[2] != 'w';
+    }
+    Require(false, "cannot read the protection of a page");
+    return false;
 }
 #endif
 
@@ -8394,7 +8568,7 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     settle();
     const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
     Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr) {
         const auto rewriteImage = [&](const std::shared_ptr<StorageTexture>& target, std::uint32_t extent, std::uint8_t value) {
             auto source = std::make_shared<Buffer>(context, extent * extent * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -8424,23 +8598,23 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         rewrite(0x4b);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a label stored a pending small tiled image instead of trapping its reads");
-        Require(StorageTexture::StoreSmallPending("flip") == 0 && HostPageProtection(memory + offset) == VM_PROT_NONE, "a flip stored a small image whose reads are trapped");
+        Require(PageInaccessible(memory + offset), "a label stored a pending small tiled image instead of trapping its reads");
+        Require(StorageTexture::StoreSmallPending("flip") == 0 && PageInaccessible(memory + offset), "a flip stored a small image whose reads are trapped");
         Require(readUnlocked([&] { return holds(0x4b); }), "a read of a trapped image did not see its pending results");
-        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "a resolved trap did not give back the image's pages");
+        Require(!PageInaccessible(memory + offset), "a resolved trap did not give back the image's pages");
         rewrite(0x2d);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a second label did not trap the small tiled image's reads");
+        Require(PageInaccessible(memory + offset), "a second label did not trap the small tiled image's reads");
         Require(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None), "storing a trapped image stored nothing");
         settle();
-        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "storing a trapped image did not release its trap");
+        Require(!PageInaccessible(memory + offset), "storing a trapped image did not release its trap");
         Require(holds(0x2d), "storing a trapped image did not publish it");
 
         rewrite(0x5e);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         std::thread flusher([&] { static_cast<void>(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None)); });
         while (StorageTexture::AnyPending()) std::this_thread::yield();
-        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a trapped image taken for a store gave back its pages before the store");
+        Require(PageInaccessible(memory + offset), "a trapped image taken for a store gave back its pages before the store");
         bool fresh = false;
         std::thread waiting([&] { fresh = holds(0x5e); });
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -8470,21 +8644,21 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         const auto holdsIn = [&](const GuestTextureResource& surface, std::size_t bytes, std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + (surface.baseAddress - address), memory + (surface.baseAddress - address) + bytes, value)) >= 8u * 8u * 4u; };
         rewriteImage(imageA, 8u, 0x61);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image");
+        Require(PageInaccessible(pageBytes), "a label did not trap a lone pending linear image");
         rewriteImage(imageB, 8u, 0x62);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         settle();
-        Require(HostPageProtection(pageBytes) != VM_PROT_NONE, "a label left a trap on a page it stored another image on");
+        Require(!PageInaccessible(pageBytes), "a label left a trap on a page it stored another image on");
         Require(holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x61) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x62), "a label did not store both images on a shared page");
         rewriteImage(imageA, 8u, 0x63);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image again");
+        Require(PageInaccessible(pageBytes), "a label did not trap a lone pending linear image again");
         rewriteImage(imageB, 8u, 0x64);
         Require(StorageTexture::FlushPending(linearB.baseAddress, static_cast<std::size_t>(layoutB.guestBytes), nullptr, "idle", PublishScope::None), "a CPU store next to a trapped image stored nothing");
         settle();
-        Require(HostPageProtection(pageBytes) != VM_PROT_NONE && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
+        Require(!PageInaccessible(pageBytes) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap the image a neighbouring CPU store left pending");
+        Require(PageInaccessible(pageBytes), "a label did not trap the image a neighbouring CPU store left pending");
         Require(readUnlocked([&] { return holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x63); }), "a read of the re-trapped image did not see its pending results");
 
         auto outer = resource;
@@ -8508,30 +8682,33 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
             Require(StorageTexture::FlushPending(address + 0x28000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's block stored nothing");
             settle();
         };
+        rewriteImage(outerImage, 256u, 0x70);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        settle();
         rewriteImage(outerImage, 256u, 0x71);
         rewriteImage(innerImage, 8u, 0x72);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label stored a small image inside a pending large tiled one instead of trapping its reads");
+        Require(PageInaccessible(innerBytes), "a label stored a small image inside a pending large tiled one instead of trapping its reads");
         storeOuterBlock();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE, "a store of a large image's block left a trapped image inside it trapped");
+        Require(!PageInaccessible(innerBytes), "a store of a large image's block left a trapped image inside it trapped");
         Require(innerHolds(0x72), "a store of a large image's block over a trapped image did not leave the bytes a label store leaves");
         rewriteImage(outerImage, 256u, 0x73);
         rewriteImage(innerImage, 8u, 0x75);
         rewriteImage(outerImage, 256u, 0x74);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image again");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image again");
         storeOuterBlock();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
+        Require(!PageInaccessible(innerBytes) && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
         rewriteImage(outerImage, 256u, 0x76);
         rewriteImage(innerImage, 8u, 0x77);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image a third time");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image a third time");
         outerImage->Flush();
         settle();
-        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+        Require(!PageInaccessible(innerBytes) && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
         rewriteImage(innerImage, 8u, 0x78);
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
-        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
+        Require(PageInaccessible(innerBytes), "a label did not trap the small image after the large one was evicted");
         Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
     }
 #endif
@@ -17124,6 +17301,148 @@ void integerClearTests(const Device& device) {
     std::cout << "integer storage clears: " << tested << " formats ok\n";
 }
 
+std::array<std::pair<std::uint64_t, std::uint64_t>, 1> discardWhileFlushingRange{};
+std::size_t discardWhileFlushingCount = 0;
+bool discardWhileFlushingRan = false;
+
+void discardWhileFlushing() {
+    discardWhileFlushingRan = true;
+    discardWhileFlushingCount = StorageTexture::DiscardPendingCovered(discardWhileFlushingRange, nullptr);
+}
+
+bool discardPendingCoveredTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    const std::string what = "proven-overwrite discard";
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: " << what << " not tested\n";
+        return false;
+    }
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t surfaceBytes = 4 * unit;
+    constexpr std::size_t bytes = 2 * surfaceBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(unit, bytes);
+#endif
+    Require(block != nullptr && reinterpret_cast<std::uint64_t>(block) % unit == 0, "cannot allocate the proven-overwrite discard block");
+    auto* memory = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Restore {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        bool previous;
+        ~Restore() {
+            StorageTexture::SetFlushingHookForTest(nullptr);
+            RuntimeSwitches::Assign(RuntimeSwitch::ProvenOverwrite, previous);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } restore{base, block, address, RuntimeSwitches::Set(RuntimeSwitch::ProvenOverwrite)};
+    if (HostImportFor(base, address, bytes) == nullptr) {
+        std::cout << "host import of the proven-overwrite discard block refused: " << what << " not tested\n";
+        return false;
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::ProvenOverwrite, true);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const auto surface = [&](std::uint64_t at) {
+        GuestTextureResource resource{};
+        resource.baseAddress = at;
+        resource.width = 256;
+        resource.height = 256;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    };
+    const auto resourceA = surface(address);
+    const auto resourceB = surface(address + surfaceBytes);
+    Require(DescribeSurface(resourceA).guestBytes == surfaceBytes, "the proven-overwrite discard surfaces have an unexpected size");
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const auto draw = [&](const std::shared_ptr<StorageTexture>& image, VkClearColorValue value) {
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+    };
+    const auto storeAll = [&] {
+        Require(StorageTexture::FlushPending(address, bytes, nullptr, "proven-overwrite discard test", PublishScope::Whole), what + ": nothing was pending at the end");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        std::vector<std::byte> read(bytes);
+        AgcDriver::GuestMemory::Read(address, read);
+        recorder.Sync();
+        std::memcpy(read.data(), memory, bytes);
+        return read;
+    };
+    const auto pendingOver = [](std::uint64_t begin, std::uint64_t end) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> ranges{{{begin, end}}};
+        return StorageTexture::AnyPendingUnitsOverlap(ranges);
+    };
+    const auto unitHolds = [](std::span<const std::byte> read, std::size_t index, std::uint8_t value) {
+        return std::all_of(read.begin() + static_cast<std::ptrdiff_t>(index * unit), read.begin() + static_cast<std::ptrdiff_t>((index + 1) * unit), [value](std::byte byte) { return std::to_integer<std::uint8_t>(byte) == value; });
+    };
+    {
+        const std::string where = what + ", a range ending inside a unit";
+        recorder.Sync();
+        std::memset(memory, 0x55, bytes);
+        auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+        draw(imageB, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        Require(pendingOver(address + surfaceBytes, address + bytes), where + ": B's results are not pending");
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> covered{{{address + surfaceBytes, address + surfaceBytes + unit + unit / 2}}};
+        Require(StorageTexture::DiscardPendingCovered(covered, nullptr) == 1, where + ": B's unit inside the range was not dropped");
+        Require(!pendingOver(address + surfaceBytes, address + surfaceBytes + unit), where + ": the unit wholly inside the range is still pending");
+        Require(pendingOver(address + surfaceBytes + unit, address + surfaceBytes + 2 * unit), where + ": the unit the range ends inside was dropped");
+        Require(pendingOver(address + surfaceBytes + 2 * unit, address + surfaceBytes + 3 * unit) && pendingOver(address + surfaceBytes + 3 * unit, address + bytes), where + ": the units past the range were dropped");
+        const auto read = storeAll();
+        Require(unitHolds(read, 4, 0x55), where + ": the dropped unit was written back");
+        Require(unitHolds(read, 5, 0xff) && unitHolds(read, 6, 0xff) && unitHolds(read, 7, 0xff), where + ": B's kept units were not written back");
+    }
+    {
+        const std::string where = what + ", while another image over the range is flushing";
+        recorder.Sync();
+        std::memset(memory, 0x55, bytes);
+        auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
+        auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+        draw(imageA, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        draw(imageB, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        discardWhileFlushingRange = {{{address, address + bytes}}};
+        discardWhileFlushingRan = false;
+        discardWhileFlushingCount = 0;
+        StorageTexture::SetFlushingHookForTest(&discardWhileFlushing);
+        Require(StorageTexture::FlushPending(address, surfaceBytes, nullptr, "proven-overwrite discard test", PublishScope::None), where + ": A was not pending");
+        StorageTexture::SetFlushingHookForTest(nullptr);
+        Require(discardWhileFlushingRan, where + ": the flush never reached its write-back");
+        Require(discardWhileFlushingCount == 0, where + ": units were dropped while A was being stored");
+        Require(pendingOver(address + surfaceBytes, address + bytes), where + ": B's results were dropped while A was being stored");
+        Require(StorageTexture::DiscardPendingCovered(discardWhileFlushingRange, nullptr) == 1, where + ": B was not dropped once A was stored");
+        Require(!pendingOver(address + surfaceBytes, address + bytes), where + ": B is still pending after the drop");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    std::cout << "proven-overwrite discard: ok\n";
+    return true;
+}
+
 bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     const std::string what = watched ? "clear-key hand-over (watched)" : "clear-key hand-over";
@@ -18522,6 +18841,13 @@ int main(int argc, char** argv) {
             std::cout << "Refreshes over a pending DCC key store passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--discard-covered-only") {
+            if (!discardPendingCoveredTests(device, recorder)) {
+                std::cout << "skipped, the device imports no host memory for the proven-overwrite discard\n";
+                return 77;
+            }
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--clear-hand-over-only") {
             clearHandOverTests(device, recorder, false);
             if (!clearHandOverTests(device, recorder, true)) {
@@ -18958,6 +19284,8 @@ int main(int argc, char** argv) {
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
         paddedVertexSnapshotTests(device);
+        growingVertexCopyTests(device);
+        grownVertexCopyShadowTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);

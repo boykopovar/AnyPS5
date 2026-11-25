@@ -195,6 +195,7 @@ static void MovesSurfaceBetweenImages() {
 
     SurfaceFlag selfFlag;
     CairoSurface* self = TrackedSurface(selfFlag);
+    cairo_surface_reference(self);
     DragImage selfTarget;
     Construct(&selfTarget);
     selfTarget.m_dragImageRef.ptr = self;
@@ -202,6 +203,7 @@ static void MovesSurfaceBetweenImages() {
     Require(selfTarget.m_dragImageRef.ptr == self);
     Require(selfFlag.destroyed == 0);
     _ZN7WebCore9DragImageD2Ev(&selfTarget);
+    Require(selfFlag.destroyed == 0);
     cairo_surface_destroy(self);
     Require(selfFlag.destroyed == 1);
 }
