@@ -2544,6 +2544,16 @@ int APS5_VABI sceCesSJisToUcs2(const void* profile, const uint8_t* sjisBuffer, u
 }
 
 int APS5_VABI sceCesSJisToUtf8(const void* profile, const uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+    if (!utf8Buffer) {
+        uint8_t encoded[4];
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (decodeProfiled(isSjis, profile, sjisBuffer, sjisMax, encoded, length, code) == 0) {
+            if (sjisSize && !CesGuest::Store(sjisSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
+            if (utf8Length) CesGuest::Store(utf8Length, encodeUtf8(code, encoded));
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     return profiledToUtf8(isSjis, profile, sjisBuffer, sjisMax, sjisSize, utf8Buffer, utf8Max, utf8Length);
 }
 
