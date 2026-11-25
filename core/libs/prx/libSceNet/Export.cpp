@@ -1991,7 +1991,16 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
     const std::uint32_t nameBytes = header.name ?
         std::min<std::uint32_t>(header.name_length, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
     const GuestArena::HostWrite nameOutput(nameBytes == 0 ? nullptr : header.name, nameBytes);
-    if (!nameOutput.Open()) return fail(NET_EFAULT);
+    if (!nameOutput.Open()) {
+#ifdef _WIN32
+        if ((flags & NET_MSG_DONTWAIT) != 0 || socket.native->nonblock.load()) {
+            char probe{};
+            if (::recvfrom(socket.native->value, &probe, sizeof(probe), MSG_PEEK, nullptr, nullptr) < 0 &&
+                WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EAGAIN);
+        }
+#endif
+        return fail(NET_EFAULT);
+    }
     const bool datagram = socket.type != NET_SOCK_STREAM;
 #if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, total == 0, flags)) {
