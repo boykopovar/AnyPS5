@@ -3785,7 +3785,21 @@ void Recorder::dropStaleHoldKept() {
 void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (owner == nullptr || bytes == 0) return;
     ensureOpen();
-    if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
+    if (open->keptOwners.emplace(owner, bytes).second) open->keptBytes += bytes;
+}
+
+void Recorder::ForgetKeptBytes(const void* owner) {
+    if (owner == nullptr) return;
+    const auto forget = [&](Batch& batch) {
+        const auto found = batch.keptOwners.find(owner);
+        if (found == batch.keptOwners.end()) return std::size_t{0};
+        const auto bytes = found->second;
+        batch.keptOwners.erase(found);
+        batch.keptBytes -= bytes;
+        return bytes;
+    };
+    if (open != nullptr) forget(*open);
+    for (auto& batch : inFlight) inFlightKeptBytes -= forget(*batch);
 }
 
 void Recorder::BoundKeptBytes() {

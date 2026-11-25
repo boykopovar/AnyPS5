@@ -1822,6 +1822,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             cache.index[key] = cache.entries.begin();
             cache.byImage[texture.get()] = cache.entries.begin();
             texture->SetCached(true);
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) recorder->ForgetKeptBytes(texture.get());
             counters.storageCreated.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageMade, start);
         }

@@ -271,6 +271,33 @@ void SharedOwnerCountsOncePerBatch() {
     recorder.Sync();
 }
 
+void ForgottenOwnerLeavesTheBudget() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    auto submitted = std::make_shared<int>(0);
+    recorder.Keep(submitted);
+    recorder.KeepBytes(submitted.get(), Budget);
+    recorder.Submit();
+    Expect(recorder.InFlightKeptBytes() == Budget, "a submitted owner's budget was not counted in flight");
+    recorder.ForgetKeptBytes(submitted.get());
+    Expect(recorder.InFlightKeptBytes() == 0, "a forgotten owner still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
+    auto open = std::make_shared<int>(1);
+    recorder.Keep(open);
+    recorder.KeepBytes(open.get(), Budget + Budget / 2);
+    recorder.ForgetKeptBytes(open.get());
+    Expect(recorder.OpenKeptBytes() == 0, "a forgotten owner still counts " + std::to_string(recorder.OpenKeptBytes()) + " kept bytes in the open batch");
+    const auto submits = mock.submits;
+    recorder.BoundKeptBytes();
+    Expect(mock.submits == submits && mock.fenceWaits == 0 && recorder.Recording(), "forgotten owners made the bound submit or wait for a batch");
+    recorder.KeepBytes(open.get(), Budget / 2);
+    Expect(recorder.OpenKeptBytes() == Budget / 2, "an owner kept again after it was forgotten was not counted");
+    recorder.ForgetKeptBytes(nullptr);
+    recorder.ForgetKeptBytes(&mock);
+    Expect(recorder.OpenKeptBytes() == Budget / 2 && recorder.InFlightKeptBytes() == 0, "forgetting an owner the batches do not count changed the counts");
+    recorder.Sync();
+}
+
 template<typename Condition>
 bool EventuallyTrue(Condition&& condition) {
     for (int attempt = 0; attempt < 5000 && !condition(); ++attempt) {
@@ -463,6 +490,7 @@ int main() {
         RetentionGrowsWithoutDuplicates();
         RetentionAfterFailedSubmission();
         SubmittedWorkRunningFollowsTheLastBatch();
+        ForgottenOwnerLeavesTheBudget();
         SeparateStoresOfOneRunAreOrdered();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
