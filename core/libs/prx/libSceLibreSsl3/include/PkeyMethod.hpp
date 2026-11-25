@@ -80,7 +80,7 @@ struct LibreSsl3PkeyAsn1Method {
     void* privateKeyPrint;
     int (APS5_VABI* keySize)(const LibreSsl3EvpPkey* key);
     int (APS5_VABI* keyBits)(const LibreSsl3EvpPkey* key);
-    void* keySecurityBits;
+    int (APS5_VABI* keySecurityBits)(const LibreSsl3EvpPkey* key);
     void* signatureInformation;
     void* parameterDecode;
     void* parameterEncode;

@@ -150,9 +150,7 @@ int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* 
     return AccessFontSettings(fontHandle, [&](FontState& state) {
         if (oldAttribute) {
             const int previous = state.attribute;
-            const int savedErrno = errno;
             const bool copied = GuestCopyOut_nid_no_patch(oldAttribute, &previous, sizeof(previous));
-            errno = savedErrno;
             if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
         state.attribute = attribute;
@@ -165,9 +163,7 @@ int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* now
     if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return AccessFontSettings(fontHandle, [&](FontState& state) {
         const int localAttr = state.attribute;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(nowAttribute, &localAttr, sizeof(localAttr));
-        errno = savedErrno;
         if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return SCE_FONT_OK;
     });
@@ -288,9 +284,17 @@ int APS5_VABI sceFontGetResolutionDpi(FontHandle fontHandle, std::uint32_t* hDpi
 }
 
 int APS5_VABI sceFontGetEffectSlant(FontHandle fontHandle, float* slantRatio) {
-    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetSlantRatio(&font->style, slantRatio); });
-    if (rc != SCE_FONT_OK && slantRatio) *slantRatio = 0.0f;
-    return rc;
+    float localSlant = 0.0f;
+    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetSlantRatio(&font->style, &localSlant);
+    });
+    if (rc != SCE_FONT_OK) {
+        if (slantRatio) CopyOutGuest(slantRatio, 0.0f);
+        return rc;
+    }
+    if (!CopyOutGuest(slantRatio, localSlant)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {

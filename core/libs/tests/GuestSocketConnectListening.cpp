@@ -1,10 +1,14 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Socket/include/SocketSelectDeadline.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -28,9 +32,90 @@ void Require(bool condition, const char* what) {
     std::abort();
 }
 
+void VerifySelectDeadline() {
+    using Clock = std::chrono::steady_clock;
+    const auto epoch = Clock::time_point{};
+    const auto preEpoch = Clock::time_point(Clock::duration(-1));
+    Require(KernelSocketSelect::DeadlineAfter(preEpoch, 0, 0) == preEpoch,
+        "pre-epoch zero timeout must preserve start");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point(std::chrono::seconds(-1)), 1, 500000) ==
+            Clock::time_point(std::chrono::milliseconds(500)),
+        "pre-epoch -1s plus (1s, 500000us) must equal +0.5s");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), 0, 0) == Clock::time_point::min(),
+        "min() zero timeout must preserve min()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), 0, 0) == Clock::time_point::max(),
+        "max() zero timeout must preserve max()");
+
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::min(), 0) == Clock::time_point::min(),
+        "INT64_MIN seconds must saturate to min()");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::min(), -1) == Clock::time_point::min(),
+        "INT64_MIN seconds with -1us must saturate to min()");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::min()) ==
+            Clock::time_point::min(),
+        "INT64_MIN seconds and microseconds must saturate to min()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), 0, -1) == Clock::time_point::min(),
+        "min() minus 1us must saturate to min()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min() + std::chrono::seconds(1), -2, 0) == Clock::time_point::min(),
+        "underflow past min() must saturate to min()");
+
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::max(), 0) == Clock::time_point::max(),
+        "INT64_MAX seconds must saturate to max()");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::max(), 1000000) == Clock::time_point::max(),
+        "INT64_MAX seconds plus 1s in microseconds must saturate to max()");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::max()) ==
+            Clock::time_point::max(),
+        "INT64_MAX seconds and microseconds must saturate to max()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), 0, 1) == Clock::time_point::max(),
+        "max() plus 1us must saturate to max()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max() - std::chrono::seconds(1), 2, 0) == Clock::time_point::max(),
+        "overflow past max() must saturate to max()");
+
+    Require(KernelSocketSelect::DeadlineAfter(epoch, 1, -500000) == Clock::time_point(std::chrono::milliseconds(500)),
+        "mixed-sign (1, -500000) must normalize to +0.5s");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, -1, 500000) == Clock::time_point(std::chrono::milliseconds(-500)),
+        "mixed-sign (-1, 500000) must normalize to -0.5s");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, 1, -1500000) == Clock::time_point(std::chrono::milliseconds(-500)),
+        "mixed-sign (1, -1500000) must normalize to -0.5s");
+    Require(KernelSocketSelect::DeadlineAfter(epoch, -1, 1500000) == Clock::time_point(std::chrono::milliseconds(500)),
+        "mixed-sign (-1, 1500000) must normalize to +0.5s");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max() - std::chrono::seconds(2), 3, -1500000) ==
+            Clock::time_point::max() - std::chrono::milliseconds(500),
+        "large positive seconds with negative microseconds must not saturate prematurely");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min() + std::chrono::seconds(2), -3, 1500000) ==
+            Clock::time_point::min() + std::chrono::milliseconds(500),
+        "large negative seconds with positive microseconds must not saturate prematurely");
+
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), std::numeric_limits<std::int64_t>::max(), 0) ==
+            Clock::time_point::max(),
+        "full-range INT64_MAX from min() must saturate to max()");
+    Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), std::numeric_limits<std::int64_t>::min(), 0) ==
+            Clock::time_point::min(),
+        "full-range INT64_MIN from max() must saturate to min()");
+
+    if constexpr (std::is_same_v<Clock::duration, std::chrono::nanoseconds>) {
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), 15000000000LL, 0).time_since_epoch().count() ==
+                5776627963145224192LL,
+            "min() plus 15e9s must span past INT64_MAX ticks without duration overflow");
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), 18446744073LL, 709551LL) ==
+                Clock::time_point::max() - std::chrono::nanoseconds(615),
+            "exact sub-saturation min()-to-max() span must reach max() - 615ns");
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::min(), 18446744073LL, 709552LL) == Clock::time_point::max(),
+            "min()-to-max() span exceeding max() by 385ns must saturate to max()");
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), -15000000000LL, 0).time_since_epoch().count() ==
+                -5776627963145224193LL,
+            "max() minus 15e9s must span past INT64_MAX ticks without duration overflow");
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), -18446744073LL, -709551LL) ==
+                Clock::time_point::min() + std::chrono::nanoseconds(615),
+            "exact sub-saturation max()-to-min() span must reach min() + 615ns");
+        Require(KernelSocketSelect::DeadlineAfter(Clock::time_point::max(), -18446744073LL, -709552LL) == Clock::time_point::min(),
+            "max()-to-min() span exceeding min() by 385ns must saturate to min()");
+    }
+}
+
 }
 
 int main() {
+    VerifySelectDeadline();
     const int listener = socket_nid_postfix(Inet, Stream, 0);
     Require(listener >= 0, "socket failed");
     std::array<std::uint8_t, 16> address{16, Inet, 0, 0, 127, 0, 0, 1};

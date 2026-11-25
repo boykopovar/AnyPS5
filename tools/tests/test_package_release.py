@@ -681,6 +681,11 @@ class ReleasePackageTests(unittest.TestCase):
             file = self.source / "3rdparty/freetype" / source
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(content)
+        self.ffmpeg_notices = self.root / "FFmpeg override" / "share/ffmpeg"
+        self.ffmpeg_notices.mkdir(parents=True)
+        (self.ffmpeg_notices / "copyright").write_bytes(b"FFmpeg copyright\n")
+        (self.ffmpeg_notices / "SOURCE.txt").write_bytes(b"FFmpeg corresponding source\n")
+        (self.build / "release-ffmpeg-notices.txt").write_text(self.ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -755,6 +760,33 @@ class ReleasePackageTests(unittest.TestCase):
             package_release.package("linux", self.build, self.output, "v1")
         self.assertEqual(list(self.output.iterdir()), [previous])
         self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def stage_ffmpeg_library(self):
+        (self.source / "core/libs/prx/libSceVdecCore").mkdir()
+        (self.library.parent / "libSceVdecCore.prx").write_bytes(b"patched video decoder")
+        (self.unpatched.parent / "libSceVdecCore.prx").write_bytes(b"unpatched video decoder")
+
+    def test_ffmpeg_notices_follow_the_configured_prebuilt(self):
+        self.stage_ffmpeg_library()
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.read("libs/licenses/ffmpeg/" + name), (self.ffmpeg_notices / name).read_bytes())
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.extractfile("libs/licenses/ffmpeg/" + name).read(), (self.ffmpeg_notices / name).read_bytes())
+
+    def test_missing_ffmpeg_notice_preserves_existing_output(self):
+        self.stage_ffmpeg_library()
+        (self.ffmpeg_notices / "SOURCE.txt").unlink()
+        self.output.mkdir()
+        published = self.output / "prx-linux-v1.zip"
+        published.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, "Missing or empty release file: .*SOURCE.txt"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [published])
+        self.assertEqual(published.read_bytes(), b"previous release")
 
     def test_mimalloc_license_in_archives(self):
         package_release.package("linux", self.build, self.output, "v1")
@@ -964,7 +996,7 @@ class ReleasePackageTests(unittest.TestCase):
                     (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
                     self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
-    def test_webrtc_library_archives_include_vad_notices(self):
+    def test_webrtc_library_archives_include_vad_and_scaler_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
@@ -972,8 +1004,14 @@ class ReleasePackageTests(unittest.TestCase):
         source.mkdir(parents=True)
         (source / "LICENSE").write_bytes(b"VAD license\n")
         (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        source = self.source / "3rdparty/libyuv"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"Scaler license\n")
+        (source / "PATENTS").write_bytes(b"Scaler patent grant\n")
         package_release.package("linux", self.build, self.output, "v1")
-        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+        notices = {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n",
+                   "libyuv.txt": b"Scaler license\n", "libyuv-patents.txt": b"Scaler patent grant\n"}
+        for archive_name, content in notices.items():
             with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:

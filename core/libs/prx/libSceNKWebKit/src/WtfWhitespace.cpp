@@ -44,6 +44,7 @@
  */
 
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <new>
 #include <stdexcept>
@@ -94,9 +95,13 @@ extern "C" {
 
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE(const NKWebKit::WtfAbi::String* self, bool (APS5_VABI *predicate)(char16_t)) {
     if (!self) throw std::invalid_argument("null WTF String");
-    if (!self->impl) return NKWebKit::WtfAbi::String();
-    if (self->impl->hashAndFlags & 4) return Simplify<unsigned char>(*self, predicate);
-    return Simplify<char16_t>(*self, predicate);
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&impl, self, sizeof(impl))) throw std::invalid_argument("String::simplifyWhiteSpace: unreadable String");
+    if (!impl) return NKWebKit::WtfAbi::String();
+    impl->refCount += 2;
+    const NKWebKit::WtfAbi::String string(impl);
+    if (impl->hashAndFlags & 4) return Simplify<unsigned char>(string, predicate);
+    return Simplify<char16_t>(string, predicate);
 }
 
 }
