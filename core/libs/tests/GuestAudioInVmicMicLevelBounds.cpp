@@ -65,9 +65,9 @@ void TestMicLevelBounds() {
     }
 
     for (const int rawDeviceId : {-1, -2, -5, -100}) {
-        Require(Throws([&] { sceAudioInSetMicLevel(rawDeviceId, 0, 0, 0, 0); }));
-        Require(Throws([&] { sceAudioInSetMicLevel(rawDeviceId, 0, 50, 0, 0); }));
-        Require(Throws([&] { sceAudioInSetMicLevel(rawDeviceId, 0, 100, 0, 0); }));
+        Require(sceAudioInSetMicLevel(rawDeviceId, 0, 0, 0, 0) == audioInErrorInvalidDevice);
+        Require(sceAudioInSetMicLevel(rawDeviceId, 0, 50, 0, 0) == audioInErrorInvalidDevice);
+        Require(sceAudioInSetMicLevel(rawDeviceId, 0, 100, 0, 0) == audioInErrorInvalidDevice);
     }
 
     for (const int overLevel : {101, 102, 150, 200, 500}) {
@@ -97,9 +97,9 @@ void TestMicLevelBounds() {
     }
 
     for (const int rawDeviceId : {-1, -2, -10}) {
-        Require(Throws([&] { sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 0, 0); }));
-        Require(Throws([&] { sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 50, 0); }));
-        Require(Throws([&] { sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 100, 0); }));
+        Require(sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 0, 0) == audioInErrorInvalidDevice);
+        Require(sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 50, 0) == audioInErrorInvalidDevice);
+        Require(sceAudioInSetMicrophoneLevel(rawDeviceId, 0, 100, 0) == audioInErrorInvalidDevice);
     }
 
     Require(Throws([&] { sceAudioInSetUsbGain(); }));

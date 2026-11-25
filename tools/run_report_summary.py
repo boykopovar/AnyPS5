@@ -4,6 +4,8 @@ import math
 import sys
 from pathlib import Path
 
+from performance_compare import unique_json_object
+
 
 DIAGNOSTIC_PREVIEW_LIMIT = 5
 
@@ -78,12 +80,13 @@ def render(report):
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
-        frame_summary = count_text(frames, "frame") if isinstance(frames, int) and not isinstance(frames, bool) else "unknown frame count"
+        frames_valid = type(frames) is int and frames >= 0
+        frame_summary = count_text(frames, "frame") if frames_valid else "unknown frame count"
         fps = run.get("averageFps")
-        if is_finite_number(fps):
+        if frames_valid and frames > 1 and is_finite_number(fps) and fps >= 0:
             fps_text = f"{fps}.00" if type(fps) is int else f"{fps:.2f}"
             frame_summary += f", {fps_text} average FPS"
-        elif isinstance(frames, int) and not isinstance(frames, bool) and frames > 1:
+        elif frames_valid and frames > 1:
             frame_summary += ", average FPS unavailable"
         lines.append(f"Rendering: {frame_summary}")
     else:
@@ -161,11 +164,11 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)
         return 2
     return 0

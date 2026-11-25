@@ -308,7 +308,13 @@ extern "C" {
 
 int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int flags) {
     if (pattern == nullptr || string == nullptr) throw std::invalid_argument("fnmatch: null pattern or string");
-    return MatchPattern(pattern, string, flags);
+    std::vector<char> scratch(HostPageSize());
+    std::string patternCopy;
+    std::string stringCopy;
+    if (!CopyGuestStringUnbounded(pattern, scratch, patternCopy) || !CopyGuestStringUnbounded(string, scratch, stringCopy)) {
+        throw std::invalid_argument("fnmatch: unreadable pattern or string");
+    }
+    return MatchPattern(patternCopy.c_str(), stringCopy.c_str(), flags);
 }
 
 char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
