@@ -29,7 +29,6 @@ constexpr int RUDP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80770004u);
 constexpr int RUDP_ERROR_INVALID_OPTION = static_cast<int>(0x80770005u);
 constexpr int RUDP_ERROR_INVALID_MUXMODE = static_cast<int>(0x80770006u);
 constexpr int RUDP_ERROR_MEMORY = static_cast<int>(0x80770007u);
-constexpr int RUDP_ERROR_CONN_RESET = static_cast<int>(0x80770009u);
 constexpr int RUDP_ERROR_CONN_REFUSED = static_cast<int>(0x8077000Au);
 constexpr int RUDP_ERROR_NOT_ACCEPTABLE = static_cast<int>(0x80770011u);
 constexpr int RUDP_ERROR_NOT_BOUND = static_cast<int>(0x80770013u);
@@ -523,26 +522,47 @@ int APS5_VABI sceRudpGetSizeReadable(int ctx_id) {
 }
 
 int APS5_VABI sceRudpWrite(int ctx_id, const void* data, uint32_t len, int flags) {
-    (void)data;
-    (void)len;
     (void)flags;
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
-    return valid_ctx(ctx_id) ? RUDP_ERROR_CONN_RESET : RUDP_ERROR_INVALID_CONTEXT_ID;
+    if (ctx_id < 0 || data == nullptr || len == 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(ctx_id)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpRead(int ctx_id, void* data, uint32_t len, int flags, void* status) {
-    (void)data;
     (void)len;
     (void)flags;
-    (void)status;
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
-    return valid_ctx(ctx_id) ? RUDP_ERROR_CONN_RESET : RUDP_ERROR_INVALID_CONTEXT_ID;
+    if (ctx_id < 0 || data == nullptr) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    std::uint8_t statusSize = 0;
+    if (status != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&statusSize, status, sizeof(statusSize)) || statusSize > 0x0c) {
+            return RUDP_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    if (!valid_ctx(ctx_id)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    if (statusSize != 0) {
+        std::uint8_t report[0x0c] = {};
+        report[0] = statusSize;
+        if (!GuestCopyOut_nid_no_patch(status, report, statusSize)) {
+            return RUDP_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpNetFlush(void) {

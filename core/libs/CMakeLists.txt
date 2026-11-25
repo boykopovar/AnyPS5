@@ -516,6 +516,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
+    add_test_executable(nid_compute_tests nid/tests/NidComputeTests.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(nid_compute_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_compile_features(nid_compute_tests PRIVATE cxx_std_20)
+    configure_host_test_executable(nid_compute_tests)
+    add_test(NAME nid_compute COMMAND nid_compute_tests)
+    set_tests_properties(nid_compute PROPERTIES TIMEOUT 10)
 
     add_test_executable(guest_dinkumware_fetch_tests NO_RUNTIME_DLL_STAGING
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
@@ -1093,6 +1100,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_abstract_storage_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractStorage>")
+    endif()
+    add_test_executable(guest_abstract_youtube_trivial_returns_tests tests/GuestAbstractYoutubeTrivialReturns.cpp)
+    target_include_directories(guest_abstract_youtube_trivial_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_abstract_youtube_trivial_returns_tests PRIVATE libSceAbstractYoutube libc)
+    configure_windows_unwind(guest_abstract_youtube_trivial_returns_tests)
+    add_test(NAME guest_abstract_youtube_trivial_returns COMMAND guest_abstract_youtube_trivial_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_youtube_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
     endif()
     add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
     target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
