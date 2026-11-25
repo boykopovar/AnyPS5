@@ -232,7 +232,8 @@ void TestWideAndNullSearchStrings() {
 }
 
 void TestCreateRejectsBadArguments() {
-    const StringImpl impl = Latin1("a");
+    const std::string text = "a";
+    const StringImpl impl = Latin1(text);
     const StringReference reference{const_cast<StringImpl*>(&impl)};
     for (const int type : {-1, 3, 255}) {
         RegularExpression result{};
@@ -278,7 +279,8 @@ void TestCount() {
     Require(CountIn(dot, "a.b.c") == 2);
     Destroy(&dot);
 
-    const StringImpl widePattern = Utf16(u"中");
+    const std::u16string widePatternText = u"中";
+    const StringImpl widePattern = Utf16(widePatternText);
     RegularExpression wide = CreateFrom(&widePattern, true, Regex);
     Require(CountIn(wide, Utf16(u"中中x中")) == 3);
     Destroy(&wide);
@@ -292,7 +294,8 @@ void TestCountEmptyAndBadArguments() {
     RegularExpression star = Make("a*", true, Regex);
     const StringReference nullContent{nullptr};
     Require(Count(&star, &nullContent) == 0);
-    const StringImpl empty = Latin1("");
+    const std::string emptyText;
+    const StringImpl empty = Latin1(emptyText);
     Require(CountIn(star, empty) == 0);
 
     RegularExpression unset{};
