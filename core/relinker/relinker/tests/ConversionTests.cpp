@@ -340,6 +340,34 @@ void branchAcrossSignedBoundary() {
     require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
+void fsAccessAfterLongZeroPadding() {
+    constexpr std::uint64_t base = 0x1000;
+    const std::array<std::uint8_t, 9> fsRead{0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const auto collect = [&](std::size_t padding) {
+        std::vector<std::uint8_t> image(64 + 0x80, 0xcc);
+        const std::size_t entry = 64 + 0x10;
+        image[entry] = 0xc3;
+        std::fill_n(image.begin() + static_cast<std::ptrdiff_t>(entry + 1), padding, std::uint8_t{0});
+        const auto function = entry + 1 + padding;
+        std::copy(fsRead.begin(), fsRead.end(), image.begin() + static_cast<std::ptrdiff_t>(function));
+        image[function + fsRead.size()] = 0xc3;
+        Io::WriteU64(image, 24, base + 0x10);
+        Domain::ProgramHeader header{};
+        header.Type = 1;
+        header.Flags = 1;
+        header.Offset = 64;
+        header.MappedAddress = base;
+        header.FileSize = image.size() - 64;
+        header.MemorySize = header.FileSize;
+        const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
+        return std::binary_search(instructions.begin(), instructions.end(), base + (function - 64));
+    };
+    require(collect(15), "Lost an FS access after zero padding up to the next 16-byte boundary");
+    require(collect(31), "Lost an FS access after zero padding that crosses a 16-byte boundary");
+    require(collect(47), "Lost an FS access after zero padding that crosses two 16-byte boundaries");
+    require(!collect(79), "Took a zero run longer than function padding for padding");
+}
+
 class FailingProgress final : public Domain::IProgress {
 public:
     std::string InputPath;
@@ -665,6 +693,7 @@ int main() {
         scanning();
         branchAcrossSignedBoundary();
         truncatedExecutableSegmentInCodeInstructionCollector();
+        fsAccessAfterLongZeroPadding();
         diagnosticContext();
         cancellation();
         baseRelocations();

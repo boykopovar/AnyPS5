@@ -50,7 +50,6 @@ bool CopyResolverString(const char* source, std::string& destination) {
 
 template<typename TValue>
 void WriteResolverValue(TValue* destination, TValue value) {
-    const SavedErrno savedErrno;
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) APS5_INVALID_ARG_EX;
 }
 

@@ -46,6 +46,8 @@ public:
 
 constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }
 
+constexpr std::size_t MaxZeroPaddingAfterTransfer = 64;
+
 bool UsedAsCodeAddress(const std::uint8_t* code, const std::size_t available, const std::size_t begin, const unsigned computed) {
     constexpr std::uint16_t arguments = RegisterBit(7) | RegisterBit(6) | RegisterBit(2) | RegisterBit(1) | RegisterBit(8) | RegisterBit(9);
     constexpr std::uint16_t preserved = RegisterBit(3) | RegisterBit(5) | RegisterBit(12) | RegisterBit(13) | RegisterBit(14) | RegisterBit(15);
@@ -675,11 +677,16 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         bool afterTransfer = false;
         for (std::size_t position = nextPaddedStart(0); position < size;) {
             if (progress && position % 65536 < 16) report(3500 + 2500 * (scannedBytes + position) / scanBytes);
-            const auto aligned = (position + 15) & ~std::size_t{15};
-            const bool zeroPadding = afterTransfer && aligned != position && aligned <= size && std::all_of(text + position, text + aligned, [](const std::uint8_t value) { return value == 0; });
+            std::size_t paddingEnd = position;
+            if (afterTransfer) {
+                const auto limit = std::min(size, position + MaxZeroPaddingAfterTransfer);
+                while (paddingEnd < limit && text[paddingEnd] == 0) ++paddingEnd;
+                if (paddingEnd % 16 != 0 && paddingEnd < limit) paddingEnd = position;
+                while (paddingEnd > position && paddingEnd % 16 != 0) --paddingEnd;
+            }
             afterTransfer = false;
-            if (zeroPadding) {
-                position = aligned;
+            if (paddingEnd != position) {
+                position = paddingEnd;
                 continue;
             }
             if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {

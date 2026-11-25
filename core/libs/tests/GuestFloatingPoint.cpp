@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <array>
 #include <barrier>
@@ -132,6 +133,20 @@ void CheckFeraise() {
         Require(state.x87[0] == seeded.x87[0] && (state.sse & ~0x3fu) == (seeded.sse & ~0x3fu), "_Feraise preserves control bits");
         const int error = (raised & 0x01) != 0 || (raised & 0x1c) == 0 ? 33 : 34;
         Require(*__error_nid_postfix() == error, "_Feraise sets EDOM or ERANGE");
+    }
+    for (const int invalid : {0x40, 0x2001, 0x6008, 0x8048, 0x10004, -1}) {
+        const auto seeded = SeedFlags(0x05, 0x12);
+        *__error_nid_postfix() = 123;
+        bool threw = false;
+        try {
+            _Feraise_nid_postfix(invalid);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw, "_Feraise rejects unsupported exception bits");
+        const auto after = ReadEnvironment();
+        Require(SameEnvironment(after, seeded), "_Feraise preserves floating-point state on invalid bits");
+        Require(*__error_nid_postfix() == 123, "_Feraise preserves errno on invalid bits");
     }
     SeedFlags(0, 0);
 }
@@ -352,7 +367,7 @@ void CheckHoldExcept(HoldExcept hold) {
 int main(int argc, char** argv) {
     Require(argc == 2, "expected libc path");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "load libc for feholdexcept");
     const auto hold = reinterpret_cast<HoldExcept>(GetProcAddress(library, "feholdexcept_nid_postfix"));
 #else
