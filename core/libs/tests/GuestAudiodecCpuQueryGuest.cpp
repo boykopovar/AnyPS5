@@ -26,12 +26,21 @@ namespace {
 
 constexpr std::uint32_t LpcmBd = 0x1003u;
 constexpr std::uint32_t LpcmDvd = 0x1004u;
+constexpr std::uint32_t Hevag = 0x1008u;
 constexpr std::uint32_t RequiredBytes = 0x190138u;
+constexpr std::uint32_t HevagRequiredBytes = 0x1b0u;
 constexpr int ErrorCtrl = static_cast<int>(0x80f70009u);
 constexpr int ErrorParam = static_cast<int>(0x80f7000au);
+constexpr int ErrorParamSize = static_cast<int>(0x80f70004u);
 constexpr int ErrorMemory = static_cast<int>(0x80f7000eu);
 constexpr int ErrorMemorySize = static_cast<int>(0x80f70008u);
 constexpr int ErrorType = static_cast<int>(0x80f70001u);
+constexpr int ErrorHevagPcmFormat = static_cast<int>(0x80f70012u);
+constexpr int ErrorMemoryBufferSize = static_cast<int>(0x80f70015u);
+constexpr int ErrorLpcmParam = static_cast<int>(0x80f70100u);
+constexpr int ErrorHevagChannels = static_cast<int>(0x80f70c00u);
+constexpr int ErrorHevagSampleRate = static_cast<int>(0x80f70c01u);
+constexpr int ErrorHevagInterleave = static_cast<int>(0x80f70c06u);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -95,6 +104,172 @@ struct ProtectedRegion {
     }
 };
 
+std::uint64_t MakeLpcmHeader(std::uint32_t channels, std::uint32_t rate, std::uint32_t bits, std::uint32_t frames) {
+    return (static_cast<std::uint64_t>(channels) << 32) |
+           (static_cast<std::uint64_t>(rate) << 40) |
+           (static_cast<std::uint64_t>(bits) << 48) |
+           (static_cast<std::uint64_t>(frames) << 56);
+}
+
+void TestHevagLifecycle(ProtectedRegion& guarded) {
+    std::array<std::uint8_t, 0x40> hevagParam{};
+    std::array<std::uint8_t, 0x30> hevagBsi{};
+    std::vector<std::uint8_t> hevagMem(0x200u, 0xA5u);
+
+    auto initValidHevagParam = [&] {
+        hevagParam.fill(0);
+        const std::uint32_t paramSize = 0x40u;
+        std::memcpy(hevagParam.data() + 0x00, &paramSize, sizeof(paramSize));
+        hevagParam[0x14] = 0x00u;
+        hevagParam[0x15] = 0x00u;
+        hevagParam[0x16] = 0xbbu;
+        hevagParam[0x17] = 0x80u;
+        hevagParam[0x22] = 2u;
+        const std::uint32_t pcmFormat = 2u;
+        std::memcpy(hevagParam.data() + 0x34, &pcmFormat, sizeof(pcmFormat));
+        hevagParam[0x38] = 1u;
+    };
+    initValidHevagParam();
+
+    AudiodecCtrl hevagCtrl{hevagParam.data(), hevagBsi.data(), nullptr, nullptr};
+    AudiodecCpuMemory hevagQueryMem{0x18u, nullptr, 0xA5A5A5A5u};
+    errno = 71;
+    Require(sceAudiodecCpuQueryMemSize(&hevagCtrl, &hevagQueryMem, Hevag) == 0 && errno == 71, "HE-VAG QueryMemSize failed");
+    Require(hevagQueryMem.ui_memory_size == HevagRequiredBytes, "HE-VAG QueryMemSize size mismatch");
+    Require(hevagQueryMem.ui_size == 0x18u && hevagQueryMem.p_memory == nullptr, "HE-VAG QueryMemSize altered other fields");
+
+    hevagQueryMem.ui_memory_size = 0xA5A5A5A5u;
+    errno = 71;
+    Require(sceAudiodecCpuInternalQueryMemSize(&hevagCtrl, &hevagQueryMem, Hevag) == 0 && errno == 71, "HE-VAG InternalQueryMemSize failed");
+    Require(hevagQueryMem.ui_memory_size == HevagRequiredBytes, "HE-VAG InternalQueryMemSize size mismatch");
+
+    AudiodecCpuMemory smallHevagMem{0x18u, hevagMem.data(), HevagRequiredBytes - 1u};
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &smallHevagMem, Hevag) == ErrorMemoryBufferSize, "HE-VAG InitDecoder accepted small memory");
+    Require(sceAudiodecCpuClearContext(&smallHevagMem, Hevag) == ErrorMemoryBufferSize, "HE-VAG ClearContext accepted small memory");
+
+    AudiodecCpuMemory validHevagMem{0x18u, hevagMem.data() + 3, HevagRequiredBytes};
+    std::uint32_t badSize = 0x38u;
+    std::memcpy(hevagParam.data(), &badSize, sizeof(badSize));
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorParamSize, "HE-VAG InitDecoder accepted bad param size");
+
+    initValidHevagParam();
+    hevagParam[0x22] = 9u;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagChannels, "HE-VAG InitDecoder accepted >8 channels");
+
+    initValidHevagParam();
+    hevagParam[0x16] = 0x07u;
+    hevagParam[0x17] = 0xcfu;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagSampleRate, "HE-VAG InitDecoder accepted <2000 Hz");
+
+    initValidHevagParam();
+    const std::uint32_t badFormat = 3u;
+    std::memcpy(hevagParam.data() + 0x34, &badFormat, sizeof(badFormat));
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagPcmFormat, "HE-VAG InitDecoder accepted bad PCM format");
+
+    initValidHevagParam();
+    hevagParam[0x38] = 2u;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == ErrorHevagInterleave, "HE-VAG InitDecoder accepted bad interleave");
+
+    initValidHevagParam();
+    errno = 71;
+    Require(sceAudiodecCpuInitDecoder(&hevagCtrl, &validHevagMem, Hevag) == 0 && errno == 71, "valid HE-VAG InitDecoder failed");
+    const std::uintptr_t alignedOff = ((reinterpret_cast<std::uintptr_t>(validHevagMem.p_memory) + 7u) & ~static_cast<std::uintptr_t>(7u)) - reinterpret_cast<std::uintptr_t>(hevagMem.data());
+    Require(hevagMem[alignedOff + 0x10] == 2u && hevagMem[alignedOff + 0x28] == 1u, "HE-VAG InitDecoder did not store state");
+
+    std::memset(hevagMem.data() + alignedOff + 0x30, 0xA5, 0x80);
+    errno = 71;
+    Require(sceAudiodecCpuClearContext(&validHevagMem, Hevag) == 0 && errno == 71, "valid HE-VAG ClearContext failed");
+    for (std::size_t i = 0; i < 0x80; ++i) {
+        Require(hevagMem[alignedOff + 0x30 + i] == 0u, "HE-VAG ClearContext did not clear history");
+    }
+
+    AudiodecCpuMemory roHevagMem{0x18u, guarded.address, HevagRequiredBytes};
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuClearContext(&roHevagMem, Hevag); }, "read-only HE-VAG ClearContext accepted");
+    Require(errno == 71, "read-only HE-VAG ClearContext changed errno");
+}
+
+void TestDvdLpcmDecode(ProtectedRegion& guarded) {
+    std::vector<std::uint8_t> dvdMem(0x200u, 0u);
+    std::array<std::uint32_t, 10> dvdParam{};
+    std::array<std::uint32_t, 8> dvdBsi{};
+    std::array<std::uint8_t, 480> auBuf{};
+    std::array<float, 240> pcmBuf{};
+
+    auto resetDvd = [&](std::uint32_t rate, std::uint32_t bits, std::uint32_t frames, std::uint32_t ptsHi, std::uint32_t ptsLo) {
+        dvdParam.fill(0);
+        dvdParam[0] = 0x28u;
+        const std::uint64_t header = MakeLpcmHeader(2u, rate, bits, frames);
+        std::memcpy(&dvdParam[6], &header, sizeof(header));
+        dvdParam[8] = ptsHi;
+        dvdParam[9] = ptsLo;
+        dvdBsi.fill(0xA5A5A5A5u);
+        pcmBuf.fill(0.0f);
+    };
+
+    AudiodecAuInfo auInfo{0x18u, auBuf.data(), static_cast<std::uint32_t>(auBuf.size())};
+    AudiodecPcmItem pcmItem{0x18u, pcmBuf.data(), static_cast<std::uint32_t>(pcmBuf.size() * sizeof(float))};
+    AudiodecCtrl ctrl{dvdParam.data(), dvdBsi.data(), &auInfo, &pcmItem};
+    AudiodecCpuMemory mem{0x18u, dvdMem.data(), RequiredBytes};
+
+    resetDvd(1u, 1u, 1u, 0u, 500u);
+    Require(sceAudiodecCpuInitDecoder(&ctrl, &mem, LpcmDvd) == 0, "DVD InitDecoder failed");
+    auBuf.fill(0);
+    auBuf[0] = 0x80u;
+    auBuf[1] = 0x00u;
+    auBuf[2] = 0x40u;
+    auBuf[3] = 0x00u;
+    errno = 71;
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0 && errno == 71, "DVD 16-bit Decode failed");
+    Require(dvdParam[1] == 2u && dvdParam[2] == 1u && dvdParam[3] == 1u && dvdParam[4] == 320u, "DVD 16-bit param mismatch");
+    Require(auInfo.ui_au_size == 320u && pcmItem.ui_pcm_size == 640u, "DVD 16-bit sizes mismatch");
+    Require(pcmBuf[0] == -1.0f && pcmBuf[1] == 0.5f && pcmBuf[2] == 0.0f, "DVD 16-bit sample mismatch");
+    Require(dvdBsi[6] == 0u && dvdBsi[7] == 500u && dvdBsi[3] == 640u, "DVD 16-bit BSI mismatch");
+
+    resetDvd(1u, 1u, 1u, 0xffffffffu, 0xffffffffu);
+    auInfo.ui_au_size = 320u;
+    pcmItem.ui_pcm_size = 640u;
+    Require(sceAudiodecCpuInternalDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD PTS continuation failed");
+    Require(dvdBsi[6] == 0u && dvdBsi[7] == 650u, "DVD PTS did not advance by 150");
+
+    resetDvd(1u, 2u, 1u, 0xffffffffu, 0xffffffffu);
+    auBuf.fill(0);
+    auBuf[0] = 0x00u;
+    auBuf[1] = 0x00u;
+    auBuf[8] = 0x10u;
+    auInfo.ui_au_size = 400u;
+    pcmItem.ui_pcm_size = 640u;
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD 20-bit Decode failed");
+    Require(dvdParam[4] == 400u && pcmItem.ui_pcm_size == 640u, "DVD 20-bit sizes mismatch");
+    Require(pcmBuf[0] == 0x1p-19f, "DVD 20-bit sample mismatch");
+
+    resetDvd(1u, 3u, 1u, 0xffffffffu, 0xffffffffu);
+    auBuf.fill(0);
+    auBuf[0] = 0x00u;
+    auBuf[1] = 0x00u;
+    auBuf[8] = 0x01u;
+    auInfo.ui_au_size = 480u;
+    pcmItem.ui_pcm_size = 640u;
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD 24-bit Decode failed");
+    Require(dvdParam[4] == 480u && pcmItem.ui_pcm_size == 640u, "DVD 24-bit sizes mismatch");
+    Require(pcmBuf[0] == 0x1p-23f, "DVD 24-bit sample mismatch");
+
+    resetDvd(3u, 1u, 1u, 0xffffffffu, 0xffffffffu);
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == ErrorLpcmParam, "DVD accepted 192 kHz");
+
+    const std::uint64_t badCh8 = MakeLpcmHeader(8u, 1u, 3u, 1u);
+    std::memcpy(&dvdParam[6], &badCh8, sizeof(badCh8));
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == ErrorLpcmParam, "DVD accepted 48 kHz 8ch 24-bit");
+
+    resetDvd(1u, 1u, 1u, 0xffffffffu, 0xffffffffu);
+    auInfo.ui_au_size = 320u;
+    pcmItem.ui_pcm_size = 640u;
+    AudiodecCtrl roBsiCtrl{dvdParam.data(), guarded.address, &auInfo, &pcmItem};
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuDecode(&roBsiCtrl, &mem, LpcmDvd); }, "read-only DVD BSI accepted");
+    Require(dvdParam[1] == 0u && errno == 71, "failed DVD Decode mutated pParam or errno");
+}
+
 }
 
 int main() {
@@ -157,7 +332,7 @@ int main() {
         lpcmParam[7] = 0xffffffffu;
         lpcmParam[8] = 0x01010102u;
         lpcmParam[9] = 0xffffffffu;
-        const std::uint64_t header = (std::uint64_t{2} << 32) | (std::uint64_t{1} << 40) | (std::uint64_t{1} << 48) | (std::uint64_t{1} << 56);
+        const std::uint64_t header = MakeLpcmHeader(2u, 1u, 1u, 1u);
         std::memcpy(&lpcmParam[6], &header, sizeof(header));
         lpcmParam[8] = 100u;
         lpcmParam[9] = 200u;
@@ -217,6 +392,9 @@ int main() {
     auto* readOnlyBsi = guarded.address;
     checkBadDecode({lpcmParam.data(), readOnlyBsi, &auInfo, &pcmItem}, validMem, "read-only decode pBsiInfo");
     Require(lpcmParam[1] == 0 && errno == 71, "failed Decode mutated pParam");
+
+    TestHevagLifecycle(guarded);
+    TestDvdLpcmDecode(guarded);
 
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
