@@ -107,6 +107,19 @@ class HostOnlyTargets(unittest.TestCase):
         source_root = Path(self.temporary.name).resolve()
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
 
+    def test_shared_link_command_is_classified_once_per_selection(self):
+        root = Path(self.temporary.name).resolve()
+        first = self.target("first", source="core/libs/tests/First.cpp", fragment="-lfont")
+        second = self.target("second", source="core/libs/tests/Second.cpp", fragment="-lfont")
+        targets = {target["id"]: target for target in (first, second)}
+        selector = build_mingw_host_only_tests
+        with mock.patch.object(selector, "links_product_library", wraps=selector.links_product_library) as classify:
+            self.assertEqual(selector.host_only_test_targets(root, targets, ["core/libs/tests/Second.cpp"]), ["second"])
+            self.assertEqual(classify.call_count, 1)
+            targets["font"] = self.target("font", target_type="STATIC_LIBRARY", source="core/libs/src/Font.cpp")
+            self.assertEqual(selector.host_only_test_targets(root, targets), [])
+            self.assertEqual(classify.call_count, 2)
+
     def test_tests_folder_above_the_checkout_does_not_select_a_non_test_executable(self):
         source_root = (Path(self.temporary.name) / "tests" / "repo").resolve()
         utility = self.target("not_a_test", source="core/libs/nid/src/main.cpp")

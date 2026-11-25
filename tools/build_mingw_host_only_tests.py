@@ -215,6 +215,7 @@ def target_reached_sources(target, targets, source_root):
 
 def host_only_test_targets(source_root, targets, changed_paths=None):
     qualifying_targets = []
+    product_by_link_command = {}
     for target in targets.values():
         if target.get("type") != "EXECUTABLE":
             continue
@@ -226,7 +227,12 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
         if not any(is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
-        if links_guest_libc(target) or links_product_library(target, targets, source_root):
+        if links_guest_libc(target):
+            continue
+        command = link_command(target)
+        if command not in product_by_link_command:
+            product_by_link_command[command] = links_product_library(target, targets, source_root)
+        if product_by_link_command[command]:
             continue
         qualifying_targets.append(target)
     selected = sorted({target["name"] for target in qualifying_targets}, key=str.casefold)
