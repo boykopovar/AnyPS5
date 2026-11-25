@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstring>
@@ -61,9 +60,7 @@ private:
         consumed += size;
         const auto address = reinterpret_cast<std::uintptr_t>(source) + consumed;
         const std::size_t count = (std::min)(chunk.size(), static_cast<std::size_t>(pageSize - address % pageSize));
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const char*>(address), count);
-        errno = savedErrno;
         if (!copied) throw std::runtime_error(caller);
         size = count;
         position = 0;
