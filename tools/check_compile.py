@@ -8,6 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from functools import cache
 from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -76,9 +77,18 @@ def validate_arguments(arguments):
         raise ValueError("arguments must be a nonempty list of strings with an executable")
 
 
+def _unique_compilation_object(pairs):
+    record = {}
+    for key, value in pairs:
+        if key in record:
+            raise ValueError(f"duplicate compilation database JSON key {key!r}")
+        record[key] = value
+    return record
+
+
 def compilation_database(text, source, skip_empty_commands=False):
     try:
-        database = json.loads(text)
+        database = json.loads(text, object_pairs_hook=_unique_compilation_object)
     except RecursionError as error:
         raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
@@ -104,8 +114,34 @@ def compilation_database(text, source, skip_empty_commands=False):
             raise ValueError(f"{context}: expected arguments or command")
         elif not isinstance(entry["command"], str) or not entry["command"].strip():
             raise ValueError(f"{context}: command must be a nonempty string")
+        values = [entry["directory"], entry["file"]]
+        if "arguments" in entry:
+            values.extend(entry["arguments"])
+        else:
+            values.append(entry["command"])
+        if any("\0" in value for value in values):
+            raise ValueError(f"{context}: NUL byte in compilation command fields")
         commands.append(entry)
     return commands
+
+
+def ninja_for_build(build):
+    try:
+        lines = (build / "CMakeCache.txt").read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        lines = ()
+    values = {}
+    for line in lines:
+        key, separator, value = line.partition("=")
+        name = key.partition(":")[0]
+        if separator and name in ("CMAKE_GENERATOR", "CMAKE_MAKE_PROGRAM"):
+            values[name] = value
+    program = values.get("CMAKE_MAKE_PROGRAM", "")
+    if values.get("CMAKE_GENERATOR") in ("Ninja", "Ninja Multi-Config") and program and not program.endswith("-NOTFOUND"):
+        executable = shutil.which(program)
+        if executable is not None:
+            return executable
+    return shutil.which("ninja")
 
 
 def entries(build):
@@ -114,7 +150,7 @@ def entries(build):
     manifest = build / "compile_commands.json"
     if manifest.is_file():
         return compilation_database(manifest.read_text(encoding="utf-8-sig"), manifest)
-    ninja = shutil.which("ninja")
+    ninja = ninja_for_build(build)
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
     result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
@@ -123,22 +159,22 @@ def entries(build):
     return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
-def entry_key(entry, root):
-    directory = real(entry["directory"])
+def entry_key(entry, root, resolve=real):
     source = Path(entry["file"])
     if not source.is_absolute():
-        source = directory / source
-    source = real(source)
+        source = resolve(entry["directory"]) / source
+    source = resolve(os.fspath(source))
     try:
-        return source.relative_to(real(root)).as_posix()
+        return source.relative_to(resolve(os.fspath(root))).as_posix()
     except ValueError:
         return source.as_posix()
 
 
 def index(build, root):
+    resolve = cache(real)
     commands = {}
     for entry in entries(build):
-        commands.setdefault(entry_key(entry, root), []).append(entry)
+        commands.setdefault(entry_key(entry, root, resolve), []).append(entry)
     return commands
 
 
@@ -371,6 +407,7 @@ def syntax_arguments(arguments, directory, source):
     index = 1
     positional = False
     syntax_added = False
+    source_added = False
     while index < len(arguments):
         argument = arguments[index]
         if not syntax_added and argument.startswith("-"):
@@ -400,6 +437,8 @@ def syntax_arguments(arguments, directory, source):
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue
+        if not positional and argument in ("-fdiagnostics-format=json-file", "-fdiagnostics-format=sarif-file"):
+            argument = argument.removesuffix("-file") + "-stderr"
         query, _, value = argument.partition("=")
         if query.startswith("--print-"):
             query = query[1:]
@@ -409,11 +448,18 @@ def syntax_arguments(arguments, directory, source):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
-            if real(candidate) == wanted:
+            candidate = real(candidate)
+            if candidate == wanted:
+                if not syntax_added:
+                    trimmed.append("-fsyntax-only")
+                    syntax_added = True
+                if not source_added:
+                    trimmed.append(str(wanted))
+                    source_added = True
                 index += 1
                 continue
             if positional:
-                trimmed.append(str(real(candidate)))
+                trimmed.append(str(candidate))
                 index += 1
                 continue
         elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
@@ -423,7 +469,8 @@ def syntax_arguments(arguments, directory, source):
         index += 1
     if not syntax_added:
         trimmed.append("-fsyntax-only")
-    trimmed.append(str(wanted))
+    if not source_added:
+        trimmed.append(str(wanted))
     return trimmed
 
 
