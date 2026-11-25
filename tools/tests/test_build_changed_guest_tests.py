@@ -647,6 +647,42 @@ int main(int argc, char **argv) {
                 self.assertFalse((build / "unrelated").exists())
         self.assertEqual(builds, [["libs"], ["host_tests"], ["libs"], ["host_tests"]])
 
+    def test_changed_shared_test_library_selects_registered_commands_and_builds_their_inputs(self):
+        source = "core/libs/tests/SharedFixture.cpp"
+        fixture = self.target("fixture", "SHARED_LIBRARY", source)
+        fixture["artifacts"] = [{"path": "modules/fixture.prx"}]
+        companion = self.target("companion", "MODULE_LIBRARY", "core/libs/tests/Companion.cpp")
+        companion["artifacts"] = [{"path": "modules/companion.prx"}]
+        runner = self.target("runner", source="core/relinker/Runner.cpp")
+        build = self.fixture([fixture, companion, runner])
+        program = (build / "tests/runner.exe").as_posix()
+        library = (build / "modules/fixture.prx").as_posix()
+        other = (build / "elsewhere/fixture.prx").as_posix()
+        dependency = (build / "modules/companion.prx").as_posix()
+        names = ["argument.one", "argument[2]", "unrelated"]
+        (build / "CTestTestfile.cmake").write_text(
+            f'add_test("argument.one" "{program}" "{library}" "{dependency}")\n'
+            f'add_test("argument[2]" "{program}" "-DLIB={library}")\n'
+            f'add_test("unrelated" "{program}" "{other}")\n', encoding="utf-8")
+        builds, selections = [], []
+
+        def execute(command, **kwargs):
+            if "--target" in command:
+                builds.append(command[command.index("--target") + 1:])
+            elif "--show-only=json-v1" in command:
+                scheduled = names[:2] if "-I" in command else names
+                return run_result(json.dumps({"tests": [{"name": name} for name in scheduled]}))
+            elif runs_selected_tests(command):
+                selections.append(Path(command[command.index("-I") + 1]).read_text())
+            return run_result()
+
+        output = io.StringIO()
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stdout(output):
+            self.assertEqual(self.main(build, [source]), 0)
+        self.assertEqual(selections, ["0,0,0,1,2\n"])
+        self.assertEqual(builds, [["libs"], ["companion", "fixture", "runner"]])
+        self.assertIn("(3 targets, 2 tests)", output.getvalue())
+
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         calls = []

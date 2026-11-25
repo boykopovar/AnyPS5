@@ -11,7 +11,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
 from check_test_registration import testfile_commands
-from select_tests import chunks, ctest_index_file, paths
+from select_tests import chunks, ctest_index_file, paths, real_path
 
 BROAD_CHANGES = {
     "CMakeLists.txt",
@@ -109,6 +109,41 @@ def scheduled_test_owners(build_dir, selection, targets_by_name):
     return owners
 
 
+def broad_guest_change(changed):
+    return any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
+        path.endswith(HEADER_SUFFIXES + (".cmake",)) or Path(path).name == "CMakeLists.txt"
+    ) for path in changed)
+
+
+def shared_library_test_inputs(build_dir, source_root, targets, changed_paths):
+    changed = {Path(path).as_posix() for path in changed_paths or () if path}
+    broad = changed_paths is None or broad_guest_change(changed)
+    if not broad and not any(host_only.is_core_libs_test_source(source_root / path, source_root / "core/libs") for path in changed):
+        return set(), set()
+    libraries = set()
+    for target in targets.values():
+        if target.get("type") not in {"SHARED_LIBRARY", "MODULE_LIBRARY"}:
+            continue
+        for source in target.get("sources", []):
+            path = source_root / source["path"]
+            if not source.get("isGenerated") and (broad or host_only.source_relative_path(source_root, path) in changed):
+                if host_only.is_core_libs_test_source(path, source_root / "core/libs"):
+                    libraries.add(target["name"])
+                    break
+    cases, required = set(), set()
+    if libraries:
+        root = build_dir.resolve()
+        artifacts = {Path(real_path(str(root / artifact["path"]))): target["name"]
+                     for target in targets.values() for artifact in target.get("artifacts", [])}
+        for name, command in registered_test_commands(root).items():
+            inputs = {artifacts.get(Path(real_path(part))) for part in paths(command)}
+            inputs.discard(None)
+            if libraries & inputs:
+                cases.add(name)
+                required.update(inputs)
+    return cases, required
+
+
 def guest_test_targets(source_root, targets, changed_paths=None):
     selected = []
     for target in targets.values():
@@ -128,9 +163,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return sorted({target["name"] for target in selected}, key=str.casefold)
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
-    ) for path in changed)
+    broad_change = broad_guest_change(changed)
     loads_libraries = broad_change or any(path.startswith("core/libs/prx/") for path in changed)
     load_test = [LIBRARY_LOAD_TEST] if loads_libraries and any(
         target.get("name") == LIBRARY_LOAD_TEST and target.get("type") == "EXECUTABLE" for target in targets.values()) else []
@@ -219,7 +252,7 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
+def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None, required_inputs=()):
     total = time.perf_counter()
     started = time.perf_counter()
     try:
@@ -253,7 +286,7 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
         return
     with ctest_index_file("0,0,0," + ",".join(map(str, sorted(indices)))) as selection:
         started = time.perf_counter()
-        additional = scheduled_test_owners(build_dir, selection, targets_by_name) - selected_names
+        additional = (scheduled_test_owners(build_dir, selection, targets_by_name) | set(required_inputs)) - selected_names
         phase_report("scheduled test owner discovery", started, f"{len(additional)} targets")
         if additional:
             batches = list(chunks(sorted(additional, key=str.casefold)))
@@ -271,7 +304,7 @@ def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None
                             *(["--output-log", str(output_log)] if output_log else [])], check=True)
         finally:
             phase_report("ctest", started, f"{len(indices)} tests")
-    phase_report("total", total, f"{len(selected)} targets, {len(indices)} tests")
+    phase_report("total", total, f"{len(selected_names) + len(additional)} targets, {len(indices)} tests")
 
 
 def main(argv=None):
@@ -289,19 +322,24 @@ def main(argv=None):
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
         selected = core_lib_test_targets(source_root, targets, changed_paths)
-        if not selected:
+        library_tests, required_inputs = shared_library_test_inputs(args.build_dir, source_root, targets, changed_paths)
+        if not selected and not library_tests:
             print("No core/libs test sources changed")
-        else:
+        if selected:
             print("Core/libs tests:")
             print("\n".join(selected))
+        if library_tests:
+            print("Tests using changed shared libraries:")
+            print("\n".join(sorted(library_tests)))
         by_name = {target.get("name"): target for target in targets.values()}
         targets_by_name = {}
         for name, target in by_name.items():
             if target.get("type") == "EXECUTABLE":
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
-        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
-        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
+        script_tests = script_test_patterns(changed_paths) if changed_paths is not None else []
+        script_tests.extend(re.compile(rf"^{re.escape(name)}$") for name in sorted(library_tests))
+        run(args.build_dir, selected, targets_by_name, args.output_log, script_tests, required_inputs)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
