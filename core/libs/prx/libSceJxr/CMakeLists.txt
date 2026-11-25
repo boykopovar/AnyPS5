@@ -21,6 +21,7 @@ target_sources(libSceJxr PRIVATE src/ListStream.cpp src/ImageEncode.cpp src/File
 configure_windows_unwind(libSceJxr)
 
 include(Metadata.cmake)
+include(Wmp.cmake)
 
 if(BUILD_TESTING)
     add_library(jxr_lookup_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrLookupReference.c)
@@ -186,6 +187,23 @@ if(BUILD_TESTING)
     set_tests_properties(guest_jxr_predict PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_jxr_predict PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJxr>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_library(jxr_wmp_roundtrip_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrWmpRoundtripReference.c)
+    configure_jxr_native(jxr_wmp_roundtrip_reference)
+    target_include_directories(jxr_wmp_roundtrip_reference PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jxr_wmp_roundtrip_reference PRIVATE jxr)
+    add_test_executable(guest_jxr_wmp_roundtrip_tests ${LIBS_INCLUDE_DIR}/tests/GuestJxrWmpRoundtrip.cpp)
+    target_include_directories(guest_jxr_wmp_roundtrip_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jxr_wmp_roundtrip_tests PRIVATE libSceJxr libc jxr_wmp_roundtrip_reference)
+    configure_windows_unwind(guest_jxr_wmp_roundtrip_tests)
+    add_test(NAME guest_jxr_wmp_roundtrip COMMAND guest_jxr_wmp_roundtrip_tests)
+    set_tests_properties(guest_jxr_wmp_roundtrip PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_jxr_wmp_roundtrip PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJxr>")
     endif()
 endif()

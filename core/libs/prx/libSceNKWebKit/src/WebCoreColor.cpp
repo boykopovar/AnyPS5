@@ -44,76 +44,110 @@ Color MakeSRGBA(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a, 
     return Color{packed | kColorSpaceSRGB | kValidFlag | extraFlags};
 }
 
+Color* StoreColor(Color* result, const Color& value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return result;
+}
+
 }  // namespace
 }  // namespace WebCore
 
 extern "C" {
 void APS5_VABI _ZN7WebCore5ColorC1EOS0_(WebCore::Color* self, WebCore::Color&& other) {
-    if (WebCore::IsOutOfLine(other)) {
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
-    other.m_colorAndFlags = 0;
+    if (!GuestWritable_nid_no_patch(&other, sizeof(other))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const WebCore::Color moved{};
+    if (!GuestCopyOut_nid_no_patch(&other, &moved, sizeof(moved))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore5ColorC2EOS0_(WebCore::Color* self, WebCore::Color&& other) {
-    if (WebCore::IsOutOfLine(other)) {
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
-    other.m_colorAndFlags = 0;
+    if (!GuestWritable_nid_no_patch(&other, sizeof(other))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const WebCore::Color moved{};
+    if (!GuestCopyOut_nid_no_patch(&other, &moved, sizeof(moved))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore5ColorC1ERKS0_(WebCore::Color* self, const WebCore::Color& other) {
-    if (WebCore::IsOutOfLine(other)) {
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore5ColorC2ERKS0_(WebCore::Color* self, const WebCore::Color& other) {
-    if (WebCore::IsOutOfLine(other)) {
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other) {
-    if (WebCore::IsOutOfLine(*self) || WebCore::IsOutOfLine(other)) {
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other) {
+    WebCore::Color target{};
+    if (!GuestCopyIn_nid_no_patch(&target, self, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(target) || WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
-    other.m_colorAndFlags = 0;
-    return *self;
+    if (target.m_colorAndFlags == source.m_colorAndFlags) {
+        return self;
+    }
+    if (!GuestWritable_nid_no_patch(&other, sizeof(other))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const WebCore::Color moved{};
+    if (!GuestCopyOut_nid_no_patch(&other, &moved, sizeof(moved))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return self;
 }
 
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other) {
-    if (WebCore::IsOutOfLine(*self) || WebCore::IsOutOfLine(other)) {
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other) {
+    WebCore::Color target{};
+    if (!GuestCopyIn_nid_no_patch(&target, self, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WebCore::Color source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(target) || WebCore::IsOutOfLine(source)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    self->m_colorAndFlags = other.m_colorAndFlags;
-    return *self;
+    if (!GuestCopyOut_nid_no_patch(self, &source, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return self;
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(const WebCore::Color* self, float alpha) {
-    if (WebCore::IsOutOfLine(*self)) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(WebCore::Color* result, const WebCore::Color* self, float alpha) {
+    WebCore::Color color{};
+    if (!GuestCopyIn_nid_no_patch(&color, self, sizeof(color))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(color)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
     std::uint8_t a = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(alpha * 255.0f)), 0l, 255l));
-    std::uint64_t semanticFlag = self->m_colorAndFlags & (1ULL << WebCore::kFlagsShift);
-    return WebCore::MakeSRGBA(WebCore::Red(*self), WebCore::Green(*self), WebCore::Blue(*self), a, semanticFlag);
+    std::uint64_t semanticFlag = color.m_colorAndFlags & (1ULL << WebCore::kFlagsShift);
+    return WebCore::StoreColor(result, WebCore::MakeSRGBA(WebCore::Red(color), WebCore::Green(color), WebCore::Blue(color), a, semanticFlag), __func__);
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* self) {
-    if (WebCore::IsOutOfLine(*self)) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color8darkenedEv(WebCore::Color* result, const WebCore::Color* self) {
+    WebCore::Color color{};
+    if (!GuestCopyIn_nid_no_patch(&color, self, sizeof(color))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(color)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    std::uint8_t r = WebCore::Red(*self);
-    std::uint8_t g = WebCore::Green(*self);
-    std::uint8_t b = WebCore::Blue(*self);
-    std::uint8_t a = WebCore::Alpha(*self);
+    std::uint8_t r = WebCore::Red(color);
+    std::uint8_t g = WebCore::Green(color);
+    std::uint8_t b = WebCore::Blue(color);
+    std::uint8_t a = WebCore::Alpha(color);
     if (r == 255 && g == 255 && b == 255 && a == 255) {
-        return WebCore::MakeSRGBA(171, 171, 171, 255);
+        return WebCore::StoreColor(result, WebCore::MakeSRGBA(171, 171, 171, 255), __func__);
     }
     float rf = static_cast<float>(r) / 255.0f;
     float gf = static_cast<float>(g) / 255.0f;
@@ -123,52 +157,58 @@ WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* sel
     std::uint8_t nr = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * rf * 255.0f)), 0l, 255l));
     std::uint8_t ng = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * gf * 255.0f)), 0l, 255l));
     std::uint8_t nb = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * bf * 255.0f)), 0l, 255l));
-    return WebCore::MakeSRGBA(nr, ng, nb, a);
+    return WebCore::StoreColor(result, WebCore::MakeSRGBA(nr, ng, nb, a), __func__);
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* self) {
-    if (WebCore::IsOutOfLine(*self)) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color9lightenedEv(WebCore::Color* result, const WebCore::Color* self) {
+    WebCore::Color color{};
+    if (!GuestCopyIn_nid_no_patch(&color, self, sizeof(color))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(color)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    std::uint8_t r = WebCore::Red(*self);
-    std::uint8_t g = WebCore::Green(*self);
-    std::uint8_t b = WebCore::Blue(*self);
-    std::uint8_t a = WebCore::Alpha(*self);
+    std::uint8_t r = WebCore::Red(color);
+    std::uint8_t g = WebCore::Green(color);
+    std::uint8_t b = WebCore::Blue(color);
+    std::uint8_t a = WebCore::Alpha(color);
     if (r == 0 && g == 0 && b == 0 && a == 255) {
-        return WebCore::MakeSRGBA(84, 84, 84, 255);
+        return WebCore::StoreColor(result, WebCore::MakeSRGBA(84, 84, 84, 255), __func__);
     }
     float rf = static_cast<float>(r) / 255.0f;
     float gf = static_cast<float>(g) / 255.0f;
     float bf = static_cast<float>(b) / 255.0f;
     float v = std::max({rf, gf, bf});
     if (v == 0.0f) {
-        return WebCore::MakeSRGBA(84, 84, 84, a);
+        return WebCore::StoreColor(result, WebCore::MakeSRGBA(84, 84, 84, a), __func__);
     }
     float multiplier = std::min(1.0f, v + 0.33f) / v;
     std::uint8_t nr = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * rf * 255.0f)), 0l, 255l));
     std::uint8_t ng = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * gf * 255.0f)), 0l, 255l));
     std::uint8_t nb = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * bf * 255.0f)), 0l, 255l));
-    return WebCore::MakeSRGBA(nr, ng, nb, a);
+    return WebCore::StoreColor(result, WebCore::MakeSRGBA(nr, ng, nb, a), __func__);
 }
 
 double APS5_VABI _ZNK7WebCore5Color9lightnessEv(const WebCore::Color* self) {
-    if (WebCore::IsOutOfLine(*self)) {
+    WebCore::Color color{};
+    if (!GuestCopyIn_nid_no_patch(&color, self, sizeof(color))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(color)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    float rf = static_cast<float>(WebCore::Red(*self)) / 255.0f;
-    float gf = static_cast<float>(WebCore::Green(*self)) / 255.0f;
-    float bf = static_cast<float>(WebCore::Blue(*self)) / 255.0f;
+    float rf = static_cast<float>(WebCore::Red(color)) / 255.0f;
+    float gf = static_cast<float>(WebCore::Green(color)) / 255.0f;
+    float bf = static_cast<float>(WebCore::Blue(color)) / 255.0f;
     auto [minVal, maxVal] = std::minmax({rf, gf, bf});
     return 0.5 * static_cast<double>(maxVal + minVal);
 }
 
 double APS5_VABI _ZNK7WebCore5Color9luminanceEv(const WebCore::Color* self) {
-    if (WebCore::IsOutOfLine(*self)) {
+    WebCore::Color color{};
+    if (!GuestCopyIn_nid_no_patch(&color, self, sizeof(color))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (WebCore::IsOutOfLine(color)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
-    float rf = static_cast<float>(WebCore::Red(*self)) / 255.0f;
-    float gf = static_cast<float>(WebCore::Green(*self)) / 255.0f;
-    float bf = static_cast<float>(WebCore::Blue(*self)) / 255.0f;
+    float rf = static_cast<float>(WebCore::Red(color)) / 255.0f;
+    float gf = static_cast<float>(WebCore::Green(color)) / 255.0f;
+    float bf = static_cast<float>(WebCore::Blue(color)) / 255.0f;
     auto toLinear = [](float c) -> float {
         if (c <= 0.04045f) {
             return std::max(c / 12.92f, 0.0f);
