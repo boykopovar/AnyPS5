@@ -1,5 +1,4 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -25,9 +24,7 @@ constexpr int Asn1NegativeEnumerated = 0x100 | Asn1Enumerated;
 constexpr int CertStatusRevoked = 1;
 
 bool CopyGuestBytesInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     return ok;
 }
 
@@ -44,9 +41,7 @@ bool CopyGuestFieldInPreservingErrno(TField& destination, const TStruct* source,
 
 template <typename T>
 bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
     return ok;
 }
 
