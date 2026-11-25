@@ -1433,6 +1433,12 @@ void absoluteFunctionSymbols() {
             write<std::uint64_t>(bytes, 0x620, constant);
             require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
                     "Strict filter treated an SHN_ABS function symbol as a code entry point");
+            if (constant == 0x1010) {
+                const std::vector<Relinker::VirtualAddress> extraEntries{0x1010};
+                require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(
+                            references, bytes, input.Text, input.TextVaddr, extraEntries).size() == 1,
+                        "Strict filter dropped an import used by an extra absolute exported-function root");
+            }
         }
     }
 

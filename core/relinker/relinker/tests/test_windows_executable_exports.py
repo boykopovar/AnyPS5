@@ -10,7 +10,7 @@ from guest_import_fixtures import dynamic
 from test_guest_intel_trampolines import main_fixture, pe_sections
 
 
-def fixture(symbols, tls=False):
+def fixture(symbols, tls=False, strict_import=False):
     image = main_fixture()
     image[0x4020:0x4026] = b'\xb8\x2b\0\0\0\xc3'
     image[0x4030:0x4036] = b'\xb8\x2c\0\0\0\xc3'
@@ -21,12 +21,35 @@ def fixture(symbols, tls=False):
         offset = len(strings)
         strings.extend(name.encode() + b'\0')
         table.extend(struct.pack('<IBBHQQ', offset, info, visibility, section, value, size))
+    import_index = None
+    if strict_import:
+        import_name = len(strings)
+        strings.extend(b'strict_only_import\0')
+        needed_name = len(strings)
+        strings.extend(b"libstrict.so" + bytes(1))
+        import_index = len(table) // 24
+        table.extend(struct.pack('<IBBHQQ', import_name, 0x12, 0, 0, 0, 0))
+        slot = 0x5f10
+        struct.pack_into('<IIQQQQQQ', image, 64 + 5 * 56, 1, 6, 0x5000, 0x5000, 0x5000,
+                         0x1000, 0x1000, 0x1000)
+        image[0x4030:0x4037] = b'\xff\x15' + struct.pack('<i', slot - (0x4030 + 6)) + b'\xc3'
+        struct.pack_into('<QQq', image, 0x4700, slot, (import_index << 32) | 6, 0)
     image[0x4800:0x4800 + len(strings)] = strings
     image[0x4a00:0x4a00 + len(table)] = table
     struct.pack_into('<II', image, 0x4e00, 1, len(table) // 24)
     tags = [(5, 0x4800), (10, len(strings)), (6, 0x4a00), (11, 24),
             (4, 0x4e00), (0x6100003f, len(table)), (7, 0x4700), (8, 0), (9, 24)]
+    if strict_import:
+        tags.insert(0, (1, needed_name))
     dynamic(image, 0x4600, 120, tags)
+    if strict_import:
+        for position in range(0x4600, 0x4700, 16):
+            tag, _ = struct.unpack_from('<qQ', image, position)
+            if tag == 8:
+                struct.pack_into('<Q', image, position + 8, 24)
+                break
+        else:
+            raise AssertionError('DT_RELASZ is missing')
     if tls:
         struct.pack_into('<IIQQQQQQ', image, 176, 7, 4, 0x4f80, 0x4f80, 0x4f80, 8, 64, 16)
     return image
@@ -82,10 +105,10 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-main-exports-') as directory:
         work = Path(directory)
-        def convert(label, symbols, tls=False, options=()):
+        def convert(label, symbols, tls=False, options=(), strict_import=False):
             source = work / (label + '.elf')
             output = work / (label + '.exe')
-            source.write_bytes(fixture(symbols, tls))
+            source.write_bytes(fixture(symbols, tls, strict_import))
             result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', *options,
                                      str(source), str(output)], capture_output=True, text=True, timeout=10)
             return result, output
@@ -114,6 +137,14 @@ def main():
         assert result.returncode == 0, (result.stdout, result.stderr)
         rooted_exports = exports(rooted_output.read_bytes())
         assert rooted_exports == actual, rooted_exports
+        strict_symbols = [(name, info, visibility, section, value,
+                           7 if name == 'absolute_function' else size)
+                          for name, info, visibility, section, value, size in symbols]
+        result, strict_output = convert('strict-absolute-root', strict_symbols,
+                                        options=('--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and strict_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 1; filtered=0' in result.stdout, result.stdout
+        assert exports(strict_output.read_bytes())['absolute_function'] == 0x10030
         for label, changed, expected in (
                 ('conflict', symbols[:2] + [('alpha#C#B', 0x12, 0, 1, 0x4020, 6)], 'Conflicting executable exports after stripping #: alpha'),
                 ('unmapped', [('bad', 0x11, 0, 1, 0x9000, 6)], 'does not fit inside a PT_LOAD segment'),

@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <algorithm>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <cstring>
 #include <sstream>
@@ -54,7 +55,7 @@ public:
         }
     }
 
-    UnusedNidFilter::StrictReachabilityInput Build(const std::vector<NidReference>& references, const std::vector<std::uint8_t>& text, VirtualAddress textVaddr) const {
+    UnusedNidFilter::StrictReachabilityInput Build(const std::vector<NidReference>& references, const std::vector<std::uint8_t>& text, VirtualAddress textVaddr, const std::vector<VirtualAddress>& extraEntries) const {
         UnusedNidFilter::StrictReachabilityInput input{text, textVaddr, {reader.ReadHeader().EntryPoint}, {}, {}, {}, {}};
         std::size_t codeSegments = 0;
         for (const auto& segment : headers) {
@@ -205,6 +206,9 @@ public:
                 input.Entries.push_back(read<std::uint64_t>(position + 8));
             }
         }
+        input.Entries.insert(input.Entries.end(), extraEntries.begin(), extraEntries.end());
+        std::sort(input.Entries.begin(), input.Entries.end());
+        input.Entries.erase(std::unique(input.Entries.begin(), input.Entries.end()), input.Entries.end());
         input.Functions = UnusedNidFilter::ReadExceptionFunctions(bytes, headers, input.Pointers, input.ImportSlots);
         for (const auto& segment : headers) {
             if (segment.Type != 1 || (segment.Flags & 1) != 0 || (segment.Flags & 6) == 0 || segment.FileSize == 0) continue;
@@ -264,9 +268,9 @@ class StrictNidFilter : public IUnusedNidFilter {
 
 public:
     explicit StrictNidFilter(Domain::IProgress& progress) : progress(progress) {}
-    std::vector<NidReference> Filter(const std::vector<NidReference>& nidRefs, const std::vector<std::uint8_t>& elfBytes, const std::vector<std::uint8_t>& textSection, VirtualAddress textVAddr, const std::vector<VirtualAddress>&) override {
+    std::vector<NidReference> Filter(const std::vector<NidReference>& nidRefs, const std::vector<std::uint8_t>& elfBytes, const std::vector<std::uint8_t>& textSection, VirtualAddress textVAddr, const std::vector<VirtualAddress>& extraEntries) override {
         const StrictImage image(elfBytes);
-        const auto input = image.Build(nidRefs, textSection, textVAddr);
+        const auto input = image.Build(nidRefs, textSection, textVAddr, extraEntries);
         const auto analysis = UnusedNidFilter::AnalyzeStrictReachability(input);
         std::vector<NidReference> result;
         for (const auto& reference : nidRefs) {
