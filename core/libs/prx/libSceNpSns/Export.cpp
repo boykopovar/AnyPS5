@@ -51,17 +51,74 @@ constexpr std::size_t kYouTubeRequiredStrOffset = 0x0c;
 constexpr std::size_t kYouTubeReservedOffset = 0x0c0c;
 constexpr std::size_t kYouTubeReservedSize = 0x20;
 
+enum class RequestOwner {
+    Internal,
+    Twitch,
+    YouTube,
+};
+
 struct RequestEntry {
     int id = 0;
     bool aborted = false;
     bool inProgress = false;
+    RequestOwner owner = RequestOwner::Internal;
 };
 
 std::atomic<bool> g_initialized{true};
 std::mutex g_requestMutex;
 std::vector<RequestEntry> g_requests;
-std::atomic<int> g_youtubeRequests{0};
-std::atomic<int> g_twitchRequests{0};
+int g_youtubeRequests = 0;
+int g_twitchRequests = 0;
+
+int CreateRequestForOwner(RequestOwner owner) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    if (owner == RequestOwner::Twitch && g_twitchRequests >= kMaxServiceRequests) return kErrRequestMax;
+    if (owner == RequestOwner::YouTube && g_youtubeRequests >= kMaxServiceRequests) return kErrYtRequestMax;
+    if (g_requests.size() >= kMaxIntRequests) return kErrRequestMax;
+    int candidate = kReqIdBase + 1;
+    for (const auto& entry : g_requests) {
+        if (entry.id == candidate) {
+            if (candidate >= kReqIdMax) return kErrRequestMax;
+            ++candidate;
+        } else if (entry.id > candidate) {
+            break;
+        }
+    }
+    if (candidate > kReqIdMax) return kErrRequestMax;
+    RequestEntry entry;
+    entry.id = candidate;
+    entry.owner = owner;
+    auto it = std::lower_bound(g_requests.begin(), g_requests.end(), candidate,
+        [](const RequestEntry& lhs, int rhs) { return lhs.id < rhs; });
+    g_requests.insert(it, entry);
+    if (owner == RequestOwner::Twitch) {
+        ++g_twitchRequests;
+    } else if (owner == RequestOwner::YouTube) {
+        ++g_youtubeRequests;
+    }
+    return candidate;
+}
+
+int DeleteRequestForOwner(int reqId, RequestOwner expectedOwner, bool matchAnyOwner) {
+    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
+    if (reqId == 0) return kErrIdNotFound;
+    std::lock_guard<std::mutex> lock(g_requestMutex);
+    for (auto it = g_requests.begin(); it != g_requests.end(); ++it) {
+        if (it->id == reqId) {
+            if (!matchAnyOwner && it->owner != expectedOwner) return kErrIdNotFound;
+            if (it->owner == RequestOwner::Twitch && g_twitchRequests > 0) {
+                --g_twitchRequests;
+            } else if (it->owner == RequestOwner::YouTube && g_youtubeRequests > 0) {
+                --g_youtubeRequests;
+            }
+            g_requests.erase(it);
+            return 0;
+        }
+        if (it->id > reqId) break;
+    }
+    return kErrIdNotFound;
+}
 
 bool IsZeroRange(const std::uint8_t* data, std::size_t offset, std::size_t length) {
     for (std::size_t i = 0; i < length; ++i) {
@@ -114,39 +171,11 @@ bool TryWriteZeroFlag(int* outFlag) {
 extern "C" {
 
 int APS5_VABI sceNpSnsIntCreateRequest(void) {
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    std::lock_guard<std::mutex> lock(g_requestMutex);
-    if (g_requests.size() >= kMaxIntRequests) return kErrRequestMax;
-    int candidate = kReqIdBase + 1;
-    for (const auto& entry : g_requests) {
-        if (entry.id == candidate) {
-            if (candidate >= kReqIdMax) return kErrRequestMax;
-            ++candidate;
-        } else if (entry.id > candidate) {
-            break;
-        }
-    }
-    if (candidate > kReqIdMax) return kErrRequestMax;
-    RequestEntry entry;
-    entry.id = candidate;
-    auto it = std::lower_bound(g_requests.begin(), g_requests.end(), candidate,
-        [](const RequestEntry& lhs, int rhs) { return lhs.id < rhs; });
-    g_requests.insert(it, entry);
-    return candidate;
+    return CreateRequestForOwner(RequestOwner::Internal);
 }
 
 int APS5_VABI sceNpSnsIntDeleteRequest(int reqId) {
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    if (reqId == 0) return kErrIdNotFound;
-    std::lock_guard<std::mutex> lock(g_requestMutex);
-    for (auto it = g_requests.begin(); it != g_requests.end(); ++it) {
-        if (it->id == reqId) {
-            g_requests.erase(it);
-            return 0;
-        }
-        if (it->id > reqId) break;
-    }
-    return kErrIdNotFound;
+    return DeleteRequestForOwner(reqId, RequestOwner::Internal, true);
 }
 
 int APS5_VABI sceNpSnsIntAbortRequest(int reqId) {
@@ -262,21 +291,11 @@ int APS5_VABI sceNpSnsFacebookAbortRequest(int reqId) {
 }
 
 int APS5_VABI sceNpSnsTwitchCreateRequest(void) {
-    int count = g_twitchRequests.load(std::memory_order_acquire);
-    if (count >= kMaxServiceRequests) return kErrRequestMax;
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    const int reqId = sceNpSnsIntCreateRequest();
-    if (reqId > 0) g_twitchRequests.fetch_add(1, std::memory_order_acq_rel);
-    return reqId;
+    return CreateRequestForOwner(RequestOwner::Twitch);
 }
 
 int APS5_VABI sceNpSnsTwitchDeleteRequest(int reqId) {
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    const int ret = sceNpSnsIntDeleteRequest(reqId);
-    if (ret < 0) return ret;
-    int prev = g_twitchRequests.load(std::memory_order_acquire);
-    while (prev > 0 && !g_twitchRequests.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel)) {}
-    return 0;
+    return DeleteRequestForOwner(reqId, RequestOwner::Twitch, false);
 }
 
 int APS5_VABI sceNpSnsTwitchAbortRequest(int reqId) {
@@ -300,26 +319,13 @@ int APS5_VABI sceNpSnsTwitchGetAccessToken(int reqId, const void* param, void* o
 }
 
 int APS5_VABI sceNpSnsYouTubeCreateRequest(void) {
-    int count = g_youtubeRequests.load(std::memory_order_acquire);
-    if (count >= kMaxServiceRequests) return kErrYtRequestMax;
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    const int reqId = sceNpSnsIntCreateRequest();
-    if (reqId > 0) {
-        g_youtubeRequests.fetch_add(1, std::memory_order_acq_rel);
-        return reqId;
-    }
-    return MapYouTubeError(reqId);
+    const int reqId = CreateRequestForOwner(RequestOwner::YouTube);
+    return reqId >= 0 ? reqId : MapYouTubeError(reqId);
 }
 
 int APS5_VABI sceNpSnsYouTubeDeleteRequest(int reqId) {
-    if (!g_initialized.load(std::memory_order_acquire)) return kErrNotInitialized;
-    const int ret = sceNpSnsIntDeleteRequest(reqId);
-    if (ret >= 0) {
-        int prev = g_youtubeRequests.load(std::memory_order_acquire);
-        while (prev > 0 && !g_youtubeRequests.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel)) {}
-        return ret;
-    }
-    return MapYouTubeError(ret);
+    const int ret = DeleteRequestForOwner(reqId, RequestOwner::YouTube, false);
+    return ret >= 0 ? ret : MapYouTubeError(ret);
 }
 
 int APS5_VABI sceNpSnsYouTubeAbortRequest(int reqId) {

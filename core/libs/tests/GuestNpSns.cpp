@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -147,6 +149,55 @@ void TestYouTube() {
     Require(sceNpSnsYouTubeDeleteRequest(ytIds[0]) == kErrYtInvalidArg);
 }
 
+void TestCrossServiceOwnershipAndConcurrency() {
+    const int intId = sceNpSnsIntCreateRequest();
+    const int ytId = sceNpSnsYouTubeCreateRequest();
+    Require(intId >= 0x60000001 && ytId >= 0x60000001);
+    Require(sceNpSnsTwitchDeleteRequest(intId) == kErrIdNotFound);
+    Require(sceNpSnsTwitchDeleteRequest(ytId) == kErrIdNotFound);
+    Require(sceNpSnsYouTubeDeleteRequest(intId) == kErrYtInvalidArg);
+    Require(sceNpSnsYouTubeDeleteRequest(ytId) == 0);
+    Require(sceNpSnsIntDeleteRequest(intId) == 0);
+
+    std::vector<int> twitchIds;
+    for (int i = 0; i < 16; ++i) {
+        const int id = sceNpSnsTwitchCreateRequest();
+        Require(id >= 0x60000001);
+        twitchIds.push_back(id);
+    }
+    const int extraIntId = sceNpSnsIntCreateRequest();
+    Require(extraIntId >= 0x60000001);
+    Require(sceNpSnsTwitchCreateRequest() == kErrRequestMax);
+    Require(sceNpSnsTwitchDeleteRequest(extraIntId) == kErrIdNotFound);
+    Require(sceNpSnsTwitchCreateRequest() == kErrRequestMax);
+    Require(sceNpSnsIntDeleteRequest(extraIntId) == 0);
+    for (int id : twitchIds) {
+        Require(sceNpSnsTwitchDeleteRequest(id) == 0);
+    }
+
+    std::mutex resultsMutex;
+    std::vector<int> created;
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t) {
+        workers.emplace_back([&]() {
+            for (int i = 0; i < 16; ++i) {
+                const int id = sceNpSnsTwitchCreateRequest();
+                if (id > 0) {
+                    std::lock_guard<std::mutex> lock(resultsMutex);
+                    created.push_back(id);
+                } else {
+                    Require(id == kErrRequestMax);
+                }
+            }
+        });
+    }
+    for (auto& w : workers) w.join();
+    Require(created.size() == 16);
+    for (int id : created) {
+        Require(sceNpSnsTwitchDeleteRequest(id) == 0);
+    }
+}
+
 }
 
 int main() {
@@ -154,4 +205,5 @@ int main() {
     TestInternalValidation();
     TestFacebookAndTwitch();
     TestYouTube();
+    TestCrossServiceOwnershipAndConcurrency();
 }
