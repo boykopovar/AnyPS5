@@ -785,8 +785,9 @@ bool TranslationContext::ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opc
 }
 
 IrU32 TranslationContext::orderF16Bits(const IrU32& bits) {
-    IrValue& value = ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&bits.Value(), &ir.Constant(0u), &ir.Constant(16u)});
-    return IrU32(ir.BitwiseXor(value, ir.BitwiseAnd(ir.ShiftRightArithmetic(value, ir.Constant(31u)), ir.Constant(0x7fffu))));
+    IrValue& nonnegative = ir.ULessThan(bits.Value(), ir.Constant(0x8000u));
+    IrValue& reflected = ir.ISub(ir.Constant(0x7fffu), bits.Value());
+    return IrU32(ir.Select(nonnegative, bits.Value(), reflected));
 }
 
 IrU32 TranslationContext::minMaxF16Bits(bool maxValue, IrU32 lhs, IrU32 rhs) {
@@ -833,7 +834,7 @@ bool TranslationContext::minMaxF16(const RdnaInstruction& inst, IrOpcode opcode)
         const IrU32 key1 = orderF16Bits(args[1]);
         const IrU32 upper = keyOp(IrOpcode::SMin32, keyOp(IrOpcode::SMax32, key0, key1), orderF16Bits(args[2]));
         const IrU32 medianKey = keyOp(IrOpcode::SMax32, keyOp(IrOpcode::SMin32, key0, key1), upper);
-        const IrU32 median(ir.BitwiseAnd(orderF16Bits(medianKey).Value(), ir.Constant(0xffffu)));
+        const IrU32 median = orderF16Bits(medianKey);
         result = IrU32(ir.Select(anyNan.Value(), minimum.Value(), median.Value()));
     }
     write16Bits(inst.destination, clampF16Bits(inst.destination, result));
