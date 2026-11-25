@@ -52,9 +52,7 @@ static_assert(offsetof(LibreSslAsn1Object, data) == 24);
 template <typename T>
 T CopyIn(const T* source, int line) {
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch("i2d_X509", __FILE__, line);
     return value;
 }
@@ -66,9 +64,7 @@ void AppendGuestBytes(std::vector<unsigned char>& output, const unsigned char* s
     const auto size = static_cast<std::size_t>(length);
     const auto offset = output.size();
     output.resize(offset + size);
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(output.data() + offset, source, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch("i2d_X509", __FILE__, __LINE__);
 }
 
@@ -105,7 +101,7 @@ std::vector<unsigned char> BitStringContent(const LibreSsl3Asn1String& bits) {
     AppendGuestBytes(data, bits.data, bits.length, "signature");
     std::size_t used = data.size();
     int unused = 0;
-    if ((bits.flags & BitsLeftFlag) != 0) {
+    if (bits.length > 0 && (bits.flags & BitsLeftFlag) != 0) {
         unused = static_cast<int>(bits.flags & 0x07);
     } else {
         while (used > 0 && data[used - 1] == 0) --used;
@@ -218,9 +214,7 @@ extern "C" int APS5_VABI i2d_X509_nid_postfix(const LibreSsl3Certificate* certif
         if (!written) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     unsigned char* const next = allocated ? allocated : target + encoded.size();
-    const int savedErrno = errno;
     const bool stored = GuestCopyOut_nid_no_patch(output, &next, sizeof(next));
-    errno = savedErrno;
     if (!stored) {
         if (allocated) free_nid_postfix(allocated);
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);

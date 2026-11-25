@@ -39,6 +39,12 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 git submodule update --init --recursive
 ```
 
+### Self-hosted Linux checkout recovery
+
+The self-hosted Linux `Build` job in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) is designed to recover from an interrupted recursive checkout. Before checkout it removes stale Git lock files. If `actions/checkout` fails, it removes only submodules that have a worktree but no valid `HEAD` (and their matching `.git/modules` directories), then retries the recursive checkout. If no specific broken submodule can be identified safely, it empties the workspace and retries instead.
+
+That retry is a repair path, not a substitute for a healthy runner seed. If the same runner repeatedly spends most of its job timeout fetching recorded submodule commits, or repeatedly returns with half-cloned submodules, take it out of rotation and reseed its AnyPS5 workspace with a complete recursive checkout at the recorded commits before returning it to service. This avoids carrying one interrupted checkout into every later job while preserving the shared compiler and shader caches outside `GITHUB_WORKSPACE`.
+
 ## Selective test builds
 
 [`tools/select_tests.py`](../../tools/select_tests.py) selects the tests whose build inputs a change touches, so a pull request can build and run only those tests. Configure and build a full tree with `-DBUILD_TESTING=ON` (`dump` needs the header dependencies that only exist once the objects are built), then:
@@ -47,7 +53,11 @@ git submodule update --init --recursive
 git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
-ninja -C build -f select.ninja selected
+if [ -f build/select.ninja ]; then
+  ninja -C build -f select.ninja selected
+else
+  cmake --build build
+fi
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
@@ -57,13 +67,13 @@ python3 tools/select_tests.py ctest build --output-on-failure
 
 ## Requirements
 
-- x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
+- x86-64, Git, CMake 3.22.1 or newer for the default full build with bundled dependencies, 3.24 or newer on macOS (bundled glslang, SPIRV-Tools and Vulkan-Headers declare 3.22.1, bundled SDL's Apple configuration 3.24, and the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
 - Linux display refresh queries require SDL's XRandR support (`libxrandr-dev` on Debian/Ubuntu; `libXrandr-devel` on Fedora). Bundled SDL configuration fails without it. Keep `SDL_X11_XRANDR` enabled.
 - Linux: GCC, G++ (`gcc-c++` on Fedora), binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu; `libX11-devel` and `libXext-devel` on Fedora). SDL's Wayland backend requires the Wayland, xkbcommon and EGL development files (`libwayland-dev`, `libxkbcommon-dev` and `libegl-dev` on Debian/Ubuntu; `wayland-devel`, `libxkbcommon-devel` and `mesa-libEGL-devel` on Fedora), and `libdecor-0-dev` (`libdecor-devel`) for window decorations on GNOME. SDL loads both backends at run time and prefers Wayland when `WAYLAND_DISPLAY` is set; `SDL_VIDEODRIVER=x11` selects X11 (XWayland). Titles that bundle their own SDL read `SDL_VIDEODRIVER` too, and some of them fail to start with `x11`. Without the Wayland files configuration still succeeds, and the build uses X11 only. Audio output needs SDL's PipeWire, PulseAudio or ALSA backend, built from their development files (`libpipewire-0.3-dev`, `libpulse-dev` and `libasound2-dev` on Debian/Ubuntu; `pipewire-devel`, `pulseaudio-libs-devel` and `alsa-lib-devel` on Fedora). SDL loads them at run time. Without any of them SDL keeps only its silent dummy and disk drivers, so configuration fails.
 - Fedora: if CMake reports `Could NOT find Threads`, install `glibc-static` and `libstdc++-static` with `sudo dnf install glibc-static libstdc++-static`, then rerun configuration. The project enables static executable linking, and FFmpeg's thread check needs these libraries.
 - Windows: x86-64 MinGW-w64 GCC with POSIX threads. The compiler must provide DWARF exceptions with `-fno-asynchronous-unwind-tables`, or SEH exceptions for System V ABI functions; CMake checks these capabilities. WinLibs GCC 15.2.0 (`x86_64-ucrt-posix-seh`, release [`15.2.0posix-14.0.0-ucrt-r7`](https://github.com/brechtsanders/winlibs_mingw/releases/tag/15.2.0posix-14.0.0-ucrt-r7)) uses DWARF. [MSYS2 UCRT64 GCC](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-gcc) 16.2.0-6 uses SEH. Add the selected toolchain's `bin` directory to `PATH` before configuring.
 - Windows antivirus software can block or quarantine the executables that the relinker tests create and run, which fails `optional_plt`, `empty_tls`, `windows_address_space`, `windows_bss`, `windows_fixed_base`, `windows_icon`, `loadexec_arguments`, `exec_arguments` and `exec_sys_*_arguments`. CTest sets `TMPDIR`, `TEMP` and `TMP` of the relinker tests to `core/relinker/test-temp` in the build directory, so setting them before running `ctest` does not move these files; add that directory (or the build directory if `relinker.exe` itself is quarantined) to the scanner's exclusions instead.
-- On Windows, Microsoft Defender quarantines some AGC test executables as `Trojan:Win64/ShellCode.MKA!MTB`, because they carry generated machine code: 34 targets in one full build on Windows 11, `agc_shader_replay.exe` and 33 `tests/agc_*_tests.exe`. The `objcopy` post-step of those targets then fails with `Invalid argument`, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
+- On Windows, Microsoft Defender quarantines `agc_shader_replay.exe` and some `tests/agc_*_tests.exe` (35 of about 950 in a full build on Windows 11) as `Trojan:Win64/ShellCode.MKA!MTB`. The signature matches the instructions GCC emits for `% 65` in `RuntimeAbi::UintStorageImageBinding` (#26777), and only in small executables: `libSceAgcDriver.prx` contains the same instructions and is not flagged. The `objcopy` post-step of those targets then fails with `Invalid argument`, because the executable is already gone, and the rest of the build succeeds. Add the build directory to the scanner's exclusions, as above.
 - FFmpeg binaries are downloaded during configuration unless `FFMPEG_PREBUILT_DIR` is set. With the WinLibs CMake, the download fails with status 60 (`SSL peer certificate or SSH remote key was not OK`) unless `SSL_CERT_FILE` names a CA bundle, for example `C:\Program Files\Git\ucrt64\etc\ssl\certs\ca-bundle.crt` from Git for Windows 2.56 and later (`mingw64` instead of `ucrt64` before 2.56), as in CI.
 - Smart App Control (Windows 11) blocks the executables the build and the relinker tests produce, because none of them is signed, and it is not an antivirus setting, so scanner exclusions do not apply to it. The Python relinker tests then fail with `OSError: [WinError 4551] An Application Control policy has blocked this file` when they start `relinker.exe` or a converted program, and CTest reports the native test executables as `Not Run` (`Process not started`). `VerifiedAndReputablePolicyState` under `HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` is 1 while it is on and 0 once it is off. Turn it off under Windows Security > App & browser control > Smart App Control settings before building; only recent Windows updates allow turning it back on afterwards without a reinstall.
 - Bitdefender Advanced Threat Defense hooks Windows calls that `sceKernelRaiseException` makes while its target thread is suspended. When the target is suspended inside ntdll's exception dispatch while it holds an ntdll lock, the hook waits for that lock and `guest_raise_exception` hangs until its timeout. A scanning exception for the build directory does not prevent it; add `guest_raise_exception_tests.exe` to the Advanced Threat Defense exceptions.
@@ -76,9 +86,11 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
-Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
-`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
+Run this command from a Git checkout that contains the commit recorded in the release's converter ZIP. If a shallow checkout is missing that commit, fetch the matching release tag from the upstream repository first.
+
+`tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit the release-body limit (`BODY_LIMIT` characters in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
 ## Commands
 
@@ -94,6 +106,13 @@ so the explicit `--target libs` step is required. With `BUILD_TESTING=ON`, the d
 also builds `libs` through the `patched_libraries_tests` dependency. Titles load the patched `.prx`
 files from `build/core/libs/libs`; running a title after a library change without rebuilding `libs`
 therefore tests the previous binaries and can show no effect at all.
+
+To rebuild one patched module, build its `libs_<name>` target, where `<name>` is the output file name
+without its extension: `cmake --build build --target libs_libSceAgcDriver` rebuilds and NID-patches
+`build/core/libs/libs/libSceAgcDriver.prx` and the targets it depends on, without patching the other
+modules. The same applies to the other files `libs` places beside them, such as `libs_mimalloc`.
+Name the target, not the output path: with the Makefile generators, an existing file passed as a
+target counts as up to date, so a stale patched module is not rebuilt.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
@@ -125,7 +144,13 @@ If configuration reports `Could NOT find Python3` or selects an unusable interpr
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DPython3_EXECUTABLE="C:/path/to/python.exe"
 ```
 
-The documentation runs the Python tools as `python3`. With the python.org installer for Windows, which provides `python.exe` and the `py` launcher but no `python3.exe`, `python3` resolves to the Microsoft Store alias in `WindowsApps`, which prints `Python was not found` and exits with code 9009 (49 in Git Bash). Installs that provide `python3.exe`, such as the Python Install Manager, are not affected. In that case run these commands with `python` or `py -3`, for example `py -3 tools/check_conventions.py --base origin/main`.
+The documentation runs the Python tools as `python3`. With the python.org installer for Windows, which provides `python.exe` and the `py` launcher but no `python3.exe`, `python3` resolves to the Microsoft Store alias in `WindowsApps`, which prints `Python was not found` and exits with code 9009 (49 in Git Bash). Installs that provide `python3.exe`, such as the Python Install Manager, are not affected. In that case run these commands with `python` or `py -3`, for example `py -3 tools/check_conventions.py`.
+
+If `windres` reports `preprocessing failed` and Windows prints the first part of the WinLibs installation path as an unrecognized command, `windres` may be splitting the path to its preprocessor at a space. This can occur when WinLibs GCC 15.2.0 r7 is installed in a directory with spaces. With the selected WinLibs `bin` directory first on `PATH`, append the following argument to the CMake configure command.
+
+```powershell
+'-DCMAKE_RC_FLAGS=--preprocessor=gcc.exe --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED'
+```
 
 If the build stops with `fatal error: opening dependency file ...\*.cpp.obj.d: No such file or directory` for a few sources with long names, the path of an object or dependency file under `build` is at or near the 260-character Windows limit. A checkout whose path was 92 characters failed this way with `LongPathsEnabled` set to 1 in the registry; the same tree at `C:\a5` built. Clone the repository to a short path such as `C:\a5` and configure in a new build directory: a CMake build tree stores absolute paths, so moving an existing `build` directory does not help.
 
@@ -184,9 +209,9 @@ Build configuration parameters:
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
-With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg`, `vorbis`, `opus`, `libusb-cmake`, `mbedtls`, `vgmstream`, `zstd`, `ZArchive` and, on Windows, `mimalloc` always stay bundled and still need `git submodule update --init`.
+With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers missing AGC declarations (available since 1.4.330, including `VK_KHR_maintenance8`, `VK_KHR_present_mode_fifo_latest_ready`, `VK_KHR_shader_fma` and the Mesa KosmicKrisp driver ID), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg`, `vorbis`, `opus`, `libusb-cmake`, `mbedtls`, `vgmstream`, `zstd`, `ZArchive` and, on Windows, `mimalloc` always stay bundled and still need `git submodule update --init`.
 
-`tools/configure_seed.py` writes the configure check results of a configured tree's `CMakeCache.txt` as an initial cache file for `cmake -C`. `--include` and `--exclude` take glob patterns on the check names, and `--stdout` prints the seed instead of writing a file. `tools/check_configure_seed.py` checks an unfiltered seed against its cache without writing anything.
+`tools/configure_seed.py` writes the configure check results of a configured tree's `CMakeCache.txt` as an initial cache file for `cmake -C`. `--include` and `--exclude` take glob patterns on the check names, and `--stdout` prints the seed instead of writing a file. `tools/check_configure_seed.py` checks an unfiltered seed against its cache without writing anything. It compares the generated text byte for byte, so an edited seed or one generated with filters can be reported as stale. The exit status is 0 for a match, 1 for a missing or stale seed, and 2 for an input error.
 
 ## Profile-guided driver build
 
@@ -204,14 +229,14 @@ The Linux HTTP URI locale regression needs an ISO-8859-1 locale. With tests enab
 
 ## ThreadSanitizer
 
-A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. Guest memory written by the emulated GPU while a guest thread polls it, such as labels and fences, is shared without C++ atomics on purpose, as on the console, so ThreadSanitizer also reports those accesses.
+A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. The driver polls labels and fences with acquire loads, but guest memory is still written with plain stores, such as copies and replay restores, as on the console, so ThreadSanitizer also reports those stores against the polls.
 
 ## Quick syntax checks
 
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
 
 ```sh
-python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
@@ -451,6 +476,8 @@ With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on st
 
 With `APS5_PROFILE_DRAW=1`, the `lock wait` row in `[draw] driver phases` can include time spent enqueueing a draw, including waiting for space in the draw pipeline. Draws that acquire the GPU mutex also charge that acquisition to the same row. Use the per-thread `[lock]` counters or `GpuMutex.wait.<site>` trace slices to measure GPU mutex contention. For draw pipeline backpressure, use the `for room` time on the `[draw] pipelined` line. Check the producer's sampled stacks for `DrawPipeline::Enqueue` and the draw committer's trace to see where the time goes.
 
+With `APS5_PROFILE_DRAW` set, the queue worker hands no draw to the draw finisher (`APS5_DRAW_PIPELINE`) and finishes every draw itself, so the `[finisher]` line reports 0 draws handed to the draw finisher. A run with draw profiling does not measure the finisher: compare `APS5_DRAW_PIPELINE` with `main` in runs without `APS5_PROFILE_DRAW`, using the trace summaries (`APS5_TRACE_SUMMARY_EVERY`) instead.
+
 | Line | Counts |
 |---|---|
 | `[rescache] revalidate` | last 10 s |
@@ -492,6 +519,8 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 
 ## Test selection tools
 
+Changed-test selection uses the configured CMake target sources. Windows CI replaces AGC execution fixtures outside `ANYPS5_AGC_EXECUTION_TESTS` with stub sources, so a change to an omitted `.cpp` can pass the changed-test job without running that fixture. To run it locally, configure a full build with `-DBUILD_TESTING=ON`. Set `-DANYPS5_AGC_EXECUTION_TESTS=` to build every AGC execution fixture, or set it to the fixture's source file stem. Build the test target and run the matching CTest. [Windows Build workflow](../../.github/workflows/build.yml)
+
 - `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
 - `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
 
@@ -499,7 +528,7 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
-- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
+- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything. It prints a JSON object with `added`, `removed` and `changed` lists. Exit status 0 means the recognized checks match, 1 means they differ, and 2 means the command could not read or compare the inputs.
 
 ## Public-header archives
 

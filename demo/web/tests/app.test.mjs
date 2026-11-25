@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
+import { translate } from "../i18n.mjs";
 
 class Element {
   children = [];
@@ -51,7 +52,8 @@ async function setup(t, name, overrides = {}) {
       },
       querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} },
+      navigator: { locks: { request: (_name, acquire) => acquire() } }, ...overrides },
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
@@ -79,7 +81,88 @@ async function inspect(worker, count) {
     } });
   }
   await worker.onmessage({ data: { type: "inspection-complete" } });
+  await setImmediate();
 }
+
+test("the visible inspection progress follows language changes", async t => {
+  const { get, workers } = await setup(t, "locale-progress-visible");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  await workers[0].onmessage({ data: { type: "progress", phase: translate("en", "inspectingFiles"), phaseKey: "inspectingFiles", completed: 1, total: 2, appName: "app.zip" } });
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+  assert.equal(get("percent").textContent, "50%");
+});
+
+test("later worker progress uses the active language", async t => {
+  const { get, workers } = await setup(t, "locale-progress-future");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  await workers[0].onmessage({ data: { type: "progress", phase: translate("en", "inspectingFiles"), phaseKey: "inspectingFiles", completed: 1, total: 2, appName: "app.zip" } });
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+});
+
+test("progress labels translate for batches and native stages while log messages remain unchanged", async t => {
+  const { get, workers } = await setup(t, "locale-progress-batch");
+  get("file").files = [{ name: "first.zip" }, { name: "second.zip" }];
+  get("file").onchange();
+  const worker = workers[0];
+  await worker.onmessage({ data: { type: "progress", stage: 0, appCount: 2, appIndex: 1, appName: "second.zip" } });
+  await worker.onmessage({ data: { type: "progress", message: "native log", appName: "second.zip" } });
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "appProgress", { index: 2, count: 2, phase: translate("de", "stage0") }));
+  assert.equal(get("log").textContent, "second.zip: native log");
+});
+
+test("changing language translates the initial inspection phase", async t => {
+  const { get } = await setup(t, "locale-progress-start");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+});
+
+test("changing language translates the initial batch label", async t => {
+  const { get } = await setup(t, "locale-progress-start-batch");
+  get("file").files = [{ name: "a.zip" }, { name: "b.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+  assert.equal(get("current-file").textContent, translate("de", "inspectingBatch", { count: 2 }));
+});
+
+test("changing language translates folder cleanup without disturbing it", async t => {
+  const pending = deferred();
+  let removed = 0;
+  const directory = {};
+  const parent = {
+    async getDirectoryHandle(name, options) {
+      if (!options?.create) throw Object.assign(new Error("missing"), { name: "NotFoundError" });
+      return directory;
+    },
+    async removeEntry() { removed++; await pending.promise; }
+  };
+  const { get, workers } = await setup(t, "locale-cleanup", { showDirectoryPicker: async () => parent });
+  const currentWorker = await selected(get, workers, "app.zip");
+  get("save").value = "disk";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  const cancelling = get("cancel").onclick();
+  await setImmediate();
+  assert.equal(removed, 1);
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "removingOutputFolder"));
+  await currentWorker.onmessage({ data: { type: "progress", phase: translate("en", "phaseCompressingZip"), phaseKey: "phaseCompressingZip", completed: 1, total: 2, input: "stale" } });
+  assert.equal(get("phase").textContent, translate("de", "removingOutputFolder"));
+  assert.notEqual(get("current-file").textContent, "stale");
+  assert.equal(get("status").hidden, false);
+  assert.equal(removed, 1);
+  pending.resolve();
+  await cancelling;
+  assert.equal(removed, 1);
+  assert.equal(get("status").hidden, true);
+});
 
 for (const stage of ["constructor", "postMessage"]) {
   test(`A worker ${stage} failure restores selection and permits retry`, async t => {
@@ -202,6 +285,258 @@ async function selected(get, workers, name) {
   return current;
 }
 
+const validReleaseResponse = () => ({ ok: true, json: async () => ({ tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } }) });
+
+test("Memory downloads reflect the target budget before inspection", async t => {
+  const { get, workers } = await setup(t, "memory-budget-before-inspection", {
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        tag: "v1-test",
+        platforms: {
+          linux: { expandedBytes: 248 * 1024 * 1024 + 1 },
+          windows: { expandedBytes: 248 * 1024 * 1024 }
+        }
+      })
+    })
+  });
+  const memory = get("save").querySelector('[value="memory"]');
+  assert.equal(workers.length, 0);
+  assert.equal(memory.disabled, true);
+  assert.equal(get("browser-note").hidden, false);
+  assert.match(get("browser-note").textContent, /exceeds the memory-download limit/);
+
+  globalThis.document.querySelector = () => ({ value: "windows" });
+  get("target").listeners.get("change")();
+  assert.equal(memory.disabled, false);
+
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  assert.equal(memory.disabled, true);
+});
+
+test("selecting an input refreshes a previously loaded release and its memory budget", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "refresh-loaded-release", { fetch: () => {
+    calls++;
+    return calls === 1 ? Promise.resolve({ ok: true, json: async () => ({ tag: "v1-previous", platforms: {
+      linux: { expandedBytes: 250 * 1024 * 1024 }, windows: { expandedBytes: 1024 }
+    } }) }) : pending.promise;
+  } });
+  const memory = get("save").querySelector('[value="memory"]');
+  assert.equal(memory.disabled, true);
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  assert.equal(calls, 2);
+  assert.equal(get("convert").disabled, true);
+  pending.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(memory.disabled, false);
+  assert.equal(get("convert").disabled, false);
+  assert.match(get("ready-note").textContent, /v1-test/);
+});
+
+test("selecting an input retries release information after a transient failure", async t => {
+  let calls = 0;
+  const { get, workers } = await setup(t, "retry-release-info", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("temporary network failure");
+    return validReleaseResponse();
+  } });
+  assert.equal(get("error").hidden, false);
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 2);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+  assert.match(get("ready-note").textContent, /v1-test/);
+});
+
+test("selecting an input does not duplicate an in-flight release request", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "release-in-flight", { fetch: () => { calls++; return pending.promise; } });
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  assert.equal(calls, 1);
+  assert.equal(get("convert").disabled, true);
+  pending.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(get("convert").disabled, false);
+});
+
+test("release information retry can fail again and later recover", async t => {
+  let calls = 0;
+  const { get, workers } = await setup(t, "release-repeat-failure", { fetch: async () => {
+    calls++;
+    if (calls < 3) throw new TypeError("temporary network failure");
+    return validReleaseResponse();
+  } });
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await setImmediate();
+  assert.equal(calls, 2);
+  assert.equal(workers[0].terminated, true);
+  assert.equal(get("error").hidden, false);
+  get("file").files = [{ name: "second.zip" }];
+  get("file").onchange();
+  await inspect(workers[1], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+});
+
+
+test("a rejected release request cannot replace cancellation or terminate a newer inspection", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-rejection", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    if (calls === 2) return pending.promise;
+    return validReleaseResponse();
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("cancel").onclick();
+  await setImmediate();
+  const cancelled = get("error").children[0].textContent;
+  pending.reject(new TypeError("stale failure"));
+  await setImmediate();
+  assert.equal(get("error").children[0].textContent, cancelled);
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  await inspect(workers[1], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(workers[1].terminated, false);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+});
+
+test("a late rejected release request does not affect an active replacement worker", async t => {
+  const old = deferred();
+  const replacement = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-after-replacement", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    return calls === 2 ? old.promise : replacement.promise;
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  const current = workers[1];
+  old.reject(new TypeError("stale failure"));
+  await setImmediate();
+  assert.equal(current.terminated, false);
+  assert.equal(get("error").hidden, true);
+  await inspect(current, 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  replacement.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(get("convert").disabled, false);
+});
+
+test("a late successful release request cannot hide a replacement request failure", async t => {
+  const old = deferred();
+  const replacement = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-success", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    return calls === 2 ? old.promise : replacement.promise;
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  replacement.reject(new TypeError("replacement failure"));
+  await setImmediate();
+  assert.equal(get("error").hidden, false);
+  assert.equal(workers[1].terminated, true);
+  old.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(get("error").hidden, false);
+  assert.equal(get("convert").disabled, true);
+});
+
+
+for (const [name, bad] of [
+  ["HTTP error", { ok: false, status: 503 }],
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }],
+  ["negative Linux library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: -1 }, windows: { expandedBytes: 1024 } }
+  }) }],
+  ["oversized Windows library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 512 * 1024 * 1024 + 1 } }
+  }) }]
+]) {
+  test(`selecting an input retries release information after ${name}`, async t => {
+    let calls = 0;
+    const { get, workers } = await setup(t, `retry-${name}`, { fetch: async () => ++calls === 1 ? bad : validReleaseResponse() });
+    assert.equal(get("error").hidden, false);
+    get("file").files = [{ name: "retry.zip" }];
+    get("file").onchange();
+    await inspect(workers[0], 1);
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    await setImmediate();
+    assert.equal(calls, 2);
+    assert.equal(get("error").hidden, true);
+    assert.equal(get("convert").disabled, false);
+  });
+}
+
+for (const focused of ["cancel", "locale"]) {
+  test("memory ZIP completion handles focus from " + focused, async t => {
+    const { get, workers } = await setup(t, "complete-focus-" + focused);
+    const worker = await selected(get, workers, "first.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    document.activeElement = get(focused);
+    get("download").focus = () => {
+      assert.equal(get("done").hidden, false);
+      assert.equal(get("download").hidden, false);
+      assert.match(get("download").href, /^blob:/u);
+      document.activeElement = get("download");
+    };
+    await worker.onmessage({ data: {
+      type: "complete", mode: "memory", blob: new Blob(["zip"]), outputName: "program.elf", size: 3, release: "v1-test", apps: 1
+    } });
+    assert.equal(get("cancel").hidden, true);
+    assert.equal(document.activeElement, get(focused === "cancel" ? "download" : "locale"));
+    get("change").onclick();
+  });
+}
+
 test("changing the input returns keyboard focus to the ZIP picker", async t => {
   const { get, workers } = await setup(t, "change-focus");
   await selected(get, workers, "first.zip");
@@ -262,6 +597,37 @@ for (const outcome of ["error", "handle", "writable", "directory"]) {
   });
 }
 
+test("cancelling a conversion returns keyboard focus to the ZIP chooser", async t => {
+  const { get, workers } = await setup(t, "cancel-focus");
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  assert.equal(get("cancel").hidden, false);
+  document.activeElement = get("cancel");
+  get("choose").focus = () => {
+    assert.equal(get("drop").hidden, false);
+    assert.equal(get("choose").disabled, false);
+    document.activeElement = get("choose");
+  };
+  await get("cancel").onclick();
+  assert.equal(document.activeElement, get("choose"));
+});
+
+test("cancel cleanup preserves focus moved to the language switch", async t => {
+  const cleanup = deferred();
+  const { get, workers } = await setup(t, "cancel-cleanup-focus", {
+    showSaveFilePicker: async () => ({ async createWritable() { return { abort: () => cleanup.promise }; } })
+  });
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  document.activeElement = get("cancel");
+  get("choose").focus = () => { assert.fail("focus should stay on the language switch"); };
+  const cancelling = get("cancel").onclick();
+  document.activeElement = get("locale");
+  cleanup.resolve();
+  await cancelling;
+  assert.equal(document.activeElement, get("locale"));
+});
+
 for (const type of ["write", "close-file", "complete"]) {
   for (const reject of [false, true]) {
     test(`late ${type} ${reject ? "failure" : "success"} cannot acknowledge or complete a new job`, async t => {
@@ -273,7 +639,11 @@ for (const type of ["write", "close-file", "complete"]) {
       get("save").listeners.get("change")();
       await get("convert").onclick();
       const request = old.onmessage({ data: { type, bytes: new Uint8Array([1]), mode: "zip", outputName: "old.elf", size: 1 } });
-      await get("cancel").onclick();
+      if (type === "complete") await old.onerror({ message: "old worker stopped" });
+      else {
+        assert.equal(get("cancel").hidden, false);
+        await get("cancel").onclick();
+      }
       get("file").files = [{ name: "replacement.zip" }];
       get("file").onchange();
       const replacement = workers.at(-1);
@@ -286,6 +656,33 @@ for (const type of ["write", "close-file", "complete"]) {
       assert.equal(get("convert").disabled, true);
     });
   }
+}
+
+for (const outcome of ["saved", "failed"]) {
+  test(`final ZIP close reports ${outcome} even if a late Cancel click arrives`, async t => {
+    const pending = deferred();
+    const sink = new WritableStream({ close: () => pending.promise }).getWriter();
+    const { get, workers } = await setup(t, `final-zip-close-${outcome}`, {
+      showSaveFilePicker: async () => ({ createWritable: async () => sink })
+    });
+    const current = await selected(get, workers, "app.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    const complete = current.onmessage({ data: {
+      type: "complete", mode: "zip", outputName: "app.elf", size: 1, apps: 1, release: "v1-test"
+    } });
+    await setImmediate();
+    const cancelWasHidden = get("cancel").hidden;
+    const cancel = get("cancel").onclick();
+    if (outcome === "failed") pending.reject(new Error("Cannot commit ZIP"));
+    else pending.resolve();
+    await Promise.all([complete, cancel]);
+
+    assert.equal(get("done").hidden, outcome === "failed");
+    assert.equal(get("error").hidden, outcome === "saved");
+    if (outcome === "failed") assert.equal(get("error").children[0].textContent, "Cannot commit ZIP");
+    assert.equal(cancelWasHidden, true);
+  });
 }
 
 for (const stage of ["picker", "writable", "root"]) {
@@ -361,6 +758,89 @@ for (const stage of ["picker", "writable"]) {
   });
 }
 
+for (const kind of ["batch", "single", "folder"]) {
+  test("finished " + kind + " output follows a language change", async t => {
+    let folderName;
+    let removals = 0;
+    const directory = {
+      async getDirectoryHandle(name, options) {
+        if (!options?.create) throw Object.assign(new Error("missing"), { name: "NotFoundError" });
+        folderName = name;
+        return {};
+      },
+      async removeEntry() { removals++; }
+    };
+    const { get, workers } = await setup(t, "result-locale-" + kind, { showDirectoryPicker: async () => directory });
+    const inputs = kind === "batch" ? [{ name: "first.zip" }, { name: "second.zip" }] : [{ name: "first.zip" }];
+    get("file").files = inputs;
+    get("file").onchange();
+    const worker = workers[0];
+    await inspect(worker, inputs.length);
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    if (kind === "folder") {
+      get("save").value = "disk";
+      get("save").listeners.get("change")();
+    }
+    await get("convert").onclick();
+    assert.equal(worker.messages.at(-1).type, "convert");
+    await worker.onmessage({ data: {
+      type: "complete", mode: worker.messages.at(-1).mode, blob: kind === "folder" ? null : new Blob([new Uint8Array(5)]),
+      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length,
+      revision: "0123456789abcdef0123456789abcdef01234567"
+    } });
+    assert.equal(get("done").hidden, false);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
+    const href = get("download").href;
+    const download = get("download").download;
+    const note = get("result-note");
+    const tag = readFileSync(new URL("../index.html", import.meta.url), "utf8").match(/<p id="result-note"[^>]*>/u)[0];
+    const i18nKey = tag.match(/\bdata-i18n="([^"]+)"/u)?.[1];
+    if (i18nKey) {
+      note.dataset = { i18n: i18nKey };
+      document.querySelectorAll = selector => selector === "[data-i18n]" ? [note] : [];
+    }
+    if (kind === "folder") {
+      assert.equal(folderName, "first-linux");
+      document.querySelector = () => ({ value: "windows" });
+    }
+    get("locale").onclick();
+    assert.equal(document.documentElement.lang, "de");
+    assert.match(get("result-info").textContent, /Systembibliotheken/);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
+    if (kind === "folder") {
+      assert.match(get("result-info").textContent, /Gespeichert in first-linux\//);
+      assert.match(get("result-info").textContent, /chmod \+x "main\.elf"/);
+      assert.equal(note.hidden, true);
+      assert.equal(get("download").hidden, true);
+    } else {
+      assert.equal(get("download").href, href);
+      assert.equal(get("download").download, download);
+      assert.equal(get("download").hidden, false);
+      assert.match(note.textContent, kind === "batch" ? /chmod \+x \*\/\*\.elf/ : /Entpacke das gesamte ZIP/);
+    }
+    get("change").onclick();
+    assert.equal(get("done").hidden, true);
+    assert.equal(removals, 0);
+  });
+}
+
+test("selected batch details follow a language switch", async t => {
+  const { get, workers } = await setup(t, "locale-selected-batch");
+  const names = ["first.zip", "second.zip"];
+  get("file").files = names.map(name => ({ name }));
+  get("file").onchange();
+  await inspect(workers[0], names.length);
+  const rows = () => get("app-list").children.map(row => row.children.map(cell => cell.textContent));
+  assert.equal(get("archive-name").textContent, "2 app ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 files · 1.0 KiB expanded · 0 modules"]));
+
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "de");
+  assert.equal(get("archive-name").textContent, "2 App-ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 Dateien · 1.0 KiB entpackt · 0 Module"]));
+});
+
 test("a visible error follows a language switch", async t => {
   const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });
   assert.equal(get("error").hidden, false);
@@ -389,6 +869,10 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Sürüm bilgileri yüklenemiyor (404). release.json site derlemesi sırasında oluşturulur, bu nedenle demo/web doğrudan sunulduğunda eksiktir.");
   get("locale").onclick();
+  assert.equal(document.documentElement.lang, "es");
+  assert.equal(document.documentElement.dir, "ltr");
+  assert.equal(get("error").children[0].textContent, "No se puede cargar la información de la versión (404). release.json se genera durante la compilación del sitio, por lo que falta al servir demo/web directamente.");
+  get("locale").onclick();
   assert.equal(document.documentElement.lang, "en");
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
@@ -400,14 +884,52 @@ test("a browser that denies direct ZIP writes explains how to continue", async t
     showSaveFilePicker: async () => ({ createWritable: async () => { throw denied; } })
   });
   assert.equal(get("save").value, "zip");
-  await selected(get, workers, "first.zip");
+  const current = await selected(get, workers, "first.zip");
   assert.equal(get("convert").disabled, false);
   await get("convert").onclick();
   const message = get("error").children[0]?.textContent ?? get("error").textContent;
   assert.match(message, /desktop Chrome or Edge/);
   assert.doesNotMatch(message, /createWritable/);
-  assert.equal(get("selection").hidden, true);
-  assert.equal(get("convert").disabled, true);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("convert").disabled, false);
+  assert.equal(current.terminated, false);
+
+  get("save").value = "memory";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect", "convert"]);
+  assert.equal(current.messages.at(-1).mode, "memory");
+});
+
+test("Cancel is available while a selected ZIP destination opens", async t => {
+  const opening = deferred();
+  const pending = deferred();
+  let aborted = 0;
+  const { get, workers } = await setup(t, "cancel-pending-zip-destination", {
+    showSaveFilePicker: async () => ({
+      createWritable() {
+        opening.resolve();
+        return pending.promise;
+      }
+    })
+  });
+  const original = await selected(get, workers, "first.zip");
+  const converting = get("convert").onclick();
+  try {
+    await opening.promise;
+    assert.equal(get("cancel").hidden, false);
+    await get("cancel").onclick();
+    assert.equal(original.terminated, true);
+    const replacement = await selected(get, workers, "replacement.zip");
+    assert.equal(replacement.terminated, false);
+  } finally {
+    pending.resolve({ async abort() { aborted++; } });
+    await converting;
+  }
+  assert.equal(aborted, 1);
+  assert.equal(original.messages.some(message => message.type === "convert"), false);
+  assert.equal(get("archive-name").textContent, "replacement.zip");
 });
 
 test("cancelling the ZIP picker does not report a failure", async t => {
@@ -416,7 +938,137 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   });
   await selected(get, workers, "first.zip");
   await get("convert").onclick();
+  assert.equal(get("cancel").hidden, true);
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
+});
+
+for (const stage of ["waiting for the lock", "creating the folder"]) {
+  test(`Cancel works while folder output is ${stage}`, async t => {
+    const waiting = deferred();
+    const resume = deferred();
+    let lookups = 0;
+    let created = 0;
+    const removed = [];
+    const waitsForLock = stage === "waiting for the lock";
+    const parent = {
+      async getDirectoryHandle(name, options) {
+        lookups++;
+        if (!options?.create) throw new DOMException("Folder not found", "NotFoundError");
+        waiting.resolve();
+        await resume.promise;
+        created++;
+        return { name };
+      },
+      async removeEntry(name, options) { removed.push([name, options]); }
+    };
+    const { get, workers } = await setup(t, `cancel-folder-${stage}`, {
+      showDirectoryPicker: async () => parent,
+      navigator: { locks: { async request(_name, acquire) {
+        if (waitsForLock) {
+          waiting.resolve();
+          await resume.promise;
+        }
+        return acquire();
+      } } }
+    });
+    const original = await selected(get, workers, "first.zip");
+    get("save").value = "disk";
+    get("save").listeners.get("change")();
+    const converting = get("convert").onclick();
+    try {
+      await waiting.promise;
+      assert.equal(get("cancel").hidden, false);
+      await get("cancel").onclick();
+      assert.equal(original.terminated, true);
+      const replacement = await selected(get, workers, "replacement.zip");
+      assert.equal(replacement.terminated, false);
+    } finally {
+      resume.resolve();
+      await converting;
+    }
+    assert.equal(lookups, waitsForLock ? 0 : 2);
+    assert.equal(created, waitsForLock ? 0 : 1);
+    assert.deepEqual(removed, waitsForLock ? [] : [["first-linux", { recursive: true }]]);
+    assert.deepEqual(original.messages.map(message => message.type), ["inspect"]);
+    assert.equal(get("archive-name").textContent, "replacement.zip");
+  });
+}
+
+test("an existing output folder permits retrying with the same inspected input", async t => {
+  let pickers = 0;
+  const existingParent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "first-linux");
+      assert.equal(options?.create, undefined);
+      return {};
+    }
+  };
+  const newParent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "first-linux");
+      if (!options?.create) throw new DOMException("Folder not found", "NotFoundError");
+      return {};
+    }
+  };
+  const { get, workers } = await setup(t, "retry-output-folder", {
+    showDirectoryPicker: async () => ++pickers === 1 ? existingParent : newParent
+  });
+  const current = await selected(get, workers, "first.zip");
+  get("save").value = "disk";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  assert.match(get("error").children[0].textContent, /first-linux already exists/);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("acknowledge").checked, true);
+  assert.equal(get("convert").disabled, false);
+  assert.equal(current.terminated, false);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect"]);
+
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect", "convert"]);
+  assert.equal(current.messages.at(-1).mode, "disk");
+});
+
+test("failure to start conversion still aborts the prepared output", async t => {
+  let aborted = 0;
+  const { get, workers } = await setup(t, "failed-convert-message", {
+    showSaveFilePicker: async () => ({ async createWritable() { return { async abort() { aborted++; } }; } })
+  });
+  const current = await selected(get, workers, "first.zip");
+  current.postMessage = () => { throw new DOMException("Could not start conversion", "DataCloneError"); };
+  await get("convert").onclick();
+  assert.equal(aborted, 1);
+  assert.equal(current.terminated, true);
+  assert.equal(get("selection").hidden, true);
+  assert.equal(get("cancel").hidden, true);
+  assert.match(get("error").children[0].textContent, /Could not start conversion/);
+});
+
+for (const supported of [false, true]) {
+  test(`Folder output requires Web Locks (${supported})`, async t => {
+    const { get } = await setup(t, `folder-locks-${supported}`, {
+      showDirectoryPicker() {},
+      navigator: supported ? { locks: { request() {} } } : {}
+    });
+    assert.equal(get("save").querySelector('[value="disk"]').disabled, !supported);
+    assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
+  });
+}
+
+test("the live log and failure details keep the last 150 lines across worker messages", async t => {
+  const { get, workers } = await setup(t, "multiline-log");
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  const send = data => workers[0].onmessage({ data });
+  const lines = Array.from({ length: 151 }, (_, index) => "line " + index);
+  await send({ type: "progress", message: lines.join("\r\n") });
+  await send({ type: "progress", appName: "first.zip", message: "done" });
+  const expected = [...lines.slice(2), "first.zip: done"].join("\n");
+  assert.equal(get("log").textContent, expected);
+  await send({ type: "error", message: "conversion failed" });
+  const report = get("error").children[1].children[1].textContent;
+  assert.ok(report.endsWith("Conversion log (last 150 lines):\n" + expected));
 });

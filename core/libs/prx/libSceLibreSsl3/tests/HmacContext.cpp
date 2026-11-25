@@ -21,6 +21,17 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
+template <typename TAction>
+void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
+    }
+    Require(false, location);
+}
+
 std::unordered_map<void*, std::size_t> allocations;
 std::size_t callocCalls = 0;
 std::size_t freeCalls = 0;
@@ -152,6 +163,34 @@ void FreeKeyedContext() {
     Require(allocations.empty());
 }
 
+void HkdfDigestBoundsAndDerivation() {
+    const std::array<std::uint8_t, 22> ikm = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b};
+    const std::array<std::uint8_t, 13> salt = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c};
+    const std::array<std::uint8_t, 10> info = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9};
+    const std::array<std::uint8_t, 42> expected = {
+        0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+        0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+        0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65};
+    std::array<std::uint8_t, 42> out {};
+    Require(HKDF_nid_postfix(out.data(), out.size(), EVP_sha256_nid_postfix(), ikm.data(), ikm.size(), salt.data(), salt.size(), info.data(), info.size()) == 1);
+    Require(out == expected);
+    Require(allocations.empty());
+
+    for (const std::int32_t invalidSize : {0, 65, -1}) {
+        EvpMd invalidDigest = *EVP_sha256_nid_postfix();
+        invalidDigest.mdSize = invalidSize;
+        std::array<std::uint8_t, 32> invalidOut {};
+        RequireInvalidArgument([&] {
+            HKDF_nid_postfix(invalidOut.data(), invalidOut.size(), &invalidDigest, ikm.data(), ikm.size(), salt.data(), salt.size(), info.data(), info.size());
+        });
+    }
+    Require(allocations.empty());
+}
+
 }
 
 int main() {
@@ -166,5 +205,6 @@ int main() {
     RoundTrip();
     RekeyFromLongToShortKey();
     FreeKeyedContext();
+    HkdfDigestBoundsAndDerivation();
     std::puts("libSceLibreSsl3 HMAC_CTX tests passed");
 }

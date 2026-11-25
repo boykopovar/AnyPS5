@@ -1,9 +1,11 @@
 import argparse
 import bisect
 import functools
+import io
 import posixpath
 import re
 import sys
+import tokenize
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -109,8 +111,8 @@ def default_of(match, window):
     default = match.groupdict().get("default")
     if default:
         return default
-    found = re.search(r"\?[\s\S]*?:\s*(" + INTEGER + ")", window)
-    return found.group(1) if found else ""
+    found = re.search(r"\?[\s\S]*?:\s*([+-]?)\s*(" + INTEGER + ")", window)
+    return "".join(found.groups()) if found else ""
 
 
 def expression_window(text, code, matches, match, start, end):
@@ -161,6 +163,17 @@ def cpp_reads(text):
                          if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
 
 
+def python_reads(text):
+    offsets = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    result = list(text)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            result[start:end] = " " * (end - start)
+    return "".join(result)
+
+
 def _blank_non_code(text):
     if '"' not in text and "'" not in text and "//" not in text and "/*" not in text:
         return text
@@ -194,6 +207,82 @@ def constant_forms(prefixes=PREFIXES):
         re.compile(r'\b([A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<name>' + name + r')"\s*;'),
         re.compile(r'(?<![\w:])(?:std::)?(' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*(?P<ident>[A-Za-z_]\w*)\s*(?=[,)])'),
     )
+
+
+@functools.lru_cache(maxsize=None)
+def computed_forms(prefixes=PREFIXES):
+    prefix = "|".join(re.escape(prefix) for prefix in prefixes)
+    declaration = re.compile(r'\b(?P<ident>[A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<prefix>(?:' + prefix + r')[A-Za-z0-9_]*)"'
+                             r'\s*\+\s*(?:std::)?to_string\s*\(\s*(?P<slot>[A-Za-z_]\w*)\s*'
+                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
+    loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + INTEGER + r')\s*;\s*'
+                      r'(?P=slot)\s*<\s*(?P<bound>[^;{}]+?)\s*;\s*(?:(?P=slot)\s*\+\+|\+\+\s*(?P=slot))\s*\)')
+    reader = re.compile(r'(?<![\w:])(?:std::)?(?P<reader>' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*'
+                        r'(?P<ident>[A-Za-z_]\w*)\.c_str\s*\(\s*\)')
+    return declaration, loop, reader
+
+
+def _integer(value):
+    value = value.replace("'", "")
+    if value[:2] in ("0x", "0X"):
+        return int(value[2:], 16)
+    if len(value) > 1 and value[0] == "0":
+        return int(value[1:], 8)
+    return int(value)
+
+
+def _loop_bound(bound, text):
+    bound = bound.strip()
+    if re.fullmatch(INTEGER, bound):
+        return _integer(bound)
+    constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(bound)
+                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+    if constant:
+        return _integer(constant.group(1))
+    sized = re.fullmatch(r'(?:std::)?size\s*\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*)\.size\s*\(\s*\)', bound)
+    if not sized:
+        return None
+    array = sized.group(1) or sized.group(2)
+    declared = re.search(r'\b([A-Za-z_]\w*)\s+' + re.escape(array) + r'\s*;', text)
+    if not declared:
+        return None
+    alias = re.search(r'\busing\s+' + re.escape(declared.group(1))
+                      + r'\s*=\s*std::array\s*<[^;]*?,\s*(' + INTEGER + r'|[A-Za-z_]\w*)\s*>', text)
+    if not alias:
+        return None
+    size = alias.group(1)
+    if re.fullmatch(INTEGER, size):
+        return _integer(size)
+    constant = re.search(r'\b(?:constexpr|const)\s+[A-Za-z_][\w:]*\s+' + re.escape(size)
+                         + r'\s*=\s*(' + INTEGER + r')\b', text)
+    return _integer(constant.group(1)) if constant else None
+
+
+def computed_reads(text, prefixes=PREFIXES):
+    declaration, loop, reader = computed_forms(tuple(prefixes))
+    loops = [(match.start(), match.group("slot"), match.group("start"), match.group("bound"))
+             for match in loop.finditer(text)]
+    names, wildcards = {}, {}
+    for match in declaration.finditer(text):
+        expand = max((item for item in loops if item[0] < match.start() and item[1] == match.group("slot")),
+                     default=None)
+        bound = _loop_bound(expand[3], text) if expand else None
+        ident = match.group("ident")
+        if bound is not None:
+            start = _integer(expand[2])
+            offset = _integer(match.group("offset")) if match.group("offset") else 0
+            if match.group("sign") == "-":
+                offset = -offset
+            names.setdefault(ident, set()).update(match.group("prefix") + str(value) + match.group("suffix")
+                                                  for value in range(start + offset, bound + offset))
+        else:
+            wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + match.group("suffix"))
+    found = []
+    for match in reader.finditer(text):
+        ident = match.group("ident")
+        for name in sorted(names.get(ident, set()) | wildcards.get(ident, set())):
+            found.append((match.group("reader"), _NamedRead(match, name)))
+    return found
 
 
 SHADOW = re.compile(r'(?<![\w.:>])[A-Za-z_][\w:]*(?:\s*[*&]+\s*|\s+)(?:const\s+)?(?P<name>[A-Za-z_]\w*)\s*(?P<after>[=;,)\[{(])')
@@ -305,14 +394,17 @@ def reads(roots, prefixes=PREFIXES):
         text = cleaned.get(path)
         if text is None:
             raw = raw_by_path[path]
-            text = cpp_reads(raw) if path.suffix != ".py" else raw
+            try:
+                text = python_reads(raw) if path.suffix == ".py" else cpp_reads(raw)
+            except (tokenize.TokenError, IndentationError, SyntaxError) as error:
+                raise ValueError(f"cannot tokenize {path.as_posix()}: {error}") from error
             cleaned[path] = text
         return text
 
     def commentless_of(path):
         text = uncommented_cache.get(path)
         if text is None:
-            text = text_of(path) if path.suffix != ".py" else uncommented(raw_by_path[path])
+            text = text_of(path) if path.suffix != ".py" else uncommented(text_of(path))
             uncommented_cache[path] = text
         return text
 
@@ -344,6 +436,8 @@ def reads(roots, prefixes=PREFIXES):
         has_literal = ((quoted_prefixes is None or any(prefix in raw for prefix in quoted_prefixes))
                        and any(token in raw for token in ALL_READER_TOKENS))
         matches = line_reads(text_of(path), prefixes) if has_literal else []
+        if has_literal and "to_string" in raw:
+            matches += computed_reads(text_of(path), prefixes)
         code = None
         if has_declared and any(reader in raw for reader in IDENTIFIER_READERS):
             constants = _visible_constants(path, includes_of, declared)
@@ -411,15 +505,31 @@ def check(found, doc, prefixes, out):
     if names is None:
         out.write(f"error: cannot read {doc}\n")
         return 1
-    missing = sorted(set(found) - names)
-    stale = sorted(names - set(found))
+    covered = set()
+    missing = []
+    undetermined = []
+    for name in sorted(found):
+        if "*" in name:
+            pattern = re.compile(re.escape(name).replace(r"\*", "[A-Za-z0-9_]+") + r"\Z")
+            covered |= {candidate for candidate in names if pattern.match(candidate)}
+            undetermined.append(name)
+        elif name not in names:
+            missing.append(name)
+    stale = sorted(names - set(found) - covered)
     for name in missing:
         source, number, _, _ = found[name][0]
         out.write(f"error: {name} is read at {source}:{number} but has no row in {doc}\n")
+    for name in undetermined:
+        source, number, _, _ = found[name][0]
+        out.write(f"error: {name} is read at {source}:{number} but the names it can take are not known, "
+                  f"so {doc} cannot be checked for it\n")
     for name in stale:
         out.write(f"error: {name} has a row in {doc} but the code no longer reads it\n")
-    if missing or stale:
-        out.write(f"{len(missing)} name(s) undocumented, {len(stale)} stale\n")
+    if missing or stale or undetermined:
+        summary = f"{len(missing)} name(s) undocumented, {len(stale)} stale"
+        if undetermined:
+            summary += f", {len(undetermined)} undetermined"
+        out.write(summary + "\n")
         return 1
     out.write(f"{len(found)} name(s), all documented\n")
     return 0

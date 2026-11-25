@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "Equeue.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -39,7 +40,7 @@ static UnreadFile UnreadFileBytes(int file) {
 }
 
 static bool RegularFile(int descriptor) {
-    if (File::IsHostStream(descriptor)) {
+    if (File::IsHostStream(descriptor) || IsKsemDescriptor_nid_no_patch(descriptor)) {
         return false;
     }
     FileStat status{};

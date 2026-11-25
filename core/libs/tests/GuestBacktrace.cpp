@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #endif
 #include <string>
 #include <stdexcept>
+#include <typeinfo>
 #include <vector>
 
 extern "C" {
@@ -161,6 +163,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "GetBufferSize accepted an unreadable count output");
+    Require(size == 0, "GetBufferSize modified size when count was unreadable");
     rejected = false;
     try {
         sceLibcBacktraceGetBufferSize_nid_postfix(1, &count, invalidSize);
@@ -168,6 +171,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "GetBufferSize accepted an unreadable size output");
+    Require(count == -1, "GetBufferSize modified count when size was unreadable");
     rejected = false;
     try {
         sceLibcBacktraceSelf_nid_postfix(1, invalidBuffer, 4096, &count);
@@ -175,6 +179,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "Self accepted an unreadable frame output");
+    Require(count == -1, "Self modified count when frame output was unreadable");
     std::vector<unsigned char> buffer(4096, Fill);
     rejected = false;
     try {
@@ -183,6 +188,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "Self accepted an unreadable count output");
+    for (const auto byte : buffer) Require(byte == Fill, "Self modified buffer when count was unreadable");
 }
 
 #if defined(_WIN32)
@@ -217,6 +223,113 @@ void CheckNullArguments() {
     for (const auto byte : buffer) Require(byte == Fill, "a rejected call wrote the buffer");
 }
 
+void CheckPersonalityEdgeCases() {
+    constexpr std::uint64_t foreignClass = 0;
+    constexpr std::uintptr_t region = 0x1000;
+    constexpr std::uintptr_t ip = 0x1008;
+
+    const unsigned char missingLsda[] = {
+        255, 255, 1, 4,
+        0x10, 4, 0x20, 0
+    };
+    _Unwind_Exception exception{};
+    _Unwind_Context missingContext{nullptr};
+    missingContext.registers[16] = ip;
+    missingContext.region = region;
+    missingContext.lsda = reinterpret_cast<std::uintptr_t>(missingLsda);
+    Require(
+        __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, foreignClass, &exception, &missingContext) == _URC_HANDLER_FOUND,
+        "missing call-site entry did not stop search phase at noexcept boundary"
+    );
+    Require(
+        __gxx_personality_v0_nid_postfix(
+            1, static_cast<_Unwind_Action>(_UA_CLEANUP_PHASE | _UA_FORCE_UNWIND), foreignClass, &exception, &missingContext
+        ) == _URC_CONTINUE_UNWIND,
+        "missing call-site entry did not continue during force unwind"
+    );
+
+    const unsigned char emptySpecLsda[] = {
+        255, 0, 8, 1, 4,
+        0, 0x10, 0x24, 1,
+        0x7f, 0,
+        0
+    };
+    _Unwind_Context emptySearchContext{nullptr};
+    emptySearchContext.registers[16] = ip;
+    emptySearchContext.region = region;
+    emptySearchContext.lsda = reinterpret_cast<std::uintptr_t>(emptySpecLsda);
+    Require(
+        __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, foreignClass, &exception, &emptySearchContext) == _URC_HANDLER_FOUND,
+        "empty exception specification did not match in search phase"
+    );
+    _Unwind_Context emptyHandlerContext{nullptr};
+    emptyHandlerContext.registers[16] = ip;
+    emptyHandlerContext.region = region;
+    emptyHandlerContext.lsda = reinterpret_cast<std::uintptr_t>(emptySpecLsda);
+    Require(
+        __gxx_personality_v0_nid_postfix(
+            1, static_cast<_Unwind_Action>(_UA_CLEANUP_PHASE | _UA_HANDLER_FRAME), foreignClass, &exception, &emptyHandlerContext
+        ) == _URC_INSTALL_CONTEXT,
+        "empty exception specification did not install handler context"
+    );
+    Require(emptyHandlerContext.registers[0] == reinterpret_cast<std::uintptr_t>(&exception), "empty spec wrote wrong exception pointer");
+    Require(
+        emptyHandlerContext.registers[1] == static_cast<std::uintptr_t>(std::intptr_t{-1}),
+        "empty spec wrote wrong selector register"
+    );
+    Require(emptyHandlerContext.registers[16] == region + 0x24, "empty spec wrote wrong landing pad IP");
+
+    const unsigned char chainedCleanupLsda[] = {
+        255, 0, 10, 1, 4,
+        0, 0x10, 0x30, 1,
+        0x7f, 1,
+        0, 0,
+        0
+    };
+    _Unwind_Context forceContext{nullptr};
+    forceContext.registers[16] = ip;
+    forceContext.region = region;
+    forceContext.lsda = reinterpret_cast<std::uintptr_t>(chainedCleanupLsda);
+    forceContext.registers[1] = 0x55;
+    Require(
+        __gxx_personality_v0_nid_postfix(
+            1, static_cast<_Unwind_Action>(_UA_CLEANUP_PHASE | _UA_FORCE_UNWIND), foreignClass, &exception, &forceContext
+        ) == _URC_INSTALL_CONTEXT,
+        "force unwind over exception spec did not install chained cleanup"
+    );
+    Require(forceContext.registers[0] == reinterpret_cast<std::uintptr_t>(&exception), "force unwind cleanup wrote wrong exception pointer");
+    Require(forceContext.registers[1] == 0, "force unwind cleanup did not clear selector register");
+    Require(forceContext.registers[16] == region + 0x30, "force unwind cleanup wrote wrong landing pad IP");
+
+    std::vector<unsigned char> typedSpecLsda = {
+        255, 0, static_cast<unsigned char>(8 + sizeof(std::uintptr_t)), 1, 4,
+        0, 0x10, 0x40, 1,
+        0x7f, 0
+    };
+    const std::size_t typeSlotOffset = typedSpecLsda.size();
+    typedSpecLsda.resize(typeSlotOffset + sizeof(std::uintptr_t) + 2, 0);
+    typedSpecLsda[typeSlotOffset + sizeof(std::uintptr_t)] = 1;
+    typedSpecLsda[typeSlotOffset + sizeof(std::uintptr_t) + 1] = 0;
+
+    const std::uintptr_t intType = reinterpret_cast<std::uintptr_t>(&typeid(int));
+    std::memcpy(typedSpecLsda.data() + typeSlotOffset, &intType, sizeof(intType));
+    _Unwind_Context typedContext{nullptr};
+    typedContext.registers[16] = ip;
+    typedContext.region = region;
+    typedContext.lsda = reinterpret_cast<std::uintptr_t>(typedSpecLsda.data());
+    Require(
+        __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, foreignClass, &exception, &typedContext) == _URC_HANDLER_FOUND,
+        "non-null exception spec allowed a foreign exception"
+    );
+
+    const std::uintptr_t nullType = 0;
+    std::memcpy(typedSpecLsda.data() + typeSlotOffset, &nullType, sizeof(nullType));
+    Require(
+        __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, foreignClass, &exception, &typedContext) == _URC_CONTINUE_UNWIND,
+        "null exception spec entry did not allow a foreign exception"
+    );
+}
+
 int main() {
 #if defined(_WIN32)
     CheckUnicodeModulePath();
@@ -224,4 +337,5 @@ int main() {
     CheckNullArguments();
     CheckBacktrace();
     CheckUnreadableOutputs();
+    CheckPersonalityEdgeCases();
 }

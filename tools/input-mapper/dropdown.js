@@ -69,6 +69,7 @@ function positionPicker() {
 }
 
 function openPicker(control) {
+    active?.trigger.setAttribute('aria-expanded', 'false');
     active = control;
     title.textContent = control.label;
     list.setAttribute('aria-label', control.label);
@@ -107,6 +108,7 @@ dialog.addEventListener('click', event => {
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
 });
 dialog.addEventListener('close', () => {
+    if (dialog.open) return;
     const current = active;
     active = undefined;
     current?.trigger.setAttribute('aria-expanded', 'false');
