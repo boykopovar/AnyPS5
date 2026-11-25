@@ -20,6 +20,34 @@ constexpr std::uint32_t CodecAvc = 0;
 constexpr std::uint32_t DecoderVdec2 = 2;
 constexpr std::uint64_t SlotSize = 0x10000;
 constexpr std::uint32_t OutputPitch = 64;
+constexpr std::array<std::uint64_t, 6> VisiblePictureHashes{
+    0x5871fdc85dfa274eull, 0x26ce4afb974cffc4ull, 0xd2e739633733d5baull,
+    0x54feb3d290e028fdull, 0xfa1342a4ba1819c8ull, 0x870125dd7f079a4cull,
+};
+
+std::uint64_t VisibleHash(const std::uint8_t* buffer, std::uint32_t pitch, std::uint32_t frameHeight) {
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    const auto mix = [&](const std::uint8_t* row) {
+        for (std::uint32_t column = 0; column < H264Fixture::Width; ++column) hash = (hash ^ row[column]) * 0x100000001b3ull;
+    };
+    for (std::uint32_t row = 0; row < H264Fixture::Height; ++row) mix(buffer + static_cast<std::size_t>(row) * pitch);
+    const auto* chroma = buffer + static_cast<std::size_t>(pitch) * frameHeight;
+    for (std::uint32_t row = 0; row < H264Fixture::Height / 2; ++row) mix(chroma + static_cast<std::size_t>(row) * pitch);
+    return hash;
+}
+
+bool ExtendsLastRows(const std::uint8_t* buffer, std::uint32_t pitch, std::uint32_t frameHeight) {
+    const auto* chroma = buffer + static_cast<std::size_t>(pitch) * frameHeight;
+    const auto* lastLuma = buffer + static_cast<std::size_t>(pitch) * (H264Fixture::Height - 1);
+    const auto* lastChroma = chroma + static_cast<std::size_t>(pitch) * (H264Fixture::Height / 2 - 1);
+    for (std::uint32_t row = H264Fixture::Height; row < frameHeight; ++row) {
+        if (std::memcmp(buffer + static_cast<std::size_t>(row) * pitch, lastLuma, H264Fixture::Width) != 0) return false;
+    }
+    for (std::uint32_t row = H264Fixture::Height / 2; row < frameHeight / 2; ++row) {
+        if (std::memcmp(chroma + static_cast<std::size_t>(row) * pitch, lastChroma, H264Fixture::Width) != 0) return false;
+    }
+    return true;
+}
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -156,9 +184,10 @@ void CheckSetDecodeInputSvp() {
         Require(output.framePitch == OutputPitch && output.frameHeight == H264Fixture::CodedHeight, "decoded frame geometry");
         const auto unit = H264Fixture::DisplayOrderUnits[picture];
         Require(output.pictures[0].pts == 1000 + unit && output.pictures[0].userData == 3000 + unit, "decoded frame metadata");
-        Require(H264Fixture::hashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch, output.frameHeight) ==
-                    H264Fixture::PictureHashes[picture],
+        const auto* frameBytes = static_cast<const std::uint8_t*>(output.frameBuffer);
+        Require(VisibleHash(frameBytes, output.framePitch, output.frameHeight) == VisiblePictureHashes[picture],
                 "decoded frame pixel hash");
+        Require(ExtendsLastRows(frameBytes, output.framePitch, output.frameHeight), "decoded frame padding rows");
     }
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete svp decoder");
 }
