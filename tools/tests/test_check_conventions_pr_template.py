@@ -160,5 +160,25 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assertIn("[pr-title] Pull request title is not Conventional Commits", result.stdout)
 
 
+def template_test_shard(index, count):
+    if not 0 <= index < count:
+        raise ValueError("shard index must be within the shard count")
+    suites = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+    tests = [test for suite in suites for test in suite]
+    return unittest.TestSuite(tests[index::count])
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--shard":
+        if len(sys.argv) != 3 or "/" not in sys.argv[2]:
+            print("usage: test_check_conventions_pr_template.py --shard INDEX/COUNT", file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            index, count = (int(part) for part in sys.argv[2].split("/", 1))
+            suite = template_test_shard(index, count)
+        except ValueError as error:
+            print(f"invalid shard: {error}", file=sys.stderr)
+            raise SystemExit(2)
+        result = unittest.TextTestRunner().run(suite)
+        raise SystemExit(0 if result.wasSuccessful() else 1)
     unittest.main()

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -51,6 +52,20 @@ void Edit(const char* utf8, std::int32_t start, std::int32_t length, unsigned wi
     event.edit.start = start;
     event.edit.length = length;
     g_window.HandleEvent(event, WindowId);
+}
+
+void EditExtended(const char* utf8, std::int32_t start, std::int32_t length, unsigned windowId = WindowId) {
+    const int allocations = SDL_GetNumAllocations();
+    SDL_Event event{};
+    event.type = SDL_TEXTEDITING_EXT;
+    event.editExt.windowID = windowId;
+    event.editExt.text = SDL_strdup(utf8);
+    Require(event.editExt.text != nullptr, "allocate extended preedit");
+    event.editExt.start = start;
+    event.editExt.length = length;
+    g_window.HandleEvent(event, WindowId);
+    Require(SDL_GetNumAllocations() == allocations + 1 && std::strcmp(event.editExt.text, utf8) == 0, "the extended preedit handler released or changed text its caller owns");
+    SDL_free(event.editExt.text);
 }
 
 void Type(const char* utf8) {
@@ -175,6 +190,57 @@ void CheckPasteShortcuts() {
     Close();
 }
 
+void CheckExtendedEditingEvents() {
+    char16_t buffer[16] = u"x";
+    const Param param = DialogParam(buffer, 8);
+    const std::string text = std::string(30, 'a') + "\xe3\x81\x8b\xf0\x9f\x98\x80\xe4\xbb\x8a";
+    const std::u16string expected = std::u16string(30, u'a') + u"\u304b\U0001f600\u4eca";
+    Open(param);
+    EditExtended(text.c_str(), 31, 1);
+    const auto view = View();
+    Require(view.preedit == expected && view.preeditCursor == 31 && view.preeditSelection == 2, "extended preedit was truncated or split inside UTF-8");
+    Require(view.text == u"x" && std::u16string(buffer) == u"x", "extended preedit committed text");
+    EditExtended("other window", 0, 0, WindowId + 1);
+    Require(View().preedit == expected, "extended preedit for another window was shown");
+    Edit("legacy", 2, 1);
+    Require(View().preedit == u"legacy", "legacy edit does not replace extended preedit");
+    EditExtended("", 0, 0);
+    Require(View().preedit.empty(), "empty extended edit did not clear preedit");
+    EditExtended(text.c_str(), -1, -1);
+    Require(View().preedit == expected && View().preeditCursor == 0 && View().preeditSelection == 0, "unknown extended offsets changed the preedit text");
+    Type("\xe3\x81\x8b");
+    Require(View().preedit.empty() && View().text == u"x\u304b", "committed text did not end extended composition");
+    Close();
+    EditExtended(text.c_str(), 31, 1);
+    Open(param);
+    Require(View().preedit.empty(), "extended preedit survived a closed dialog");
+    Close();
+}
+
+void ThrowPreedit(const char16_t*, std::size_t, std::int32_t, std::int32_t) {
+    throw std::runtime_error("preedit sink failure");
+}
+
+void CheckExtendedEditingFailure() {
+    SDL_Event event{};
+    event.type = SDL_TEXTEDITING_EXT;
+    event.editExt.windowID = WindowId;
+    g_window.HandleEvent(event, WindowId);
+    const int allocations = SDL_GetNumAllocations();
+    event.editExt.text = SDL_strdup("preedit");
+    Require(event.editExt.text != nullptr, "allocate throwing preedit");
+    ImeSetHostPreeditSink_nid_no_patch(&ThrowPreedit);
+    bool threw = false;
+    try {
+        g_window.HandleEvent(event, WindowId);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    ImeSetHostPreeditSink_nid_no_patch(nullptr);
+    Require(threw && SDL_GetNumAllocations() == allocations + 1, "the extended preedit handler released text its caller owns when its sink threw");
+    SDL_free(event.editExt.text);
+}
+
 void CheckNothingCaptured() {
     g_window.SetClipboardProvider(&ReadClipboard);
     g_clipboard = "secret";
@@ -233,10 +299,12 @@ void CheckSession() {
     g_clipboard = "a\r\nb";
     Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "open");
     Key(SDL_SCANCODE_V, SDLK_v, PasteModifier);
-    Edit("ni", 2, 0);
+    EditExtended((std::string(30, 'a') + "\xe3\x81\x8b\xf0\x9f\x98\x80").c_str(), 31, 1);
+    Key(SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, 0);
     Key(SDL_SCANCODE_V, SDLK_v, PasteModifier);
+    Type("c");
     Require(sceImeUpdate(param.handler) == 0, "update");
-    Require(std::u16string(buffers.text) == u"a\nb", "the session text is not the single paste with a normalised break");
+    Require(std::u16string(buffers.text) == u"a\nbc", "queued extended preedit did not own its text or suppress editing and paste");
     Require(sceImeClose_nid_postfix() == 0, "close");
 }
 
@@ -244,6 +312,8 @@ void CheckSession() {
 
 int main() {
     CheckEditingEvents();
+    CheckExtendedEditingEvents();
+    CheckExtendedEditingFailure();
     CheckPasteShortcuts();
     CheckNothingCaptured();
     CheckHugeClipboard();

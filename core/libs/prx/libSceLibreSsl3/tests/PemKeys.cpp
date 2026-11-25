@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <random>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -1202,6 +1204,295 @@ void TestTraditionalDerValidationAndContext() {
         {ErrorReasonAsn1Library, Asn1FieldMissing}, {PemLibrary, ErrorReasonAsn1Library}});
 }
 
+class GuestPemFileFixture {
+public:
+    explicit GuestPemFileFixture(const std::string& content) {
+        std::random_device random;
+        bool created = false;
+        for (int attempt = 0; attempt < 16 && !created; ++attempt) {
+            directory = "libressl3-pem-fixture-" + std::to_string(random());
+            created = std::filesystem::create_directory(directory);
+        }
+        Require(created);
+        path = directory + "/key.pem";
+        FileStream* writer = fopen_nid_postfix(path.c_str(), "wb");
+        Require(writer != nullptr);
+        if (!content.empty()) {
+            const std::size_t written = fwrite_nid_postfix(content.data(), 1, content.size(), writer);
+            Require(written == content.size());
+        }
+        Require(fclose_nid_postfix(writer) == 0);
+        stream = fopen_nid_postfix(path.c_str(), "rb");
+        Require(stream != nullptr);
+    }
+
+    ~GuestPemFileFixture() {
+        if (stream != nullptr) fclose_nid_postfix(stream);
+        remove_nid_postfix(path.c_str());
+        std::error_code error;
+        std::filesystem::remove(directory, error);
+    }
+
+    FileStream* Get() const { return stream; }
+
+    void CloseAndVerify(std::source_location location = std::source_location::current()) {
+        Require(stream != nullptr, location);
+        FileStream* target = stream;
+        stream = nullptr;
+        Require(fclose_nid_postfix(target) == 0, location);
+    }
+
+private:
+    std::string directory;
+    std::string path;
+    FileStream* stream = nullptr;
+};
+
+int APS5_VABI CountingRsaFilePasswordCallback(char*, int, int, void* userData) {
+    auto* count = static_cast<int*>(userData);
+    ++(*count);
+    return 0;
+}
+
+void TestRsaPrivateFile() {
+    constexpr int EvpLibrary = 6;
+    constexpr int EvpRExpectingAnRsaKey = 127;
+
+    auto* rsaReferencePkey = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    const auto* rsaReference = static_cast<const LibreSsl3Rsa*>(rsaReferencePkey->key);
+
+    {
+        ERR_clear_error_nid_postfix();
+        std::string payload = RsaTraditionalPem;
+        payload += "AFTER_PEM_MARKER\n";
+        GuestPemFileFixture file(payload);
+        int callbackCount = 0;
+        LibreSsl3Rsa* key = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+            file.Get(), nullptr, CountingRsaFilePasswordCallback, &callbackCount);
+        Require(key != nullptr);
+        Require(callbackCount == 0);
+        Require(key->method == nullptr);
+        Require(key->references == 1);
+        CompareRsa(key, rsaReference, true);
+        Require(RSA_check_key_nid_postfix(key) == 1);
+        ExpectEmptyQueue();
+
+        char line[64] {};
+        Require(fgets_nid_postfix(line, static_cast<int>(sizeof(line)), file.Get()) != nullptr);
+        Require(std::strcmp(line, "AFTER_PEM_MARKER\n") == 0);
+        file.CloseAndVerify();
+
+        Require(RSA_up_ref_nid_postfix(key) == 1);
+        Require(key->references == 2);
+        RSA_free_nid_disambig1_nid_postfix(key);
+        Require(key->references == 1);
+        CompareRsa(key, rsaReference, true);
+        RSA_free_nid_disambig1_nid_postfix(key);
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(RsaPkcs8Pem);
+        LibreSsl3Rsa* slot = nullptr;
+        LibreSsl3Rsa* key = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+        Require(key != nullptr);
+        Require(slot == key);
+        Require(key->method == nullptr);
+        Require(key->references == 1);
+        CompareRsa(key, rsaReference, true);
+        Require(RSA_check_key_nid_postfix(key) == 1);
+        ExpectEmptyQueue();
+        file.CloseAndVerify();
+        RSA_free_nid_disambig1_nid_postfix(key);
+    }
+
+    LibreSsl3Rsa* preserved = nullptr;
+    {
+        GuestPemFileFixture seed(RsaPkcs8Pem);
+        preserved = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(seed.Get(), nullptr, nullptr, nullptr);
+        Require(preserved != nullptr);
+        seed.CloseAndVerify();
+    }
+    Require(RSA_up_ref_nid_postfix(preserved) == 1);
+    Require(preserved->references == 2);
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(RsaTraditionalPem);
+        LibreSsl3Rsa* slot = preserved;
+        LibreSsl3Rsa* replaced = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+        Require(replaced != nullptr);
+        Require(slot == replaced);
+        Require(replaced != preserved);
+        Require(replaced->references == 1);
+        Require(preserved->references == 1);
+        CompareRsa(replaced, rsaReference, true);
+        ExpectEmptyQueue();
+        file.CloseAndVerify();
+
+        LibreSsl3Rsa* secondSlot = replaced;
+        GuestPemFileFixture secondFile(RsaPkcs8Pem);
+        LibreSsl3Rsa* secondReplaced = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+            secondFile.Get(), &secondSlot, nullptr, nullptr);
+        Require(secondReplaced != nullptr);
+        Require(secondSlot == secondReplaced);
+        Require(secondReplaced != replaced);
+        Require(secondReplaced->references == 1);
+        ExpectEmptyQueue();
+        secondFile.CloseAndVerify();
+        RSA_free_nid_disambig1_nid_postfix(secondReplaced);
+    }
+
+    Require(RSA_up_ref_nid_postfix(preserved) == 1);
+    Require(preserved->references == 2);
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(Ec256Pkcs8Pem);
+        LibreSsl3Rsa* slot = preserved;
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        ExpectErrorCode(EvpLibrary, EvpRExpectingAnRsaKey);
+        ExpectEmptyQueue();
+        file.CloseAndVerify();
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        const std::vector<unsigned char> malformedBytes = EncodePemRecord("RSA PRIVATE KEY", {0x30, 0x03, 0x02, 0x01, 0x00});
+        const std::string malformed(reinterpret_cast<const char*>(malformedBytes.data()), malformedBytes.size());
+        GuestPemFileFixture file(malformed);
+        LibreSsl3Rsa* slot = preserved;
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1FieldMissing}, {RsaLibrary, ErrorReasonRsaLibrary},
+            {ErrorReasonAsn1Library, Asn1FieldMissing}, {PemLibrary, ErrorReasonAsn1Library}});
+        file.CloseAndVerify();
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file("not a pem key\n");
+        LibreSsl3Rsa* slot = preserved;
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        ExpectErrorCode(PemLibrary, PemNoStartLine);
+        ExpectEmptyQueue();
+        file.CloseAndVerify();
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(RsaEncryptedPem);
+        LibreSsl3Rsa* slot = preserved;
+        int callbackCount = 0;
+        bool threw = false;
+        try {
+            PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+                file.Get(), &slot, CountingRsaFilePasswordCallback, &callbackCount);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(callbackCount == 0);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        file.CloseAndVerify();
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(DsaPrivateKeyLabelPem);
+        LibreSsl3Rsa* slot = preserved;
+        bool threw = false;
+        try {
+            PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        file.CloseAndVerify();
+    }
+
+    {
+        LibreSsl3Rsa* slot = preserved;
+        bool threw = false;
+        try {
+            PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(nullptr, &slot, nullptr, nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+    }
+
+    RSA_free_nid_disambig1_nid_postfix(preserved);
+    RSA_free_nid_disambig1_nid_postfix(preserved);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReferencePkey);
+}
+
+void TestRsaPrivateFileSequential() {
+    constexpr int EvpLibrary = 6;
+    constexpr int EvpRExpectingAnRsaKey = 127;
+
+    auto* rsaReferencePkey = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    const auto* rsaReference = static_cast<const LibreSsl3Rsa*>(rsaReferencePkey->key);
+
+    ERR_clear_error_nid_postfix();
+    std::string payload = RsaTraditionalPem;
+    payload += Ec256Pkcs8Pem;
+    payload += RsaPkcs8Pem;
+    payload += "AFTER_SEQUENTIAL_MARKER\n";
+    GuestPemFileFixture file(payload);
+
+    LibreSsl3Rsa* slot = nullptr;
+    LibreSsl3Rsa* first = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+    Require(first != nullptr);
+    Require(slot == first);
+    Require(first->method == nullptr);
+    Require(first->references == 1);
+    CompareRsa(first, rsaReference, true);
+    Require(RSA_check_key_nid_postfix(first) == 1);
+    ExpectEmptyQueue();
+
+    Require(RSA_up_ref_nid_postfix(first) == 1);
+    Require(first->references == 2);
+
+    Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+    Require(slot == first);
+    Require(first->references == 2);
+    CompareRsa(first, rsaReference, true);
+    ExpectErrorCode(EvpLibrary, EvpRExpectingAnRsaKey);
+    ExpectEmptyQueue();
+
+    LibreSsl3Rsa* third = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+    Require(third != nullptr);
+    Require(third != first);
+    Require(slot == third);
+    Require(third->method == nullptr);
+    Require(third->references == 1);
+    Require(first->references == 1);
+    CompareRsa(third, rsaReference, true);
+    Require(RSA_check_key_nid_postfix(third) == 1);
+    ExpectEmptyQueue();
+
+    char line[64] {};
+    Require(fgets_nid_postfix(line, static_cast<int>(sizeof(line)), file.Get()) != nullptr);
+    Require(std::strcmp(line, "AFTER_SEQUENTIAL_MARKER\n") == 0);
+    file.CloseAndVerify();
+
+    RSA_free_nid_disambig1_nid_postfix(first);
+    RSA_free_nid_disambig1_nid_postfix(third);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReferencePkey);
+    ExpectEmptyQueue();
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -1245,5 +1536,7 @@ int main() {
     TestPkcs8InTraditionalLabelFallback();
     TestNormalTraditionalCleanQueue();
     TestTraditionalDerValidationAndContext();
+    TestRsaPrivateFile();
+    TestRsaPrivateFileSequential();
     return 0;
 }

@@ -483,13 +483,12 @@ int APS5_VABI sceFontCloseFont(FontHandle fontHandle) {
 }
 
 int APS5_VABI sceFontGetLibrary(FontHandle fontHandle, FontLibrary* pLibrary) {
-    if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto* font = GetNativeFont(fontHandle);
     if (!font || font->magic != HANDLE_MAGIC) {
-        if (!CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (pLibrary && !CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    if (!CopyOutGuest(pLibrary, font->library)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!pLibrary || !CopyOutGuest(pLibrary, font->library)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -538,9 +537,7 @@ int APS5_VABI sceFontGetCharGlyphCode(FontHandle fontHandle, std::uint32_t code,
     });
     if (rc == SCE_FONT_OK) {
         const std::uint32_t outGlyph = index | 0x80000000u;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(glyphCode, &outGlyph, sizeof(outGlyph));
-        errno = savedErrno;
         if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     return rc;
