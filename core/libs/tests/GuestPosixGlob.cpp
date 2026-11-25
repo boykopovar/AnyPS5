@@ -3,6 +3,12 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
@@ -25,6 +31,7 @@ constexpr int GlobNocheck = 0x0010;
 constexpr int GlobNosort = 0x0020;
 constexpr int GlobBrace = 0x0080;
 constexpr int GlobNomatch = -3;
+constexpr int GlobAborted = -2;
 
 struct TestGlob {
     std::size_t pathc;
@@ -151,6 +158,45 @@ void TestAppendAndDooffs() {
     globfree_nid_postfix(&offset);
 }
 
+void TestFailedPublishKeepsPreviousResults() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* page = static_cast<char*>(VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* page = mapped == MAP_FAILED ? nullptr : static_cast<char*>(mapped);
+#endif
+    Require(page != nullptr);
+    auto* glob = reinterpret_cast<TestGlob*>(page);
+    *glob = TestGlob{};
+    Require(glob_nid_postfix("/anyps5-glob-test/a*.txt", 0, nullptr, glob) == 0);
+    const std::vector<std::string> before = Paths(*glob);
+    const std::size_t count = glob->pathc;
+    char** array = glob->pathv;
+#ifdef _WIN32
+    DWORD previousProtection = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previousProtection) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    Require(glob_nid_postfix("/anyps5-glob-test/b*.log", GlobAppend, nullptr, glob) == GlobAborted);
+    Require(glob->pathc == count && glob->pathv == array && Paths(*glob) == before);
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_READWRITE, &previousProtection) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+    globfree_nid_postfix(glob);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 void TestNosortKeepsAllMatches() {
     TestGlob glob{};
     Require(glob_nid_postfix("/anyps5-glob-test/*.txt", GlobNosort, nullptr, &glob) == 0);
@@ -194,6 +240,7 @@ int main() {
     TestTrailingSlashMatchesDirectoriesOnly(root);
     TestNoMatchAndNocheck();
     TestAppendAndDooffs();
+    TestFailedPublishKeepsPreviousResults();
     TestNosortKeepsAllMatches();
     TestUnsupportedFlagThrows();
 

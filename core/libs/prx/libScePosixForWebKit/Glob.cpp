@@ -178,28 +178,40 @@ int Publish(GuestGlob& guest, void* pglob, const std::vector<std::string>& match
         texts.push_back(text);
     }
     const std::size_t oldCount = append ? guest.pathc : 0;
-    char** array = append ? guest.pathv : nullptr;
+    char** previous = append ? guest.pathv : nullptr;
     const std::size_t newCount = oldCount + matches.size();
-    if (!matches.empty() || (array == nullptr && offs != 0)) {
+    const bool replace = !matches.empty() || (previous == nullptr && offs != 0);
+    char** array = previous;
+    if (replace) {
         const std::size_t slots = offs + newCount + 1;
-        char** storage = static_cast<char**>(array != nullptr ? realloc_nid_postfix(array, slots * sizeof(char*)) : malloc_nid_postfix(slots * sizeof(char*)));
+        char** storage = static_cast<char**>(malloc_nid_postfix(slots * sizeof(char*)));
         if (storage == nullptr) {
             release();
             return GlobNospace;
         }
-        if (array == nullptr)
-            for (std::size_t index = 0; index < offs; ++index) storage[index] = nullptr;
+        for (std::size_t index = 0; index < offs; ++index) storage[index] = nullptr;
+        for (std::size_t index = 0; index < oldCount; ++index) storage[offs + index] = previous[offs + index];
+        for (std::size_t index = 0; index < texts.size(); ++index) storage[offs + oldCount + index] = texts[index];
+        storage[offs + newCount] = nullptr;
         array = storage;
-        for (std::size_t index = 0; index < texts.size(); ++index) array[offs + oldCount + index] = texts[index];
-        array[offs + newCount] = nullptr;
     }
-    guest.pathc = newCount;
-    guest.matchc = matches.size();
-    guest.offs = offs;
-    guest.pathv = array;
-    guest.flags = (flags & ~GlobMagchar) | (magic ? GlobMagchar : 0);
-    guest.errfunc = errfunc;
-    return GuestCopyOut_nid_no_patch(pglob, &guest, sizeof(guest)) ? 0 : GlobAborted;
+    GuestGlob updated = guest;
+    updated.pathc = newCount;
+    updated.matchc = matches.size();
+    updated.offs = offs;
+    updated.pathv = array;
+    updated.flags = (flags & ~GlobMagchar) | (magic ? GlobMagchar : 0);
+    updated.errfunc = errfunc;
+    if (!GuestCopyOut_nid_no_patch(pglob, &updated, sizeof(updated))) {
+        if (replace) {
+            release();
+            free_nid_postfix(array);
+        }
+        return GlobAborted;
+    }
+    if (replace && previous != nullptr) free_nid_postfix(previous);
+    guest = updated;
+    return 0;
 }
 
 }
