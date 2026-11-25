@@ -1,6 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -423,9 +422,7 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     const auto copyOutput = [](std::uint32_t* destination, std::uint32_t value) {
         if (!destination) return true;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-        errno = savedErrno;
         return copied;
     };
     if (context->deviceBacked && !AudioOut2TraceEnabled()) {
@@ -515,9 +512,7 @@ int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     if (!memory_size) return static_cast<int>(0x80268001);
     const std::size_t size = CONTEXT_MEMORY_BASE + CONTEXT_MEMORY_PER_PORT * params->max_ports;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(memory_size, &size, sizeof(size));
-    errno = savedErrno;
     return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
 
@@ -527,9 +522,7 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) {
     defaults.max_ports = DEFAULT_MAX_PORTS;
     defaults.queue_depth = 1;
     defaults.num_grains = AUDIO_OUT2_DEFAULT_GRAIN;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(params, &defaults, sizeof(defaults));
-    errno = savedErrno;
     return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
 
