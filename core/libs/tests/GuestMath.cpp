@@ -5196,6 +5196,10 @@ int main() {
     {
         struct Case { std::uint32_t input, expected[4]; int sign; };
         constexpr Case cases[] = {
+            {0x01b2c176u, {0x42ab3b87u, 0x42ab3b87u, 0x42ab3b86u, 0x42ab3b86u}, 1},
+            {0xb52680dcu, {0x4164b08eu, 0x4164b08fu, 0x4164b091u, 0x4164b090u}, -1},
+            {0x40642084u, {0x3fa2eadcu, 0x3fa2eadbu, 0x3fa2eadcu, 0x3fa2eadbu}, 1},
+            {0x4124a496u, {0x41575aa5u, 0x41575aa2u, 0x41575aa6u, 0x41575aa2u}, 1},
             {0xbe4ccccdu, {0x3fe178c0u, 0x3fe178beu, 0x3fe178c2u, 0x3fe178c1u}, -1},
             {0x3ec00000u, {0x3f5cf26au, 0x3f5cf26au, 0x3f5cf26bu, 0x3f5cf26au}, 1},
             {0xbd000000u, {0x405f0384u, 0x405f0383u, 0x405f0387u, 0x405f0384u}, -1},
