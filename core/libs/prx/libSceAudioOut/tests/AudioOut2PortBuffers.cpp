@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
@@ -375,11 +376,42 @@ void TestSetAttributesRejectsUnreadablePointers() {
     Require(sceAudioOut2ContextDestroy(context) == 0);
 }
 
+void TestInventoryExportValidationGates() {
+    constexpr int errorInvalidParam = static_cast<int>(0x80268001);
+    constexpr int errorNotInitialized = static_cast<int>(0x80268006);
+    constexpr int errorInvalidPointer = static_cast<int>(0x8026800c);
+    constexpr int errorInvalidUser = static_cast<int>(0x80268010);
+
+    float debugState = -1.0f;
+    Require(sceAudioOut2GetSystemDebugState(nullptr) == errorNotInitialized);
+    Require(sceAudioOut2GetSystemDebugState(&debugState) == errorNotInitialized);
+
+    Require(sceAudioOut2SetHrtfIdForCronos(1, 0) == errorInvalidParam);
+    Require(sceAudioOut2SetHrtfIdForCronos(1, 6) == errorInvalidParam);
+    Require(sceAudioOut2SetHrtfIdForCronos(-1, 0) == errorInvalidParam);
+    Require(sceAudioOut2SetHrtfIdForCronos(0xfe, -1) == errorInvalidUser);
+    Require(sceAudioOut2SetHrtfIdForCronos(0xff, 0x80) == errorInvalidUser);
+    Require(sceAudioOut2SetHrtfIdForCronos(-1, 1) == errorInvalidUser);
+
+    Require(sceAudioOut2AssignHRTF(1, 0) == errorInvalidParam);
+    Require(sceAudioOut2AssignHRTF(1, 6) == errorInvalidParam);
+    Require(sceAudioOut2AssignHRTF(0xfe, 99) == errorInvalidParam);
+    Require(sceAudioOut2AssignHRTF(0xfe, -1) == errorInvalidUser);
+    Require(sceAudioOut2AssignHRTF(0xff, 0x80) == errorInvalidUser);
+    Require(sceAudioOut2AssignHRTF(-1, 5) == errorInvalidUser);
+
+    std::uint8_t tvInfo[64]{};
+    Require(sceAudioOut2SetTvCorrectionInfo(0, nullptr) == errorInvalidPointer);
+    Require(sceAudioOut2SetTvCorrectionInfo(2, nullptr) == errorInvalidPointer);
+    Require(sceAudioOut2SetTvCorrectionInfo(2, tvInfo) == errorInvalidParam);
+}
+
 }
 
 int main() {
     UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
+    TestInventoryExportValidationGates();
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
     TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared();
