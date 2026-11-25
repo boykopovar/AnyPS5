@@ -212,9 +212,14 @@ void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int3
     if (value == AttributeValueCount) CopyOut(status, Icu::IllegalArgument, __func__);
 }
 
-void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t, std::int32_t* status) {
+void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t position, std::int32_t* status) {
     if (!Succeeded(status, __func__) || search == nullptr) return;
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetOffset(state->search, position, outgoing);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t* status) {

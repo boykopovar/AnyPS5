@@ -34,4 +34,10 @@ void Reset(void* search) {
     usearch_reset(static_cast<UStringSearch*>(search));
 }
 
+void SetOffset(void* search, std::int32_t position, std::int32_t& status) {
+    auto code = static_cast<UErrorCode>(status);
+    usearch_setOffset(static_cast<UStringSearch*>(search), position, &code);
+    status = code;
+}
+
 }

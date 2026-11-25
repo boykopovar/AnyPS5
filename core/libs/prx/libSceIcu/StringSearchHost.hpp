@@ -8,6 +8,7 @@ void* Open(const char16_t* pattern, std::int32_t patternLength, const char16_t* 
 void Close(void* search);
 std::int32_t GetMatchedLength(const void* search);
 void Reset(void* search);
+void SetOffset(void* search, std::int32_t position, std::int32_t& status);
 
 }
 
