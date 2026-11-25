@@ -1,7 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
-#include "prx/libSceSysmodule/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
