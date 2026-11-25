@@ -6,7 +6,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -25,29 +24,23 @@ void RequireValue(const unsigned long long* value, const char* function) {
 void RequireWritable(unsigned long long* value, std::size_t words, const char* function) {
     RequireValue(value, function);
     const std::size_t bytes = words * sizeof(unsigned long long);
-    const int savedErrno = errno;
     bool writable = false;
     {
         const GuestArena::HostWrite guard(value, bytes);
         writable = guard.Open() && GuestWritable_nid_no_patch(value, bytes);
     }
-    errno = savedErrno;
     if (!writable) throw std::invalid_argument(std::string(function) + ": unwritable value");
 }
 
 void LoadWords(const unsigned long long* source, unsigned long long* destination, std::size_t words, const char* function) {
     RequireValue(source, function);
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, words * sizeof(unsigned long long));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable value");
 }
 
 void StoreWords(unsigned long long* destination, const unsigned long long* source, std::size_t words, const char* function) {
     RequireWritable(destination, words, function);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, words * sizeof(unsigned long long));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable value");
 }
 
