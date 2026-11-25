@@ -56,6 +56,8 @@ def load_known(path):
         fields = line.split("\t")
         if len(fields) < 2 or fields[1] not in KINDS:
             raise SystemExit(f"{path}:{number}: expected 'id<TAB>kind<TAB>reason' with kind one of {', '.join(KINDS)}")
+        if fields[0] in known:
+            raise SystemExit(f"{path}:{number}: duplicate case {fields[0]!r}")
         known[fields[0]] = (fields[1], fields[2] if len(fields) > 2 else "")
     return known
 

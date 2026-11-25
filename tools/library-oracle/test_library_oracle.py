@@ -107,6 +107,13 @@ class KnownTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 library_oracle.load_known(path)
 
+    def test_duplicate_known_case_is_refused_instead_of_overwriting_its_kind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            path.write_text("case\tdiff\tfirst\ncase\tskip\tsecond\n", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, r"known.tsv:2: duplicate case 'case'"):
+                library_oracle.load_known(path)
+
     def test_write_known_after_one_family_preserves_unrun_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "known.tsv"
