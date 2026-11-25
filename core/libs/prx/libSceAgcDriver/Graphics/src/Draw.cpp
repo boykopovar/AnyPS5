@@ -5118,7 +5118,6 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
         PreparedDraw prepared(profile);
         prepared.trace = trace;
-        prepared.shape = shape;
         prepared.contentKey = contentKey;
         prepared.passAttachments = PassAttachmentMemoEnabled();
         const struct HeldSpace {
@@ -5146,7 +5145,6 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             }
             recordPreparedDraw(context, firstWindow, draw, shaders, prepared);
             if (sharePrepared) {
-                auto prevLayers = firstWindow.renderLayers;
                 for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
                     auto window = makeWindow(base);
                     if (base + window.renderLayers >= state.renderLayers) {
@@ -5158,25 +5156,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                         prepared.targets[index].color = color;
                         prepared.targetViews[index] = prepared.targets[index].resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
                     }
-                    if (window.renderLayers != prevLayers) {
-                        const State& pipelineState = prepared.masked.has_value() ? [&] {
-                            auto updated = *prepared.masked;
-                            updated.renderLayers = window.renderLayers;
-                            updated.meshLayerBase = window.meshLayerBase;
-                            updated.meshLayerCount = window.meshLayerCount;
-                            updated.colors = window.colors;
-                            updated.color = window.color;
-                            prepared.masked = updated;
-                            return *prepared.masked;
-                        }() : window;
-                        prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
-                        prevLayers = window.renderLayers;
-                    } else if (prepared.masked.has_value()) {
+                    if (prepared.masked.has_value()) {
+                        prepared.masked->renderLayers = window.renderLayers;
                         prepared.masked->meshLayerBase = window.meshLayerBase;
                         prepared.masked->meshLayerCount = window.meshLayerCount;
                         prepared.masked->colors = window.colors;
                         prepared.masked->color = window.color;
                     }
+                    const auto& pipelineState = prepared.masked.has_value() ? *prepared.masked : window;
+                    prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
                     prepared.framebuffer = prepared.pipeline->AcquireFramebuffer(prepared.targetViews, prepared.framebufferOwners, window.renderExtent, window.renderLayers);
                     recordPreparedDraw(context, window, draw, shaders, prepared);
                     base += window.renderLayers;
