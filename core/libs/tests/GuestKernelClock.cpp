@@ -98,7 +98,9 @@ static void TestLibcxxSteadyClock() {
     const auto first = _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix();
     const auto after = ReadGuestMonotonicNanos();
     Require(before <= first && first <= after);
+    Require(*__error_nid_postfix() == 97);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    *__error_nid_postfix() = 97;
     const auto laterBefore = ReadGuestMonotonicNanos();
     const auto second = _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix();
     const auto laterAfter = ReadGuestMonotonicNanos();

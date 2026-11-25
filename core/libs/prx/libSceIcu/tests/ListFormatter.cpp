@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 #include <type_traits>
@@ -108,6 +109,10 @@ void Run() {
         Require(status == incoming);
 
         status = incoming;
+        Require(ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, -1, result.data(), 4, &status) == -1);
+        Require(status == incoming);
+
+        status = incoming;
         Require(ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, &status) == -1);
         Require(status == incoming);
         Require(result == probeResult);
@@ -124,6 +129,29 @@ void Run() {
         Require(status == IllegalArgument);
         Require(result == probeResult);
         Require(Unchanged(formatterStorage));
+
+        for (const std::int32_t count : {-1, -2, INT32_MIN}) {
+            status = incoming;
+            Require(ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), count, result.data(), 4, &status) == -1);
+            Require(status == IllegalArgument);
+            Require(result == probeResult);
+
+            status = incoming;
+            Require(ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, count, nullptr, 0, &status) == -1);
+            Require(status == IllegalArgument);
+        }
+
+        for (const std::int32_t count : {1, 2, 5, INT32_MAX}) {
+            status = incoming;
+            Require(ulistfmt_format_nid_postfix(formatter, nullptr, lengths.data(), count, result.data(), 4, &status) == -1);
+            Require(status == IllegalArgument);
+            Require(result == probeResult);
+
+            status = incoming;
+            Require(ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, count, nullptr, 0, &status) == -1);
+            Require(status == IllegalArgument);
+        }
+        Require(Unchanged(formatterStorage));
     }
 
     for (const auto incoming : passing) {
@@ -136,6 +164,11 @@ void Run() {
         status = incoming;
         RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, 0, nullptr, 0, &status); });
         Require(status == incoming);
+
+        status = incoming;
+        RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, 0, result.data(), 4, &status); });
+        Require(status == incoming);
+        Require(result == probeResult);
     }
 
     RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, nullptr); });

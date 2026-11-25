@@ -1,10 +1,23 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 
+#include <atomic>
+#include <cstdint>
+#include <string>
+
+namespace {
+
+std::atomic<std::uint64_t> uniqueWorldNameNumber{0};
+
+}
+
 extern "C" {
 
 const void* APS5_VABI WKBundleScriptWorldCreateWorld() {
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleScriptWorld>());
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    const std::string name = "UniqueWorld_" + std::to_string(uniqueWorldNameNumber.fetch_add(1, std::memory_order_relaxed));
+    world->name = NKWebKit::String::FromUtf8(name.c_str());
+    return NKWebKit::ToRef(world);
 }
 
 const void* APS5_VABI WKBundleScriptWorldNormalWorld() {

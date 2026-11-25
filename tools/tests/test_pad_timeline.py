@@ -1,5 +1,7 @@
 import contextlib
+import ctypes
 import copy
+import errno
 import io
 import json
 import os
@@ -182,6 +184,33 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"new\n")
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
+    @unittest.skipUnless(os.name == "nt", "Windows command-file sharing")
+    def test_both_tools_queue_while_runtime_reader_is_open(self):
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                       ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+        kernel.CreateFileW.restype = ctypes.c_void_p
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = root / "input.cmd"
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({"version": 1, "events": [
+                {"at_ms": 0, "hold_ms": 300, "buttons": ["cross"]}]}), encoding="utf-8")
+            for script, arguments in (("pad_input.py", [command, "cross"]),
+                                      ("pad_timeline.py", [timeline, command])):
+                previous = b"1 0 50\n"
+                command.write_bytes(previous)
+                reader = kernel.CreateFileW(str(command), 0x80000000, 7, None, 3, 0x80, None)
+                self.assertNotEqual(reader, ctypes.c_void_p(-1).value)
+                try:
+                    result = subprocess.run([sys.executable, str(Path(pad_input.__file__).with_name(script)),
+                                             *map(str, arguments)], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotEqual(command.read_bytes(), previous)
+                finally:
+                    kernel.CloseHandle(reader)
+
     def run_cli(self, timeline, output, *arguments):
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output), *arguments],
@@ -222,7 +251,18 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text(original, encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, timeline).returncode, 2)
             linked = root / "hardlink"
-            os.link(timeline, linked)
+            try:
+                os.link(timeline, linked)
+            except NotImplementedError:
+                self.skipTest("hard links are unavailable")
+            except OSError as error:
+                unsupported = {
+                    getattr(errno, name, None)
+                    for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+                } - {None}
+                if error.errno not in unsupported and getattr(error, "winerror", None) not in (1, 5):
+                    raise
+                self.skipTest("hard links are unavailable")
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 

@@ -1,6 +1,15 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
+namespace {
+
+double TruncatedToInt(double value) {
+    if (!(value > -2147483649.0 && value < 2147483648.0)) return -2147483648.0;
+    return static_cast<double>(static_cast<int>(value));
+}
+
+}
+
 extern "C" {
 
 bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef) {
@@ -35,7 +44,7 @@ std::uint32_t APS5_VABI WKPageGetScrollPinningBehavior(const void* pageRef) {
 
 void APS5_VABI WKPageSetScrollPinningBehavior(const void* pageRef, std::uint32_t pinning) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->scrollPinningBehavior = pinning;
+    page->scrollPinningBehavior = pinning <= 2 ? pinning : 0;
 }
 
 bool APS5_VABI WKPageUseFixedLayout(const void* pageRef) {
@@ -45,7 +54,9 @@ bool APS5_VABI WKPageUseFixedLayout(const void* pageRef) {
 
 void APS5_VABI WKPageSetUseFixedLayout(const void* pageRef, bool fixed) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    if (page->useFixedLayout == fixed) return;
     page->useFixedLayout = fixed;
+    if (!fixed) page->fixedLayoutSize = NKWebKit::SizeValue{0.0, 0.0};
 }
 
 NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef) {
@@ -55,7 +66,7 @@ NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef) {
 
 void APS5_VABI WKPageSetFixedLayoutSize(const void* pageRef, NKWebKit::SizeValue size) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->fixedLayoutSize = size;
+    page->fixedLayoutSize = NKWebKit::SizeValue{TruncatedToInt(size.width), TruncatedToInt(size.height)};
 }
 
 std::uint32_t APS5_VABI WKPageGetPaginationMode(const void* pageRef) {
@@ -65,6 +76,7 @@ std::uint32_t APS5_VABI WKPageGetPaginationMode(const void* pageRef) {
 
 void APS5_VABI WKPageSetPaginationMode(const void* pageRef, std::uint32_t paginationMode) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    if (paginationMode > 4) return;
     page->paginationMode = paginationMode;
 }
 
@@ -78,9 +90,11 @@ void APS5_VABI WKPageSetPaginationBehavesLikeColumns(const void* pageRef, bool b
     page->paginationBehavesLikeColumns = behavesLikeColumns;
 }
 
-void APS5_VABI WKPageSetPaginationLineGridEnabled(const void* pageRef, bool lineGridEnabled) {
-    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    page->paginationLineGridEnabled = lineGridEnabled;
+bool APS5_VABI WKPageGetPaginationLineGridEnabled(const void*) {
+    return false;
+}
+
+void APS5_VABI WKPageSetPaginationLineGridEnabled(const void*, bool) {
 }
 
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef) {
