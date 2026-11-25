@@ -48,7 +48,7 @@ endif()
 add_custom_command(OUTPUT ${icu_data_dir}/icudt78l_dat.c
     COMMAND ${CMAKE_COMMAND} -E make_directory ${icu_data_dir}/icudt78l ${icu_data_dir}/tmp
     COMMAND ${CMAKE_COMMAND} -E time ${CMAKE_COMMAND} -E env PYTHONPATH=${ICU_SOURCE_DIR}/python
-        ${Python3_EXECUTABLE} -m icutools.databuilder
+        ${Python3_EXECUTABLE} -B -m icutools.databuilder
         --mode=${icu_data_mode} --tool_cfg=host --tool_dir=${icu_host_dir}/bin
         --src_dir=${ICU_SOURCE_DIR}/data --out_dir=${icu_data_dir}/icudt78l --tmp_dir=${icu_data_dir}/tmp
         --filter_file=${CMAKE_SOURCE_DIR}/cmake/IcuDataFilter.json --verbose
