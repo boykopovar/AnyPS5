@@ -1,7 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceBeisobmf/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <array>
@@ -103,18 +102,14 @@ void LogGuestAccessFailure(const char *function, const char *message) noexcept {
 
 template <typename TValue, typename TFunction>
 TValue CallSafely(const char *function, TValue fallback, TFunction operation) noexcept {
-    const int savedErrno = errno;
     try {
         const TValue result = operation();
-        errno = savedErrno;
         return result;
     } catch (const std::exception &error) {
         LogGuestAccessFailure(function, error.what());
-        errno = savedErrno;
         return fallback;
     } catch (...) {
         LogGuestAccessFailure(function, "unknown guest memory error");
-        errno = savedErrno;
         return fallback;
     }
 }
