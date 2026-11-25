@@ -231,7 +231,7 @@ class MainTests(unittest.TestCase):
                     calls.append(kwargs)
                     if len(calls) > len(cursors):
                         raise ValueError("fixture read budget exceeded")
-                    return page([node(same=False)], True, cursors[len(calls) - 1])["data"]
+                    return page([node(number=len(calls), same=False)], True, cursors[len(calls) - 1])["data"]
                 with patch.object(pr_unchanged, "graphql", fake), self.assertRaisesRegex(ValueError, "did not advance"):
                     pr_unchanged.fetch("o/r")
                 self.assertEqual(len(calls), len(cursors))
@@ -246,6 +246,18 @@ class MainTests(unittest.TestCase):
 
 
 class PaginationTests(unittest.TestCase):
+    def test_fetch_rejects_inconsistent_pages_before_returning_candidates(self):
+        for repeated in (False, True):
+            with self.subTest(repeated=repeated):
+                api = Api([])
+                second = page([node(number=7 if repeated else 8)])
+                if not repeated:
+                    second["data"]["repository"]["defaultBranchRef"]["target"]["oid"] = OLD
+                api.pages = [page([node()], more=True, cursor="next"), second]
+                expected = "appeared more than once" if repeated else "main changed"
+                with patch.object(pr_unchanged.pr_labels, "gh", api), self.assertRaisesRegex(ValueError, expected):
+                    pr_unchanged.fetch("o/r")
+
     def test_pagination_cursor_returns_each_new_cursor_once(self):
         seen = set()
         self.assertEqual(pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
