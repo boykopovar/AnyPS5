@@ -84,6 +84,10 @@ VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements(VkDevice, VkImage, VkMemoryRe
     *requirements = {65536, 65536, 1};
 }
 
+VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements2(VkDevice, const VkImageMemoryRequirementsInfo2*, VkMemoryRequirements2* requirements) {
+    requirements->memoryRequirements = {65536, 65536, 1};
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
     *memory = newHandle<VkDeviceMemory>();
     return VK_SUCCESS;
@@ -218,6 +222,7 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(createImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements2)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(allocateMemory)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(bindImageMemory)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(createImageView)},
@@ -374,6 +379,21 @@ void TestD16StencilFallback(const Context& context) {
     Require(lastImageFormat == VK_FORMAT_D24_UNORM_S8_UINT, "a D16_UNORM_S8_UINT surface was not created as D24_UNORM_S8_UINT on a device without it");
     Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface stored as D24 must still sample its depth plane");
     Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256}) != nullptr, "an 8-bit view of the stencil plane of a D16 surface stored as D24 must sample it");
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x10000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    imageWrites.clear();
+    Require(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr && lastImageFormat == VK_FORMAT_R8_UINT, "two slices of the stencil plane of a D16 surface stored as D24 must assemble through an R8_UINT plane copy");
+    Require(imageReads.size() == 2 && imageReads[0].second == VK_IMAGE_ASPECT_STENCIL_BIT && imageReads[1].second == VK_IMAGE_ASPECT_STENCIL_BIT, "the layered stencil plane copy must read the stencil aspect of each resident slice");
+    Require(imageWrites.size() == 2 && imageWrites[0].second == VK_IMAGE_ASPECT_COLOR_BIT && imageWrites[1].second == VK_IMAGE_ASPECT_COLOR_BIT, "the layered stencil plane copy must write the color aspect of its R8_UINT array");
+    DepthSurfaceView(without, {d16s8 + 0x40000, d16s8Stencil + 0x10000, {128, 128}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    imageReads.clear();
+    bool displacedFallback = false;
+    try {
+        static_cast<void>(lookup(without, {d16s8Stencil, FormatR8Uint, 256, 256, TileDepth64KB, Type2DArray, 1}));
+    } catch (const std::runtime_error&) {
+        displacedFallback = true;
+    }
+    Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
     const auto refused = [&](const View& view) {

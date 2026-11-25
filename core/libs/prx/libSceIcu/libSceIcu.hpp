@@ -20,6 +20,7 @@
 #include "CString.hpp"
 #include "prx/libSceIcu/include/Availability.hpp"
 #include "prx/libSceIcu/include/CollatorAvailability.hpp"
+#include "prx/libSceIcu/include/DataSwap.hpp"
 #include "prx/libSceIcu/include/InvariantChars.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
@@ -35,6 +36,7 @@
 #include "CharsetDetection.hpp"
 #include "Normalization.hpp"
 #include "ClassIds.hpp"
+#include "Normalizer2Accessors.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
