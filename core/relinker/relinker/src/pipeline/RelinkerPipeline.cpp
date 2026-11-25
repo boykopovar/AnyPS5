@@ -544,10 +544,6 @@ RelinkResult RelinkerPipeline::Relink() {
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
             segment[offset] = scanSegment[offset] = 0x0F;
             segment[offset + 1] = scanSegment[offset + 1] = 0x0B;
-            if (index == 0 && !textSection.empty() && offset + 2u <= textSection.size()) {
-                textSection[offset] = 0x0F;
-                textSection[offset + 1] = 0x0B;
-            }
             syscallPatches.push_back({segmentFileOffset + offset, {0x0F, 0x0B}});
         }
 
