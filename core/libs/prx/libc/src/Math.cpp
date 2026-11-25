@@ -1156,10 +1156,7 @@ double APS5_VABI ldexp_nid_postfix(double x, int exponent) {
     return x;
 }
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
-    const int saved_errno = errno;
-    const double result = std::scalbn(x, exponent);
-    errno = saved_errno;
-    return result;
+    return GuestCpu::X87Scale(x, exponent);
 }
 float APS5_VABI scalbnf_nid_postfix(float x, int exponent) {
     return GuestCpu::X87Scale(x, exponent);
