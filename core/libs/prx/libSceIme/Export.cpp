@@ -609,7 +609,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     session.extKeyboardFilter = extended ? localExt.ext_keyboard_filter : nullptr;
     session.text = std::move(localText);
     session.caret = static_cast<uint32_t>(session.text.size());
-    session.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
+    session.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended ? &localExt : nullptr));
     SyncBuffers(session);
     ImeEvent open{};
     open.id = EventOpen;
@@ -618,7 +618,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     PanelSize(localParam, &open.param.rect.width, &open.param.rect.height);
     session.events.push_back(open);
     g_session = std::move(session);
-    if (!extended || (extended->disable_device & DisableController) == 0) ClaimPanel();
+    if (!extended || (localExt.disable_device & DisableController) == 0) ClaimPanel();
     return 0;
 }
 
