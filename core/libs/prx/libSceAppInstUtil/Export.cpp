@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAppInstUtil/include/InventoryExports.hpp"
 #include "prx/libSceAppInstUtil/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -70,35 +69,29 @@ int APS5_VABI sceAppInstUtilAppIsInInstalling(int32_t* installing) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating) {
-    const int savedErrno = errno;
     if (titleId == nullptr || updating == nullptr) return ErrorNullArgument;
     std::lock_guard lock(g_serviceMutex);
     if (g_serviceReferences <= 0) return ErrorNotInitialized;
     std::string requested;
     const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(GetAppTitleId_nid_postfix().value) + 1, requested);
-    errno = savedErrno;
     if (copyError == GuestEfault) return ErrorNullArgument;
     if (copyError == GuestEnomem) throw std::bad_alloc();
     const bool localUpdating = false;
     const bool copied = GuestCopyOut_nid_no_patch(updating, &localUpdating, sizeof(localUpdating));
-    errno = savedErrno;
     if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
-    const int savedErrno = errno;
     if (titleId == nullptr || exists == nullptr) return ErrorNullArgument;
     std::lock_guard lock(g_serviceMutex);
     if (g_serviceReferences <= 0) return ErrorNotInitialized;
     const AppTitleId running = GetAppTitleId_nid_postfix();
     std::string requested;
     const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(running.value) + 1, requested);
-    errno = savedErrno;
     if (copyError == GuestEfault) return ErrorNullArgument;
     if (copyError == GuestEnomem) throw std::bad_alloc();
     const int32_t localExists = copyError == 0 && requested == running.value ? 1 : 0;
     const bool copied = GuestCopyOut_nid_no_patch(exists, &localExists, sizeof(localExists));
-    errno = savedErrno;
     if (!copied) return ErrorNullArgument;
     return 0;
 }
