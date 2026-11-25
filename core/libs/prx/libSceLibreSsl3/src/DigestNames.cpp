@@ -2,7 +2,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
@@ -198,9 +197,7 @@ extern "C" {
 const void* APS5_VABI EVP_get_digestbyname_nid_postfix(const char* name) {
     if (!name) return nullptr;
     std::string guestName;
-    const int savedErrno = errno;
     const int error = CopyGuestString_nid_no_patch(name, LongestName + 1, guestName);
-    errno = savedErrno;
     if (error == 63) return nullptr;
     if (error != 0) throw std::invalid_argument("EVP_get_digestbyname: unreadable name");
     name = guestName.c_str();
