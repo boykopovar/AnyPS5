@@ -72,6 +72,14 @@ def report_libs_ninja_steps(build_dir, previous):
         print(f"[ci-timing] libs Ninja step: {elapsed} ms {name!a}", flush=True)
 
 
+def build_libs(build_dir):
+    previous = ninja_log_entries(build_dir)
+    try:
+        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+    finally:
+        report_libs_ninja_steps(build_dir, previous)
+
+
 def reaches_libs(changed):
     return any(
         path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
@@ -253,13 +261,11 @@ def ctest_resolutions(build_dir, targets_by_name, selected=None):
 
 def run(build_dir, selected, targets_by_name, output_log=None, script_tests=None):
     total = time.perf_counter()
-    previous = ninja_log_entries(build_dir)
     started = time.perf_counter()
     try:
-        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
+        build_libs(build_dir)
     finally:
         phase_report("build libs", started)
-        report_libs_ninja_steps(build_dir, previous)
     indices = set()
     if script_tests:
         started = time.perf_counter()
