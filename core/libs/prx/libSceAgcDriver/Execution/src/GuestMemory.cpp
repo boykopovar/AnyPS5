@@ -2996,6 +2996,14 @@ void UnwatchImportBookkeeping(std::uint64_t address, std::size_t bytes) {
     unwatchRange(address, bytes, false);
 }
 
+bool RewatchSupported() {
+#ifdef _WIN32
+    return true;
+#else
+    return false;
+#endif
+}
+
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
 #ifdef _WIN32
     auto& tracker = Tracker();

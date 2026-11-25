@@ -205,7 +205,7 @@ void CheckRewatchAfterStencilWrite(AgcDriver::VulkanDevice& device, const DepthF
     Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x2bu)}) == PlaneTexels, "the divergent rewatch stencil draw did not cover the plane");
     device.WaitIdle();
 
-    const bool watched = AgcDriver::GuestMemory::WriteWatched() && AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes);
+    const bool watched = AgcDriver::GuestMemory::RewatchSupported() && AgcDriver::GuestMemory::WriteWatched() && AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes);
     if (mode != 0 && watched) {
         Fill(stencil, mode == 1 ? 0x18u : 0x77u);
         Require(AgcDriver::GuestMemory::CollectWrites(stencilBase, StencilBytes) != 0, "the rewatch stencil guest write was not collected");
