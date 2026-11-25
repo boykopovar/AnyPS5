@@ -33,7 +33,7 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
 
             needsRecord = !queuedTable && NeedsRecordedLabels(header) && !selfLocking;
         }
-        if (now - deferred.since >= labelFlushDeadline()) record = deferredDue = true;
+        if (now - deferred.since >= labelIdleDeadline()) record = deferredDue = true;
         if (record && !deferredDue && selfLocking && !labelTryEachPacket()) {
             record = false;
             recordAtLock = true;
@@ -41,7 +41,7 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     }
     if (pending.has_value()) {
         if (!labelPacket && packetFlush) submit = true;
-        if (now - *pending >= labelFlushDeadline()) submit = pendingDue = true;
+        if (now - *pending >= labelIdleDeadline()) submit = pendingDue = true;
     }
     const auto work = Graphics::Recorder::RecordedWorkSinceSubmit();
     const bool capped = !submit && !record && batchCap() != 0 && work >= batchCap();

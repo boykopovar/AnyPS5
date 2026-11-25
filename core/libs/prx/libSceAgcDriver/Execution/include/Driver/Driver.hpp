@@ -413,6 +413,7 @@ private:
     static bool packetEpoch();
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
+    static std::chrono::microseconds labelIdleDeadline();
     static bool labelFlushDue();
     static bool completionsPending();
     static bool reapEachPacket();

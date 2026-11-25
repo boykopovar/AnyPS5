@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/LabelDeadlines.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
@@ -63,12 +64,22 @@ bool Driver::labelTryEachPacket() {
     return each;
 }
 
-std::chrono::microseconds Driver::labelFlushDeadline() {
-    static const std::chrono::microseconds value = [] {
-        const char* text = std::getenv("APS5_LABEL_FLUSH_US");
-        return std::chrono::microseconds(text ? std::atoi(text) : (LabelBatchSubmit() ? 100 : 250));
-    }();
+namespace {
+
+const LabelDeadlines& labelDeadlines() {
+    static const LabelDeadlines value = ReadLabelDeadlines(std::getenv("APS5_LABEL_FLUSH_US"), std::getenv("APS5_LABEL_IDLE_FLUSH_US"),
+                                                           std::getenv("APS5_NO_LABEL_IDLE_DEADLINE") != nullptr, LabelBatchSubmit());
     return value;
+}
+
+}
+
+std::chrono::microseconds Driver::labelFlushDeadline() {
+    return labelDeadlines().waiter;
+}
+
+std::chrono::microseconds Driver::labelIdleDeadline() {
+    return labelDeadlines().idle;
 }
 
 bool Driver::labelFlushDue() {
