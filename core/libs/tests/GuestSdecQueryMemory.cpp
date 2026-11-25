@@ -312,6 +312,15 @@ void CheckCreateAndDestroyLifecycle() {
     std::memcpy(header.data(), handle, sizeof(header));
     Require(header[1] == 0 && header[2] == 0, "destroy did not clear workspace and codec fields");
 
+    std::memset(buf0.data(), 0xCD, buf0.size());
+    errno = 71;
+    Require(Create(config, record, memory, reinterpret_cast<void**>(0x10)) == Invalid, "create accepted an unwritable handle after workspace setup");
+    Require(errno == 71, "errno changed across failed handle write");
+    std::memcpy(header.data(), buf0.data(), sizeof(header));
+    Require(header[0] == 0 && header[1] == 0 && header[2] == 0, "failed handle write left initialized header");
+    std::memcpy(&codecState, codecBytes + 0xf0, sizeof(codecState));
+    Require(codecState == 0, "failed handle write left initialized codec state");
+
     std::array<std::uint64_t, 8> standaloneCodec{};
     standaloneCodec[6] = 0x12345678u;
     std::array<std::uint64_t, 4> standaloneDecoder{1, 0x2000, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(standaloneCodec.data())), 0x4444};
