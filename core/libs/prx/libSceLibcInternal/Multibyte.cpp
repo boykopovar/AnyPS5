@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 
@@ -15,16 +14,12 @@ constexpr auto Invalid = static_cast<std::size_t>(-1);
 constexpr auto Incomplete = static_cast<std::size_t>(-2);
 
 void CopyInChecked(void* destination, const void* source, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 void CopyOutChecked(void* destination, const void* source, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
