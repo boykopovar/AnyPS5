@@ -483,6 +483,10 @@ void APS5_VABI WKPageListenForLayoutMilestones(const void* pageRef, std::uint32_
 void APS5_VABI WKPageSetMockCameraOrientation(const void* pageRef, std::uint32_t orientation);
 void APS5_VABI WKPageTerminate(const void* pageRef);
 void APS5_VABI WKPageUpdateWebsitePolicies(const void* pageRef, const void* websitePoliciesRef);
+bool APS5_VABI WKPageGetAllowsRemoteInspection(const void* pageRef);
+void APS5_VABI WKPageSetAllowsRemoteInspection(const void* pageRef, bool allowsRemoteInspection);
+const void* APS5_VABI WKPageCopyPendingAPIRequestURL(const void* pageRef);
+const void* APS5_VABI WKPageCopyPageConfiguration(const void* pageRef);
 const void* APS5_VABI WKPointCreate(NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKPointGetTypeID();
 NKWebKit::PointValue APS5_VABI WKPointGetValue(const void* pointRef);
