@@ -57,9 +57,7 @@ int AllocateContext(std::uint16_t* ctxId, std::uint16_t flag) {
         const auto candidate = static_cast<std::uint16_t>((nextContextId - 1 + tried) % MAX_CONTEXTS + 1);
         if (contexts.contains(candidate) || contexts.contains(candidate | CONTEXT_A_FLAG)) continue;
         const std::uint16_t resultId = candidate | flag;
-        const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(ctxId, &resultId, sizeof(resultId));
-        errno = savedErrno;
         if (!written) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
         contexts.insert(resultId);
         nextContextId = candidate % MAX_CONTEXTS + 1;
@@ -68,16 +66,21 @@ int AllocateContext(std::uint16_t* ctxId, std::uint16_t flag) {
     return SCE_NP_MATCHING2_ERROR_CONTEXT_MAX;
 }
 
+template <typename T>
+bool CopyInGuestValue(T& dst, const void* src) {
+    return GuestCopyIn_nid_no_patch(&dst, src, sizeof(dst));
+}
+
 int CheckRequest(const void* request, const std::uint32_t* requestId, Leading leading) {
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!request || !requestId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (leading == Leading::ServerId) {
-        std::uint16_t serverId;
-        std::memcpy(&serverId, request, sizeof(serverId));
+        std::uint16_t serverId = 0;
+        if (!CopyInGuestValue(serverId, request)) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
         return serverId == 0 ? SCE_NP_MATCHING2_ERROR_INVALID_SERVER_ID : 0;
     }
-    std::uint64_t roomId;
-    std::memcpy(&roomId, request, sizeof(roomId));
+    std::uint64_t roomId = 0;
+    if (!CopyInGuestValue(roomId, request)) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return roomId == 0 ? SCE_NP_MATCHING2_ERROR_INVALID_ROOM_ID : 0;
 }
 
@@ -123,9 +126,7 @@ int APS5_VABI sceNpMatching2CreateContext(const NpMatching2CreateContextParamete
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!param || !ctxId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     NpMatching2CreateContextParameter localParam{};
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!read || localParam.size != CREATE_CONTEXT_PARAMETER_SIZE) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return AllocateContext(ctxId, 0);
 }
@@ -177,8 +178,9 @@ int APS5_VABI sceNpMatching2GetUserInfoList(std::uint16_t ctxId, const void* req
     if (!request || !requestId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (!contexts.contains(ctxId)) return SCE_NP_MATCHING2_ERROR_CONTEXT_NOT_FOUND;
     if ((ctxId & CONTEXT_A_FLAG) != 0) return SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT;
-    std::uint16_t serverId;
-    std::memcpy(&serverId, request, sizeof(serverId));
+    std::uint16_t serverId = 0;
+    const bool copied = GuestCopyIn_nid_no_patch(&serverId, request, sizeof(serverId));
+    if (!copied) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (serverId == 0) return SCE_NP_MATCHING2_ERROR_INVALID_SERVER_ID;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -194,9 +196,7 @@ int APS5_VABI sceNpMatching2Initialize(const NpMatching2InitializeParameter* par
     if (matching2Initialized) return SCE_NP_MATCHING2_ERROR_ALREADY_INITIALIZED;
     if (!param) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size));
-    errno = savedErrno;
     if (!copied || (size != offsetof(NpMatching2InitializeParameter, sslPoolSize) && size != sizeof(NpMatching2InitializeParameter))) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     matching2Initialized = true;
     return 0;
@@ -332,9 +332,7 @@ int APS5_VABI sceNpMatching2CreateContextA(const NpMatching2CreateContextParamet
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!param || !ctxId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     NpMatching2CreateContextParameterA localParam{};
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!read || localParam.size != CREATE_CONTEXT_PARAMETER_A_SIZE) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return AllocateContext(ctxId, CONTEXT_A_FLAG);
 }
@@ -454,11 +452,9 @@ int APS5_VABI sceNpMatching2JoinLobby(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2JoinRoomA(void) {
-    std::lock_guard lock(matching2Mutex);
-    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2JoinRoomA(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId) {
+    (void)requestOpt;
+    return StartRequest(__func__, ctxId, request, requestId, Leading::RoomId);
 }
 
 int APS5_VABI sceNpMatching2LeaveLobby(void) {
@@ -567,9 +563,7 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, st
     if (!connStatus) NotImplemented_nid_no_patch(__func__);
     if (const int error = CheckContext(ctxId)) return error;
     const std::int32_t status = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(connStatus, &status, sizeof(status));
-    errno = savedErrno;
     if (!copied) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -602,9 +596,7 @@ int APS5_VABI sceNpMatching2SignalingGetPort(std::uint16_t* port) {
     if (port == nullptr) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(matching2Mutex);
     const std::uint16_t currentPort = signalingPort;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(port, &currentPort, sizeof(currentPort));
-    errno = savedErrno;
     if (!copied) return SCE_NP_MATCHING2_SIGNALING_ERROR_INVALID_ARGUMENT;
     return 0;
 }

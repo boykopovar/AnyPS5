@@ -161,6 +161,13 @@ int main() {
     Require(*__error_nid_postfix() == 22);
     Require(allocated == nullptr);
 
+    *__error_nid_postfix() = 0;
+    auto* inaccessibleDestination = reinterpret_cast<char**>(0x10);
+    const auto allocationsBeforeBadDestination = allocations;
+    Require(CallVasprintf(inaccessibleDestination, "value=%d", 42) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(allocations == allocationsBeforeBadDestination);
+
     InitializeHeap();
 
     *__error_nid_postfix() = 0;
@@ -248,7 +255,13 @@ int main() {
     Require(dprintf_nid_postfix(32767, "invalid") == -1);
     Require(*__error_nid_postfix() == 9);
 
+    *__error_nid_postfix() = 55;
     Require(dprintf_nid_postfix(1, "") == 0);
+    Require(*__error_nid_postfix() == 55);
+    *__error_nid_postfix() = 55;
+    Require(CallVdprintf(1, "") == 0);
+    Require(*__error_nid_postfix() == 55);
+    *__error_nid_postfix() = 0;
     Require(dprintf_nid_postfix(2, "") == 0);
 
     const char guestFile[] = "guest_allocating_strings_guest.tmp";
@@ -349,6 +362,32 @@ int main() {
         Require(allocations == allocatedBefore + 1 && releases == releasedBefore + 1 && lastReleased == lastAllocated);
     }
     LibcSetGuestWriteHook_nid_no_patch(origHook);
+
+    {
+        const auto beforeSuccessHook = LibcGetGuestWriteHook_nid_no_patch();
+        LibcSetGuestWriteHook_nid_no_patch(ThrowingWrite);
+        failureCall = 0;
+        writeCalls = 0;
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 42;
+        const int successResult = dprintf_nid_postfix(1, "ok");
+        clobberFreeErrno = false;
+        Require(successResult == 2);
+        Require(*__error_nid_postfix() == 42);
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 43;
+        const int vaSuccessResult = CallVdprintf(1, "ok %d", 7);
+        clobberFreeErrno = false;
+        Require(vaSuccessResult == 4);
+        Require(*__error_nid_postfix() == 43);
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 44;
+        const int emptySuccessResult = dprintf_nid_postfix(1, "");
+        clobberFreeErrno = false;
+        Require(emptySuccessResult == 0);
+        Require(*__error_nid_postfix() == 44);
+        LibcSetGuestWriteHook_nid_no_patch(beforeSuccessHook);
+    }
 
 #ifndef _WIN32
     LibcSetGuestWriteHook_nid_no_patch(nullptr);

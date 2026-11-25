@@ -73,13 +73,6 @@ std::uint32_t WorkMemorySize(std::uint32_t mode) {
     return 32u << 20;
 }
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 0x10, sizeof(sdkVersion));
-    return sdkVersion;
-}
-
 std::int32_t ValidateMode(std::uint32_t mode) {
     if (mode == SystemTrackingMode || mode == SystemClientMode) NotImplemented_nid_no_patch("sceVrTracker2Initialize: application category of a system mode");
     return mode == TrackerMode ? SCE_OK : VR_TRACKER2_ERROR_INVALID_ARGUMENT;
@@ -96,7 +89,7 @@ bool AffinityAllowed(std::uint32_t mode, std::uint64_t mask) {
 
 bool OptionModeAllowed(std::int8_t optionMode) {
     if (optionMode == -1 || optionMode == 0) return true;
-    return optionMode == 1 && CompiledSdkVersion() >= OptionModeSdkVersion;
+    return optionMode == 1 && ApplicationCompiledSdkVersion() >= OptionModeSdkVersion;
 }
 
 class InitializeSession {
@@ -229,7 +222,7 @@ std::int32_t APS5_VABI sceVrTracker2QueryMemory(const VrTracker2MemoryParameter*
     if (!copiedParam) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (localParam.size != sizeof(VrTracker2MemoryParameter)) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     if (localParam.mode == SystemTrackingMode || localParam.mode == SystemClientMode) {
-        if (CompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
+        if (ApplicationCompiledSdkVersion() < 0x1000000) return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     } else if (localParam.mode != TrackerMode) {
         return VR_TRACKER2_ERROR_INVALID_ARGUMENT;
     }
@@ -617,15 +610,20 @@ std::int32_t APS5_VABI VrTracker2Accept() {
 }
 
 std::int32_t APS5_VABI SceVrTracker2DepthCubeMapInit(void* output) {
-    if (output == nullptr) APS5_INVALID_ARG_EX;
-    auto* bytes = static_cast<std::uint8_t*>(output);
+    const auto address = reinterpret_cast<std::uintptr_t>(output);
+    if (output == nullptr || address > UINTPTR_MAX - 4) APS5_INVALID_ARG_EX;
+    std::array<std::uint8_t, 12> bytes{};
     const std::uint32_t first = 0xC000;
     const std::uint32_t second = 0;
     const std::uint16_t third = 0x40;
-    std::memcpy(bytes + 4, &first, sizeof first);
-    std::memcpy(bytes + 8, &second, sizeof second);
-    std::memcpy(bytes + 12, &third, sizeof third);
-    std::memcpy(bytes + 14, &third, sizeof third);
+    std::memcpy(bytes.data(), &first, sizeof first);
+    std::memcpy(bytes.data() + 4, &second, sizeof second);
+    std::memcpy(bytes.data() + 8, &third, sizeof third);
+    std::memcpy(bytes.data() + 10, &third, sizeof third);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + 4), bytes.data(), bytes.size());
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
     return SCE_OK;
 }
 

@@ -185,8 +185,14 @@ void CheckArguments() {
     Require(sceHidControlSetRevokeList2(0, 1, nullptr) == ErrorInvalidArgument, "SetRevokeList2 null list");
     Require(sceHidControlIsForceUpdateNeeded(0, 0, &flag) == ErrorInvalidArgument && flag == 0x5a, "IsForceUpdateNeeded zero value");
     Require(sceHidControlIsForceUpdateNeeded(0, 1, nullptr) == ErrorInvalidArgument, "IsForceUpdateNeeded null result");
+    errno = 71;
+    Require(sceHidControlIsForceUpdateNeeded(0, 1, reinterpret_cast<std::uint8_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "IsForceUpdateNeeded unwritable result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), nullptr) == ErrorInvalidArgument, "PswUpdateIsUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, nullptr, &first) == ErrorInvalidArgument && first == 0, "PswUpdateIsUpdateNeeded clears result before the image check");
+    errno = 71;
+    Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), reinterpret_cast<std::uint16_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeeded unwritable result");
     first = 0x5a5a;
     Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &first, nullptr, &second) == ErrorInvalidArgument && second == 0x5a5a,
             "PswUpdateIsUpdateNeededForMultiDevice null first result");
@@ -226,6 +232,8 @@ void CheckGuestPointerFaults() {
     const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
     const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
     errno = 71;
+    Require(sceHidControlGetAuthInformation(1, 0, 1, reinterpret_cast<void*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "GetAuthInformation unmapped output");
     Require(sceHidControlPswUpdateSendData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
             "PswUpdateSendData unreadable chunk header");
     Require(sceHidControlPswUpdateSendAppendixData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,

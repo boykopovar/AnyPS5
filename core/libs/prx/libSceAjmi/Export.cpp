@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceAjmi/include/Api.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -8,7 +9,9 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -63,6 +66,39 @@ void* APS5_VABI sceAjmBatchJobInlineBuffer_nid_disambig1(void* position, const v
     return reinterpret_cast<void*>(payload + size);
 }
 
+static void ValidateGuestRange(const void* address, std::size_t bytes, const char* message) {
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (start == 0 || (bytes > 0 && bytes - 1 > std::numeric_limits<std::uintptr_t>::max() - start)) {
+        throw std::runtime_error(message);
+    }
+}
+
+static void ReadGuest(void* destination, const void* source, std::size_t bytes, const char* message) {
+    if (bytes == 0) return;
+    ValidateGuestRange(source, bytes, message);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+static void WriteGuest(void* destination, const void* source, std::size_t bytes, const char* message) {
+    if (bytes == 0) return;
+    ValidateGuestRange(destination, bytes, message);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+static std::vector<AjmBuffer> ReadBufferList(const AjmBuffer* guestBuffers, std::size_t count, const char* message) {
+    if (count == 0) return {};
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(AjmBuffer)) throw std::runtime_error(message);
+    std::vector<AjmBuffer> buffers(count);
+    ReadGuest(buffers.data(), guestBuffers, count * sizeof(AjmBuffer), message);
+    return buffers;
+}
+
 static std::uint8_t* KeepChunk(std::uint8_t* at, std::uint32_t keep, std::uint32_t low, std::uint32_t word) {
     std::uint32_t words[2];
     std::memcpy(words, at, sizeof(words));
@@ -87,51 +123,71 @@ static std::uint8_t* BeginJob(std::uint8_t* job, const void* returnAddress) {
     return returnAddress ? KeepBuffer(at, 6, returnAddress, 0) : at;
 }
 
-static void* EndJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance) {
-    KeepChunk(job, 0xFC000000u, (instance & 0xFFFFFu) << 6, static_cast<std::uint32_t>(end - job) - 2 * sizeof(std::uint32_t));
-    return end;
+static std::size_t EndJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance) {
+    const auto totalBytes = static_cast<std::size_t>(end - job);
+    KeepChunk(job, 0xFC000000u, (instance & 0xFFFFFu) << 6, static_cast<std::uint32_t>(totalBytes) - 2 * sizeof(std::uint32_t));
+    return totalBytes;
 }
 
+static constexpr std::size_t kJobHeaderBytes = 2 * sizeof(std::uint32_t);
+static constexpr std::size_t kBufferEntryBytes = 2 * sizeof(std::uint32_t) + sizeof(const void*);
+
 void* APS5_VABI sceAjmBatchJobControlBufferRa_nid_disambig1(void* position, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    auto* job = static_cast<std::uint8_t*>(position);
-    auto* at = BeginJob(job, return_address);
+    const std::size_t totalBytes = kJobHeaderBytes + (return_address ? kBufferEntryBytes : 0) + 2 * kBufferEntryBytes + kJobHeaderBytes;
+    ValidateGuestRange(position, totalBytes, "AJMI: batch job destination address is invalid");
+    std::vector<std::uint8_t> staging(totalBytes);
+    ReadGuest(staging.data(), position, totalBytes, "AJMI: batch job buffer is unreadable");
+    auto* at = BeginJob(staging.data(), return_address);
     at = KeepBuffer(at, 2, sideband_input, sideband_input_size);
     at = KeepFlags(at, 3, flags & 0x000060000000E7FF);
     at = KeepBuffer(at, 0x12, sideband_output, sideband_output_size);
-    return EndJob(job, at, instance);
+    EndJob(staging.data(), at, instance);
+    WriteGuest(position, staging.data(), totalBytes, "AJMI: batch job buffer is unwritable");
+    return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(position) + totalBytes);
 }
 
-static void* RunJob(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    auto* job = static_cast<std::uint8_t*>(position);
-    auto* at = BeginJob(job, return_address);
-    for (std::size_t index = 0; index < input_buffers_num; ++index) at = KeepBuffer(at, 1, input_buffers[index].ptr, input_buffers[index].size);
+static void* RunJob(void* position, uint32_t instance, uint64_t flags, std::span<const AjmBuffer> input_buffers, std::span<const AjmBuffer> output_buffers, void* sideband_output, size_t sideband_output_size, void* return_address) {
+    const std::size_t fixedBytes = 2 * kJobHeaderBytes + (return_address ? kBufferEntryBytes : 0) + kBufferEntryBytes;
+    if (input_buffers.size() > (std::numeric_limits<std::uint32_t>::max() - fixedBytes) / kBufferEntryBytes ||
+        output_buffers.size() > (std::numeric_limits<std::uint32_t>::max() - fixedBytes - input_buffers.size() * kBufferEntryBytes) / kBufferEntryBytes) {
+        throw std::runtime_error("AJMI: batch job size overflows");
+    }
+    const std::size_t totalBytes = fixedBytes + (input_buffers.size() + output_buffers.size()) * kBufferEntryBytes;
+    ValidateGuestRange(position, totalBytes, "AJMI: batch job destination address is invalid");
+    std::vector<std::uint8_t> staging(totalBytes);
+    ReadGuest(staging.data(), position, totalBytes, "AJMI: batch job buffer is unreadable");
+    auto* at = BeginJob(staging.data(), return_address);
+    for (const AjmBuffer& input : input_buffers) at = KeepBuffer(at, 1, input.ptr, input.size);
     at = KeepFlags(at, 4, flags & 0x0000E00000001FFF);
-    for (std::size_t index = 0; index < output_buffers_num; ++index) at = KeepBuffer(at, 0x11, output_buffers[index].ptr, output_buffers[index].size);
+    for (const AjmBuffer& output : output_buffers) at = KeepBuffer(at, 0x11, output.ptr, output.size);
     at = KeepBuffer(at, 0x12, sideband_output, sideband_output_size);
-    return EndJob(job, at, instance);
+    EndJob(staging.data(), at, instance);
+    WriteGuest(position, staging.data(), totalBytes, "AJMI: batch job buffer is unwritable");
+    return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(position) + totalBytes);
 }
 
 void* APS5_VABI sceAjmBatchJobRunSplitBufferRa_nid_disambig1(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    if ((input_buffers_num && !input_buffers) || (output_buffers_num && !output_buffers)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
-    return RunJob(position, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size, return_address);
+    const std::vector<AjmBuffer> inputs = ReadBufferList(input_buffers, input_buffers_num, "AJMI: batch input buffer array is unreadable");
+    const std::vector<AjmBuffer> outputs = ReadBufferList(output_buffers, output_buffers_num, "AJMI: batch output buffer array is unreadable");
+    return RunJob(position, instance, flags, inputs, outputs, sideband_output, sideband_output_size, return_address);
 }
 
 void* APS5_VABI sceAjmBatchJobRunBufferRa_nid_disambig1(void* position, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
-    const AjmBuffer output{data_output, data_output_size};
-    return RunJob(position, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size, return_address);
+    const std::array<AjmBuffer, 1> inputs{AjmBuffer{const_cast<void*>(data_input), data_input_size}};
+    const std::array<AjmBuffer, 1> outputs{AjmBuffer{data_output, data_output_size}};
+    return RunJob(position, instance, flags, inputs, outputs, sideband_output, sideband_output_size, return_address);
 }
 
 }
 
 extern "C" {
 
-int APS5_VABI sceAjmiBatchCancel() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchCancel(std::uint32_t context, std::uint32_t batch) {
+    return sceAjmBatchCancel(context, batch);
 }
 
-int APS5_VABI sceAjmiBatchWait() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchWait(std::uint32_t context, std::uint32_t batch, std::uint32_t timeout, AjmBatchError* error) {
+    return sceAjmBatchWait(context, batch, timeout, error);
 }
 
 void* APS5_VABI sceAjmiBatchJobInlineBuffer_nid_no_patch(void* position, const void* data, std::size_t size, const void** address) {
@@ -139,64 +195,65 @@ void* APS5_VABI sceAjmiBatchJobInlineBuffer_nid_no_patch(void* position, const v
 }
 APS5_EXPORT("4MsUK9kAnKg", sceAjmiBatchJobInlineBuffer_nid_no_patch);
 
-int APS5_VABI sceAjmiModuleUnregister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiModuleUnregister(std::uint32_t context, std::uint32_t codec) {
+    return sceAjmModuleUnregister(context, codec);
 }
 
-int APS5_VABI sceAjmiBatchStartBuffer() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t* batch, std::uint32_t batchSize, int priority, AjmBatchError* error, std::uint32_t* batchId) {
+    return sceAjmBatchStartBuffer(context, batch, batchSize, priority, error, batchId);
 }
 
-int APS5_VABI sceAjmiFinalize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiFinalize(std::uint32_t context) {
+    return sceAjmFinalize(context);
 }
 
-int APS5_VABI sceAjmiStrError() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI sceAjmiStrError(int error) {
+    return sceAjmStrError(error);
 }
 
-int APS5_VABI sceAjmiBatchJobControlBufferRa() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI sceAjmiBatchJobControlBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* sidebandInput, std::size_t sidebandInputSize, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress) {
+    return sceAjmBatchJobControlBufferRa_nid_disambig1(position, instance, flags, sidebandInput, sidebandInputSize, sidebandOutput, sidebandOutputSize, returnAddress);
 }
+APS5_EXPORT("J3UwQ5e6sNU", sceAjmiBatchJobControlBufferRa_nid_no_patch);
 
 int APS5_VABI sceAjmiInstanceSwitch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiDecAt9ParseConfigData() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo) {
+    return sceAjmDecAt9ParseConfigData(configData, configInfo);
 }
 
-int APS5_VABI sceAjmiInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context) {
+    return sceAjmInitialize(reserved, context);
 }
 
-int APS5_VABI sceAjmiBatchErrorDump() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
+    return sceAjmBatchErrorDump(info, error);
 }
 
-int APS5_VABI sceAjmiInstanceCodecType() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId) {
+    return sceAjmInstanceCodecType(instanceId);
 }
 
-int APS5_VABI sceAjmiMemoryUnregister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiMemoryUnregister(std::uint32_t context, void* ptr) {
+    return sceAjmMemoryUnregister(context, ptr);
 }
 
-int APS5_VABI sceAjmiInstanceDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance) {
+    return sceAjmInstanceDestroy(context, instance);
 }
 
-int APS5_VABI sceAjmiDecMp3ParseFrame() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame) {
+    return sceAjmDecMp3ParseFrame(stream, streamSize, parseOfl, frame);
 }
 
-int APS5_VABI sceAjmiMemoryRegister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiMemoryRegister(std::uint32_t context, void* ptr, std::size_t pages) {
+    return sceAjmMemoryRegister(context, ptr, pages);
 }
 
-int APS5_VABI sceAjmiModuleRegister() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiModuleRegister(std::uint32_t context, std::uint32_t codec, std::int64_t reserved) {
+    return sceAjmModuleRegister(context, codec, reserved);
 }
 
 void* APS5_VABI sceAjmiBatchJobRunBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* input, std::size_t inputSize, void* output, std::size_t outputSize, void* sideband, std::size_t sidebandSize, void* returnAddress) {
@@ -204,16 +261,17 @@ void* APS5_VABI sceAjmiBatchJobRunBufferRa_nid_no_patch(void* position, std::uin
 }
 APS5_EXPORT("m0xisYC6U2w", sceAjmiBatchJobRunBufferRa_nid_no_patch);
 
-int APS5_VABI sceAjmiInstanceCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceCreate(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t* instance) {
+    return sceAjmInstanceCreate(context, codec, flags, instance);
 }
 
 int APS5_VABI sceAjmiInstanceExtend() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchJobRunSplitBufferRa() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI sceAjmiBatchJobRunSplitBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* inputBuffers, std::size_t inputBuffersNum, const AjmBuffer* outputBuffers, std::size_t outputBuffersNum, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress) {
+    return sceAjmBatchJobRunSplitBufferRa_nid_disambig1(position, instance, flags, inputBuffers, inputBuffersNum, outputBuffers, outputBuffersNum, sidebandOutput, sidebandOutputSize, returnAddress);
 }
+APS5_EXPORT("r7NMFYcJi08", sceAjmiBatchJobRunSplitBufferRa_nid_no_patch);
 
 }

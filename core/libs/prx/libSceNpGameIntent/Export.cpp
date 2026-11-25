@@ -19,6 +19,7 @@ constexpr int NpGameIntentErrorValueNotFound = -2141898745;
 constexpr int NpGameIntentUserIdInvalid = -1;
 constexpr int NpAppLauncherErrorNotInitialized = -2141898238;
 constexpr int NpAppLauncherErrorInvalidArgument = -2141898236;
+constexpr int NpSessionServiceErrorNotInitialized = -2141861374;
 
 std::atomic_bool& NpGameIntentInitialized() {
     static std::atomic_bool initialized{false};
@@ -66,12 +67,22 @@ int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* inte
 	if (!NpGameIntentInitialized()) {
 		return NpGameIntentErrorNotInitialized;
 	}
-	if (intentData == nullptr || key == nullptr || key[0] == '\0' || valueBuf == nullptr || bufSize == 0) {
+	if (intentData == nullptr || key == nullptr || valueBuf == nullptr || bufSize == 0) {
 		return NpGameIntentErrorInvalidArgument;
 	}
 
-	valueBuf[0] = '\0';
-	return NpGameIntentErrorValueNotFound;
+	const int savedErrno = errno;
+	char firstKeyByte{};
+	const bool keyReadable = GuestCopyIn_nid_no_patch(&firstKeyByte, key, 1);
+	errno = savedErrno;
+	if (!keyReadable || firstKeyByte == '\0') {
+		return NpGameIntentErrorInvalidArgument;
+	}
+
+	const char terminator = '\0';
+	const bool outputWritable = GuestCopyOut_nid_no_patch(valueBuf, &terminator, 1);
+	errno = savedErrno;
+	return outputWritable ? NpGameIntentErrorValueNotFound : NpGameIntentErrorInvalidArgument;
 }
 
 int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {
@@ -211,8 +222,7 @@ int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
 }
 
 int APS5_VABI sceNpSessionServiceGetJoinedPartySession() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceInitialize() {
@@ -220,21 +230,19 @@ int APS5_VABI sceNpSessionServiceInitialize() {
 }
 
 int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceSendPlayerSessionRequestToJoin() {
-    NotImplemented_nid_no_patch(__func__);
+    return NpSessionServiceErrorNotInitialized;
 }
 
 int APS5_VABI sceNpSessionServiceTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    return NpSessionServiceErrorNotInitialized;
 }
 
 }

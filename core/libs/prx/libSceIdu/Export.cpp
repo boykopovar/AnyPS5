@@ -86,8 +86,10 @@ int APS5_VABI sceIduGetHardwareId(void* id) {
     return SCE_IDU_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceIduGetPkgInstallStatus() {
+int APS5_VABI sceIduGetPkgInstallStatus(const char* id, void* status, std::uint32_t size) {
+    if (id == nullptr || status == nullptr || size != 0x220) return SCE_IDU_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceIduGetTitleList(void* list, std::int32_t count) {

@@ -1,0 +1,7 @@
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test_executable(guest_socket_rights_datagram_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketRightsDatagram.cpp)
+    target_include_directories(guest_socket_rights_datagram_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_rights_datagram_tests PRIVATE libkernel libc)
+    add_test(NAME guest_socket_rights_datagram COMMAND guest_socket_rights_datagram_tests)
+    set_tests_properties(guest_socket_rights_datagram PROPERTIES TIMEOUT 20)
+endif()

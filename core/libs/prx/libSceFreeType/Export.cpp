@@ -250,7 +250,15 @@ int APS5_VABI FT_Attach_File_nid_postfix(GuestFaceRec* face, const char* filepat
     native.flags = FT_OPEN_MEMORY;
     native.memory_base = bytes.data();
     native.memory_size = static_cast<FT_Long>(bytes.size());
-    return FT_Attach_Stream(owner->host, &native);
+    const FT_Face host = owner->host;
+    const FT_Error error = FT_Attach_Stream(host, &native);
+    if (error == 0) {
+        face->face_flags = host->face_flags;
+        face->bbox = {host->bbox.xMin, host->bbox.yMin, host->bbox.xMax, host->bbox.yMax};
+        face->ascender = host->ascender;
+        face->descender = host->descender;
+    }
+    return error;
 }
 
 int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {

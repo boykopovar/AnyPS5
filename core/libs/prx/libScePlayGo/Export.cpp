@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <charconv>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
@@ -28,6 +29,7 @@ static constexpr uint64_t PLAYGO_OPTIONAL_CHUNK_MASK_ALL = ~0ull;
 static constexpr int32_t PLAYGO_INSTALL_SPEED_FULL = 2;
 static constexpr uint32_t PLAYGO_SCENARIO_CHUNK_COUNT = 1000;
 
+static std::mutex g_settingsMutex;
 static int32_t g_installSpeed = PLAYGO_INSTALL_SPEED_FULL;
 static uint64_t g_languageMask = PLAYGO_LANGUAGE_MASK_ALL;
 
@@ -100,8 +102,14 @@ static bool ReadExplicitChunks(ChunkTable& table) {
     return true;
 }
 
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 static const ChunkTable& Chunks() {
     static const ChunkTable chunks = [] {
+        const ErrnoGuard errnoGuard;
         ChunkTable table;
         std::ifstream file(ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml"));
         if (!file) {
@@ -179,10 +187,7 @@ static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries)
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
         uint16_t chunkId = 0;
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(&chunkId, &chunk_ids[index], sizeof(chunkId));
-        errno = savedErrno;
-        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!GuestCopyIn_nid_no_patch(&chunkId, &chunk_ids[index], sizeof(chunkId))) return SCE_PLAYGO_ERROR_BAD_POINTER;
         if (!IsKnownChunk(chunkId)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
     }
     return 0;
@@ -196,10 +201,7 @@ static int ValidateOptionalChunkRequest(uint32_t type, const PlayGoOptionalChunk
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
     PlayGoOptionalChunk localOption{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
-    errno = savedErrno;
-    if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (!GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption))) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (localOption.bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
     return 0;
 }
@@ -245,13 +247,23 @@ int APS5_VABI scePlayGoGetInstallChunkId(int handle, uint16_t* out_chunk_id_list
 int APS5_VABI scePlayGoGetInstallSpeed(int handle, int32_t* out_speed) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_speed) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    return GuestCopyOut_nid_no_patch(out_speed, &g_installSpeed, sizeof(g_installSpeed)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
+    int32_t speed;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        speed = g_installSpeed;
+    }
+    return GuestCopyOut_nid_no_patch(out_speed, &speed, sizeof(speed)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetLanguageMask(int handle, uint64_t* out_language_mask) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!out_language_mask) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    return GuestCopyOut_nid_no_patch(out_language_mask, &g_languageMask, sizeof(g_languageMask)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
+    uint64_t languageMask;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        languageMask = g_languageMask;
+    }
+    return GuestCopyOut_nid_no_patch(out_language_mask, &languageMask, sizeof(languageMask)) ? 0 : SCE_PLAYGO_ERROR_BAD_POINTER;
 }
 
 int APS5_VABI scePlayGoGetLocus(int handle, const uint16_t* chunkIds, uint32_t numberOfEntries, int8_t* outLoci) {
@@ -310,6 +322,7 @@ int APS5_VABI scePlayGoGetToDoList(int handle, PlayGoToDo* out_todo_list, uint32
 
 int APS5_VABI scePlayGoInitialize(const PlayGoInitParams* init) {
     if (!init) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    std::lock_guard lock(g_settingsMutex);
     g_initialized = true;
     return 0;
 }
@@ -333,11 +346,13 @@ int APS5_VABI scePlayGoPrefetchOptionalChunk(int handle, int32_t type, const Pla
 
 int APS5_VABI scePlayGoSetInstallSpeed(int handle, int32_t speed) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    std::lock_guard lock(g_settingsMutex);
     g_installSpeed = speed;
     return 0;
 }
 
 int APS5_VABI scePlayGoSetInstallSpeed2(int32_t reserved, uint32_t speed) {
+    std::lock_guard lock(g_settingsMutex);
     if (!g_initialized) return SCE_PLAYGO_ERROR_NOT_INITIALIZED;
     if (reserved != 0) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
     if (speed > static_cast<uint32_t>(PLAYGO_INSTALL_SPEED_FULL)) return SCE_PLAYGO_ERROR_BAD_SPEED;
@@ -352,10 +367,7 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
     for (uint32_t index = 0; index < number_of_entries; ++index) {
         PlayGoToDo entry{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry));
-        errno = savedErrno;
-        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!GuestCopyIn_nid_no_patch(&entry, &todo_list[index], sizeof(entry))) return SCE_PLAYGO_ERROR_BAD_POINTER;
         if (!IsKnownChunk(entry.chunk_id)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
         const int8_t locus = entry.locus;
         if (locus != PLAYGO_LOCUS_NOT_DOWNLOADED && locus != PLAYGO_LOCUS_LOCAL_SLOW && locus != PLAYGO_LOCUS_LOCAL_FAST) return SCE_PLAYGO_ERROR_BAD_LOCUS;
@@ -364,6 +376,7 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
 }
 
 int APS5_VABI scePlayGoTerminate(void) {
+    std::lock_guard lock(g_settingsMutex);
     g_initialized = false;
     return 0;
 }
@@ -381,6 +394,7 @@ int APS5_VABI scePlayGoRequestOptionalChunk(int handle, std::uint32_t type, cons
 
 int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    std::lock_guard lock(g_settingsMutex);
     g_languageMask = language_mask;
     return 0;
 }

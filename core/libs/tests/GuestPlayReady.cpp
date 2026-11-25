@@ -91,6 +91,41 @@ void CheckVersionString() {
     }
 }
 
+void CheckNotStarted() {
+    constexpr int NotStarted = static_cast<int>(0x8004c002);
+    Require(scePlayReadyApiIsStarted() == 0, "the library must report that it is not started");
+    Require(scePlayReadyApiStop() == NotStarted, "scePlayReadyApiStop must answer that the library is not started");
+    Require(scePlayReadyContentGetProperty() == NotStarted, "scePlayReadyContentGetProperty must answer that the library is not started");
+    Require(scePlayReadyContentSetProperty() == NotStarted, "scePlayReadyContentSetProperty must answer that the library is not started");
+    Require(scePlayReadyDomainCertEnumFini() == NotStarted, "scePlayReadyDomainCertEnumFini must answer that the library is not started");
+    Require(scePlayReadyDomainCertEnumInit() == NotStarted, "scePlayReadyDomainCertEnumInit must answer that the library is not started");
+    Require(scePlayReadyDomainCertEnumNext() == NotStarted, "scePlayReadyDomainCertEnumNext must answer that the library is not started");
+    Require(scePlayReadyDomainCertFind() == NotStarted, "scePlayReadyDomainCertFind must answer that the library is not started");
+    Require(scePlayReadyDomainJoinGenerateChallenge() == NotStarted, "scePlayReadyDomainJoinGenerateChallenge must answer that the library is not started");
+    Require(scePlayReadyDomainJoinProcessResponse() == NotStarted, "scePlayReadyDomainJoinProcessResponse must answer that the library is not started");
+    Require(scePlayReadyDomainLeaveGenerateChallenge() == NotStarted, "scePlayReadyDomainLeaveGenerateChallenge must answer that the library is not started");
+    Require(scePlayReadyDomainLeaveProcessResponse() == NotStarted, "scePlayReadyDomainLeaveProcessResponse must answer that the library is not started");
+    Require(scePlayReadyFinalize() == NotStarted, "scePlayReadyFinalize must answer that the library is not started");
+    Require(scePlayReadyLicenseAcqGetAdditionalResponseData() == NotStarted, "scePlayReadyLicenseAcqGetAdditionalResponseData must answer that the library is not started");
+    Require(scePlayReadyReaderBind() == NotStarted, "scePlayReadyReaderBind must answer that the library is not started");
+    Require(scePlayReadyReaderCommit() == NotStarted, "scePlayReadyReaderCommit must answer that the library is not started");
+    Require(scePlayReadyReaderDecrypt() == NotStarted, "scePlayReadyReaderDecrypt must answer that the library is not started");
+    Require(scePlayReadyReset() == NotStarted, "scePlayReadyReset must answer that the library is not started");
+    Require(scePlayReadyStoreCleanup() == NotStarted, "scePlayReadyStoreCleanup must answer that the library is not started");
+    unsigned char block[64]{};
+    Require(scePlayReadyLicenseAcqGenerateAck(block, nullptr, block) == InvalidArgument, "GenerateAck must check its second argument");
+    Require(scePlayReadyLicenseAcqGenerateAck(block, block, nullptr) == InvalidArgument, "GenerateAck must check its third argument");
+    Require(scePlayReadyLicenseAcqGenerateAck(nullptr, nullptr, nullptr) == InvalidArgument, "GenerateAck checks pointers before the started flag");
+    Require(scePlayReadyLicenseAcqGenerateAck(nullptr, block, block) == NotStarted, "GenerateAck must not check its first argument");
+    Require(scePlayReadyLicenseAcqProcessAckResponse(block, nullptr) == InvalidArgument, "ProcessAckResponse must check its second argument");
+    Require(scePlayReadyLicenseAcqProcessAckResponse(nullptr, block) == NotStarted, "ProcessAckResponse must not check its first argument");
+    for (const std::uint32_t value : {0u, 1u, 0xffffffffu}) {
+        Require(scePlayReadyLicenseAcqProcessResponse(block, value, nullptr, block) == InvalidArgument, "ProcessResponse must check its third argument");
+        Require(scePlayReadyLicenseAcqProcessResponse(block, value, block, nullptr) == InvalidArgument, "ProcessResponse must check its fourth argument");
+        Require(scePlayReadyLicenseAcqProcessResponse(nullptr, value, block, block) == NotStarted, "ProcessResponse must not check its first two arguments");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -98,5 +133,6 @@ int main() {
     CheckInitParams();
     CheckVersion();
     CheckVersionString();
+    CheckNotStarted();
     return 0;
 }

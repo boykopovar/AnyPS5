@@ -82,6 +82,7 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getRoomDataInternal = Resolve<RequestFn>("sceNpMatching2GetRoomDataInternal");
     const auto getPingInfo = Resolve<RequestFn>("sceNpMatching2SignalingGetPingInfo");
     const auto leaveRoom = Resolve<RequestFn>("sceNpMatching2LeaveRoom");
+    const auto joinRoomA = Resolve<RequestFn>("sceNpMatching2JoinRoomA");
     const auto sendRoomMessage = Resolve<RequestFn>("sceNpMatching2SendRoomMessage");
     const auto getServerId = Resolve<GetServerIdFn>("sceNpMatching2GetServerId");
     const auto getSlotMask = Resolve<SlotMaskFn>("sceNpMatching2GetRoomJoinedSlotMaskLocal");
@@ -117,6 +118,8 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getWorldInfoList(context, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request was taken");
     Require(getWorldInfoList(context, serverRequest, nullptr, nullptr) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request id was taken");
     for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "server request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
         Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
@@ -128,7 +131,11 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getUserInfoList(99, zeroed, nullptr, &requestId) == ContextNotFound, "sceNpMatching2GetUserInfoList", "an unknown context did not return CONTEXT_NOT_FOUND");
     Require(getUserInfoList(contextA, zeroed, nullptr, &requestId) == InvalidContext, "sceNpMatching2GetUserInfoList", "an A context did not return 0x80550C3B");
     Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
-    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
+    errno = 71;
+    Require(getUserInfoList(context, reinterpret_cast<const void*>(0x10), nullptr, &requestId) == InvalidArgument && errno == 71, "sceNpMatching2GetUserInfoList", "an unreadable request did not return INVALID_ARGUMENT with errno preserved");
+    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom, joinRoomA}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "room request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
@@ -243,7 +250,8 @@ int main() {
     Require(sceNpMatching2GetUserInfoListA() == NotInitialized, "sceNpMatching2GetUserInfoListA", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2GrantRoomOwner() == NotInitialized, "sceNpMatching2GrantRoomOwner", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2JoinLobby() == NotInitialized, "sceNpMatching2JoinLobby", "a call before initialization did not return NOT_INITIALIZED");
-    Require(sceNpMatching2JoinRoomA() == NotInitialized, "sceNpMatching2JoinRoomA", "a call before initialization did not return NOT_INITIALIZED");
+    std::uint32_t joinRoomARequestId = 77;
+    Require(sceNpMatching2JoinRoomA(1, nullptr, nullptr, &joinRoomARequestId) == NotInitialized && joinRoomARequestId == 77, "sceNpMatching2JoinRoomA", "a null request before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2LeaveLobby() == NotInitialized, "sceNpMatching2LeaveLobby", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterManualUdpSignalingCallback() == NotInitialized, "sceNpMatching2RegisterManualUdpSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SendLobbyChatMessage() == NotInitialized, "sceNpMatching2SendLobbyChatMessage", "a call before initialization did not return NOT_INITIALIZED");

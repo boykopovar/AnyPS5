@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## change [X509_get0_pubkey]
+
+- [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - PS5 layout and console behaviour unverified. A null cached key with key bits is decoded, as LibreSSL 4.0.0 [x_pubkey.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) `X509_PUBKEY_get0` does, from the algorithm and the BIT STRING contents, re-encoded as a SubjectPublicKeyInfo with no unused bits for `d2i_PUBKEY_nid_postfix`. Its refusals and errors apply: bytes after an RSA key, RSA parameters other than NULL, explicit EC parameters, curves other than P-256 and P-384, and DSA, DH, RSA-PSS and 2.5.8.1.1 keys, which LibreSSL 3.4.1 decodes. The key is cached via `GuestCopyOut_nid_no_patch`; another thread's cached key wins. A null algorithm, null parameter data, a parameter type outside 1 to 30 other than SEQUENCE, SET and other, and unreadable or unwritable guest memory throw. Closes when: compared with the console.

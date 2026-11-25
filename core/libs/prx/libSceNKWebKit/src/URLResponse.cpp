@@ -11,7 +11,7 @@ const void* APS5_VABI WKURLResponseCopyURL(const void* responseRef) {
 
 const void* APS5_VABI WKURLResponseCopyMIMEType(const void* responseRef) {
     const auto* response = NKWebKit::Cast<NKWebKit::URLResponse>(responseRef, __func__);
-    if (!response->mimeType) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    if (!response->mimeType || response->mimeType->null) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string()));
     return NKWebKit::ToRef(NKWebKit::Retained<NKWebKit::String>::Share(response->mimeType.Get()));
 }
 
@@ -22,7 +22,7 @@ int APS5_VABI WKURLResponseHTTPStatusCode(const void* responseRef) {
 
 const void* APS5_VABI WKURLResponseCopySuggestedFilename(const void* responseRef) {
     const auto* response = NKWebKit::Cast<NKWebKit::URLResponse>(responseRef, __func__);
-    if (!response->suggestedFilename) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    if (!response->suggestedFilename || response->suggestedFilename->null) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string()));
     return NKWebKit::ToRef(NKWebKit::Retained<NKWebKit::String>::Share(response->suggestedFilename.Get()));
 }
 

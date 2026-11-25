@@ -2,15 +2,22 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
 template <typename TValue>
 TValue ReadAt(const void* object, std::size_t offset, const char* function) {
     TValue value{};
-    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value))) NotImplemented_nid_no_patch(function);
+    const int savedErrno = errno;
+    const bool copied = object != nullptr &&
+        reinterpret_cast<std::uintptr_t>(object) <= std::numeric_limits<std::uintptr_t>::max() - offset &&
+        GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(function);
     return value;
 }
 
@@ -93,9 +100,7 @@ int APS5_VABI libSceNpWebApiUnknown_U2KAvj2rtSE_nid_no_patch() {
 }
 APS5_EXPORT("U2KAvj2rtSE", libSceNpWebApiUnknown_U2KAvj2rtSE_nid_no_patch);
 
-int APS5_VABI libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch() {}
 APS5_EXPORT("V6DhvHJCGfM", libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch);
 
 int APS5_VABI libSceNpWebApiUnknown_WBl0nAQLZjc_nid_no_patch() {
@@ -123,9 +128,7 @@ int APS5_VABI libSceNpWebApiUnknown_daA4FMfpA58_nid_no_patch() {
 }
 APS5_EXPORT("daA4FMfpA58", libSceNpWebApiUnknown_daA4FMfpA58_nid_no_patch);
 
-int APS5_VABI libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch() {}
 APS5_EXPORT("eJ1gJsUhQW4", libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch);
 
 int APS5_VABI libSceNpWebApiUnknown_fe1j0GOZ7_minus_8_nid_no_patch() {

@@ -1,8 +1,10 @@
 #include "prx/libSceMbus/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +14,8 @@
 static_assert(std::is_same_v<decltype(&sceMbusEventCallbackFuncsInit_), void (APS5_VABI *)(MbusEventCallbacks*, std::uint32_t)>);
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -70,6 +74,8 @@ void CheckInit() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     static_assert(sizeof(MbusEventCallbacks) == 16);
     sceMbusEventCallbackFuncsInit_(nullptr, sizeof(MbusEventCallbacks));
     errno = 71;
@@ -93,6 +99,7 @@ int main() {
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(longCallbacks.data()), 516);
     for (std::size_t i = 0; i < longCallbacks.size(); ++i) Require(longCallbacks[i] == (i < 516 ? 0 : 0xa5), "large callback initialization wrote outside the requested range");
 
+    Require(sceMbusAcquireControlList() == static_cast<int>(0x809B00FFu), "control-list fallback changed");
     CheckDeviceIdConversion();
     CheckInit();
     DeviceServiceInitParam param{};
@@ -107,10 +114,16 @@ int main() {
     param.threadParam = &threadParam;
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "threadParam reserved field accepted");
     param.threadParam = nullptr;
+    errno = 71;
     Require(sceDeviceServiceInitialize(3, &param) == 0, "default parameter initialization failed");
+    Require(errno == 71, "errno modified by valid parameter initialization");
+    errno = 71;
     Require(sceDeviceServiceInitialize(3, reinterpret_cast<const DeviceServiceInitParam*>(1)) == invalidArgument, "unmapped parameter accepted");
+    Require(errno == 71, "errno modified by unmapped parameter initialization");
     param.threadParam = reinterpret_cast<DeviceServiceThreadParam*>(~std::uintptr_t{0});
+    errno = 71;
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "unmapped thread parameter accepted");
+    Require(errno == 71, "errno modified by unmapped thread parameter initialization");
     param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
     Require(sceDeviceServiceGetGeneration() == 0, "the device set started at another generation");
@@ -141,6 +154,8 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "reversed HID usage range accepted");
     Require(sceDeviceServiceGetGeneration() == 0, "the generation advanced without a device change");
     Require(sceDeviceServiceTerminate() == 0, "termination failed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     std::puts("DeviceService tests passed");
     return 0;
 }

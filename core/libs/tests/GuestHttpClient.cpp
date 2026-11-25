@@ -90,6 +90,8 @@ void CheckInputValidation(const std::string& base) {
     try { Aps5HttpClient_Read_nid_postfix(client.get(), &byte, 1); } catch (const std::exception&) { failed = true; }
     Check(failed && byte == 0xa5, "closed read did not reject without writing");
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/payload.bin").c_str()) == 1, "validation source open failed");
+    Invalid([&] { Aps5HttpClient_Read_nid_postfix(client.get(), reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10}), 1); });
+    Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 1) == 0, "invalid read changed the source position");
     Read(client.get(), 0, 13);
     Invalid([&] { Aps5HttpClient_Open_nid_postfix(client.get(), nullptr); });
     Invalid([&] { Aps5HttpClient_Read_nid_postfix(client.get(), &byte, -1); });
@@ -517,6 +519,48 @@ void CheckCancellation(const std::string& base) {
     Read(opening.get(), 0, 777, true);
 }
 
+void CheckStatusAndFraming(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const char* name : {"info-100", "info-multiple", "bare-status"}) {
+        auto client = Create();
+        const auto url = base + "/framing-status/" + name + "/payload.bin";
+        Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "valid HTTP framing/status response refused");
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "valid HTTP framing/status size differs");
+        Read(client.get(), 0, 64);
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "valid HTTP framing/status seek failed");
+        Read(client.get(), 90000, 64);
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "valid HTTP framing/status end differs");
+        End(client.get());
+        ++accepted;
+    }
+    for (const char* name : {"status-four-digits", "status-missing-space", "status-tab", "status-del-reason",
+                             "status-ctl-reason", "status-nul-reason", "info-http10", "info-content-length",
+                             "info-transfer-encoding", "both-200", "both-206"}) {
+        auto client = Create();
+        const auto url = base + "/framing-status/" + name + "/payload.bin";
+        bool failed = false;
+        try { failed = Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0; }
+        catch (const std::exception&) { failed = true; }
+        Check(failed && Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "invalid HTTP status or conflicting framing was accepted");
+        ++refused;
+    }
+    auto late = Create();
+    Check(Aps5HttpClient_Open_nid_postfix(late.get(), (base + "/framing-status/both-late/payload.bin").c_str()) == 1, "late framing control refused");
+    Read(late.get(), 0, 31);
+    Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 90000, 0) == 90000, "late framing seek failed");
+    std::uint8_t byte = 0xa5;
+    bool lateRefused = false;
+    try { Aps5HttpClient_Read_nid_postfix(late.get(), &byte, 1); }
+    catch (const std::exception&) { lateRefused = true; }
+    Check(lateRefused && byte == 0xa5 && Aps5HttpClient_GetSize_nid_postfix(late.get()) == 100000 &&
+          Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 1) == 90000, "conflicting late framing changed source state");
+    Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 0) == 0, "late framing cache rewind failed");
+    Read(late.get(), 0, 31);
+    std::printf("HTTP status/1xx framing controls: %d/3; invalid refused: %d/11; late conflict refused: %d/1\n", accepted, refused, lateRefused);
+    Check(accepted == 3 && refused == 11 && lateRefused, "HTTP status line and framing checks failed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -544,6 +588,7 @@ int main(int argc, char** argv) {
         CheckCancellation(base);
         CheckRangeUnits(base);
         CheckContentLengths(base);
+        CheckStatusAndFraming(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
         return 0;
     } catch (const std::exception& error) {

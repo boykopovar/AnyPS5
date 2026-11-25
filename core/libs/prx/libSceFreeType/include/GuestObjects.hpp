@@ -2,19 +2,31 @@
 #define CORE_LIBS_PRX_LIBSCEFREETYPE_INCLUDE_GUESTOBJECTS_HPP
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_SYSTEM_H
 
+#include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <list>
+#include <map>
 #include <memory>
 #include <vector>
 
 namespace FreeType {
 
 struct GuestFace;
+
+constexpr bool InGlyphFormatRange(std::uint32_t format) {
+    constexpr std::uint32_t largest = std::max({static_cast<std::uint32_t>(FT_GLYPH_FORMAT_NONE), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_COMPOSITE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_BITMAP), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_OUTLINE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_PLOTTER), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_SVG)});
+    return std::bit_width(format) <= std::bit_width(largest);
+}
 
 struct GuestLibrary {
     FT_Library host = nullptr;
@@ -41,6 +53,15 @@ struct GuestStreamBridge {
     bool closed = false;
 };
 
+extern "C" void FreeTypeSyncCharmaps_nid_no_patch(GuestFace& face);
+
+struct CharmapRemoval;
+
+struct CharMapMemory {
+    GuestMemoryRec guest{};
+    FT_Memory host = nullptr;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -53,7 +74,11 @@ struct GuestFace {
     std::list<GuestSize> sizes;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
-    std::vector<GuestCharMapRec> charmaps;
+    std::map<FT_CharMap, GuestCMap> charmaps;
+    CharMapMemory charmapMemory{};
+    CharmapRemoval* charmapRemoval = nullptr;
+    const GuestCMapClass* nativeCharmapClass = nullptr;
+    std::map<FT_CharMap, GuestCharMapRec*> customCharmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
     GuestSfntTables sfntTables{};
@@ -76,5 +101,6 @@ void SyncSlot(GuestFace& face);
 }
 
 extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
+extern "C" bool FreeTypeSyncBitmap_nid_no_patch(FreeType::GuestBitmap* guest, const FT_Bitmap& bitmap);
 
 #endif

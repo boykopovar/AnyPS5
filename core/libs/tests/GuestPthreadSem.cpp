@@ -1,7 +1,9 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -91,6 +93,25 @@ public:
     GuardPage& operator=(const GuardPage&) = delete;
 
     void* Unreadable() const { return memory + page; }
+    void* Writable() const { return memory; }
+
+    void MakeReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    }
+
+    void MakeReadWrite() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
 
 private:
     char* memory = nullptr;
@@ -104,13 +125,34 @@ static void CheckBadPointers() {
     Require(scePthreadSemInit(&sem, 0, 3, nullptr) == SCE_OK);
     int value = -1;
     Require(scePthreadSemGetvalue(&sem, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    errno = 42;
+    *__error_nid_postfix() = 42;
+    Require(scePthreadSemDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(errno == 42 && *__error_nid_postfix() == 42);
     for (void* pointer : bad) {
         Require(scePthreadSemInit(static_cast<PthreadSem*>(pointer), 0, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadSemGetvalue(static_cast<PthreadSem*>(pointer), &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
         Require(scePthreadSemGetvalue(&sem, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        errno = 42;
+        *__error_nid_postfix() = 42;
+        Require(scePthreadSemDestroy(static_cast<PthreadSem*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 42 && *__error_nid_postfix() == 42);
     }
     Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 3);
     Require(scePthreadSemDestroy(&sem) == SCE_OK);
+    auto* const readOnlySem = static_cast<PthreadSem*>(guard.Writable());
+    Require(scePthreadSemInit(readOnlySem, 0, 5, nullptr) == SCE_OK);
+    guard.MakeReadOnly();
+    errno = 42;
+    *__error_nid_postfix() = 42;
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 42 && *__error_nid_postfix() == 42);
+    Require(scePthreadSemGetvalue(readOnlySem, &value) == SCE_OK && value == 5);
+    Require(scePthreadSemPost(readOnlySem) == SCE_OK);
+    Require(scePthreadSemGetvalue(readOnlySem, &value) == SCE_OK && value == 6);
+    guard.MakeReadWrite();
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_OK);
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 struct CancellableWaitContext {
@@ -168,6 +210,22 @@ int main() {
     Require(scePthreadSemDestroy(&busySem) == SCE_OK);
     waiterThread.join();
     Require(waitResult == SCE_KERNEL_ERROR_EINVAL);
+
+    PthreadSem timedSem = nullptr;
+    Require(scePthreadSemInit(&timedSem, 0, 0, nullptr) == SCE_OK);
+    std::atomic<bool> timedWaiting{false};
+    std::atomic<int> timedResult{-1};
+    std::thread timedThread([&] {
+        timedWaiting.store(true, std::memory_order_release);
+        timedResult = scePthreadSemTimedwait(&timedSem, 2000000);
+    });
+    while (!timedWaiting.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(scePthreadSemDestroy(&timedSem) == SCE_OK);
+    timedThread.join();
+    Require(timedResult == SCE_KERNEL_ERROR_ETIMEDOUT);
 
     PthreadSem cancelSem = nullptr;
     Require(scePthreadSemInit(&cancelSem, 0, 0, nullptr) == SCE_OK);

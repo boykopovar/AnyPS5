@@ -1,5 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "FontFixture.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -7,6 +9,7 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +24,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using FreeType::GuestBitmap;
@@ -61,8 +66,47 @@ static TFunction Import(TModule module, const char* name) {
 struct Api {
     decltype(&FT_Init_FreeType_nid_postfix) initialize;
     decltype(&FT_Done_FreeType_nid_postfix) doneLibrary;
+    decltype(&FT_New_Memory_Face_nid_postfix) newFace;
+    decltype(&FT_Done_Face_nid_postfix) doneFace;
     decltype(&FT_Bitmap_Done_nid_postfix) doneBitmap;
     decltype(&freetypeLegacyBitmapBlend_nid_no_patch) blend;
+};
+
+class GuardedTail {
+public:
+    explicit GuardedTail(std::size_t bytes) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(memory != MAP_FAILED);
+        Require(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0);
+#endif
+        Require(bytes <= page);
+        data = static_cast<unsigned char*>(memory) + page - bytes;
+    }
+    ~GuardedTail() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    GuardedTail(const GuardedTail&) = delete;
+    GuardedTail& operator=(const GuardedTail&) = delete;
+    template <class T> T* As() const { return static_cast<T*>(data); }
+
+private:
+    void* memory = nullptr;
+    std::size_t page = 0;
+    void* data = nullptr;
 };
 
 struct Source {
@@ -103,7 +147,13 @@ static std::vector<unsigned char> Pixels(const unsigned char* buffer, std::uint3
     return {buffer, buffer + stride * rows};
 }
 
-static void CheckSame(const GuestBitmap& guest, const FT_Bitmap& native, const GuestVector& guestOffset, const FT_Vector& nativeOffset) {
+static void CheckSame(const GuestBitmap& guest, const FT_Bitmap& native, const GuestVector& guestOffset, const FT_Vector& nativeOffset,
+                      std::source_location caller = std::source_location::current()) {
+    if (guest.rows != native.rows || guest.width != native.width || guest.pitch != native.pitch || guestOffset.x != nativeOffset.x || guestOffset.y != nativeOffset.y) {
+        std::fprintf(stderr, "bitmap mismatch from line %u: guest %ux%u pitch %d mode %u offset (%lld, %lld); FreeType %ux%u pitch %d mode %u offset (%lld, %lld)\n",
+                     caller.line(), guest.rows, guest.width, guest.pitch, guest.pixel_mode, static_cast<long long>(guestOffset.x), static_cast<long long>(guestOffset.y),
+                     native.rows, native.width, native.pitch, native.pixel_mode, static_cast<long long>(nativeOffset.x), static_cast<long long>(nativeOffset.y));
+    }
     Require(guest.rows == native.rows && guest.width == native.width && guest.pitch == native.pitch);
     Require(guest.num_grays == native.num_grays && guest.pixel_mode == native.pixel_mode && guest.palette_mode == native.palette_mode);
     Require((guest.buffer == nullptr) == (native.buffer == nullptr));
@@ -164,6 +214,38 @@ static void CheckErrors(const Api& api, FreeType::GuestLibrary* library, FT_Libr
     Require(api.blend(library, &source.guest, {}, nullptr, &offset, color) == FT_Err_Invalid_Argument);
     Require(api.blend(library, &source.guest, {}, &empty, nullptr, color) == FT_Err_Invalid_Argument);
     Require(empty.buffer == nullptr && empty.pixel_mode == 0 && offset.x == 5 && offset.y == 6);
+    const auto unmapped = std::uintptr_t{0x10};
+    Require(api.blend(library, reinterpret_cast<const GuestBitmap*>(unmapped), {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, reinterpret_cast<GuestBitmap*>(unmapped), &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, &empty, reinterpret_cast<GuestVector*>(unmapped), color) == FT_Err_Invalid_Argument);
+    GuestBitmap unmappedPixels = source.guest;
+    unmappedPixels.buffer = reinterpret_cast<unsigned char*>(unmapped);
+    Require(api.blend(library, &unmappedPixels, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    GuardedTail tailPixels(source.pixels.size());
+    std::memcpy(tailPixels.As<unsigned char>(), source.pixels.data(), source.pixels.size());
+    GuestBitmap oversized = source.guest;
+    oversized.buffer = tailPixels.As<unsigned char>();
+    oversized.rows = 0x40000000u;
+    Require(api.blend(library, &oversized, {}, &empty, &offset, color) == FT_Err_Invalid_Argument);
+    static const GuestBitmap readOnlyTarget{};
+    static const GuestVector readOnlyOffset{5, 6};
+    Require(api.blend(library, &source.guest, {}, const_cast<GuestBitmap*>(&readOnlyTarget), &offset, color) == FT_Err_Invalid_Argument);
+    Require(api.blend(library, &source.guest, {}, &empty, const_cast<GuestVector*>(&readOnlyOffset), color) == FT_Err_Invalid_Argument);
+    Require(empty.buffer == nullptr && empty.pixel_mode == 0 && offset.x == 5 && offset.y == 6);
+    {
+        GuestBitmap tailSource = source.guest;
+        tailSource.buffer = tailPixels.As<unsigned char>();
+        GuestBitmap guest{};
+        GuestVector guestOffset{};
+        FT_Bitmap native;
+        FT_Bitmap_Init(&native);
+        FT_Vector nativeOffset{};
+        const FT_Bitmap nativeSource = source.Native();
+        Require(api.blend(library, &tailSource, {64, 64}, &guest, &guestOffset, color) == 0);
+        Require(FT_Bitmap_Blend(nativeLibrary, &nativeSource, {64, 64}, &native, &nativeOffset, nativeColor) == 0);
+        CheckSame(guest, native, guestOffset, nativeOffset);
+        Require(api.doneBitmap(library, &guest) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
+    }
 
     GuestBitmap target{};
     FT_Bitmap native;
@@ -221,6 +303,47 @@ static void CheckErrors(const Api& api, FreeType::GuestLibrary* library, FT_Libr
         if (&item != &cases[8]) Require(guestPixels == Pixels(target.buffer, target.rows, target.pitch));
     }
     Require(api.doneBitmap(library, &target) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
+}
+
+static void CheckGlyphSlotTarget(const Api& api, FreeType::GuestLibrary* library, FT_Library nativeLibrary) {
+    const auto font = FontFixture::BuildFont(1, {});
+    FreeType::GuestFaceRec* face = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(api.newFace(library, font.data(), static_cast<std::int64_t>(font.size()), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    FreeType::GuestFace* owner = nullptr;
+    for (const auto& candidate : library->faces) {
+        if (&candidate->rec == face) owner = candidate.get();
+    }
+    Require(owner != nullptr && face->glyph != nullptr);
+    auto& guest = face->glyph->bitmap;
+    auto& native = nativeFace->glyph->bitmap;
+    GuestVector offset{0, 0};
+    FT_Vector nativeOffset{0, 0};
+    const Color color{33, 99, 177, 255};
+    const FT_Color nativeColor{color.blue, color.green, color.red, color.alpha};
+    for (const auto position : std::array<GuestVector, 3>{{{0, 0}, {-192, 320}, {256, -128}}}) {
+        const Source source = MakeSource(FT_PIXEL_MODE_GRAY, 3, 5, false, 19);
+        const FT_Bitmap nativeSource = source.Native();
+        Require(api.blend(library, &source.guest, position, &guest, &offset, color) ==
+                FT_Bitmap_Blend(nativeLibrary, &nativeSource, {static_cast<FT_Pos>(position.x), static_cast<FT_Pos>(position.y)}, &native, &nativeOffset, nativeColor));
+        CheckSame(guest, native, offset, nativeOffset);
+        CheckSame(guest, owner->host->glyph->bitmap, offset, nativeOffset);
+        Require(guest.buffer != nullptr && guest.buffer == owner->host->glyph->bitmap.buffer);
+    }
+    guest.pixel_mode = FT_PIXEL_MODE_GRAY;
+    native.pixel_mode = FT_PIXEL_MODE_GRAY;
+    const Source source = MakeSource(FT_PIXEL_MODE_GRAY, 2, 2, false, 23);
+    const FT_Bitmap nativeSource = source.Native();
+    const auto before = Pixels(guest.buffer, guest.rows, guest.pitch);
+    Require(api.blend(library, &source.guest, {}, &guest, &offset, color) ==
+            FT_Bitmap_Blend(nativeLibrary, &nativeSource, {}, &native, &nativeOffset, nativeColor));
+    Require(Pixels(guest.buffer, guest.rows, guest.pitch) == before);
+    CheckSame(guest, native, offset, nativeOffset);
+    CheckSame(guest, owner->host->glyph->bitmap, offset, nativeOffset);
+    Require(api.doneBitmap(library, &guest) == 0 && FT_Bitmap_Done(nativeLibrary, &native) == 0);
+    Require(owner->host->glyph->bitmap.buffer == nullptr);
+    Require(api.doneFace(face) == 0 && FT_Done_Face(nativeFace) == 0);
 }
 
 static void CheckInPlace(const Api& api, FreeType::GuestLibrary* library, FT_Library nativeLibrary, GuestBitmap* guestTarget, GuestVector* guestOffset) {
@@ -346,6 +469,8 @@ int main(int argc, char** argv) {
     Api api{};
     api.initialize = Import<decltype(api.initialize)>(base, patched ? "GNsiLzm4SH8" : "FT_Init_FreeType_nid_postfix");
     api.doneLibrary = Import<decltype(api.doneLibrary)>(base, patched ? "dH02CpEEcYk" : "FT_Done_FreeType_nid_postfix");
+    api.newFace = Import<decltype(api.newFace)>(base, patched ? "40Wa2neSLM0" : "FT_New_Memory_Face_nid_postfix");
+    api.doneFace = Import<decltype(api.doneFace)>(base, patched ? "OgFczHko0w8" : "FT_Done_Face_nid_postfix");
     api.doneBitmap = Import<decltype(api.doneBitmap)>(base, patched ? "Mu2upxmY2C8" : "FT_Bitmap_Done_nid_postfix");
     api.blend = Import<decltype(api.blend)>(module, patched ? "C3-qsnriefE" : "C3-qsnriefE_nid_no_patch_cut");
     FreeType::GuestLibrary* library = nullptr;
@@ -354,6 +479,7 @@ int main(int argc, char** argv) {
     CheckSequences(api, library, nativeLibrary);
     CheckErrors(api, library, nativeLibrary);
     CheckInPlaceHost(api, library, nativeLibrary);
+    CheckGlyphSlotTarget(api, library, nativeLibrary);
 #ifdef _WIN32
     CheckGuestMemory(api, kernelApi, library, nativeLibrary);
 #endif

@@ -29,6 +29,18 @@ int main() {
         Require(_ZN15AbstractStorage13TwitterFolder6RemoveEb() == notSupported);
         Require(_ZNK15AbstractStorage14TwitterStorage7GetStatEPNS_4StatE() == notSupported);
         Require(_ZN15AbstractStorage14TwitterStorage14GetStorageSizeEPlS1_S1_() == notSupported);
+        Require(_ZN15AbstractStorage13TwitterFolder12RemoveFolderERKSbIcSt11char_traitsIcENS_8StlAllocIcEEEb() == notSupported);
+        Require(_ZN15AbstractStorage13TwitterFolder13RemoveContentERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() == notSupported);
+        Require(_ZN15AbstractStorage13TwitterFolder8NextItemEPSt10shared_ptrINS_4ItemEE() == notSupported);
+        Require(_ZN15AbstractStorage13TwitterFolder9NewFolderERKSbIcSt11char_traitsIcENS_8StlAllocIcEEEPSt10shared_ptrINS_6FolderEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterContent6RenameERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage10GetContentERKSbIcSt11char_traitsIcENS_8StlAllocIcEEEPSt10shared_ptrINS_7ContentEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage11DeserializeESt10shared_ptrINS_7ContentEEPS1_INS_4ItemEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage13GetRootFolderEPSt10shared_ptrINS_6FolderEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage15CreateRecursiveERKSbIcSt11char_traitsIcENS_8StlAllocIcEEENS_8ItemTypeEPSt10shared_ptrINS_4ItemEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage15RemoveRecursiveERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() == notSupported);
+        Require(_ZN15AbstractStorage14TwitterStorage7IsExistERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() == 0);
+        Require(_ZN15AbstractStorage14TwitterStorage9SerializeESt10shared_ptrINS_7ContentEES1_INS_4ItemEE() == notSupported);
     }
     return 0;
 }

@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import tomllib
 from collections import Counter
 from datetime import date
@@ -53,6 +54,23 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def file_signature(path):
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def cached_sha256(path, cache):
+    signature = file_signature(path)
+    previous = cache.get(path)
+    if previous is not None and previous[0] == signature:
+        return previous[1]
+    digest = sha256(path)
+    if file_signature(path) != signature:
+        raise ValueError(f"{path}: file changed during hashing")
+    cache[path] = (signature, digest)
+    return digest
+
+
 def command_line(arguments):
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
@@ -93,7 +111,7 @@ def finite_json_number(value):
 
 def read_catalog(directory, object_pairs_hook=None, *, strict_numbers=False):
     options = {"parse_constant": finite_json_number, "parse_float": finite_json_number} if strict_numbers else {}
-    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook, **options)
+    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8-sig"), object_pairs_hook=object_pairs_hook, **options)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
         raise ValueError("catalog must have format 1 and an entries array")
     return data["entries"]
@@ -188,12 +206,14 @@ def validate_entry(directory, entry):
         raise ValueError("targets must be a nonempty object")
     if any(not isinstance(name, str) or not isinstance(digest, str) or not SHA256.fullmatch(digest) for name, digest in targets.items()):
         raise ValueError("invalid target digest")
-    parsed = tomllib.loads(patch.read_text(encoding="utf-8"))
+    parsed = tomllib.loads(patch.read_text(encoding="utf-8-sig"))
     patches = parsed.get("patch")
     if not isinstance(patches, list) or not patches or any(not isinstance(item, dict) or not isinstance(item.get("target"), str) for item in patches):
         raise ValueError("patch file has no valid targets")
     if set(targets) != {item["target"] for item in patches}:
         raise ValueError("target hashes must cover exactly the patch targets")
+    if type(parsed.get("format")) is not int or parsed["format"] != 1:
+        raise ValueError("patch file must have format 1")
     return patch, {name: digest.lower() for name, digest in targets.items()}, metadata
 
 
@@ -252,7 +272,7 @@ def main(argv=None):
         return code
     prefix = "No verified catalog entries" if args.list_verified else "No recommendation"
     try:
-        metadata = json.loads(args.param_json.read_text(encoding="utf-8"), object_pairs_hook=unique_json_keys, parse_constant=finite_json_number, parse_float=finite_json_number)
+        metadata = json.loads(args.param_json.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys, parse_constant=finite_json_number, parse_float=finite_json_number)
         if not isinstance(metadata, dict):
             raise ValueError("param.json must be an object")
         title = metadata.get("titleId")
@@ -265,6 +285,8 @@ def main(argv=None):
             raise ValueError("--skip-sce-module conflicts with --sce-module-path")
         if args.timeout_seconds <= 0:
             raise ValueError("timeout-seconds must be positive")
+        if args.timeout_seconds > threading.TIMEOUT_MAX:
+            raise ValueError(f"timeout-seconds must be at most {threading.TIMEOUT_MAX:.0f}")
         root = resolve_path(args.sce_module_path or args.input.parent)
         if not root.is_dir():
             raise ValueError("module parent must be a directory")
@@ -272,6 +294,7 @@ def main(argv=None):
             confined(root, executable)
         catalog = resolve_path(args.catalog)
         matches = []
+        hash_cache = {}
         entries = load_catalog(catalog, title, version)
         if not entries:
             emit(f"{prefix}: no catalog entry for {title} {version}.")
@@ -291,7 +314,7 @@ def main(argv=None):
             for name, expected in targets.items():
                 try:
                     source = resolve_path(args.input) if name == args.input.name else confined(root, name)
-                    actual = sha256(source)
+                    actual = cached_sha256(source, hash_cache)
                     if actual != expected:
                         errors.append(f"{name}: SHA-256 mismatch ({actual})")
                 except (OSError, ValueError) as error:
@@ -324,9 +347,11 @@ def main(argv=None):
             if result.returncode:
                 detail = (result.stdout + result.stderr).strip()
                 if result.returncode == 1 and verified and verified[3] > 0:
+                    record["reason"] = "verification_mismatch"
                     emit(f"{label}: rejected by relinker: {detail}")
                     continue
                 if result.returncode == 2:
+                    record["reason"] = "relinker_error"
                     emit(f"{label}: relinker error (exit 2): {detail}")
                     relinker_errors = True
                     continue
@@ -334,6 +359,7 @@ def main(argv=None):
             if not verified:
                 raise ValueError(f"{label}: relinker produced no verification summary")
             if verified[0] == 0 or verified[1] != verified[0] or verified[2] or verified[3]:
+                record["reason"] = "verification_unconfirmed"
                 emit(f"{label}: rejected: relinker did not confirm every patch")
                 continue
             record.update(status="verified", targets=targets, metadata=catalog_metadata,

@@ -1,3 +1,5 @@
+#include "WriterState.hpp"
+#include <cstring>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libScePngParser/include/InventoryExports.hpp"
 #include <cerrno>
@@ -29,12 +31,11 @@ APS5_DUMMY_FUN
 
 extern "C" {
 
-int APS5_VABI libScePngParserUnknown_suBT1aYALqA_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser17pngParserFinalizeEv() {
     const std::lock_guard<std::mutex> lock(g_configMutex);
     g_config.fill(std::byte{0});
     return 0;
 }
-APS5_EXPORT("suBT1aYALqA", libScePngParserUnknown_suBT1aYALqA_nid_no_patch);
 
 int APS5_VABI libScePngParserUnknown_vJpgNFIBlCk_nid_no_patch(const void* config) {
     if (config == nullptr)
@@ -62,20 +63,17 @@ int APS5_VABI libScePngParserUnknown_5XfcHLzGE6E_nid_no_patch() {
 }
 APS5_EXPORT("5XfcHLzGE6E", libScePngParserUnknown_5XfcHLzGE6E_nid_no_patch);
 
-int APS5_VABI libScePngParserUnknown_zfzpwUnVvYE_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser19pngParserInitializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("zfzpwUnVvYE", libScePngParserUnknown_zfzpwUnVvYE_nid_no_patch);
 
-int APS5_VABI libScePngParserUnknown_70kLUNq_plus_dvQ_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser21pngParserReadMetadataERKSsRKNS_8MetadataERS3_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("70kLUNq+dvQ", libScePngParserUnknown_70kLUNq_plus_dvQ_nid_no_patch);
 
-int APS5_VABI libScePngParserUnknown_I58FzHBd1OE_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser22pngParserWriteMetadataERKSsRKNS_8MetadataE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("I58FzHBd1OE", libScePngParserUnknown_I58FzHBd1OE_nid_no_patch);
 
 int APS5_VABI libScePngParserUnknown_G6G_minus_KRVQEwI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -87,9 +85,17 @@ int APS5_VABI libScePngParserUnknown_ji_plus_m7tJEFUk_nid_no_patch() {
 }
 APS5_EXPORT("ji+m7tJEFUk", libScePngParserUnknown_ji_plus_m7tJEFUk_nid_no_patch);
 
-int APS5_VABI libScePngParserUnknown_Ena5vQ_plus_C5Vs_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9pngParser25pngParserExtractThumbnailERKSsRNS_9ThumbnailE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Ena5vQ+C5Vs", libScePngParserUnknown_Ena5vQ_plus_C5Vs_nid_no_patch);
 
+}
+
+PngWriter::Allocator PngWriter::GetAllocator_nid_no_patch() {
+    const std::lock_guard lock(g_configMutex);
+    Allocator allocator{};
+    std::memcpy(&allocator.allocate, g_config.data(), sizeof(allocator.allocate));
+    std::memcpy(&allocator.release, g_config.data() + 0x18, sizeof(allocator.release));
+    if (!allocator.allocate || !allocator.release) throw std::logic_error("PNG writer: missing configured allocator");
+    return allocator;
 }

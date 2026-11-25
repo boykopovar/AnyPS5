@@ -21,7 +21,14 @@ public:
     std::uint64_t address;
 };
 
+class DrawCompilePending final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 bool SkipRefusedDraws();
+bool AsyncDrawCompile();
+std::size_t AsyncComputePipelineWords();
 
 void ReportRefusedDraw(const RefusedDraw& refused);
 std::optional<std::size_t> RefusedShaderCount();
