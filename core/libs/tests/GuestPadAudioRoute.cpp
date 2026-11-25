@@ -98,6 +98,39 @@ static void TestPadHapticBuffer() {
 
     {
         PadHapticBuffer buf;
+        std::array<float, 15> left48{};
+        std::array<float, 15> right48{};
+        left48.fill(0.5f);
+        right48.fill(-0.25f);
+        buf.Push(left48.data(), right48.data(), 1, 15, 48000);
+        Require(buf.Frames() == 0);
+        const float zero = 0.0f;
+        buf.Push(&zero, &zero, 1, 0, 3000);
+        buf.Push(left48.data(), right48.data(), 1, 1, 48000);
+        Require(buf.Frames() == 1);
+    }
+
+    {
+        PadHapticBuffer buf;
+        std::array<float, 11> left{};
+        std::array<float, 11> right{};
+        left.fill(0.5f);
+        right.fill(-0.25f);
+        buf.Push(left.data(), right.data(), 1, 10, 1000);
+        Require(buf.Frames() == 30);
+        buf.Push(left.data(), right.data(), 1, 1, 1000);
+        Require(buf.Frames() == 33);
+        std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+        Require(buf.Take(block));
+        Require(buf.Frames() == 1);
+        for (std::size_t i = 0; i < PadHapticBuffer::BlockFrames; ++i) {
+            Require(block[i * 2] == 64);
+            Require(block[i * 2 + 1] == -32);
+        }
+    }
+
+    {
+        PadHapticBuffer buf;
         std::array<float, 512> left{};
         std::array<float, 512> right{};
         for (std::size_t i = 0; i < left.size(); ++i) {
