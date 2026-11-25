@@ -3551,7 +3551,8 @@ void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self
     Construct(builtKey, loadedKey);
     try { StoreGuest(&self->key, builtKey, __func__); }
     catch (...) { Destroy(builtKey); throw; }
-    CopyInto(self->value, loadedValue);
+    try { CopyInto(self->value, loadedValue); }
+    catch (...) { Destroy(self->key); throw; }
     if (!ModernValues()) CopyLegacyHandler(self->value, *value);
 }
 
@@ -3675,7 +3676,8 @@ void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
     Construct(builtKey, std::string_view{});
     try { StoreGuest(&self->key, builtKey, __func__); }
     catch (...) { Destroy(builtKey); throw; }
-    Construct(self->value);
+    try { Construct(self->value); }
+    catch (...) { Destroy(self->key); throw; }
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
