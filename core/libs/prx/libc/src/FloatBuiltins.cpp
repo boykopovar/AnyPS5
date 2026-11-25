@@ -764,13 +764,24 @@ __complex__ float APS5_VABI cexpf_nid_postfix(__complex__ float z) {
 }
 
 __complex__ float APS5_VABI clogf_nid_postfix(__complex__ float z) {
-    const float x = __real__ z;
-    const float y = __imag__ z;
-    const float ax = std::fabs(x);
-    const float ay = std::fabs(y);
-    const float excess = (ax - 1.0f) * (ax + 1.0f) + ay * ay;
-    const float real = std::fabs(excess) <= 0.5f ? 0.5f * std::log1p(excess) : std::log(std::hypot(x, y));
-    return MakeComplex(real, std::atan2(y, x));
+    const double x = __real__ z;
+    const double y = __imag__ z;
+    double larger = std::abs(x);
+    double smaller = std::abs(y);
+    if (larger < smaller) std::swap(larger, smaller);
+    double logMagnitude;
+    if (larger >= 0.5 && larger <= 1.5) {
+        const double radiusSquaredMinusOne = (larger - 1.0) * (larger + 1.0) + smaller * smaller;
+        if (std::abs(radiusSquaredMinusOne) < 0x1p-25) {
+            logMagnitude = radiusSquaredMinusOne == 0.0 ? 0.0
+                : 0.5 * radiusSquaredMinusOne - 0.25 * radiusSquaredMinusOne * radiusSquaredMinusOne;
+        } else {
+            logMagnitude = 0.5 * std::log1p(radiusSquaredMinusOne);
+        }
+    } else {
+        logMagnitude = std::log(std::hypot(x, y));
+    }
+    return MakeComplex(static_cast<float>(logMagnitude), static_cast<float>(std::atan2(y, x)));
 }
 
 __complex__ float APS5_VABI csinf_nid_postfix(__complex__ float z) {
