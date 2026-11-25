@@ -1366,9 +1366,10 @@ def validate_performance_args(parser, args):
 def source_root(build):
     cache = Path(build) / "CMakeCache.txt"
     if cache.is_file():
-        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("CMAKE_HOME_DIRECTORY:"):
-                return Path(line.split("=", 1)[1])
+        for line in cache.read_text(encoding="utf-8-sig", errors="replace").split("\n"):
+            key, _, value = line.partition("=")
+            if key.startswith("CMAKE_HOME_DIRECTORY:") and value:
+                return Path(value)
     return ROOT
 
 
