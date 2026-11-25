@@ -996,6 +996,19 @@ class AnnotateModuleTests(unittest.TestCase):
 
 
 class InputProtectionTests(unittest.TestCase):
+    def test_dangling_output_is_rejected_before_module_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            try:
+                (root / "report.asm").symlink_to(root / "missing.asm")
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("module read before output validation")):
+                with self.assertRaisesRegex(annotate_module.ModuleError, "regular file"):
+                    annotate_module.annotate(root / "input.prx", str(root / "report"), annotate_module.Namer({}))
+
     def test_directory_output_is_rejected_before_existing_reports_are_truncated(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
