@@ -1,9 +1,11 @@
 #include "Jsc.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include <algorithm>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 namespace NKWebKit {
 
@@ -11,11 +13,30 @@ namespace {
 
 bool g_remoteInspectionEnabledByDefault = true;
 
+void ReleaseStoredValues(JSRuntime* rt, CallbackObjectData* data) {
+    if (!JS_IsUndefined(data->propStore)) {
+        JS_FreeValueRT(rt, data->propStore);
+        data->propStore = JS_UNDEFINED;
+    }
+    for (auto& [k, slot] : data->privateProperties) {
+        if (!JS_IsUndefined(slot.strongVal)) {
+            JS_FreeValueRT(rt, slot.strongVal);
+            slot.strongVal = JS_UNDEFINED;
+        }
+    }
+    data->privateProperties.clear();
+}
+
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
     if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    const double cpuNow = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
+    if (cpuNow < group->cpuDeadlineSeconds) {
+        group->deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(group->cpuDeadlineSeconds - cpuNow));
+        return 0;
+    }
     group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
@@ -71,7 +92,8 @@ struct ConstraintMarker : JSMarker {
 
 bool APS5_VABI MarkerIsMarked(JSMarker* baseMarker, JSObjectRef object) {
     auto* marker = static_cast<ConstraintMarker*>(baseMarker);
-    if (!marker || !object || !object->alive) return false;
+    if (!object) return true;
+    if (!marker || !object->alive) return false;
     if (object->protectCount > 0) return true;
     if (marker->group->activeCallbackPins.count(object) > 0) return true;
     for (auto* ctx : marker->group->contexts) {
@@ -86,19 +108,6 @@ void APS5_VABI MarkerMark(JSMarker* baseMarker, JSObjectRef object) {
     if (marker->markedSet->insert(object).second) {
         marker->changed = true;
     }
-}
-
-int ParseErrorLineFromStack(const std::string& stack, int fallbackLine) {
-    const auto colon2 = stack.rfind(':');
-    if (colon2 == std::string::npos || colon2 == 0) return fallbackLine;
-    const auto colon1 = stack.rfind(':', colon2 - 1);
-    if (colon1 == std::string::npos || colon1 + 1 >= colon2) return fallbackLine;
-    int line = 0;
-    for (std::size_t i = colon1 + 1; i < colon2; ++i) {
-        if (stack[i] < '0' || stack[i] > '9') return fallbackLine;
-        line = line * 10 + (stack[i] - '0');
-    }
-    return line > 0 ? line : fallbackLine;
 }
 
 JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, int startingLineNumber, const char* source, std::size_t length, JSStringRef* errorMessage, int* errorLine) {
@@ -125,16 +134,10 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
             JS_FreeValue(qctx, msgVal);
         }
         if (errorLine) {
-            int parsedLine = clampedLine;
-            JSValue stackVal = JS_GetPropertyStr(qctx, exc, "stack");
-            if (JS_IsString(stackVal)) {
-                const char* stackStr = JS_ToCString(qctx, stackVal);
-                if (stackStr) {
-                    parsedLine = ParseErrorLineFromStack(stackStr, clampedLine);
-                    JS_FreeCString(qctx, stackStr);
-                }
-            }
-            JS_FreeValue(qctx, stackVal);
+            std::int32_t parsedLine = clampedLine;
+            JSValue lineVal = JS_GetPropertyStr(qctx, exc, "line");
+            if (JS_IsNumber(lineVal)) JS_ToInt32(qctx, &parsedLine, lineVal);
+            JS_FreeValue(qctx, lineVal);
             *errorLine = parsedLine;
         }
         JS_FreeValue(qctx, exc);
@@ -154,13 +157,37 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
 
 std::string JsStringToUtf8(const GuestJSString* str) {
     if (!str || str->nullString) return {};
-    const std::size_t maxLen = JSStringGetMaximumUTF8CStringSize_nid_postfix(str);
-    if (maxLen == 0) return {};
-    std::string buffer(maxLen, '\0');
-    const std::size_t written = JSStringGetUTF8CString_nid_postfix(str, buffer.data(), buffer.size());
-    if (written == 0) return {};
-    buffer.resize(written - 1);
-    return buffer;
+    const std::size_t count = str->characters.size() - 1;
+    std::string utf8;
+    utf8.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        std::uint32_t codepoint = str->characters[index];
+        if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+            if (index + 1 == count) break;
+            const std::uint32_t low = str->characters[index + 1];
+            if (low < 0xDC00 || low > 0xDFFF) break;
+            codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+            ++index;
+        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+            break;
+        }
+        if (codepoint < 0x80) {
+            utf8.push_back(static_cast<char>(codepoint));
+        } else if (codepoint < 0x800) {
+            utf8.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint < 0x10000) {
+            utf8.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else {
+            utf8.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    }
+    return utf8;
 }
 
 GuestJSString* Utf8ToJsString(const std::string& utf8) {
@@ -223,7 +250,8 @@ void CapturePendingException(OpaqueJSContext* ctx, JSValueRef* exception) {
         return;
     }
     if (JS_IsUncatchableError(exc)) {
-        JS_ClearUncatchableError(ctx->qctx, exc);
+        JS_FreeValue(ctx->qctx, exc);
+        exc = JS_NewString(ctx->qctx, "JavaScript execution terminated.");
     }
     if (exception) {
         *exception = ctx->group->ToHandle(ctx, exc);
@@ -251,6 +279,7 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
     utilityCtx = JS_NewContext(rt);
     JSValue globalObj = JS_GetGlobalObject(utilityCtx);
+    InstallErrorInfo(utilityCtx, globalObj);
     weakRefCtor = JS_GetPropertyStr(utilityCtx, globalObj, "WeakRef");
     JSValue weakRefProto = JS_GetPropertyStr(utilityCtx, weakRefCtor, "prototype");
     weakRefDerefFunc = JS_GetPropertyStr(utilityCtx, weakRefProto, "deref");
@@ -298,18 +327,7 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
         handle->alive = false;
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
-        if (!data) continue;
-        if (!JS_IsUndefined(data->propStore)) {
-            JS_FreeValueRT(rt, data->propStore);
-            data->propStore = JS_UNDEFINED;
-        }
-        for (auto& [k, slot] : data->privateProperties) {
-            if (!JS_IsUndefined(slot.strongVal)) {
-                JS_FreeValueRT(rt, slot.strongVal);
-                slot.strongVal = JS_UNDEFINED;
-            }
-        }
-        data->privateProperties.clear();
+        if (data) ReleaseStoredValues(rt, data);
     }
     if (toStringTagAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toStringTagAtom);
     if (toPrimitiveAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toPrimitiveAtom);
@@ -441,6 +459,15 @@ void OpaqueJSContextGroup::NotifyObjectFinalized(void* ptr, OpaqueJSValue* handl
     }
     if (ptr) {
         objectHandles.erase(ptr);
+        const auto left = callbackDataByPtr.find(ptr);
+        if (left != callbackDataByPtr.end()) {
+            CallbackObjectData* data = left->second;
+            callbackDataByPtr.erase(left);
+            if (data) {
+                ReleaseStoredValues(rt, data);
+                delete data;
+            }
+        }
     }
 }
 
@@ -516,57 +543,89 @@ void OpaqueJSContextGroup::CollectGarbage() {
     inGarbageCollect = false;
 }
 
-void OpaqueJSContextGroup::DrainMicrotasks(OpaqueJSContext* ctx) {
-    JSContext* jobCtx = nullptr;
-    while (JS_IsJobPending(rt)) {
-        if (JS_ExecutePendingJob(rt, &jobCtx) < 0) {
-            if (jobCtx) {
-                JS_FreeValue(jobCtx, JS_GetException(jobCtx));
-            }
-        }
-    }
-    if (ctx && !ctx->pendingUnhandledRejections.empty()) {
-        auto rejections = std::move(ctx->pendingUnhandledRejections);
-        ctx->pendingUnhandledRejections.clear();
-        for (auto& [promiseVal, reasonVal] : rejections) {
-            if (ctx->unhandledRejectionCallback && ctx->unhandledRejectionCallback->alive) {
-                JSValueConst args[2] = {promiseVal, reasonVal};
-                JSValue res = JS_Call(ctx->qctx, ctx->unhandledRejectionCallback->qval, ctx->globalObject->qval, 2, args);
-                JS_FreeValue(ctx->qctx, res);
-                if (JS_HasException(ctx->qctx)) {
-                    JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
+void OpaqueJSContextGroup::DrainMicrotasks() {
+    do {
+        JSContext* jobCtx = nullptr;
+        while (JS_IsJobPending(rt)) {
+            if (JS_ExecutePendingJob(rt, &jobCtx) < 0) {
+                if (jobCtx) {
+                    JS_FreeValue(jobCtx, JS_GetException(jobCtx));
                 }
             }
-            JS_FreeValue(ctx->qctx, promiseVal);
-            JS_FreeValue(ctx->qctx, reasonVal);
         }
-    }
+        const std::vector<OpaqueJSContext*> current(contexts.begin(), contexts.end());
+        for (OpaqueJSContext* ctx : current) {
+            if (std::find(contexts.begin(), contexts.end(), ctx) == contexts.end() || ctx->pendingUnhandledRejections.empty()) continue;
+            auto rejections = std::move(ctx->pendingUnhandledRejections);
+            ctx->pendingUnhandledRejections.clear();
+            for (auto& [promiseVal, reasonVal] : rejections) {
+                if (ctx->unhandledRejectionCallback && ctx->unhandledRejectionCallback->alive) {
+                    JSValueConst args[2] = {promiseVal, reasonVal};
+                    JSValue res = JS_Call(ctx->qctx, ctx->unhandledRejectionCallback->qval, ctx->globalObject->qval, 2, args);
+                    JS_FreeValue(ctx->qctx, res);
+                    if (JS_HasException(ctx->qctx)) {
+                        JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
+                    }
+                }
+                JS_FreeValue(ctx->qctx, promiseVal);
+                JS_FreeValue(ctx->qctx, reasonVal);
+            }
+        }
+    } while (JS_IsJobPending(rt));
 }
 
 void OpaqueJSContextGroup::RefreshDeadline() {
     constexpr double maxTimeLimitSeconds = 1.0e9;
-    if (!(timeLimitSeconds > 0.0)) {
-        deadline = std::chrono::steady_clock::now();
-    } else {
-        const double seconds = std::min(timeLimitSeconds, maxTimeLimitSeconds);
-        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
-    }
+    const double seconds = timeLimitSeconds > 0.0 ? std::min(timeLimitSeconds, maxTimeLimitSeconds) : 0.0;
+    cpuDeadlineSeconds = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value + seconds;
+    deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
 }
 
 void OpaqueJSContextGroup::EnterVm() {
-    if (vmEntryDepth++ != 0 || !hasTimeLimit) return;
+    if (vmEntryDepth++ != 0) return;
+    UpdateStackLimit();
+    if (!hasTimeLimit) return;
     RefreshDeadline();
     deadlineArmed = true;
 }
 
+void OpaqueJSContextGroup::UpdateStackLimit() {
+    constexpr std::size_t maxPerThreadStackUsage = 5 * 1024 * 1024;
+    constexpr std::size_t softReservedZoneSize = 128 * 1024;
+    JS_UpdateStackTop(rt);
+    const auto start = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
+    std::uintptr_t bound = 0;
+    try {
+        bound = reinterpret_cast<std::uintptr_t>(_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv().m_bound);
+    } catch (const std::runtime_error&) {
+        JS_SetMaxStackSize(rt, 0);
+        return;
+    }
+    const std::uintptr_t endWithReservedZone = bound + softReservedZoneSize;
+    const std::size_t available = start > endWithReservedZone ? start - endWithReservedZone : 0;
+    const std::size_t budget = std::min(maxPerThreadStackUsage - softReservedZoneSize, available);
+    JS_SetMaxStackSize(rt, std::max<std::size_t>(budget, 1));
+}
+
 void OpaqueJSContextGroup::ExitVm() {
+    if (vmEntryDepth == 1) DrainMicrotasks();
     if (--vmEntryDepth == 0) deadlineArmed = false;
+    if (vmEntryDepth == 0 && !releasedContexts.empty()) DestroyReleasedContexts();
+}
+
+void OpaqueJSContextGroup::DestroyReleasedContexts() {
+    const std::vector<OpaqueJSContext*> released = std::move(releasedContexts);
+    releasedContexts.clear();
+    for (OpaqueJSContext* ctx : released) {
+        if (ctx->refCount.load(std::memory_order_acquire) == 0) delete ctx;
+    }
 }
 
 OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globalObjectClass)
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
+    InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
@@ -574,12 +633,17 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     }
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    InstallErrorInfo(qctx, rawGlobal);
     dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
     errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
     regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
+    JSValue reflect = JS_GetPropertyStr(qctx, rawGlobal, "Reflect");
+    reflectSet = JS_GetPropertyStr(qctx, reflect, "set");
+    JS_FreeValue(qctx, reflect);
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);
@@ -612,6 +676,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
         }
         JS_SetPrototype(qctx, globalObject->qval, globalExoticInterceptor);
 
+        if (globalObjectClass->HasConvertToType()) DefineToPrimitive(this, globalObject->qval, true);
         RunClassInitialize(this, globalObject, globalObjectClass);
     }
 }
@@ -659,6 +724,7 @@ OpaqueJSContext::~OpaqueJSContext() {
         JS_FreeValue(qctx, dateConstructor);
         JS_FreeValue(qctx, errorConstructor);
         JS_FreeValue(qctx, regExpConstructor);
+        JS_FreeValue(qctx, reflectSet);
         JS_FreeContext(qctx);
         qctx = nullptr;
     }
@@ -754,10 +820,7 @@ void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
 void APS5_VABI JSContextGroupAddHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
     if (!group || !finalizer) return;
     auto* mutGroup = const_cast<OpaqueJSContextGroup*>(group);
-    const std::pair<JSHeapFinalizer, void*> entry{finalizer, userData};
-    if (std::find(mutGroup->heapFinalizers.begin(), mutGroup->heapFinalizers.end(), entry) == mutGroup->heapFinalizers.end()) {
-        mutGroup->heapFinalizers.push_back(entry);
-    }
+    mutGroup->heapFinalizers.emplace_back(finalizer, userData);
 }
 
 void APS5_VABI JSContextGroupRemoveHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
@@ -877,8 +940,14 @@ JSGlobalContextRef APS5_VABI JSGlobalContextRetain(JSGlobalContextRef ctx) {
 
 void APS5_VABI JSGlobalContextRelease(JSGlobalContextRef ctx) {
     if (!ctx) return;
-    if (ctx->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    if (ctx->refCount.fetch_sub(1, std::memory_order_acq_rel) != 1) return;
+    OpaqueJSContextGroup* group = ctx->group;
+    if (group->vmEntryDepth == 0) {
         delete ctx;
+        return;
+    }
+    if (std::find(group->releasedContexts.begin(), group->releasedContexts.end(), ctx) == group->releasedContexts.end()) {
+        group->releasedContexts.push_back(ctx);
     }
 }
 
@@ -956,8 +1025,8 @@ void APS5_VABI JSRemoteInspectorSetInspectionEnabledByDefault(bool enabledByDefa
 JSValueRef APS5_VABI JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSObjectRef thisObject, JSStringRef sourceURL, int startingLineNumber, JSValueRef* exception) {
     if (!ctx || !script) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    ActiveContextScope activeScope(mutCtx->group, mutCtx);
     VmEntryScope vmScope(mutCtx->group);
+    ActiveContextScope activeScope(mutCtx->group, mutCtx);
 
     const std::string code = JsStringToUtf8(script);
     const std::string url = sourceURL ? JsStringToUtf8(sourceURL) : std::string();
@@ -978,12 +1047,10 @@ JSValueRef APS5_VABI JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSOb
 
     if (JS_IsException(result)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
 
     OpaqueJSValue* resultHandle = mutCtx->group->ToHandle(mutCtx, result);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return resultHandle;
 }
 
@@ -1033,8 +1100,8 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
         return nullptr;
     }
 
-    ActiveContextScope activeScope(mutCtx->group, mutCtx);
     VmEntryScope vmScope(mutCtx->group);
+    ActiveContextScope activeScope(mutCtx->group, mutCtx);
 
     JSEvalOptions options{};
     options.version = JS_EVAL_OPTIONS_VERSION;
@@ -1053,12 +1120,10 @@ JSValueRef APS5_VABI JSScriptEvaluate(JSContextRef ctx, JSScriptRef script, JSVa
 
     if (JS_IsException(result)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
 
     OpaqueJSValue* resultHandle = mutCtx->group->ToHandle(mutCtx, result);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return resultHandle;
 }
 
@@ -1109,8 +1174,8 @@ JSObjectRef APS5_VABI JSWeakGetObject(JSWeakRef weak) {
 }
 
 void APS5_VABI JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSObjectRef object) {
-    if (!ctx || !map) return;
-    if (!object || !object->alive) {
+    if (!ctx || !map || !object) return;
+    if (!object->alive) {
         map->entries.erase(key);
         return;
     }

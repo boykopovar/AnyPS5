@@ -220,12 +220,6 @@ int APS5_VABI sceLibcInternalPending4_119_nid_no_patch() {
 }
 APS5_EXPORT("XD9FmX1mavU", sceLibcInternalPending4_119_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
-
 [[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
     const GuestLocale::String* path2, LibcException::ErrorCode code) {
     FilesystemErrorTwoPaths_nid_no_patch(message, path1, path2, code);
@@ -269,9 +263,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI sceLibcInternalPending4_138_nid_no_patch() {
@@ -325,9 +318,8 @@ int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix() {
@@ -847,18 +839,26 @@ int APS5_VABI _Getcloc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getctyptab_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
-    if (s == nullptr || *s == '\0') {
+    if (s == nullptr) {
         return nullptr;
     }
-    const char sep = *s;
+    const char* const begin = s;
+    const auto readByte = [&](const char* p) -> char {
+        if (p - begin >= 0x10000) throw std::invalid_argument("_Getdst: an unterminated rule string");
+        char value;
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&value, p, sizeof(value));
+        errno = savedErrno;
+        if (!read) throw std::invalid_argument("_Getdst: an unreadable rule string");
+        return value;
+    };
+    if (readByte(s) == '\0') {
+        return nullptr;
+    }
+    const char sep = readByte(s);
     ++s;
-    if (*s == '\0') {
+    if (readByte(s) == '\0') {
         return nullptr;
     }
 
@@ -873,25 +873,33 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
     std::vector<Rule> rules;
     std::uint8_t lastYear = 0;
 
-    while (*s != '\0') {
-        if (*s == sep) {
+    while (true) {
+        const char head = readByte(s);
+        if (head == '\0') {
+            break;
+        }
+        if (head == sep) {
             return nullptr;
         }
 
         std::uint8_t ruleYear = lastYear;
-        if (*s == '(') {
+        if (head == '(') {
             ++s;
             int yearVal = 0;
             int digits = 0;
-            while (*s >= '0' && *s <= '9') {
-                yearVal = yearVal * 10 + (*s - '0');
+            while (true) {
+                const char digit = readByte(s);
+                if (digit < '0' || digit > '9') {
+                    break;
+                }
+                yearVal = yearVal * 10 + (digit - '0');
                 ++digits;
                 ++s;
                 if (digits > 4) {
                     return nullptr;
                 }
             }
-            if (digits != 4 || *s != ')' || yearVal < 1900) {
+            if (digits != 4 || readByte(s) != ')' || yearVal < 1900) {
                 return nullptr;
             }
             ++s;
@@ -901,9 +909,13 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
 
         int dateDigits = 0;
         char dateBuf[7] = {};
-        while (*s >= '0' && *s <= '9') {
+        while (true) {
+            const char digit = readByte(s);
+            if (digit < '0' || digit > '9') {
+                break;
+            }
             if (dateDigits < 6) {
-                dateBuf[dateDigits] = *s;
+                dateBuf[dateDigits] = digit;
             }
             ++dateDigits;
             ++s;
@@ -928,13 +940,14 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         }
 
         std::uint8_t suffixByte = 0;
-        if (*s == '+' || *s == '-') {
-            char sign = *s;
+        const char sign = readByte(s);
+        if (sign == '+' || sign == '-') {
             ++s;
-            if (*s < '0' || *s > '6') {
+            const char weight = readByte(s);
+            if (weight < '0' || weight > '6') {
                 return nullptr;
             }
-            int w = *s - '0';
+            int w = weight - '0';
             ++s;
             int v = (w == 0) ? 7 : w;
             if (sign == '+') {
@@ -944,7 +957,8 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
             }
         }
 
-        if (*s != '\0' && *s != sep) {
+        const char stop = readByte(s);
+        if (stop != '\0' && stop != sep) {
             return nullptr;
         }
 
@@ -956,9 +970,9 @@ const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
         r.year = ruleYear;
         rules.push_back(r);
 
-        if (*s == sep) {
+        if (stop == sep) {
             ++s;
-            if (*s == '\0') {
+            if (readByte(s) == '\0') {
                 return nullptr;
             }
         }
@@ -998,11 +1012,6 @@ int APS5_VABI _Getfld_nid_postfix() {
 }
 
 int APS5_VABI _Getfloat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Getgloballocale_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1131,11 +1140,6 @@ int APS5_VABI _Makestab_nid_postfix() {
 }
 
 int APS5_VABI _Makewct_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Mbtowc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
