@@ -2,7 +2,6 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <atomic>
-#include <cerrno>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -29,12 +28,9 @@ int APS5_VABI sceNpSnsYouTubeDialogOpen(const void* param) {
         if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
         if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
         std::uint8_t probe = 0;
-        const int savedErrno = errno;
         if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) {
-            errno = savedErrno;
             return COMMON_DIALOG_ERROR_ARG_NULL;
         }
-        errno = savedErrno;
     } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return 0;
@@ -54,9 +50,7 @@ int APS5_VABI sceNpSnsYouTubeDialogGetResult(void* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
-    errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
