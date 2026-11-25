@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FmaskTexture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -23,6 +25,14 @@
 #else
 #include <sys/mman.h>
 #endif
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -308,7 +318,79 @@ struct FlushProbe {
     std::uint32_t calls = 0;
 };
 
-void RunStandalone(AgcDriver::VulkanDevice& device, bool tiled, bool watched, bool registration, std::uint32_t pipeXor) {
+void CheckStandaloneDescriptorChanges(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& image, const ShaderRecompiler::RecompileResult& original, const StandalonePlane& fmask, const StandalonePlane& cmask, bool registration) {
+    const auto savedInput = Input;
+    const std::vector<std::byte> savedFmask(fmask.data, fmask.data + fmask.bytes);
+    const std::vector<std::byte> savedCmask(cmask.data, cmask.data + cmask.bytes);
+    const auto key = [](const ShaderRecompiler::RecompileResult& shader) {
+        return ShaderResources::ContentKey(CompiledShader{ShaderRecompiler::ShaderStage::Compute, &shader, 0u}, false, true);
+    };
+    const auto originalKey = key(original);
+    const auto texture = [&](const std::array<std::uint32_t, 8>& descriptor) {
+        const auto component = [&](std::uint32_t index) {
+            const auto selector = (descriptor[3] >> (index * 3u)) & 7u;
+            return selector == 4u ? VK_COMPONENT_SWIZZLE_R : selector == 1u ? VK_COMPONENT_SWIZZLE_ONE : VK_COMPONENT_SWIZZLE_ZERO;
+        };
+        return StandaloneFmaskTexture_nid_no_patch(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), DecodeTextureResource(descriptor), {component(0u), component(1u), component(2u), component(3u)});
+    };
+    const auto originalTexture = texture(image);
+    Require(originalTexture->HasReuseLookup() && originalTexture->RefreshedPerUse() && originalTexture->ReuseLookupHolds(), "standalone fixture did not exercise its captured view's reuse callback");
+    const auto dispatch = [&](const std::array<std::uint32_t, 8>& descriptor, const ShaderRecompiler::RecompileResult& shader) {
+        const auto resource = DecodeTextureResource(descriptor);
+        const auto geometry = DescribeSurface(resource);
+        const auto& mip = geometry.mips.front();
+        const auto block = ThinBlockLayout(resource.tileMode, 1u);
+        const auto* equation = FindTextureSwizzleEquation(24u, 1u);
+        Require(equation != nullptr, "descriptor reuse fixture lacks its swizzle equation");
+        for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+            Input[lane * 4u] = lane == 0u ? resource.width - 1u : (lane * 79u) % resource.width;
+            Input[lane * 4u + 1u] = lane == 0u ? resource.height - 1u : (lane * 43u) % resource.height;
+        }
+        Output.fill(Sentinel);
+        Texture::TakeReuseLookupCounts();
+        device.Dispatch(shader, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        device.WaitIdle();
+        const auto lookups = Texture::TakeReuseLookupCounts();
+        Require(lookups.held == 0u && lookups.changed == 0u, "a standalone per-use texture unexpectedly entered the resource cache");
+        for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+            const auto x = Input[lane * 4u], y = Input[lane * 4u + 1u];
+            const auto tile = mip.tail ? 0u : (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0];
+            const auto offset = mip.tiledOffset + tile + (EquationOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), 0u) ^ resource.pipeBankXor);
+            Require(offset < savedFmask.size(), "descriptor reuse fixture exceeds its unchanged FMASK plane");
+            const auto expanded = Expanded(NarrowFormats[5], FmaskWord{std::to_integer<std::uint32_t>(savedFmask[offset]), 0u});
+            for (std::uint32_t component = 0u; component < 4u; ++component) {
+                const auto selector = (descriptor[3] >> (component * 3u)) & 7u;
+                const auto expected = selector == 4u ? expanded : selector == 1u ? 1u : 0u;
+                Require(Output[lane * 4u + component] == expected, "a changed standalone descriptor retained stale geometry or selectors");
+            }
+        }
+        Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto word) { return word == Sentinel; }), "descriptor reuse fixture overran its output");
+    };
+    dispatch(image, original);
+    const auto resource = DecodeTextureResource(image);
+    for (const auto mode : {0u, 1u, 2u, 3u}) {
+        auto changed = image;
+        const auto width = mode == 0u || mode == 3u ? resource.width / 2u : resource.width;
+        const auto height = mode == 1u || mode == 3u ? resource.height / 2u : resource.height;
+        changed[1] = (changed[1] & ~(3u << 30u)) | (((width - 1u) & 3u) << 30u);
+        changed[2] = ((width - 1u) >> 2u) | ((height - 1u) << 14u);
+        if (mode >= 2u) changed[3] = (changed[3] & ~0xfffu) | (4u << 3u) | (1u << 6u) | (4u << 9u);
+        const auto shader = Compile(device, Code, changed, registration);
+        Require(shader.variantId == original.variantId, "descriptor reuse fixture changed its shader artifact");
+        Require(key(shader) != originalKey, "resource content key ignored a changed standalone FMASK descriptor");
+        const auto changedTexture = texture(changed);
+        Require(changedTexture != originalTexture && changedTexture->View() != originalTexture->View(), "a changed standalone descriptor received the prior texture or view");
+        Require(changedTexture->HasReuseLookup() && changedTexture->RefreshedPerUse() && changedTexture->ReuseLookupHolds() && originalTexture->ReuseLookupHolds(), "a standalone callback did not retain its own unchanged descriptor");
+        dispatch(changed, shader);
+        dispatch(changed, shader);
+        dispatch(image, original);
+    }
+    Require(std::equal(savedFmask.begin(), savedFmask.end(), fmask.data) && std::equal(savedCmask.begin(), savedCmask.end(), cmask.data), "descriptor reuse fixture modified its source planes");
+    Input = savedInput;
+    std::cout << "standalone FMASK descriptor changes passed: width, height, selectors and combined views use distinct resource keys and textures; callbacks retain their own view; snapshots remain per-use; both source planes unchanged\n";
+}
+
+void RunStandalone(AgcDriver::VulkanDevice& device, bool tiled, bool watched, bool registration, std::uint32_t pipeXor, bool descriptorChanges = false) {
     const std::uint32_t width = tiled ? 1152u : 128u;
     const std::uint32_t height = tiled ? 576u : 64u;
     StandalonePlane fmask(2u * 1024u * 1024u, watched);
@@ -366,6 +448,7 @@ void RunStandalone(AgcDriver::VulkanDevice& device, bool tiled, bool watched, bo
         check();
         Require(recipe == nullptr, "standalone FMASK emitted a recipe without a two-plane proof");
     }
+    if (descriptorChanges) CheckStandaloneDescriptorChanges(device, image, program, fmask, cmask, registration);
     for (std::uint32_t y = 0; y < height; y += 8u) for (std::uint32_t x = 0; x < width; x += 8u) setCode(x, y, ((x / 8u + 3u * (y / 8u)) & 1u) ? 12u : 14u);
     setCode(Input[0], Input[1], 14u);
     const auto prepared = device.PrepareDispatch(program, {}, Threads, codeAddress);
@@ -428,7 +511,11 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         if (argc == 2) {
             const std::string mode = argv[1];
-            Require(mode == "--standalone4-small" || mode == "--standalone4-tiled" || mode == "--standalone4-watched", "unknown FMASK test mode");
+            Require(mode == "--standalone4-small" || mode == "--standalone4-tiled" || mode == "--standalone4-watched" || mode == "--standalone4-descriptor-reuse", "unknown FMASK test mode");
+            if (mode == "--standalone4-descriptor-reuse") {
+                for (const bool registration : {false, true}) for (const auto pipeXor : {0u, 0xcf00u}) RunStandalone(*device, true, true, registration, pipeXor, true);
+                return 0;
+            }
             for (const bool registration : {false, true}) for (const auto pipeXor : {0u, 0xcf00u}) RunStandalone(*device, mode != "--standalone4-small", mode == "--standalone4-watched", registration, pipeXor);
             return 0;
         }

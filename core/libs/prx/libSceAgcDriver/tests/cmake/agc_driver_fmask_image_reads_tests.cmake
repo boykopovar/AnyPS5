@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    foreach(mode IN ITEMS small tiled watched)
+    foreach(mode IN ITEMS small tiled watched descriptor-reuse)
         add_test(NAME agc_driver_standalone_fmask_4_${mode} COMMAND agc_driver_fmask_image_reads_tests --standalone4-${mode})
         set_tests_properties(agc_driver_standalone_fmask_4_${mode} PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
