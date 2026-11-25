@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceVdecCore/include/Decoder.hpp"
 
 namespace {
 
@@ -29,14 +30,30 @@ bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
+void OnDecoderDeleted(void* decoder);
+
 struct MapState {
     std::mutex mutex;
     std::unordered_map<void*, std::uint32_t> counts;
+
+    MapState() {
+        VdecCoreSetDeleteCallback_nid_no_patch(OnDecoderDeleted);
+    }
+
+    ~MapState() {
+        VdecCoreSetDeleteCallback_nid_no_patch(nullptr);
+    }
 };
 
 MapState& State() {
     static MapState state;
     return state;
+}
+
+void OnDecoderDeleted(void* decoder) {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    state.counts.erase(decoder);
 }
 
 int CreateDecoderVariant(const VdecCoreConfigInfo* config, const VdecCoreMemoryInfo* memory, void** decoder) {

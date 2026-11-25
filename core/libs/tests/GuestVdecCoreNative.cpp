@@ -1,6 +1,7 @@
 #include "prx/libSceVdecCore.native/include/Api.hpp"
 #include "H264Fixture.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -119,6 +120,21 @@ void CheckMapMemory() {
     }
     Require(sceVdecCoreMapMemory(decoder, dummy.data(), dummy.size()) == MaxMapCount, "17th map call returns 0x80C00015");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete mapped decoder");
+
+    std::vector<void*> deletedHandles{decoder};
+    for (std::uint32_t attempt = 0; attempt < 16; ++attempt) {
+        void* next = nullptr;
+        Require(sceVdecCoreCreateDecoder(&config, nullptr, nullptr, &next) == 0 && next != nullptr, "create decoder after deletion");
+        for (std::uint32_t i = 0; i < 16; ++i) {
+            Require(sceVdecCoreMapMemory(next, dummy.data(), dummy.size()) == 0, "map within 16-block limit after deletion");
+        }
+        Require(sceVdecCoreMapMemory(next, dummy.data(), dummy.size()) == MaxMapCount, "17th map call after deletion returns 0x80C00015");
+        Require(sceVdecCoreDeleteDecoder(next) == 0, "delete subsequent mapped decoder");
+        if (std::find(deletedHandles.begin(), deletedHandles.end(), next) != deletedHandles.end()) {
+            break;
+        }
+        deletedHandles.push_back(next);
+    }
 }
 
 void CheckSetDecodeInputSvp() {

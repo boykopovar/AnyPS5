@@ -121,6 +121,8 @@ Decoders& State() {
     return decoders;
 }
 
+std::atomic<VdecCoreDeleteCallback> DeleteCallback{nullptr};
+
 std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
     const std::uint32_t remainder = value % alignment;
     return remainder == 0 ? value : value - remainder + alignment;
@@ -276,6 +278,10 @@ std::uint64_t PictureTime(std::int64_t decoded, std::int64_t last) {
 
 extern "C" {
 
+void VdecCoreSetDeleteCallback_nid_no_patch(VdecCoreDeleteCallback callback) {
+    DeleteCallback.store(callback, std::memory_order_release);
+}
+
 std::uint64_t VdecCoreMaxAccessUnitSize_nid_no_patch() {
     return MaxAccessUnitSize;
 }
@@ -359,6 +365,9 @@ int APS5_VABI sceVdecCoreDeleteDecoder(void* decoder) {
         const auto found = Find(state, decoder, __func__);
         removed = std::move(found->second);
         state.live.erase(found);
+    }
+    if (const auto callback = DeleteCallback.load(std::memory_order_acquire); callback != nullptr) {
+        callback(decoder);
     }
     return 0;
 }
