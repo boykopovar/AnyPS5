@@ -1784,13 +1784,22 @@ static void TestBundleHitTestResult() {
 
     Require(WKBundleHitTestResultCopyNodeHandle(ref) == nullptr);
     Require(WKBundleHitTestResultCopyURLElementHandle(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(ref) == nullptr);
+    Require(WKBundleHitTestResultGetFrame(ref) == nullptr);
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == nullptr);
     auto defaultRect = WKBundleHitTestResultGetImageRect(ref);
     Require(defaultRect.origin.x == 0.0 && defaultRect.size.width == 0.0);
 
     auto node = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
     auto urlElem = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto testFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testTargetFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto testImage = NKWebKit::Make<NKWebKit::Image>(64, 48);
     hit->nodeHandle = node;
     hit->urlElementHandle = urlElem;
+    hit->frame = testFrame;
+    hit->targetFrame = testTargetFrame;
+    hit->image = testImage;
     hit->imageRect = NKWebKit::RectValue{{10.0, 20.0}, {30.0, 40.0}};
 
     auto* copiedNode = WKBundleHitTestResultCopyNodeHandle(ref);
@@ -1801,6 +1810,13 @@ static void TestBundleHitTestResult() {
     Require(copiedUrlElem == urlElem.Get());
     WKRelease(copiedUrlElem);
 
+    Require(WKBundleHitTestResultGetFrame(ref) == testFrame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(ref) == testTargetFrame.Get());
+
+    auto* copiedImage = WKBundleHitTestResultCopyImage(ref);
+    Require(copiedImage == testImage.Get());
+    WKRelease(copiedImage);
+
     auto rect = WKBundleHitTestResultGetImageRect(ref);
     Require(rect.origin.x == 10.0 && rect.origin.y == 20.0);
     Require(rect.size.width == 30.0 && rect.size.height == 40.0);
@@ -1809,6 +1825,9 @@ static void TestBundleHitTestResult() {
     auto* createdHit = WKBundleFrameCreateHitTestResult(frame.Get(), NKWebKit::PointValue{15.0, 25.0});
     Require(createdHit != nullptr);
     Require(WKGetTypeID(createdHit) == WKBundleHitTestResultGetTypeID());
+    Require(WKBundleHitTestResultGetFrame(createdHit) == frame.Get());
+    Require(WKBundleHitTestResultGetTargetFrame(createdHit) == nullptr);
+    Require(WKBundleHitTestResultCopyImage(createdHit) == nullptr);
     auto* hitNode = WKBundleHitTestResultCopyNodeHandle(createdHit);
     Require(hitNode != nullptr);
     auto* hitFrame = WKBundleNodeHandleCopyDocumentFrame(hitNode);
@@ -1879,6 +1898,54 @@ static void TestBundleHitTestResult() {
     threw = false;
     try {
         WKBundleHitTestResultMediaIsInFullscreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultCopyImage(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetFrame(frame.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleHitTestResultGetTargetFrame(frame.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -3385,6 +3452,100 @@ static void TestContext() {
     WKRelease(pathStr);
 }
 
+static void TestIconDatabase() {
+    Require(WKIconDatabaseGetTypeID() != 0);
+
+    const auto* context = WKContextCreate();
+    Require(context != nullptr);
+
+    const auto* iconDb = WKContextGetIconDatabase(context);
+    Require(iconDb != nullptr);
+    Require(WKContextGetIconDatabase(context) == iconDb);
+    Require(WKGetTypeID(iconDb) == WKIconDatabaseGetTypeID());
+
+    auto* pathStr = WKStringCreateWithUTF8CString("/app0/icons");
+    WKContextSetIconDatabasePath(context, pathStr);
+    WKRelease(pathStr);
+    WKContextSetIconDatabasePath(context, nullptr);
+
+    WKIconDatabaseCheckIntegrityBeforeOpening(iconDb);
+    WKIconDatabaseEnableDatabaseCleanup(iconDb);
+    WKIconDatabaseClose(iconDb);
+
+    int dummyClient = 123;
+    WKIconDatabaseSetIconDatabaseClient(iconDb, &dummyClient);
+    WKIconDatabaseSetIconDatabaseClient(iconDb, nullptr);
+
+    auto* pageURL = WKURLCreateWithUTF8CString("https://example.com/home");
+    auto* iconURL = WKURLCreateWithUTF8CString("https://example.com/icon.png");
+
+    Require(WKIconDatabaseCopyIconURLForPageURL(iconDb, pageURL) == nullptr);
+    Require(WKIconDatabaseCopyIconDataForPageURL(iconDb, pageURL) == nullptr);
+
+    WKIconDatabaseSetIconURLForPageURL(iconDb, iconURL, pageURL);
+    auto* retrievedIconURL = WKIconDatabaseCopyIconURLForPageURL(iconDb, pageURL);
+    Require(retrievedIconURL != nullptr);
+    Require(WKURLIsEqual(retrievedIconURL, iconURL));
+    WKRelease(retrievedIconURL);
+
+    const unsigned char bytes[] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    auto* iconData = WKDataCreate(bytes, sizeof(bytes));
+    WKIconDatabaseSetIconDataForIconURL(iconDb, iconData, iconURL);
+
+    auto* retrievedData = WKIconDatabaseCopyIconDataForPageURL(iconDb, pageURL);
+    Require(retrievedData != nullptr);
+    Require(WKDataGetSize(retrievedData) == sizeof(bytes));
+    Require(std::memcmp(WKDataGetBytes(retrievedData), bytes, sizeof(bytes)) == 0);
+    WKRelease(retrievedData);
+
+    WKIconDatabaseRetainIconForURL(iconDb, pageURL);
+    WKIconDatabaseRetainIconForURL(iconDb, pageURL);
+    WKIconDatabaseReleaseIconForURL(iconDb, pageURL);
+    WKIconDatabaseReleaseIconForURL(iconDb, pageURL);
+    WKIconDatabaseReleaseIconForURL(iconDb, pageURL);
+
+    WKIconDatabaseRemoveAllIcons(iconDb);
+    Require(WKIconDatabaseCopyIconURLForPageURL(iconDb, pageURL) == nullptr);
+    Require(WKIconDatabaseCopyIconDataForPageURL(iconDb, pageURL) == nullptr);
+
+    auto checkThrows = [](auto&& fn) {
+        bool threw = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    };
+
+    checkThrows([&] { WKContextGetIconDatabase(nullptr); });
+    checkThrows([&] { WKContextSetIconDatabasePath(nullptr, nullptr); });
+    checkThrows([&] { WKIconDatabaseCheckIntegrityBeforeOpening(nullptr); });
+    checkThrows([&] { WKIconDatabaseClose(nullptr); });
+    checkThrows([&] { WKIconDatabaseEnableDatabaseCleanup(nullptr); });
+    checkThrows([&] { WKIconDatabaseSetIconDatabaseClient(nullptr, nullptr); });
+    checkThrows([&] { WKIconDatabaseRetainIconForURL(nullptr, pageURL); });
+    checkThrows([&] { WKIconDatabaseRetainIconForURL(iconDb, nullptr); });
+    checkThrows([&] { WKIconDatabaseReleaseIconForURL(nullptr, pageURL); });
+    checkThrows([&] { WKIconDatabaseReleaseIconForURL(iconDb, nullptr); });
+    checkThrows([&] { WKIconDatabaseCopyIconURLForPageURL(nullptr, pageURL); });
+    checkThrows([&] { WKIconDatabaseCopyIconURLForPageURL(iconDb, nullptr); });
+    checkThrows([&] { WKIconDatabaseSetIconURLForPageURL(nullptr, iconURL, pageURL); });
+    checkThrows([&] { WKIconDatabaseSetIconURLForPageURL(iconDb, nullptr, pageURL); });
+    checkThrows([&] { WKIconDatabaseSetIconURLForPageURL(iconDb, iconURL, nullptr); });
+    checkThrows([&] { WKIconDatabaseSetIconDataForIconURL(nullptr, iconData, iconURL); });
+    checkThrows([&] { WKIconDatabaseSetIconDataForIconURL(iconDb, nullptr, iconURL); });
+    checkThrows([&] { WKIconDatabaseSetIconDataForIconURL(iconDb, iconData, nullptr); });
+    checkThrows([&] { WKIconDatabaseCopyIconDataForPageURL(nullptr, pageURL); });
+    checkThrows([&] { WKIconDatabaseCopyIconDataForPageURL(iconDb, nullptr); });
+    checkThrows([&] { WKIconDatabaseRemoveAllIcons(nullptr); });
+
+    WKRelease(iconData);
+    WKRelease(iconURL);
+    WKRelease(pageURL);
+    WKRelease(context);
+}
+
 static void TestSerializedScriptValue() {
     Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
@@ -3943,6 +4104,7 @@ int main() {
 
     TestInspector();
     TestContext();
+    TestIconDatabase();
     TestSessionState();
     TestSerializedScriptValue();
     TestRunLoop();

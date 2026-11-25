@@ -138,6 +138,15 @@ class SplitTextTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_long_bracket_delimiters(self):
+        equals = "=" * 40
+        for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
+            with self.subTest(prefix=prefix):
+                text = f"set(A {prefix}[{equals}[x y]{equals}] tail)"
+                arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
+                self.assertEqual(arguments, expected)
+                self.assertEqual(end, len(text))
+
     def test_bracket_comment_ends_at_its_closing_bracket(self):
         text = "set(A #[[c]]x)\n"
         arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
@@ -390,6 +399,30 @@ class SubjectNameTests(unittest.TestCase):
         self.assertEqual(facts.subject_tests, set())
         self.assertEqual(facts.dynamic, {'Y'})
         self.assertEqual(facts.test_patterns, {'t${Y}'})
+
+
+class CommandErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def tool(self, command):
+        return subprocess.run([sys.executable, str(TOOL), command], cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_outside_a_git_checkout_is_a_controlled_error(self):
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a git repository", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_registration_file_is_a_controlled_error(self):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.root, check=True, capture_output=True)
+        result = self.tool("refactor")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(LISTS, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

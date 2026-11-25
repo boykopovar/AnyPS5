@@ -67,6 +67,24 @@ void TestExec() {
                    "_execvpe of a missing program did not fail with ENOENT");
 }
 
+void TestSocketClose() {
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(-1), GuestEbadf,
+                   "__sys_socketclose(-1) did not fail with EBADF");
+    RequireFailure(__sys_socketclose_nid_postfix(-1), GuestEbadf,
+                   "libkernel_sys __sys_socketclose(-1) did not fail with EBADF");
+
+    int pipeFds[2]{-1, -1};
+    Require(pipe_nid_postfix(pipeFds) == 0, "pipe creation failed");
+    Require(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]) == 0,
+            "__sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_disambig1_nid_postfix(pipeFds[0]), GuestEbadf,
+                   "__sys_socketclose closed descriptor twice");
+    Require(__sys_socketclose_nid_postfix(pipeFds[1]) == 0,
+            "libkernel_sys __sys_socketclose failed to close descriptor");
+    RequireFailure(__sys_socketclose_nid_postfix(pipeFds[1]), GuestEbadf,
+                   "libkernel_sys __sys_socketclose closed descriptor twice");
+}
+
 void TestDevelopmentMode() {
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == 0, "__sys_is_development_mode did not report development mode off");
     Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == __sys_is_development_mode_nid_postfix(),
@@ -112,6 +130,7 @@ void TestWait4() {
 int main() {
     TestDup2();
     TestExec();
+    TestSocketClose();
     TestDevelopmentMode();
     TestNamedObject();
     TestWait4();
