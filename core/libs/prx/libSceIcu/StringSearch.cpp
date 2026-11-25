@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/BreakIterator.hpp"
+#include "prx/libSceIcu/CollatorRegistry.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libc/include/General.hpp"
@@ -45,11 +46,14 @@ struct SearchState {
     std::mutex mutex;
     UStringSearch* search{};
     void* breakIterator{};
+    void* collator{};
+    void* collatorHandle{};
     std::vector<char16_t> pattern;
     std::vector<char16_t> text;
     std::vector<std::vector<char16_t>> retainedTexts;
 
     ~SearchState() {
+        Icu::CollatorRegistry::UnregisterBorrowed(collatorHandle);
         Icu::StringSearchHost::Close(search);
         Icu::BreakIterator::CloseClone(breakIterator);
     }
@@ -154,7 +158,14 @@ UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search
     if (search == nullptr) return nullptr;
     const auto state = Find(search, __func__);
     const std::lock_guard lock(state->mutex);
-    return static_cast<UCollator*>(Icu::StringSearchHost::GetCollator(state->search));
+    auto* collator = Icu::StringSearchHost::GetCollator(state->search);
+    if (collator != state->collator || !state->collatorHandle) {
+        void* handle = Icu::CollatorRegistry::RegisterBorrowed(collator);
+        Icu::CollatorRegistry::UnregisterBorrowed(state->collatorHandle);
+        state->collator = collator;
+        state->collatorHandle = handle;
+    }
+    return static_cast<UCollator*>(state->collatorHandle);
 }
 
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search) {

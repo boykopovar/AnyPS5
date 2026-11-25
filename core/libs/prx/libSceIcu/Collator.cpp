@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/CollatorHost.hpp"
+#include "prx/libSceIcu/CollatorRegistry.hpp"
 #include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
@@ -24,8 +25,12 @@ constexpr std::size_t LocaleBytes = 4096;
 constexpr std::size_t PageBytes = 4096;
 
 struct Registry {
+    struct Entry {
+        void* native;
+        bool owned;
+    };
     std::shared_mutex mutex;
-    std::unordered_map<const void*, void*> collators;
+    std::unordered_map<const void*, Entry> collators;
     std::uintptr_t nextHandle{1};
 };
 
@@ -83,23 +88,30 @@ RegisteredCollator Registered(const UCollator* coll, const char* caller) {
     std::shared_lock lock(registry.mutex);
     const auto found = registry.collators.find(coll);
     if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
-    return {std::move(lock), found->second};
+    return {std::move(lock), found->second.native};
+}
+
+void* AddHandle(Registry& registry, void* native, bool owned) {
+    if (registry.nextHandle > std::numeric_limits<std::uintptr_t>::max() - 2) NotImplemented_nid_no_patch(__func__);
+    void* key = reinterpret_cast<void*>(registry.nextHandle);
+    registry.nextHandle += 2;
+    registry.collators.emplace(key, Registry::Entry{native, owned});
+    return key;
 }
 
 void* Register(void* collator) {
     auto& registry = Collators();
     const std::unique_lock lock(registry.mutex);
-    if (registry.nextHandle > std::numeric_limits<std::uintptr_t>::max() - 2) NotImplemented_nid_no_patch(__func__);
-    void* key = reinterpret_cast<void*>(registry.nextHandle);
-    registry.nextHandle += 2;
-    registry.collators.emplace(key, collator);
-    return key;
+    return AddHandle(registry, collator, true);
 }
 
 bool Unregister(const void* collator) {
     auto& registry = Collators();
     const std::unique_lock lock(registry.mutex);
-    return registry.collators.erase(collator) != 0;
+    const auto found = registry.collators.find(collator);
+    if (found == registry.collators.end() || !found->second.owned) return false;
+    registry.collators.erase(found);
+    return true;
 }
 
 void CloseRegistered(void* collator, const char* caller) {
@@ -108,8 +120,8 @@ void CloseRegistered(void* collator, const char* caller) {
     {
         const std::unique_lock lock(registry.mutex);
         const auto found = registry.collators.find(collator);
-        if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
-        native = found->second;
+        if (found == registry.collators.end() || !found->second.owned) NotImplemented_nid_no_patch(caller);
+        native = found->second.native;
         registry.collators.erase(found);
     }
     Icu::CollatorHost::Close(native);
@@ -168,6 +180,23 @@ Operand<TUnit> CopyOperand(const TUnit* text, std::int32_t length, const char* c
 }
 
 } // namespace
+
+namespace Icu::CollatorRegistry {
+
+void* RegisterBorrowed(void* collator) {
+    auto& registry = Collators();
+    const std::unique_lock lock(registry.mutex);
+    return AddHandle(registry, collator, false);
+}
+
+void UnregisterBorrowed(const void* collator) {
+    auto& registry = Collators();
+    const std::unique_lock lock(registry.mutex);
+    const auto found = registry.collators.find(collator);
+    if (found != registry.collators.end() && !found->second.owned) registry.collators.erase(found);
+}
+
+}
 
 extern "C" {
 
