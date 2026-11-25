@@ -1,10 +1,12 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
@@ -16,6 +18,7 @@
 static constexpr int SCE_OK = 0;
 
 static constexpr int POSIX_EDEADLK = 11;
+static constexpr int POSIX_EAGAIN = 35;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
 static const PthreadMutex AdaptiveInitializer = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
@@ -125,6 +128,40 @@ static void CheckOwnershipAndRelativeLock() {
     Require(Throws([] { pthread_mutex_isowned_np_nid_postfix(nullptr); }));
 }
 
+static void CheckRecursiveOverflow() {
+    constexpr int maximum = std::numeric_limits<int>::max();
+    PthreadMutexattr attr = nullptr;
+    PthreadMutex mutex = nullptr;
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, 2) == SCE_OK);
+    Require(scePthreadMutexInit(&mutex, &attr, "recursive") == SCE_OK);
+    Require(scePthreadMutexLock(&mutex) == SCE_OK);
+    Require(scePthreadMutexTrylock(&mutex) == SCE_OK && mutex->_count == 2);
+    Require(scePthreadMutexUnlock(&mutex) == SCE_OK && mutex->_count == 1);
+    mutex->_count = maximum;
+    const KernelTimespec past{};
+    Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(scePthreadMutexTrylock(&mutex) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(scePthreadMutexTimedlock(&mutex, 1000) == SCE_KERNEL_ERROR_EAGAIN);
+    Require(pthread_mutex_lock_nid_postfix(&mutex) == POSIX_EAGAIN);
+    Require(pthread_mutex_trylock_nid_postfix(&mutex) == POSIX_EAGAIN);
+    Require(pthread_mutex_timedlock_nid_postfix(&mutex, &past) == POSIX_EAGAIN);
+    const KernelTimespec invalid{0, 1000000000};
+    Require(pthread_mutex_timedlock_nid_postfix(&mutex, &invalid) == POSIX_EAGAIN);
+    GuardPage guard;
+    Require(pthread_mutex_timedlock_nid_postfix(&mutex, static_cast<const KernelTimespec*>(guard.Unreadable())) == POSIX_EAGAIN);
+    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EAGAIN);
+    Require(mutex->_count == maximum && pthread_mutex_isowned_np_nid_postfix(&mutex) == 1);
+    mutex->_count = maximum - 1;
+    Require(scePthreadMutexLock(&mutex) == SCE_OK && mutex->_count == maximum);
+    Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
+    mutex->_count = 1;
+    Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
+    Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 0);
+    Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+}
+
 static void CheckLoops(PthreadMutexattr* attr) {
     PthreadMutex mutex = nullptr;
     int count = -1;
@@ -209,6 +246,7 @@ int main() {
     Require(scePthreadMutexInit(&mutex, &attr, "attr") == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
     CheckLoops(&attr);
+    CheckRecursiveOverflow();
     CheckOwnershipAndRelativeLock();
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
 }

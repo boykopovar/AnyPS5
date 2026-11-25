@@ -99,7 +99,7 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
         throw std::runtime_error("Mutex is already owned by the current thread");
     }
     if (owned && mutex->_count == std::numeric_limits<int>::max())
-        throw std::overflow_error("Recursive mutex lock count overflow");
+        return SCE_KERNEL_ERROR_EAGAIN;
     const auto take = [&](auto& native) {
         return (!tryOnly && !owned && spinAcquire(mutex, native)) || acquire(native);
     };

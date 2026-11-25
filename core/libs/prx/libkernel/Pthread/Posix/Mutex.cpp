@@ -98,7 +98,8 @@ int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex) {
 int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime) {
     if (!abstime) return pthread_mutex_lock_nid_postfix(mutex);
     _initializeStatic(mutex, __func__);
-    if (scePthreadMutexTrylock(mutex) == 0) return 0;
+    const int tried = scePthreadMutexTrylock(mutex);
+    if (tried == 0 || tried == SCE_KERNEL_ERROR_EAGAIN) return PosixThread::ToErrno(tried);
     KernelUseconds usec = 0;
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexTimedlock(mutex, usec));
