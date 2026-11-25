@@ -63,6 +63,16 @@ void Reject(const std::function<void(Fixture&)>& change, const std::string_view 
 int main() try {
     Fixture fixture;
     Require(fixture.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x200, 0xb00}});
+    {
+        Fixture splitTable;
+        splitTable.Headers = {
+            {1, 7, 0, 0, 0, 0x1008, 0x1008, 1},
+            {1, 7, 0x1800, 0x1008, 0x1008, 0x800, 0x1ff8, 1}};
+        splitTable.SetWords({0x200, 1});
+        Io::WriteU64(splitTable.Bytes, 0x1008, 3);
+        Io::WriteU64(splitTable.Bytes, 0x1800, 1);
+        Require(splitTable.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x200, 0xb00}});
+    }
     for (unsigned bit = 1; bit < 64; ++bit) {
         fixture.SetWords({0x200, 1ull | (1ull << bit), 1ull | (1ull << 63)});
         const auto result = fixture.Read();
@@ -110,6 +120,16 @@ int main() try {
     Reject([](auto& input) { input.Tags[0].Value = 0x2000; }, "table exceeds file-backed");
     Reject([](auto& input) { input.Tags[0].Value = 0x1ffc; }, "table exceeds file-backed");
     Reject([](auto& input) { input.Tags[1].Value = 0xfffffffffffffff8ull; }, "table exceeds file-backed");
+    Reject([](auto& input) {
+        input.Headers = {
+            {1, 7, 0, 0, 0, 0x1004, 0x1004, 1},
+            {1, 7, 0x1800, 0x1004, 0x1004, 0x800, 0x1ffc, 1}};
+        input.SetWords({0x200});
+    }, "table exceeds file-backed");
+    Reject([](auto& input) {
+        input.Tags[0].Value = std::numeric_limits<std::uint64_t>::max() - 7;
+        input.Tags[1].Value = 16;
+    }, "table exceeds file-backed");
     Reject([](auto& input) { input.Headers[0].Offset = 0xffffffffffffffffull; }, "Invalid RELR load");
     Reject([](auto& input) { input.Headers[0].MemorySize = 0x1000; }, "Invalid RELR load");
     Reject([](auto& input) { input.Headers.push_back(input.Headers.front()); }, "Ambiguous RELR load");
