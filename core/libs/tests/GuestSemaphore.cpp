@@ -9,6 +9,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 
@@ -25,6 +31,43 @@ static void* APS5_VABI Wait(void* arg) {
     KernelUseconds timeout = 5000000;
     waiter.result = sceKernelWaitSema(waiter.sem, 1, waiter.timed ? &timeout : nullptr);
     return nullptr;
+}
+
+static KernelUseconds* ReadOnlyTimeout(KernelUseconds value) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    auto* page = static_cast<KernelUseconds*>(VirtualAlloc(nullptr, info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    *page = value;
+    DWORD previous = 0;
+    Require(VirtualProtect(page, info.dwPageSize, PAGE_READONLY, &previous) != 0);
+#else
+    const auto size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<KernelUseconds*>(mapped);
+    *page = value;
+    Require(mprotect(mapped, size, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+static void RequireUnusableTimeout() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "timeout pointer", 0, 1, 3, nullptr) == SCE_OK);
+    KernelUseconds* const readOnly = ReadOnlyTimeout(0);
+    for (auto* timeout : {reinterpret_cast<KernelUseconds*>(1), readOnly}) {
+        Require(sceKernelWaitSema(sem, 1, timeout) == SCE_KERNEL_ERROR_EFAULT);
+        Require(sceKernelWaitSema(sem, 2, timeout) == SCE_KERNEL_ERROR_EFAULT);
+        Require(sceKernelWaitSema(sem, 4, timeout) == SCE_KERNEL_ERROR_EINVAL);
+    }
+    Require(*readOnly == 0);
+    Require(sceKernelPollSema(sem, 1) == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+    KernelUseconds remaining = 1000;
+    Require(sceKernelWaitSema(sem, 1, &remaining) == SCE_KERNEL_ERROR_ETIMEDOUT && remaining == 0);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
 static void RequireInvalidArguments() {
@@ -178,4 +221,5 @@ int main() {
 
     RequireInvalidArguments();
     RequireZeroTimeout();
+    RequireUnusableTimeout();
 }

@@ -104,6 +104,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  if (need <= 0 || need > sem->maxCount) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
+ KernelUseconds timeout = 0;
+ if (time != nullptr && (!GuestCopyIn_nid_no_patch(&timeout, time, sizeof(timeout)) || !GuestWritable_nid_no_patch(time, sizeof(*time)))) {
+  return SCE_KERNEL_ERROR_EFAULT;
+ }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
  const void* caller = __builtin_return_address(0);
@@ -120,7 +124,7 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
   traceSyncWaitEnd(KERNEL_SEMA_OK);
   return KERNEL_SEMA_OK;
  }
- if (time != nullptr && *time == 0) {
+ if (time != nullptr && timeout == 0) {
   if (KernelTraceWaitEnabled()) KernelTraceWait_nid_postfix("sema", caller, 0, true);
   traceSyncWaitEnd(SCE_KERNEL_ERROR_ETIMEDOUT);
   return SCE_KERNEL_ERROR_ETIMEDOUT;
@@ -156,9 +160,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  if (time == nullptr) {
   sem->condition.Wait(lock, released);
  } else {
-  const std::uint64_t deadline = TimedWait::DeadlineNanos(*time);
+  const std::uint64_t deadline = TimedWait::DeadlineNanos(timeout);
   acquired = sem->condition.WaitUntil(lock, deadline, released);
-  *time = static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline));
+  const auto remaining = static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline));
+  if (!GuestCopyOut_nid_no_patch(time, &remaining, sizeof(remaining))) throw std::runtime_error("sceKernelWaitSema: the timeout became unwritable during the wait");
  }
  traceWait(!acquired);
  if (waiter.released) {
