@@ -598,6 +598,7 @@ void PadInput::dispatchPadChords(DisplayWindow& window) {
 void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
     if (requests.reloadInputMapping) reloadInputMapping();
     if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
+    if (requests.toggleBorderless && windowFocused) window.ToggleBorderless();
     if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
     if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
     if (requests.showPadStatus && windowFocused) {
