@@ -150,9 +150,13 @@ def main():
         result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--windows-fixed-base", "0x7fffffff0000", str(source), str(output)], capture_output=True, text=True, timeout=5)
         assert result.returncode == 2 and "user address space" in result.stderr and not output.exists(), result
 
-        size = image_end(convert("user-limit-size", fixture(), 0x400000)) - 0x3f0000
+        unaligned = fixture()
+        size = image_end(convert("user-limit-size", unaligned, 0x400000)) - 0x3f0000
+        if size % 0x10000 == 0:
+            struct.pack_into("<Q", unaligned, 64 + 40, struct.unpack_from("<Q", unaligned, 64 + 40)[0] + 0x1000)
+            size = image_end(convert("user-limit-unaligned-size", unaligned, 0x400000)) - 0x3f0000
         assert size % 0x10000, hex(size)
-        image = fixture()
+        image = bytearray(unaligned)
         struct.pack_into("<Q", image, 64 + 40, struct.unpack_from("<Q", image, 64 + 40)[0] + 0x10000 - size % 0x10000)
         padded = image_end(convert("user-limit-padded-size", image, 0x400000)) - 0x3f0000
         assert padded % 0x10000 == 0, hex(padded)
@@ -162,7 +166,7 @@ def main():
         assert 0x7fffffff0000 < base - 0x10000 + size <= 0x7ffffffff000, hex(base)
         source = work / "user-limit-top.elf"
         output = work / "user-limit-top.exe"
-        source.write_bytes(fixture())
+        source.write_bytes(unaligned)
         result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", "--windows-fixed-base", hex(base), str(source), str(output)], capture_output=True, text=True, timeout=5)
         assert result.returncode == 2 and "user address space" in result.stderr and not output.exists(), (hex(base), result)
     print("Windows fixed base: default, absolute GOT, 64-bit base, TLS, guest/native/lazy imports, collision, bounds and user address limit passed")

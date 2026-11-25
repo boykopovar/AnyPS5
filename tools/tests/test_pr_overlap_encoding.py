@@ -42,7 +42,7 @@ def command_output(stdout, stderr="", returncode=0):
             f"sys.exit({returncode})\n")
 
     def run(command, **kwargs):
-        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+        if command[0] == "git" and command[-2:] == ["rev-parse", "--show-toplevel"]:
             root = (str(Path.cwd()) + "\n").encode("utf-8")
             return subprocess.CompletedProcess(command, 0, stdout=root, stderr=b"")
         return RUN([sys.executable, "-c", code], **kwargs)

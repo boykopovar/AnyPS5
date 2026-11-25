@@ -160,9 +160,12 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
         stream->SetError();
         return -1;
     }
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     if (!stream->OpenForReading()) return -1;
-    if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+    errno = previousError;
     const char16_t low = value >= 0xd800 && value < 0xdc00 ? stream->TakeLowSurrogate() : 0;
     const std::uint32_t code = low != 0 ? 0x10000 + ((static_cast<std::uint32_t>(value) & 0x3ff) << 10) + (low & 0x3ffu) : static_cast<std::uint32_t>(value);
     unsigned char bytes[4];
@@ -184,7 +187,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     }
     const std::size_t total = count;
     int result = 0;
-    while (count != 0 && result != -1) result = std::ungetc(bytes[--count], native);
+    while (count != 0 && result != -1) result = stream->PushBack(bytes[--count]);
     stream->SyncStatus();
     if (result == -1) {
         if (low != 0 && count + 1 == total) stream->SetLowSurrogate(low);
@@ -282,10 +285,15 @@ int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
-    auto* native = GetNativeStream(stream);
+    static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
-    if (value != EOF && !stream->SwitchToReading()) return -1;
-    const int result = std::ungetc(value, native);
+    if (value != EOF) {
+        const int previousError = errno;
+        errno = 0;
+        if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+        errno = previousError;
+    }
+    const int result = stream->PushBack(value);
     stream->SyncStatus();
     return result;
 }
@@ -350,6 +358,7 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
+    if (native != _IONBF && (size & 0x80000000u) != 0) return -1;
     if (native != _IONBF && size == 0) {
         buffer = nullptr;
         size = BUFSIZ;
@@ -359,6 +368,10 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
+    if (native != _IONBF) {
+        if (size > 0x7FFFFFFFu) throw std::length_error("setvbuf: buffer size above the host C library's limit");
+        if (size < 2) size = 2;
+    }
     ::_lock_file(handle);
     const int result = std::setvbuf(handle, buffer, native, size);
     if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;

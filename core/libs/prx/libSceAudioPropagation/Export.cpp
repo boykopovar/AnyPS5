@@ -540,9 +540,20 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     return 0;
 }
 
+std::int32_t APS5_VABI sceAudioPropagationSourceQueryAudioPaths(AudioPropagationHandle source, std::uint64_t* paths, std::size_t size) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+    if (!paths) return ErrorNullPointer;
+    static_cast<void>(size);
+    return 0;
+}
+
 std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
+    if (state.objects.find(path) == state.objects.end()) return ErrorInvalidHandle;
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
