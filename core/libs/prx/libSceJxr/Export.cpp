@@ -31,7 +31,6 @@
 #include "src/EncoderMetadata.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -77,13 +76,9 @@ bool CopyGuestRange(std::uintptr_t destBase, std::uintptr_t sourceBase, std::siz
     std::size_t offset = 0;
     while (offset < size) {
         const std::size_t batch = std::min(size - offset, chunk.size());
-        const int copyInErrno = errno;
         const bool inOk = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(sourceBase + offset), batch);
-        errno = copyInErrno;
         if (!inOk) return false;
-        const int copyOutErrno = errno;
         const bool outOk = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destBase + offset), chunk.data(), batch);
-        errno = copyOutErrno;
         if (!outOk) return false;
         offset += batch;
     }
@@ -177,9 +172,7 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
     if (!stream) APS5_INVALID_ARG_EX;
     std::array<std::uintptr_t, 4> state{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return state[MemorySize] <= state[MemoryPosition];
 }
@@ -187,14 +180,10 @@ std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
 std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t* position) {
     if (!stream || !position) APS5_INVALID_ARG_EX;
     std::uintptr_t local = 0;
-    const int readErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(&local, &stream->state[MemoryPosition], sizeof(local));
-    errno = readErrno;
     if (!read) APS5_INVALID_ARG_EX;
     const std::size_t guestPosition = local;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(position, &guestPosition, sizeof(guestPosition));
-    errno = savedErrno;
     if (!copied) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
@@ -498,9 +487,7 @@ std::int64_t APS5_VABI PKImageEncode_WriteSource_nid_postfix(void* encoder, void
 std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
     std::array<std::uintptr_t, 4> state{};
-    const int readErrno = errno;
     const bool readState = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
-    errno = readErrno;
     if (!readState) APS5_INVALID_ARG_EX;
     if (state[MemorySize] < state[MemoryPosition]) return WmpErrSuccess;
     if (state[MemoryPosition] + size < state[MemoryPosition]) return WmpErrBufferOverflow;
@@ -511,9 +498,7 @@ std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buff
         if (!CopyGuestRange(reinterpret_cast<std::uintptr_t>(buffer), state[MemoryBuffer] + state[MemoryPosition], size)) APS5_INVALID_ARG_EX;
     }
     const std::uintptr_t nextPosition = state[MemoryPosition] + size;
-    const int writeErrno = errno;
     const bool updated = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &nextPosition, sizeof(nextPosition));
-    errno = writeErrno;
     if (!updated) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
@@ -521,9 +506,7 @@ std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buff
 std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t position) {
     if (!stream) APS5_INVALID_ARG_EX;
     const std::uintptr_t value = position;
-    const int savedErrno = errno;
     const bool written = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &value, sizeof(value));
-    errno = savedErrno;
     if (!written) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
@@ -546,9 +529,7 @@ std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
     std::array<std::uintptr_t, 4> state{};
-    const int readErrno = errno;
     const bool readState = GuestCopyIn_nid_no_patch(&state, &stream->state, sizeof(state));
-    errno = readErrno;
     if (!readState) APS5_INVALID_ARG_EX;
     if (state[MemoryPosition] + size < state[MemoryPosition] || state[MemorySize] < state[MemoryPosition] + size) return WmpErrBufferOverflow;
     if (size != 0) {
@@ -557,9 +538,7 @@ std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const voi
         if (!CopyGuestRange(state[MemoryBuffer] + state[MemoryPosition], reinterpret_cast<std::uintptr_t>(buffer), size)) APS5_INVALID_ARG_EX;
     }
     const std::uintptr_t nextPosition = state[MemoryPosition] + size;
-    const int writeErrno = errno;
     const bool updated = GuestCopyOut_nid_no_patch(&stream->state[MemoryPosition], &nextPosition, sizeof(nextPosition));
-    errno = writeErrno;
     if (!updated) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
