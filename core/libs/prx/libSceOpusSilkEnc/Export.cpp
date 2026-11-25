@@ -56,6 +56,7 @@ constexpr std::uint32_t requestErrorOffset = 0x07u;
 constexpr std::uint32_t priorityErrorOffset = 0x14u;
 constexpr std::uint32_t lowestPriority = 20u;
 constexpr std::uint32_t highestPriority = 100u;
+constexpr std::uint32_t infiniteTimeout = 0xFFFFFFFFu;
 constexpr std::uint32_t firstRequest = 4000u;
 constexpr std::uint32_t requestCount = 32u;
 constexpr std::array<int, 4> otherRequests{-2, -1, 11002, 11003};
@@ -107,6 +108,18 @@ int priorityEncodeFloatError(const void* state, const void* samples, int frameSi
     if (samples == nullptr) return encoderError(codes.nullSamplesErrorOffset);
     if (frameSize == 0) return encoderError(codes.frameErrorOffset);
     if (!hasStateMarker(state)) return encoderError(codes.destroyStateErrorOffset);
+    return 0;
+}
+
+int priorityEncodeFloatCheck(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
+    if (const int result = priorityEncodeFloatError(state, samples, frameSize); result != 0) return result;
+    if (frameSize < 0 || static_cast<std::uint64_t>(frameSize) * guestStateWord(state, codes.stateChannelsOffset) * 4u > 0x800000u) {
+        return library.EncodeFloat(state, samples, frameSize, data, maxDataBytes);
+    }
+    if (data == nullptr) return encoderError(codes.nullDataErrorOffset);
+    if (maxDataBytes == 0) return encoderError(codes.sizeErrorOffset);
+    if (priority < lowestPriority || priority > highestPriority) return encoderError(priorityErrorOffset);
+    if (!acceptedPriorityFrame(guestStateWord(state, codes.stateRateOffset), static_cast<std::uint32_t>(frameSize))) return encoderError(codes.frameErrorOffset);
     return 0;
 }
 
@@ -168,28 +181,22 @@ int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* state, const std
 }
 
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriority(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
-    (void)data;
-    (void)maxDataBytes;
-    (void)priority;
-    if (const int result = priorityEncodeFloatError(state, samples, frameSize); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    if (const int result = priorityEncodeFloatCheck(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
+    return library.EncodeFloat(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeWithPriorityAndTimeout(OpusSilkEncoder* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority, std::uint32_t timeout, std::uint32_t* batchId) {
-    (void)timeout;
     (void)batchId;
     if (const int result = priorityEncodeError(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    if (timeout != infiniteTimeout) NotImplemented_nid_no_patch(__func__);
+    return library.Encode(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(OpusSilkEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority, std::uint32_t timeout, std::uint32_t* batchId) {
-    (void)data;
-    (void)maxDataBytes;
-    (void)priority;
-    (void)timeout;
     (void)batchId;
-    if (const int result = priorityEncodeFloatError(state, samples, frameSize); result != 0) return result;
-    NotImplemented_nid_no_patch(__func__);
+    if (const int result = priorityEncodeFloatCheck(state, samples, frameSize, data, maxDataBytes, priority); result != 0) return result;
+    if (timeout != infiniteTimeout) NotImplemented_nid_no_patch(__func__);
+    return library.EncodeFloat(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusSilkEncGetAjmContext(const OpusSilkEncoder* state, std::uint32_t* context) {

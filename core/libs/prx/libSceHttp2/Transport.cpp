@@ -9,6 +9,7 @@
 
 #include "Transport.hpp"
 #include "Cookies.hpp"
+#include "GuestAccess.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 
 #include "zlib.h"
@@ -43,6 +44,7 @@ using Clock = std::chrono::steady_clock;
 constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
 constexpr int InvalidValue = static_cast<int>(0x817B11FE);
+constexpr int NullPointer = static_cast<int>(0x817B1225);
 constexpr int ResponseUnavailable = static_cast<int>(0x817b1065);
 constexpr int ConnectionEnded = static_cast<int>(0x817b1064);
 constexpr int AlreadySent = static_cast<int>(0x817b1066);
@@ -1320,29 +1322,30 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
     if (state->networkResult) return ResponseUnavailable;
     Require(kind && length, "sceHttp2GetResponseContentLength: null output");
     if (!state->ready) return ResponseUnavailable;
+    if (!GuestWritable_nid_no_patch(kind, sizeof(*kind)) || !GuestWritable_nid_no_patch(length, sizeof(*length))) return NullPointer;
     const bool known = state->hasLength && (!state->GzipResponse() || (!state->settings.inflateGzip && ApplicationCompiledSdkVersion() >= 0x12500000));
-    *kind = known ? 0 : state->chunked ? 2 : 1;
-    *length = known ? state->contentLength : 0;
-    return 0;
+    const int outputKind = known ? 0 : state->chunked ? 2 : 1;
+    const std::uint64_t outputLength = known ? state->contentLength : 0;
+    return Http2Guest::Store(kind, outputKind) && Http2Guest::Store(length, outputLength) ? 0 : NullPointer;
 }
 
 int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
+    if (!GuestWritable_nid_no_patch(header, sizeof(*header)) || !GuestWritable_nid_no_patch(size, sizeof(*size))) return NullPointer;
     auto& block = state->version < 3 ? state->rawHeaders : state->allHeaders;
+    char* outputHeader = block.data();
+    std::size_t outputSize = block.size();
     if (state->settings.inflateGzip && state->settings.stripGzipHeaders && GzipEncoded(block)) {
         if (state->strippedSource != block) {
             state->strippedHeaders = WithoutGzipFields(block);
             state->strippedSource = block;
         }
-        *header = state->strippedHeaders.data();
-        *size = state->strippedHeaders.size();
-        return 0;
+        outputHeader = state->strippedHeaders.data();
+        outputSize = state->strippedHeaders.size();
     }
-    *header = block.data();
-    *size = block.size();
-    return 0;
+    return Http2Guest::Store(header, outputHeader) && Http2Guest::Store(size, outputSize) ? 0 : NullPointer;
 }
 
 int Request::TrailingHeaders(char** header, std::size_t* size) {
@@ -1350,9 +1353,10 @@ int Request::TrailingHeaders(char** header, std::size_t* size) {
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready && state->ended, "sceHttp2GetAllTrailingHeaders: null output or response unavailable");
     Require(!state->trailerHeaders.empty(), "sceHttp2GetAllTrailingHeaders: response has no trailers");
-    *header = state->trailerHeaders.data();
-    *size = state->trailerHeaders.size();
-    return 0;
+    if (!GuestWritable_nid_no_patch(header, sizeof(*header)) || !GuestWritable_nid_no_patch(size, sizeof(*size))) return NullPointer;
+    char* const outputHeader = state->trailerHeaders.data();
+    const std::size_t outputSize = state->trailerHeaders.size();
+    return Http2Guest::Store(header, outputHeader) && Http2Guest::Store(size, outputSize) ? 0 : NullPointer;
 }
 
 void Request::Cancel() { state->cancelled.store(true); }

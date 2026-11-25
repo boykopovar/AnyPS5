@@ -130,6 +130,11 @@ void* APS5_VABI FT_Get_ModuleForward_nid_no_patch(FreeType::GuestLibrary* librar
 }
 APS5_EXPORT("swrIPzOxcmM", FT_Get_ModuleForward_nid_no_patch);
 
+int APS5_VABI FT_Get_Multi_MasterForward_nid_no_patch(FreeType::GuestFaceRec* face, void* master) {
+    return FT_Get_Multi_Master_nid_postfix(face, master);
+}
+APS5_EXPORT("pORpGtdlfqQ", FT_Get_Multi_MasterForward_nid_no_patch);
+
 std::uint64_t APS5_VABI FT_Get_Next_CharForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint32_t* glyphIndex) {
     return FT_Get_Next_Char_nid_postfix(face, charcode, glyphIndex);
 }

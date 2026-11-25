@@ -2,6 +2,8 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
+#include <deque>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -1179,6 +1181,28 @@ std::vector<std::uint32_t> cachedSpecializeWords(const CompiledShaderArtifact& a
     return words;
 }
 
+void keepSpecializedWords(const SharedSpirv& spirv) {
+    static const std::uint64_t budget = [] {
+        const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
+        if (text == nullptr) return std::uint64_t{0};
+        char* end = nullptr;
+        const auto mib = std::strtoull(text, &end, 0);
+        if (end == text || *end != '\0') throw std::runtime_error("ShaderRecompiler: APS5_KEEP_SPECIALIZED_MIB must be a whole number of MiB");
+        return std::min<std::uint64_t>(mib, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
+    }();
+    if (budget == 0u || spirv.empty()) return;
+    static std::mutex mutex;
+    static std::deque<SharedSpirv> kept;
+    static std::uint64_t bytes = 0;
+    std::lock_guard lock(mutex);
+    kept.push_back(spirv);
+    bytes += spirv.size() * sizeof(std::uint32_t);
+    while (bytes > budget && !kept.empty()) {
+        bytes -= kept.front().size() * sizeof(std::uint32_t);
+        kept.pop_front();
+    }
+}
+
 SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
     auto materialized = cachedSpecializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
@@ -1207,6 +1231,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
     module->hash = spirv.ContentHash();
     module->spirv = spirv.Weaken();
     module->specializationId = constants.empty() ? 0u : nextVariantId();
+    keepSpecializedWords(spirv);
     return {std::move(module), std::move(spirv)};
 }
 
@@ -1216,6 +1241,7 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
     if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
     module.spirv = spirv.Weaken();
+    keepSpecializedWords(spirv);
     return spirv;
 }
 
@@ -1425,6 +1451,25 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
         for (const auto reg : layout.userDataRegisters) patch.userWords.push_back(reg - variant.info.userDataBase);
     }
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
+}
+
+void dumpFinalSpirv(const RecompileRequest& request, const RecompileResult& result) {
+    static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
+    const auto words = result.spirv.Words();
+    if (list.empty() || words.empty()) return;
+    char address[32];
+    std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+    if (list != "all" && list.find(address) == std::string::npos) return;
+    char path[128];
+    std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    auto* file = std::fopen(path, "wb");
+    if (file == nullptr) throw std::runtime_error("cannot open SPIR-V dump " + std::string(path));
+    const auto written = std::fwrite(words.data(), sizeof(std::uint32_t), words.size(), file);
+    const auto closed = std::fclose(file);
+    if (written != words.size() || closed != 0) throw std::runtime_error("cannot write SPIR-V dump " + std::string(path));
+    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
 }
 
 bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
@@ -1664,6 +1709,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
+    dumpFinalSpirv(request, result);
     return result;
 }
 
