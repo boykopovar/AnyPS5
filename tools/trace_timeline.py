@@ -38,10 +38,10 @@ def window_slices(trace, start_us, end_us, threads=None):
 
 
 def layout(slices, start_us, end_us, width_px, max_slices=5000, presents=()):
-    span = max(end_us - start_us, 1e-9)
-    markers = [(LABEL_WIDTH + (ts - start_us) / span * width_px, ts, number)
+    span = end_us - start_us
+    markers = [(LABEL_WIDTH + (ts - start_us) / (span or 1) * width_px, ts, number)
                for ts, number in presents if start_us <= ts <= end_us]
-    kept = heapq.nlargest(max_slices, slices, key=lambda slice_: slice_["dur"])
+    kept = heapq.nlargest(max_slices, slices, key=lambda slice_: slice_["dur"]) if span > 0 else []
     rows = {(slice_["thread"], slice_["tid"]) for slice_ in slices}
     depths = {thread: set() for thread in rows}
     for slice_ in kept:
@@ -57,8 +57,8 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000, presents=()):
 
     bars = []
     for slice_ in kept:
-        x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
         w = max(slice_["dur"] / span * width_px, 1.0)
+        x = LABEL_WIDTH + min((slice_["ts"] - start_us) / span * width_px, width_px - w)
         bars.append({"thread": slice_["thread"], "tid": slice_["tid"], "name": slice_["name"],
                      "ms": slice_["dur"] / 1000.0, "x": x, "w": w,
                      "y": row_y[(slice_["thread"], slice_["tid"], slice_["depth"])]})

@@ -174,6 +174,21 @@ class TimelineTests(unittest.TestCase):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
         self.assertEqual(laid["threads"], [("presenter", 0), ("queue worker", trace_timeline.ROW_HEIGHT)])
 
+    def test_layout_scales_narrow_windows_and_their_present_markers_to_the_full_axis(self):
+        trace = trace_of([complete(1, "tiny interval", 5e-11, 5e-11)])
+        slices = trace_timeline.window_slices(trace, 0, 1e-10)
+        result = trace_timeline.layout(slices, 0, 1e-10, 1000, presents=[(1e-10, 7)])
+        self.assertAlmostEqual(result["bars"][0]["x"], trace_timeline.LABEL_WIDTH + 500)
+        self.assertAlmostEqual(result["bars"][0]["w"], 500)
+        self.assertEqual(result["presents"][0][0], result["width"])
+
+    def test_last_subpixel_slice_keeps_its_visible_width_inside_the_plot(self):
+        slices = trace_timeline_slices([complete(1, "last", 9999, 1)])
+        result = trace_timeline.layout(slices, 0, 10000, 100)
+        bar = result["bars"][0]
+        self.assertEqual(bar["w"], 1.0)
+        self.assertEqual(bar["x"] + bar["w"], result["width"])
+
     def test_layout_places_nested_slices_on_separate_rows(self):
         items = [
             complete(1, "Dispatch", 0, 10000),

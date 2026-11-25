@@ -25,10 +25,10 @@ PULL_FIELDS = """
 fragment Readiness on PullRequest {
   number title isDraft mergeable headRefOid createdAt
   author { login }
-  labels(first: 50) { nodes { name } }
-  reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-  latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) {
+  labels(first: 50) { pageInfo { hasNextPage } nodes { name } }
+  reviewRequests(first: 50) { pageInfo { hasNextPage } nodes { requestedReviewer { ... on User { login } } } }
+  latestOpinionatedReviews(first: 50) { pageInfo { hasNextPage } nodes { state author { login } } }
+  commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
     pageInfo { hasNextPage }
     nodes {
       __typename
@@ -111,17 +111,25 @@ def check_of(node):
 
 
 def pull(node):
-    if not isinstance(node, dict) or not isinstance(node.get("number"), int):
-        raise ValueError("pull request needs a number")
+    if not isinstance(node, dict) or type(node.get("number")) is not int or node["number"] < 1:
+        raise ValueError("expected a positive pull request number")
     if not isinstance(node.get("isDraft"), bool):
         raise ValueError(f"#{node['number']}: draft flag must be a boolean")
     commits = listed(node.get("commits"))
-    rollup = commits[0]["commit"].get("statusCheckRollup") if commits else None
+    commit = commits[0]["commit"] if commits else {}
+    if commits and "headRefOid" in node and commit.get("oid") != node["headRefOid"]:
+        raise ValueError(f"#{node['number']}: head commit changed while reading checks")
+    rollup = commit.get("statusCheckRollup")
     contexts = (rollup or {}).get("contexts") or {}
     author = (node.get("author") or {}).get("login") or "ghost"
+    labels = listed(node.get("labels"))
     reviews = [(item.get("author") or {}).get("login") or "ghost" for item in listed(node.get("latestOpinionatedReviews"))
                if item.get("state") == "CHANGES_REQUESTED"]
     requested = {(item.get("requestedReviewer") or {}).get("login") for item in listed(node.get("reviewRequests"))}
+    requested = {login.casefold() for login in requested if isinstance(login, str)}
+    incomplete = [label for field, label in (("labels", "labels"), ("reviewRequests", "review requests"),
+                                              ("latestOpinionatedReviews", "reviews"))
+                  if (node[field].get("pageInfo") or {}).get("hasNextPage")]
     return {
         "number": node["number"],
         "title": node.get("title") or "",
@@ -129,10 +137,11 @@ def pull(node):
         "draft": node["isDraft"],
         "mergeable": node.get("mergeable"),
         "created": node.get("createdAt") or "",
-        "labels": {item["name"] for item in listed(node.get("labels"))},
-        "changes": sorted(set(reviews) - requested),
+        "labels": {item["name"] for item in labels},
+        "changes": sorted({login for login in reviews if login.casefold() not in requested}),
         "checks": [check_of(item) for item in listed(contexts)] if contexts else [],
         "checks_incomplete": bool((contexts.get("pageInfo") or {}).get("hasNextPage")),
+        "incomplete_metadata": incomplete,
     }
 
 
@@ -156,6 +165,8 @@ def blockers(pr):
     conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
+    if pr["incomplete_metadata"]:
+        reasons.append("incomplete " + ", ".join(pr["incomplete_metadata"]))
     if not conventions:
         reasons.append("conventions has not run")
     elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):
@@ -207,6 +218,16 @@ def pagination_cursor(connection, seen, label):
     return cursor
 
 
+def unique_pulls(prs):
+    seen = set()
+    for pr in prs:
+        number = pr["number"]
+        if number in seen:
+            raise ValueError(f"duplicate pull request #{number} in paginated results")
+        seen.add(number)
+    return prs
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
@@ -221,7 +242,7 @@ def fetch(repo):
         connection = page["data"]["repository"]["pullRequests"]
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
-            return prs
+            return unique_pulls(prs)
         after = pagination_cursor(connection, seen, "open pull request")
 
 
@@ -266,7 +287,7 @@ def fetch_author(repo, login):
         prs += [pull(node) for node in listed(connection)
                 if node["repository"]["nameWithOwner"].casefold() == repo.casefold()]
         if not connection["pageInfo"]["hasNextPage"]:
-            return prs
+            return unique_pulls(prs)
         after = pagination_cursor(connection, seen, "author pull request")
 
 

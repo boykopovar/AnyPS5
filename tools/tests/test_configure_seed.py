@@ -488,6 +488,21 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_later_non_check_assignment_supersedes_a_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            for later in ("//User option\nHAVE_EXAMPLE:BOOL=OFF\n",
+                          "//Manual entry\nHAVE_EXAMPLE:INTERNAL=manual\n",
+                          '"HAVE_EXAMPLE":INTERNAL=undocumented'):
+                with self.subTest(later=later):
+                    cache.write_text("//Have function example\nHAVE_EXAMPLE:INTERNAL=1\n" + later, encoding="utf-8")
+                    self.assertEqual(configure_seed.checks(cache), {})
+
+    def test_nonregular_cache_is_rejected_before_opening_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(OSError, "configure cache must be a regular file"):
+                configure_seed.checks(directory)
+
     def test_unicode_line_separators_are_preserved_in_cache_fields(self):
         entries = {
             f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")

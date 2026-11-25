@@ -62,6 +62,43 @@ ANYPS5_HOST_REPORT: 1
 
 
 class FrameReplayReportTests(unittest.TestCase):
+    def test_bad_saved_metrics_do_not_break_other_observations(self):
+        assessment = report.parse_replay_result(json.dumps(NATIVE), HOST)
+        trial = {"phase": "trial", "iteration": 1, "returncode": 0, "timed_out": False, "log_limit": False}
+        for key, value, metric in (("frame_ms", [], "p50_ms"), ("fps", 10**309, "fps"),
+                                   ("replay_s", 1e308, "replay_s")):
+            with self.subTest(key=key):
+                candidate = copy.deepcopy(assessment)
+                candidate["native"][key] = value
+                payload = {"format": "aps5-frame-replay-comparison/1", "complete": True,
+                           "runs": [{**trial, "arm": "baseline", "assessment": assessment},
+                                    {**trial, "arm": "candidate", "assessment": candidate}]}
+                result = report.replay_comparison_report(payload)
+                metrics = result["observations"]["candidate"]["metrics"]
+                self.assertIsNone(metrics[metric]["median"])
+                self.assertEqual(metrics["replay_s" if metric == "fps" else "fps"]["n"], 1)
+                self.assertIsNone(result["pairs"][0]["metrics"][metric]["candidate"])
+                self.assertIsNone(result["paired_observations"][metric]["median_change_pct"])
+
+    def test_saved_comparison_refuses_a_non_object_inputs_section(self):
+        with self.assertRaisesRegex(ValueError, "comparison inputs must be an object"):
+            report.replay_comparison_report({"format": "aps5-frame-replay-comparison/1", "runs": [], "inputs": []})
+
+    def test_large_finite_percentage_changes_keep_a_finite_median(self):
+        baseline = report.parse_replay_result(json.dumps(NATIVE), HOST)
+        candidate = copy.deepcopy(baseline)
+        baseline["native"]["fps"] = 1e-306
+        candidate["native"]["fps"] = 1.0
+        runs = [{"phase": "trial", "iteration": iteration, "returncode": 0, "timed_out": False,
+                 "log_limit": False, "arm": arm, "assessment": assessment}
+                for iteration in (1, 2)
+                for arm, assessment in (("baseline", baseline), ("candidate", candidate))]
+        result = report.replay_comparison_report(
+            {"format": "aps5-frame-replay-comparison/1", "complete": True, "runs": runs})
+        fps = result["paired_observations"]["fps"]
+        self.assertEqual(fps["n"], 2)
+        self.assertEqual(fps["median_change_pct"], fps["max_change_pct"])
+
     def test_host_report_preserves_unicode_separators_inside_values(self):
         for separator in ("\x85", "\u2028", "\u2029"):
             for newline in ("\n", "\r\n"):

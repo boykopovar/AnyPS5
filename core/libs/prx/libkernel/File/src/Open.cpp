@@ -251,6 +251,7 @@ static int CreationThroughSeparatorError(const std::filesystem::path& native, in
 #endif
 
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
+    if ((flags & SCE_KERNEL_O_DIRECTORY) != 0) flags &= ~SCE_KERNEL_O_CREAT;
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
@@ -570,7 +571,6 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     if (base == nullptr) return SceErrorFromErrno(error);
     const auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
     if (follow) return StatNative(native, std::string_view(path).back() == '/', sb);
-    if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
     FileStat result{};
     if (!File::FillLinkStat(native, &result)) return SceErrorFromErrno(errno);
     if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);

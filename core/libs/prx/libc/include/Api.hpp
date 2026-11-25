@@ -108,6 +108,16 @@ struct CategoryObject { const void* vtable; };
 
 struct ExceptionObject { const void* vtable; const char* message; };
 
+struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
+
+struct ExceptionVtable {
+    std::ptrdiff_t offset;
+    const TypeRecord* type;
+    void (APS5_VABI *destroy)(ExceptionObject*);
+    void (APS5_VABI *deleteObject)(ExceptionObject*);
+    const char* (APS5_VABI *what)(const ExceptionObject*);
+};
+
 struct ErrorCode { int reserved; int value; const CategoryObject* category; };
 
 struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
@@ -145,6 +155,9 @@ constexpr int DateOrderNone = 2;
 
 extern "C" {
 
+void APS5_VABI _ZNSt3__115__thread_structC1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt3__115__thread_structD1Ev_nid_postfix(void* self);
+PthreadKey* APS5_VABI _ZNSt3__119__thread_local_dataEv_nid_postfix();
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
@@ -306,6 +319,8 @@ int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwr
 int APS5_VABI unsetenv_nid_postfix(const char* name);
 int APS5_VABI putenv_nid_postfix(char* text);
 char* APS5_VABI strerror_nid_postfix(int error);
+extern const char* const sys_errlist_nid_postfix[];
+extern const int sys_nerr_nid_postfix;
 const char* APS5_VABI StrerrorText_nid_no_patch(int error);
 int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
 void APS5_VABI perror_nid_postfix(const char* prefix);
@@ -1537,6 +1552,7 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr);
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer);
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
+int APS5_VABI fmtmsg_nid_postfix(std::int64_t classification, const char* label, int severity, const char* text, const char* action, const char* tag);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
 int64_t APS5_VABI clock_nid_postfix();
 int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base);
@@ -1693,6 +1709,10 @@ void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObjec
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self);
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
+
+void APS5_VABI _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObject* self) noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__112bad_weak_ptrE_nid_postfix;
+extern const LibcException::ExceptionVtable _ZTVNSt3__112bad_weak_ptrE_nid_postfix;
 void APS5_VABI _ZNSt19bad_optional_accessD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt19bad_optional_accessD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt19bad_optional_accessD0Ev_nid_postfix(LibcException::ExceptionObject* self);
