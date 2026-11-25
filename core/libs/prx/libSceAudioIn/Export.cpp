@@ -61,7 +61,11 @@ struct Port {
     Clock::duration grain{};
     Clock::time_point next{};
     std::int32_t mode = 0;
+    bool opening = false;
 };
+
+// A slot reserved by an open that has not finished is taken but not yet a port.
+bool isOpen(const Port& port) { return port.used && !port.opening; }
 
 std::mutex g_mutex;
 std::mutex g_openMutex;
@@ -124,7 +128,7 @@ int findPort(int handle, Port** port) {
     const std::uint32_t raw = static_cast<std::uint32_t>(handle);
     if ((raw & 0x7f000000u) != HANDLE_BASE || (raw & 0xffu) >= g_ports.size()) return AUDIO_IN_ERROR_INVALID_HANDLE;
     Port& candidate = g_ports[raw & 0xffu];
-    if (!candidate.used) return AUDIO_IN_ERROR_INVALID_STATE;
+    if (!isOpen(candidate)) return AUDIO_IN_ERROR_INVALID_STATE;
     *port = &candidate;
     return 0;
 }
@@ -193,7 +197,7 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     if (slot == g_ports.size()) return AUDIO_IN_ERROR_PORT_FULL;
     g_ports[slot] = {};
     g_ports[slot].used = true;
-    g_ports[slot].busy = true;
+    g_ports[slot].opening = true;
     lock.unlock();
     SDL_AudioDeviceID device = 0;
     {
@@ -331,7 +335,7 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     std::lock_guard lock(g_mutex);
-    if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+    if (index >= g_ports.size() || !isOpen(g_ports[index])) return AUDIO_IN_ERROR_INVALID_STATE;
     return 0;
 }
 
@@ -375,7 +379,7 @@ int APS5_VABI sceAudioInIsSharedDevice(int handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     {
         std::lock_guard lock(g_mutex);
-        if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+        if (index >= g_ports.size() || !isOpen(g_ports[index])) return AUDIO_IN_ERROR_INVALID_STATE;
     }
     NotImplemented_nid_no_patch(__func__);
     return 0;
