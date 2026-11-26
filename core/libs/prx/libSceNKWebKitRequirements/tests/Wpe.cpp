@@ -106,6 +106,7 @@ int Check(const char* name, Function function, const Case* cases, std::size_t co
 }
 
 std::size_t lastCallocSize = 0;
+std::size_t freeCount = 0;
 
 int CheckPasteboardString() {
     NKWebKit::WpePasteboardString string{};
@@ -150,12 +151,50 @@ int CheckPasteboardString() {
     return 0;
 }
 
+int CheckPasteboardStringVector() {
+    auto* strings = static_cast<NKWebKit::WpePasteboardString*>(std::calloc(2, sizeof(NKWebKit::WpePasteboardString)));
+    wpe_pasteboard_string_initialize(&strings[0], "a", 1);
+    wpe_pasteboard_string_initialize(&strings[1], "bc", 2);
+    NKWebKit::WpePasteboardStringVector vector{strings, 2};
+    freeCount = 0;
+    wpe_pasteboard_string_vector_free(&vector);
+    const bool released = freeCount == 3 && !vector.strings && vector.length == 0;
+    wpe_pasteboard_string_vector_free(&vector);
+    vector.length = 5;
+    wpe_pasteboard_string_vector_free(&vector);
+    const bool empty = freeCount == 3 && !vector.strings && vector.length == 0;
+    NKWebKit::WpePasteboardString single{};
+    constexpr std::uint64_t oversize = std::numeric_limits<std::uint64_t>::max() / 8;
+    vector = {&single, oversize};
+    bool rejectedOversize = false;
+    try {
+        wpe_pasteboard_string_vector_free(&vector);
+    } catch (const std::invalid_argument&) {
+        rejectedOversize = true;
+    }
+    const bool untouched = vector.strings == &single && vector.length == oversize && freeCount == 3;
+    bool rejectedVector = false;
+    try {
+        wpe_pasteboard_string_vector_free(nullptr);
+    } catch (const std::invalid_argument&) {
+        rejectedVector = true;
+    }
+    if (!released || !empty || !rejectedOversize || !untouched || !rejectedVector) {
+        std::fprintf(stderr, "WPE pasteboard string vector free failed.\n");
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 namespace {
 
 void* APS5_VABI HeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
-void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
+void APS5_VABI HeapFree(void* pointer) {
+    if (pointer) ++freeCount;
+    std::free(pointer);
+}
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t bytes) {
     lastCallocSize = count * bytes;
     return std::calloc(count, bytes);
@@ -182,6 +221,7 @@ int main() {
     failures += Check("wpe_unicode_to_key_code", wpe_unicode_to_key_code_nid_postfix, UnicodeToKeyCode,
         sizeof(UnicodeToKeyCode) / sizeof(UnicodeToKeyCode[0]));
     failures += CheckPasteboardString();
+    failures += CheckPasteboardStringVector();
     if (failures != 0) {
         std::fprintf(stderr, "%d WPE key code cases failed\n", failures);
         return EXIT_FAILURE;

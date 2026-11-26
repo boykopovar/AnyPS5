@@ -74,10 +74,6 @@ int APS5_VABI wpe_pasteboard_get_types() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI wpe_pasteboard_string_vector_free() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI wpe_pasteboard_write() {
     NotImplemented_nid_no_patch(__func__);
 }

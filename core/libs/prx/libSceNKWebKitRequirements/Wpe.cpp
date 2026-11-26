@@ -78,4 +78,33 @@ void APS5_VABI wpe_pasteboard_string_free(NKWebKit::WpePasteboardString* string)
     free_nid_postfix(current.data);
 }
 
+void APS5_VABI wpe_pasteboard_string_vector_free(NKWebKit::WpePasteboardStringVector* vector) {
+    NKWebKit::WpePasteboardStringVector current{};
+    {
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(&current, vector, sizeof(current));
+        const bool writable = readable && GuestWritable_nid_no_patch(vector, sizeof(current));
+        errno = savedErrno;
+        if (!writable) throw std::invalid_argument("wpe_pasteboard_string_vector_free: inaccessible vector");
+    }
+    if (current.strings && current.length) {
+        if (current.length > std::numeric_limits<std::size_t>::max() / sizeof(NKWebKit::WpePasteboardString)) {
+            throw std::invalid_argument("wpe_pasteboard_string_vector_free: invalid length");
+        }
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(current.strings, current.length * sizeof(NKWebKit::WpePasteboardString));
+        errno = savedErrno;
+        if (!writable) throw std::invalid_argument("wpe_pasteboard_string_vector_free: unwritable strings");
+        for (std::uint64_t index = 0; index < current.length; ++index) wpe_pasteboard_string_free(&current.strings[index]);
+    }
+    const NKWebKit::WpePasteboardStringVector empty{};
+    {
+        const int savedErrno = errno;
+        const bool writable = GuestCopyOut_nid_no_patch(vector, &empty, sizeof(empty));
+        errno = savedErrno;
+        if (!writable) throw std::invalid_argument("wpe_pasteboard_string_vector_free: unwritable vector");
+    }
+    free_nid_postfix(current.strings);
+}
+
 }
