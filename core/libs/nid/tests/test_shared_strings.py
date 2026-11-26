@@ -1,7 +1,5 @@
 import struct
-import sys
 import unittest
-from pathlib import Path
 
 from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSYM_OFFSET, read_dynsym, sections, DEFINITIONS, PATCHER
 
