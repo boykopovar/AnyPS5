@@ -1382,6 +1382,14 @@ unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr,
 double APS5_VABI strtod_nid_postfix(const char* str, char** endptr);
 double APS5_VABI atof_nid_postfix(const char* str);
 float APS5_VABI strtof_nid_postfix(const char* str, char** endptr);
+int APS5_VABI _ZNSt3__14stoiERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+std::uint64_t APS5_VABI _ZNSt3__15stoulERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+std::uint64_t APS5_VABI _ZNSt3__16stoullERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPmi_nid_postfix(
+    const void* value, std::uint64_t* index, int base);
+float APS5_VABI _ZNSt3__14stofERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPm_nid_postfix(
+    const void* value, std::uint64_t* index);
 long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr);
 int APS5_VABI atoi_nid_postfix(const char* str);
 std::int64_t APS5_VABI atol_nid_postfix(const char* str);
