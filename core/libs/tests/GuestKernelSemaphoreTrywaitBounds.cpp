@@ -302,5 +302,13 @@ int main() {
     TestKsemTrywaitBounds();
     TestKernelPollSemaBounds();
     TestConcurrentTrywaitContention();
+    void* semSlot = nullptr;
+    Require(sem_init_nid_postfix(reinterpret_cast<void*>(0x10), 0, 1) == -1 && errno == 22);
+    Require(sem_init_nid_postfix(&semSlot, 0, 2) == 0);
+    int semValue = -1;
+    Require(sem_getvalue_nid_postfix(&semSlot, &semValue) == 0 && semValue == 2);
+    Require(sem_getvalue_nid_postfix(&semSlot, reinterpret_cast<int*>(0x10)) == -1 && errno == 22);
+    Require(sem_destroy_nid_postfix(reinterpret_cast<void*>(0x10)) == -1 && errno == 22);
+    Require(sem_destroy_nid_postfix(&semSlot) == 0 && semSlot == nullptr);
     return 0;
 }
