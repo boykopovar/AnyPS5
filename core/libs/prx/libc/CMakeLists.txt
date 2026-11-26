@@ -253,6 +253,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/LibcxxRuntimeErrorString.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp
