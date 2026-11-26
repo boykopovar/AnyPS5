@@ -116,6 +116,19 @@ void TestContext400(bool neo) {
     Require(contextEb == neo && context2aa != neo && uconfig258 == neo, "400 mode-specific registers differ");
 }
 
+void TestValidateQueries() {
+    Require(sceGnmValidateDisableDiagnostics_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate disable diagnostics differs");
+    Require(sceGnmValidateDisableDiagnostics2_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate disable diagnostics 2 differs");
+    Require(sceGnmValidateDispatchCommandBuffers_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate dispatch differs");
+    Require(sceGnmValidateDrawCommandBuffers_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate draw differs");
+    Require(sceGnmValidateGetDiagnosticInfo_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate diagnostic info differs");
+    Require(sceGnmValidateGetDiagnostics_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate diagnostics differs");
+    Require(sceGnmValidateGetVersion_nid_disambig1() == 0, "validate version differs");
+    Require(sceGnmValidateOnSubmitEnabled_nid_disambig1() == 0, "validate on-submit differs");
+    Require(sceGnmValidateResetState_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate reset differs");
+    Require(sceGnmValidationRegisterMemoryCheckCallback_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate callback differs");
+}
+
 int RunSelf(const std::filesystem::path& program, const char* mode) {
     const std::string arguments = "\"" + program.string() + "\" " + mode;
 #ifdef _WIN32
@@ -135,6 +148,7 @@ int main(int argc, char** argv) {
             Require(sceKernelIsNeoMode() == neo, "mode fixture did not set sceKernelIsNeoMode");
             TestHardware350(neo);
             TestContext400(neo);
+            TestValidateQueries();
             return 0;
         }
         const auto program = std::filesystem::absolute(argv[0]);

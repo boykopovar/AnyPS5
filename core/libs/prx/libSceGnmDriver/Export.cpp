@@ -992,6 +992,46 @@ int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t,
     return sceGnmSubmitCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes);
 }
 
+int APS5_VABI sceGnmValidateDisableDiagnostics_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDisableDiagnostics2_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDispatchCommandBuffers_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDrawCommandBuffers_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetDiagnosticInfo_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetDiagnostics_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetVersion_nid_disambig1(void) {
+    return 0;
+}
+
+int APS5_VABI sceGnmValidateOnSubmitEnabled_nid_disambig1(void) {
+    return 0;
+}
+
+int APS5_VABI sceGnmValidateResetState_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
 }
 
 namespace {

@@ -81,6 +81,16 @@ int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
 int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
     std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
 int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
+int APS5_VABI sceGnmValidateDisableDiagnostics_nid_disambig1(void);
+int APS5_VABI sceGnmValidateDisableDiagnostics2_nid_disambig1(void);
+int APS5_VABI sceGnmValidateDispatchCommandBuffers_nid_disambig1(void);
+int APS5_VABI sceGnmValidateDrawCommandBuffers_nid_disambig1(void);
+int APS5_VABI sceGnmValidateGetDiagnosticInfo_nid_disambig1(void);
+int APS5_VABI sceGnmValidateGetDiagnostics_nid_disambig1(void);
+int APS5_VABI sceGnmValidateGetVersion_nid_disambig1(void);
+int APS5_VABI sceGnmValidateOnSubmitEnabled_nid_disambig1(void);
+int APS5_VABI sceGnmValidateResetState_nid_disambig1(void);
+int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback_nid_disambig1(void);
 
 
 int APS5_VABI sceGnmDispatchDirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags);
