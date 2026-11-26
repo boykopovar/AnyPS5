@@ -51,9 +51,9 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uint32_t queueCount, std
         throw std::runtime_error(std::string(caller) + ": event queue rejected the event");
     }
     std::lock_guard lock(g_mutex);
-    if (std::none_of(g_registrations.begin(), g_registrations.end(), [&](const Registration& r) { return r.eq == eq && r.ident == ident; })) {
-        g_registrations.push_back({eq, queue, queueCount, ident, identData});
-    }
+    const auto found = std::find_if(g_registrations.begin(), g_registrations.end(), [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
+    if (found == g_registrations.end()) g_registrations.push_back({eq, queue, queueCount, ident, identData});
+    else *found = {eq, queue, queueCount, ident, identData};
     return 0;
 }
 

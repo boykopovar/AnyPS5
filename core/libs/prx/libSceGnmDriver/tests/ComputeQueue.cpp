@@ -1,4 +1,5 @@
 #include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -380,6 +381,36 @@ void TestComputeEventsOfEveryPipe() {
     Require(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
 }
 
+void TestComputeEventAddedAgain() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "GnmDriver event added again") == 0, "event queue creation failed");
+    int queueTag = 0;
+    int pipeTag = 0;
+    Require(sceAgcDriverAddEqEvent(eq, 3, &queueTag) == 0, "the event of queue 3 was not registered");
+    Require(sceGnmAddEqEvent(eq, 3, &pipeTag) == 0, "the release event of compute pipe 3 was not registered over the event of queue 3");
+    auto owner = EqueuePin_nid_postfix(eq);
+    std::array<KernelEvent, 2> events{};
+    const int ring = sceGnmMapComputeQueue(3, 0, memory.ringA, RingWords, &memory.readA);
+    Require(ring > 0, "queue 0 of pipe 3 was not mapped");
+    auto offset = Put(memory.ringA, 0, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), 41u, 0u});
+    Require(sceGnmDingDong(ring, offset) == 0, "sceGnmDingDong on pipe 3 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 41, "the interrupting release on pipe 3 did not store its value");
+    Require(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].ident == 3 && events[0].filter == -14 && events[0].udata == &pipeTag && events[0].data == 3,
+        "an interrupting release on pipe 3 did not raise event 3 added again for that pipe");
+    Require(sceAgcDriverAddEqEvent(eq, 3, &queueTag) == 0, "the event of queue 3 was not registered over the release event of compute pipe 3");
+    offset = Put(memory.ringA, offset, {Type3(0x49, 6) | 2u, 0x62fu, 0x22000000u, Low(&memory.released), High(&memory.released), 42u, 0u});
+    Require(sceGnmDingDong(ring, offset) == 0, "sceGnmDingDong on pipe 3 after event 3 was added again for queue 3 failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 42 && owner->GetTriggeredEvents(events.data(), 2) == 0, "an interrupting release on pipe 3 raised event 3 added again for queue 3");
+    Require(sceAgcDriverDeleteEqEvent(eq, 3) == 0, "event 3 was not deleted");
+    Require(sceGnmUnmapComputeQueue(ring) == 0, "queue 0 of pipe 3 was not unmapped");
+    owner.reset();
+    Require(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
+}
+
 }
 
 int main() {
@@ -392,6 +423,7 @@ int main() {
         TestWorkloadDingDong();
         TestComputeEvents();
         TestComputeEventsOfEveryPipe();
+        TestComputeEventAddedAgain();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {
