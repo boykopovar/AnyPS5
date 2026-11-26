@@ -677,7 +677,111 @@ static void CheckUnusablePtonPointers() {
     Require(munmap_nid_postfix(memory, 2 * Page) == 0);
 }
 
+template <typename TCall>
+static bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void CheckGenericAtomicsZeroAndOverlap() {
+    unsigned char lock = 0;
+    std::array<unsigned char, 16> targetBuf{};
+    std::array<unsigned char, 16> sourceBuf{};
+    std::array<unsigned char, 16> expectedBuf{};
+    std::array<unsigned char, 16> desiredBuf{};
+    targetBuf.fill(0xA5);
+    sourceBuf.fill(0x5A);
+    expectedBuf.fill(0x3C);
+    desiredBuf.fill(0xC3);
+    const auto origTarget = targetBuf;
+    const auto origSource = sourceBuf;
+    const auto origExpected = expectedBuf;
+
+    _Atomic_copy_nid_postfix(&lock, 0, nullptr, nullptr, 5);
+    Require(lock == 0);
+    _Atomic_copy_nid_postfix(&lock, 0, targetBuf.data(), nullptr, 5);
+    Require(lock == 0 && targetBuf == origTarget);
+    _Atomic_copy_nid_postfix(&lock, 0, nullptr, sourceBuf.data(), 5);
+    Require(lock == 0 && sourceBuf == origSource);
+    _Atomic_copy_nid_postfix(&lock, 0, targetBuf.data(), sourceBuf.data(), 5);
+    Require(lock == 0 && targetBuf == origTarget && sourceBuf == origSource);
+
+    _Atomic_exchange_nid_postfix(&lock, 0, nullptr, nullptr, 5);
+    Require(lock == 0);
+    _Atomic_exchange_nid_postfix(&lock, 0, targetBuf.data(), sourceBuf.data(), 5);
+    Require(lock == 0 && targetBuf == origTarget && sourceBuf == origSource);
+
+    Require(_Atomic_compare_exchange_strong_nid_postfix(&lock, 0, nullptr, nullptr, nullptr, 5, 5) == 1 && lock == 0);
+    Require(_Atomic_compare_exchange_weak_nid_postfix(&lock, 0, nullptr, nullptr, nullptr, 5, 5) == 1 && lock == 0);
+    Require(_Atomic_compare_exchange_strong_nid_postfix(&lock, 0, targetBuf.data(), expectedBuf.data(), desiredBuf.data(), 5, 5) == 1);
+    Require(lock == 0 && targetBuf == origTarget && expectedBuf == origExpected);
+    Require(_Atomic_compare_exchange_weak_nid_postfix(&lock, 0, targetBuf.data(), expectedBuf.data(), desiredBuf.data(), 5, 5) == 1);
+    Require(lock == 0 && targetBuf == origTarget && expectedBuf == origExpected);
+
+    Require(ThrowsInvalidArgument([&] { _Atomic_copy_nid_postfix(nullptr, 0, nullptr, nullptr, 5); }));
+    Require(ThrowsInvalidArgument([&] { _Atomic_exchange_nid_postfix(nullptr, 0, nullptr, nullptr, 5); }));
+    Require(ThrowsInvalidArgument([&] { _Atomic_compare_exchange_strong_nid_postfix(nullptr, 0, nullptr, nullptr, nullptr, 5, 5); }));
+    Require(ThrowsInvalidArgument([&] { _Atomic_compare_exchange_weak_nid_postfix(nullptr, 0, nullptr, nullptr, nullptr, 5, 5); }));
+    Require(ThrowsInvalidArgument([&] { _Atomic_copy_nid_postfix(&lock, 4, nullptr, sourceBuf.data(), 5); }) && lock == 0);
+    Require(ThrowsInvalidArgument([&] { _Atomic_copy_nid_postfix(&lock, 4, targetBuf.data(), nullptr, 5); }) && lock == 0);
+    Require(ThrowsInvalidArgument([&] { _Atomic_exchange_nid_postfix(&lock, 4, nullptr, sourceBuf.data(), 5); }) && lock == 0);
+    Require(ThrowsInvalidArgument([&] { _Atomic_compare_exchange_strong_nid_postfix(&lock, 4, nullptr, expectedBuf.data(), desiredBuf.data(), 5, 5); }) && lock == 0);
+    Require(ThrowsInvalidArgument([&] { _Atomic_compare_exchange_weak_nid_postfix(&lock, 4, targetBuf.data(), nullptr, desiredBuf.data(), 5, 5); }) && lock == 0);
+    Require(ThrowsInvalidArgument([&] { _Atomic_compare_exchange_strong_nid_postfix(&lock, 4, targetBuf.data(), expectedBuf.data(), nullptr, 5, 5); }) && lock == 0);
+
+    std::array<unsigned char, 160> overlapBuf{};
+    std::array<unsigned char, 160> expectedOverlap{};
+    for (std::size_t i = 0; i < overlapBuf.size(); ++i) {
+        overlapBuf[i] = static_cast<unsigned char>((i * 37u + 11u) & 0xFFu);
+    }
+    expectedOverlap = overlapBuf;
+    _Atomic_copy_nid_postfix(&lock, 64, overlapBuf.data() + 1, overlapBuf.data(), 5);
+    std::memmove(expectedOverlap.data() + 1, expectedOverlap.data(), 64);
+    Require(lock == 0 && overlapBuf == expectedOverlap);
+
+    _Atomic_copy_nid_postfix(&lock, 128, overlapBuf.data() + 3, overlapBuf.data(), 5);
+    std::memmove(expectedOverlap.data() + 3, expectedOverlap.data(), 128);
+    Require(lock == 0 && overlapBuf == expectedOverlap);
+
+    _Atomic_copy_nid_postfix(&lock, 64, overlapBuf.data(), overlapBuf.data() + 1, 5);
+    std::memmove(expectedOverlap.data(), expectedOverlap.data() + 1, 64);
+    Require(lock == 0 && overlapBuf == expectedOverlap);
+
+    _Atomic_copy_nid_postfix(&lock, 128, overlapBuf.data(), overlapBuf.data() + 3, 5);
+    std::memmove(expectedOverlap.data(), expectedOverlap.data() + 3, 128);
+    Require(lock == 0 && overlapBuf == expectedOverlap);
+
+    _Atomic_copy_nid_postfix(&lock, 64, overlapBuf.data() + 16, overlapBuf.data() + 16, 5);
+    Require(lock == 0 && overlapBuf == expectedOverlap);
+
+    std::array<unsigned char, 24> casTarget{};
+    std::array<unsigned char, 24> casExpected{};
+    std::array<unsigned char, 24> casDesired{};
+    for (std::size_t i = 0; i < casTarget.size(); ++i) {
+        casTarget[i] = static_cast<unsigned char>(0x10u + i);
+        casExpected[i] = static_cast<unsigned char>(0x80u + i);
+        casDesired[i] = static_cast<unsigned char>(0x40u + i);
+    }
+    Require(_Atomic_compare_exchange_strong_nid_postfix(&lock, casTarget.size(), casTarget.data(), casExpected.data(), casDesired.data(), 5, 5) == 0);
+    Require(lock == 0 && casExpected == casTarget);
+    Require(_Atomic_compare_exchange_strong_nid_postfix(&lock, casTarget.size(), casTarget.data(), casExpected.data(), casDesired.data(), 5, 5) == 1);
+    Require(lock == 0 && casTarget == casDesired);
+
+    casExpected.fill(0x22);
+    std::array<unsigned char, 24> casNextDesired{};
+    casNextDesired.fill(0x99);
+    Require(_Atomic_compare_exchange_weak_nid_postfix(&lock, casTarget.size(), casTarget.data(), casExpected.data(), casNextDesired.data(), 5, 5) == 0);
+    Require(lock == 0 && casExpected == casDesired && casTarget == casDesired);
+    Require(_Atomic_compare_exchange_weak_nid_postfix(&lock, casTarget.size(), casTarget.data(), casExpected.data(), casNextDesired.data(), 5, 5) == 1);
+    Require(lock == 0 && casTarget == casNextDesired);
+}
+
 int main() {
+    CheckGenericAtomicsZeroAndOverlap();
     Require(htonl_nid_postfix(0x11223344u) == 0x44332211u && ntohl_nid_postfix(0x44332211u) == 0x11223344u);
     Require(htons_nid_postfix(0x1234) == 0x3412 && ntohs_nid_postfix(0x3412) == 0x1234);
     const std::uint32_t loopback = htonl_nid_postfix(0x7f000001u);
