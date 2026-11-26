@@ -5407,6 +5407,40 @@ void multisampledDepthTests() {
     queue = msaaDepthOnly();
     queue.context[0x2fe] = 0xcc44;
     expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
+    const auto msaaColorOnly = [&] {
+        auto queue = singleSampleScan();
+        queue.context[0x010] = 0;
+        queue.context[0x011] = 0;
+        queue.context[0x200] = 0;
+        queue.context[0x203] = 0x10;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0;
+        return queue;
+    };
+    queue = msaaColorOnly();
+    state = DecodeState(queue);
+    Require(state.samples == 4 && !state.depth && state.colors.size() == 1 && state.colors[0].samples == 4 && state.customSampleLocations && !state.sampleLocationGrid && !state.perSampleShading, "a single-sample scan with MSAA_ENABLE into a 4x color target without a depth target (PPSA28183's registers) did not rasterize the color target's samples");
+    const auto scannedOnce = AgcDriver::Graphics::SampleLocations(state);
+    for (std::uint32_t sample = 0; sample < state.samples; ++sample) Require(scannedOnce[sample].x == 0.5f && scannedOnce[sample].y == 0.5f, "a single-sample scan with MSAA_ENABLE into a 4x color target did not place every sample at the pixel center");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a single-sample scan with MSAA_ENABLE into a 4x color target");
+    queue = msaaColorOnly();
+    queue.context[0x2fe] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
+    for (const auto primitive : {2u, 3u}) {
+        queue = msaaColorOnly();
+        queue.userConfig[0x242] = primitive;
+        expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled color target for primitives other than triangles and rectangles");
+    }
+    queue = msaaColorOnly();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+    expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled color target with a pixel program reading the sample index");
+    queue = msaaColorOnly();
+    queue.context[0x1c4] = 9;
+    queue.context[0x203] |= 0x100u;
+    expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled color target with a sample-mask export");
+    queue = msaaColorOnly();
+    queue.context[0x2dc] = 0x0000aa01u;
+    expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     queue = singleSampleScan();
     queue.context[0x2f8] = 0x00100001;
     queue.context[0x292] = 3;

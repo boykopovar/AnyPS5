@@ -725,16 +725,17 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
     return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles, lines and rectangles", true, true);
 }
 
-std::string singleSampleDepthScanRejection(const QueueState& queue) {
-    if (auto reason = nonTriangleRejection(queue, "a single-sample scan into a multisampled depth target for primitives other than triangles and rectangles", true); !reason.empty()) return reason;
+std::string singleSampleScanRejection(const QueueState& queue, const char* target) {
+    const auto scan = std::string("a single-sample scan into a multisampled ") + target + " target ";
+    if (auto reason = nonTriangleRejection(queue, (scan + "for primitives other than triangles and rectangles").c_str(), true); !reason.empty()) return reason;
     const auto& cx = queue.context;
-    if (const auto eqaa = find(cx, 0x201); eqaa != cx.end() && (eqaa->second & 0x0f0c0000u) != 0) return zeroMessage(0x201, eqaa->second, "a single-sample scan into a multisampled depth target with Z interpolation or overrasterization (DB_EQAA)");
+    if (const auto eqaa = find(cx, 0x201); eqaa != cx.end() && (eqaa->second & 0x0f0c0000u) != 0) return zeroMessage(0x201, eqaa->second, (scan + "with Z interpolation or overrasterization (DB_EQAA)").c_str());
     if (PixelProgramSkipped(queue)) return {};
     constexpr std::uint32_t sampleIndex = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     const auto ena = find(cx, 0x1b3);
     const auto addr = find(cx, 0x1b4);
-    if (ena != cx.end() && addr != cx.end() && (ena->second & addr->second & sampleIndex) != 0) return zeroMessage(0x1b3, ena->second, "a single-sample scan into a multisampled depth target with a pixel program reading the sample index");
-    if (const auto control = find(cx, 0x203); control != cx.end() && (control->second & 0x100u) != 0) return zeroMessage(0x203, control->second, "a single-sample scan into a multisampled depth target with a sample-mask export");
+    if (ena != cx.end() && addr != cx.end() && (ena->second & addr->second & sampleIndex) != 0) return zeroMessage(0x1b3, ena->second, (scan + "with a pixel program reading the sample index").c_str());
+    if (const auto control = find(cx, 0x203); control != cx.end() && (control->second & 0x100u) != 0) return zeroMessage(0x203, control->second, (scan + "with a sample-mask export").c_str());
     return {};
 }
 
@@ -1860,7 +1861,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     if (result.depth && result.depth->samples > 1 && result.samples == 1) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
-        if (auto reason = singleSampleDepthScanRejection(queue); !reason.empty()) throw std::runtime_error(reason);
+        if (auto reason = singleSampleScanRejection(queue, "depth"); !reason.empty()) throw std::runtime_error(reason);
         result.samples = result.depth->samples;
         result.customSampleLocations = true;
         result.sampleLocations.fill(0);
@@ -1942,7 +1943,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = false;
             result.perSampleShading = false;
         }
-        if (color.samples > 1 && result.samples == 1 && result.colors.empty() && !result.depth && !result.alphaToCoverage && (read(cx, 0x292) & 1u) == 0) {
+        if (color.samples > 1 && result.samples == 1 && result.colors.empty() && !result.depth && !result.alphaToCoverage) {
+            if (auto reason = (read(cx, 0x292) & 1u) != 0 ? singleSampleScanRejection(queue, "color") : std::string(); !reason.empty()) throw std::runtime_error(reason);
             Require(result.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT || (read(cx, 0x1b3) & 0x44u) == 0, "conservative rasterization with centroid interpolation of a draw raised to a multisampled target is unsupported");
             result.samples = color.samples;
             result.customSampleLocations = true;
