@@ -98,11 +98,25 @@ void PortStateRejectsBadArguments(AudioOut2ContextHandle context) {
 }
 
 void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
-    const AudioOut2Attribute attribute{0, 0, nullptr, 0};
+    constexpr int errorInvalidParam = static_cast<int>(0x80268001);
+    const std::uint32_t one = 1;
+    const AudioOut2Attribute attribute{2, 0, &one, sizeof(one)};
     Require(sceAudioOut2ContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == static_cast<int>(0x80268001));
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == static_cast<int>(0x80268001));
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidParam);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == errorInvalidParam);
     Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
+    const AudioOut2Attribute first{1, 0, &one, sizeof(one)};
+    Require(sceAudioOut2ContextSetAttributes(context, &first, 1) == 0);
+    for (const std::uint32_t id : {0u, 3u, 4u, 0x100u, 0xffffffffu}) {
+        const AudioOut2Attribute refused{id, 0, &one, sizeof(one)};
+        Require(sceAudioOut2ContextSetAttributes(context, &refused, 1) == errorInvalidParam);
+    }
+    const AudioOut2Attribute nullValue{2, 0, nullptr, sizeof(one)};
+    Require(sceAudioOut2ContextSetAttributes(context, &nullValue, 1) == errorInvalidParam);
+    const AudioOut2Attribute emptyValue{2, 0, &one, 0};
+    Require(sceAudioOut2ContextSetAttributes(context, &emptyValue, 1) == errorInvalidParam);
+    const AudioOut2Attribute pair[2]{first, emptyValue};
+    Require(sceAudioOut2ContextSetAttributes(context, pair, 2) == errorInvalidParam);
 }
 
 void SpeakerInfoReportsTheFrontPair() {
