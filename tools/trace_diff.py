@@ -77,7 +77,9 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
               "threads": threads, "slices": slices[:top]}
     if windowed:
         result["windows"] = {"a": a_window, "b": b_window}
-        result["event_loss"] = {"a": a.get("event_loss", []), "b": b.get("event_loss", [])}
+    event_loss = {"a": a.get("event_loss", []), "b": b.get("event_loss", [])}
+    if windowed or any(event_loss.values()):
+        result["event_loss"] = event_loss
     return result
 
 
@@ -92,25 +94,33 @@ def thread_timings(rows):
 
 def markdown(result):
     lines = [f"Frames: A {result['frames']['a']}, B {result['frames']['b']}"]
-    if "windows" in result:
+    windows = result.get("windows", {})
+    event_loss = result.get("event_loss", {})
+    if windows or any(event_loss.values()):
         lines.append("")
-        for side, window in result["windows"].items():
-            description = (f"{window['start']}:{window['count']} ({window['start_ms']:g} to {window['end_ms']:g} ms in the capture)"
-                           if window is not None else "whole capture")
-            lines.append(f"- {side.upper()} window: {description}")
-            for loss in result["event_loss"][side]:
+        for side in ("a", "b"):
+            if side in windows:
+                window = windows[side]
+                description = (f"{window['start']}:{window['count']} ({window['start_ms']:g} to {window['end_ms']:g} ms in the capture)"
+                               if window is not None else "whole capture")
+                lines.append(f"- {side.upper()} window: {description}")
+            elif event_loss.get(side):
+                lines.append(f"- {side.upper()} capture:")
+            for loss in event_loss.get(side, []):
                 name = trace_digest.markdown_text(loss["thread"])
                 lines.append(f"  - {name}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:g} ms in the capture.")
-        if any(result["event_loss"].values()):
+        if any(event_loss.values()):
             lines += ["", "Timings describe retained events only. Loss markers refer to the original captures."]
     lines += ["", "| thread | A busy ms/frame | B busy ms/frame | delta busy | A wait ms/frame | B wait ms/frame | delta wait |",
               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in result["threads"]:
-        lines.append(f"| {row['thread']} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
+        name = trace_digest.table_cell(row["thread"])
+        lines.append(f"| {name} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
                      f"{row['a_wait_ms_per_frame']:.3f} | {row['b_wait_ms_per_frame']:.3f} | {row['wait_delta_ms_per_frame']:+.3f} |")
     lines += ["", "| slice | A ms/frame | B ms/frame | delta |", "| --- | ---: | ---: | ---: |"]
     for row in result["slices"]:
-        lines.append(f"| {row['name']} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
+        name = trace_digest.table_cell(row["name"])
+        lines.append(f"| {name} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
     return "\n".join(lines) + "\n"
 
 

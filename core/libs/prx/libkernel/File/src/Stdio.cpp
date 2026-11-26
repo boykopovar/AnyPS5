@@ -915,6 +915,7 @@ int File::DuplicateFrom(int fd, int start) {
 #else
     const int duplicate = ::fcntl(fd, F_DUPFD, start);
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    DuplicateKsemDescriptor(fd, duplicate);
     File::DuplicateDirectoryDescriptor(fd, duplicate);
     if (File::IsRandomDevice(fd)) File::RememberRandomDevice(duplicate);
     File::ShareDescriptor(fd, duplicate);
@@ -1085,7 +1086,6 @@ int APS5_VABI dup_nid_postfix(int d) {
     if (GuestSockets::IsOpen(d)) return GuestSockets::Duplicate(d);
     if (d < 0) return PosixFailure(GUEST_EBADF);
     if (IsKqueueDescriptor_nid_no_patch(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
-    if (IsKsemDescriptor(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
     const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
     if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
@@ -1093,6 +1093,7 @@ int APS5_VABI dup_nid_postfix(int d) {
     const int duplicate = ::dup(d);
 #endif
     if (duplicate < 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    DuplicateKsemDescriptor(d, duplicate);
     File::DuplicateDirectoryDescriptor(d, duplicate);
     if (File::IsRandomDevice(d)) File::RememberRandomDevice(duplicate);
     File::ShareDescriptor(d, duplicate);
@@ -1127,7 +1128,6 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     }
     const bool sourceIsRandom = File::IsRandomDevice(from);
     if (from != to && IsKqueueDescriptor_nid_no_patch(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
-    if (from != to && IsKsemDescriptor(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a ksem id is not supported");
 #ifdef _WIN32
     if (WithoutParameterHandler([from] { return ::_get_osfhandle(from) == -1 ? -1 : 0; }) != 0) return PosixFailure(GUEST_EBADF);
     if (from == to) return to;
@@ -1151,6 +1151,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     positioned.unlock();
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
+    DuplicateKsemDescriptor(from, to);
     return to;
 #else
     if (from == to) {
@@ -1169,6 +1170,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (sourceIsRandom) File::RememberRandomDevice(to);
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
+    DuplicateKsemDescriptor(from, to);
     return result;
 #endif
 }

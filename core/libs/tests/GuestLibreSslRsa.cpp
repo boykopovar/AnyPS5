@@ -829,6 +829,25 @@ static void TestVerify() {
         Require(ERR_get_error_nid_postfix() == 0x04fff068);
         Require(ERR_get_error_nid_postfix() == 0);
     }
+    const std::pair<Bytes, std::vector<std::uint64_t>> rejected[] {
+        {{0x30, 0x85, 0x01, 0x00, 0x00, 0x00, 0x00}, {0x0dfff09b, 0x0dfff066, 0x0dfff03a}},
+        {{0x30, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x0dfff07b, 0x0dfff066, 0x0dfff03a}},
+        {{0x31, 0x00}, {0x0dfff0a8, 0x0dfff03a}},
+        {{0x30, 0x00}, {0x0dfff079}},
+        {{0x30, 0x02, 0x00, 0x00}, {0x0dfff09f}},
+        {Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null})), {0x0dfff094}},
+        {DigestInfo(sha256, {0x05}, digest), {0x0dfff07b, 0x0dfff066, 0x0dfff03a, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x05, 0x01, 0x00}, digest), {0x0dfff090, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x10, 0x00}, digest), {0x0dfff09c, 0x0dfff03a, 0x0dfff03a}},
+        {DigestInfo(sha256, {0x30, 0x00}, digest), {0x04fff068}},
+        {DigestInfo({0x2A, 0x80}, Null, digest), {0x0dfff0d8, 0x0dfff03a, 0x0dfff03a}},
+    };
+    for (const auto& [encoded, errors] : rejected) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(encoded), rsa) == 0);
+        for (const auto code : errors) Require(ERR_get_error_nid_postfix() == code);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);
