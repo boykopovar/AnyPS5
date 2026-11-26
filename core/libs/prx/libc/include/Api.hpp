@@ -1356,6 +1356,13 @@ void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, con
 int APS5_VABI strcmp_nid_postfix(const char* s1, const char* s2);
 int APS5_VABI strncmp_nid_postfix(const char* s1, const char* s2, size_t n);
 size_t APS5_VABI strlen_nid_postfix(const char* s);
+void APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE9__grow_byEmmmmmm_nid_postfix(
+    void* string, std::uint64_t oldCapacity, std::uint64_t deltaCapacity, std::uint64_t oldSize,
+    std::uint64_t copied, std::uint64_t deleted, std::uint64_t added);
+void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEaSERKS5__nid_postfix(
+    void* string, const void* source);
+void* APS5_VABI _ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EEPKS6_RKS9__nid_postfix(
+    void* result, const char* left, const void* right);
 void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE5eraseEmm_nid_postfix(
     void* string, std::uint64_t position, std::uint64_t count);
 char* APS5_VABI strcpy_nid_postfix(char* dest, const char* src);
