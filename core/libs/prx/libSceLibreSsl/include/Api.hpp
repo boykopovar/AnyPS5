@@ -636,6 +636,19 @@ struct LibreSslAsn1Encoding {
     int modified;
 };
 
+struct LibreSslX509Info {
+    LibreSslX509* certificate;
+    void* crl;
+    void* privateKey;
+    const void* cipher;
+    unsigned char iv[16];
+    std::int32_t encLength;
+    std::int32_t padding;
+    char* encData;
+    std::int32_t references;
+    std::int32_t trailing;
+};
+
 struct LibreSslX509CertInfo {
     void* version;
     void* serialNumber;
@@ -998,7 +1011,7 @@ int APS5_VABI X509V3_EXT_print_nid_postfix(LibreSsl::Bio* out, void* extension, 
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension);
-int APS5_VABI X509_INFO_free_nid_postfix(void);
+void APS5_VABI X509_INFO_free_nid_postfix(LibreSslX509Info* info);
 LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void);
 void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const LibreSslX509NameEntry* entry);
 LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX509Name* name, int loc);
