@@ -4660,6 +4660,13 @@ void multisampleTests() {
         anchorRefuses([](auto& refused) { refused.context[0x293] = 0x10000u; }, "fewer samples than the rasterizer is unsupported for color-writing draws with PS_ITER_SAMPLE");
         anchorRefuses([](auto& refused) { refused.context[0x203] = 0x150u; refused.context[0x1c4] = 9u; }, "fewer samples than the rasterizer in a color-writing draw with a depth or sample-mask export");
         anchorRefuses([](auto& refused) { refused.context[0x201] = 0x02052202u; }, "fewer samples than the rasterizer in a color-writing draw with overrasterization");
+        constexpr std::string_view anchors = "fewer samples than the rasterizer in a color-writing draw with fewer anchor samples than the depth target's samples (DB_EQAA.MAX_ANCHOR_SAMPLES)";
+        anchorRefuses([](auto& refused) { refused.context[0x201] = 0x00052200u; }, anchors);
+        anchorRefuses([](auto& refused) { refused.context.erase(0x201); }, anchors);
+        auto twoAnchors = anchored;
+        twoAnchors.context[0x201] = 0x00052201u;
+        state = DecodeState(twoAnchors);
+        Require(state.depthAnchorSamples == 2 && anchoredMap(state, 0) == 0x76540010u, "a MAX_ANCHOR_SAMPLES of two anchors over a two-sample depth target was refused");
         for (const auto input : {ShaderRecompiler::PixelInput::PerspectiveCentroid, ShaderRecompiler::PixelInput::LinearCentroid, ShaderRecompiler::PixelInput::PerspectiveSample, ShaderRecompiler::PixelInput::LinearSample, ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) expectFailure([&] { DecodeState(withInputs(anchored, {input})); }, "fewer samples than the rasterizer in a color-writing draw with a centroid, sample, ancillary or coverage pixel input");
         auto noColor = anchored;
         noColor.context[0x8e] = 0u;

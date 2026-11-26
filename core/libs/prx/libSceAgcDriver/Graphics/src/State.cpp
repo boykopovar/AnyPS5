@@ -923,6 +923,7 @@ void requireAnchoredDepthSamples(const QueueState& queue, const State& state) {
     const auto eqaaEntry = find(cx, 0x201);
     const auto eqaa = eqaaEntry == cx.end() ? 0u : eqaaEntry->second;
     if ((eqaa & 0x0f000000u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer in a color-writing draw with overrasterization (DB_EQAA)"));
+    if ((eqaa & 7u) < static_cast<std::uint32_t>(std::countr_zero(state.depth->samples))) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer in a color-writing draw with fewer anchor samples than the depth target's samples (DB_EQAA.MAX_ANCHOR_SAMPLES)"));
 }
 
 bool documentedRop(std::uint32_t rop) {
