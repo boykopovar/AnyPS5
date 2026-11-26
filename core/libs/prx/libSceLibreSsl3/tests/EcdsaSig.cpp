@@ -57,7 +57,7 @@ void Run(Getter getter) {
     }
     const LibreSsl3EcdsaSig sig{&values[0], &values[1]};
     const auto* const unmappedSig = reinterpret_cast<const LibreSsl3EcdsaSig*>(std::uintptr_t{0x10});
-    auto** const unwritable = reinterpret_cast<const void**>(std::uintptr_t{0x10});
+    const void** const unwritable = reinterpret_cast<const void**>(std::uintptr_t{0x10});
     const auto throws = [&](const LibreSsl3EcdsaSig* source, const void** first, const void** second) {
         try {
             getter(source, first, second);
