@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/ListFormatterBackend.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -231,7 +232,7 @@ UListFormatter* APS5_VABI ulistfmt_openForType_nid_postfix(const char* locale, U
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0) return nullptr;
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     auto local = incoming;
     void* formatter = Icu::ListFormatterBackend::OpenForType(localePtr, type, width, &local);
     WriteStatus(status, incoming, local, __func__);

@@ -371,7 +371,8 @@ void Run() {
     Require(status <= 0 && value != nullptr);
 
     auto* formatter = ulistfmt_openForType_nid_postfix("en", 0, 0, &status);
-    if (formatter != nullptr && status <= 0) {
+    if (formatter != nullptr) {
+        Require(status <= 0);
         const std::array<char16_t, 2> one{u'A', 0};
         const std::array<char16_t, 2> two{u'B', 0};
         const char16_t* items[2] = {one.data(), two.data()};
@@ -382,6 +383,8 @@ void Run() {
         ulistfmt_formatStringsToResult_nid_postfix(formatter, items, lengths, 2, result, &status);
         Require(status <= 0);
         ulistfmt_close_nid_postfix(formatter);
+    } else {
+        Require(status == 2);
     }
 
     ulistfmt_closeResult_nid_postfix(result);
