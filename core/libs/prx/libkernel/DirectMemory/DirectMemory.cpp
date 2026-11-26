@@ -1365,6 +1365,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         RecordProtection(*addr, len, prot);
         return 0;
     }
+    if ((flags & GuestMapFixedFlag) != 0) ValidateRange(*addr, len, ValidateAlignment(alignment));
     ReplaceFixedOverlap(mutation, *addr, len, flags);
     RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     std::lock_guard lock(g_directLock);
@@ -1395,6 +1396,7 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
         RecordProtection(*addr, len, prot);
         return 0;
     }
+    if ((flags & GuestMapFixedFlag) != 0) ValidateRange(*addr, len, ValidateAlignment(alignment));
     ReplaceFixedOverlap(mutation, *addr, len, flags);
 #ifdef _WIN32
     void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
