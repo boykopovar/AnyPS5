@@ -47,9 +47,9 @@ int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix(LibreSslX509VerifyParam* p
         throw std::invalid_argument("X509_VERIFY_PARAM_set_flags requires parameters");
     auto* const guestFlags = reinterpret_cast<unsigned char*>(param) + offsetof(LibreSslX509VerifyParam, flags);
     const auto current = CopyInPreservingErrno<std::uint64_t>(guestFlags, __func__);
-    if ((flags & PolicyVariables) && !((current | flags) & PolicyCheck))
-        NotImplemented_nid_no_patch(__func__);
-    const std::uint64_t updated = current | flags;
+    std::uint64_t updated = current | flags;
+    if (flags & PolicyVariables)
+        updated |= PolicyCheck;
     CopyOutPreservingErrno(guestFlags, updated, __func__);
     return 1;
 }

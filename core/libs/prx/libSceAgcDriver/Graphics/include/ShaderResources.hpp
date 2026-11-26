@@ -196,6 +196,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
     std::uint64_t arrayViewsShared = 0;
+    std::uint64_t entryMemoHits = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -306,6 +307,7 @@ public:
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool StorePages() const;
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
