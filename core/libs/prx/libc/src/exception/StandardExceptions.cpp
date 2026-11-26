@@ -470,6 +470,10 @@ void APS5_VABI _ZNSt9bad_allocD0Ev_nid_postfix(LibcException::ExceptionObject* s
 const char* APS5_VABI _ZNKSt9bad_alloc4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
 void APS5_VABI _ZNSt9bad_allocC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9bad_alloc_nid_postfix.destroy; }
 void APS5_VABI _ZNSt9bad_allocC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9bad_alloc_nid_postfix.destroy; }
+[[noreturn]] void APS5_VABI _ZNKSt9bad_alloc8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
+    if (!self) throw std::invalid_argument("exception object is null");
+    LibcException::ThrowPlain(_ZTVSt9bad_alloc_nid_postfix);
+}
 
 LibcException::TypeRecord _ZTISt20bad_array_new_length_nid_postfix {LibcException::SingleTypeVtable + 2, "St20bad_array_new_length", &_ZTISt9bad_alloc_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt20bad_array_new_length_nid_postfix {0, &_ZTISt20bad_array_new_length_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
@@ -987,6 +991,14 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self) {
     if (!self) throw std::invalid_argument("exception object is null");
     LibcException::SceV2::ThrowSystemCopy(self, _ZTVNSt8ios_base7failureE_nid_postfix);
+}
+[[noreturn]] void APS5_VABI _ZNKSt12system_error8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self) {
+    if (!self) throw std::invalid_argument("exception object is null");
+    auto* object = static_cast<LibcException::SystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(LibcException::SystemErrorObject)));
+    LibcException::Copy(&object->base, &self->base, _ZTVSt12system_error_nid_postfix);
+    object->code = self->code;
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<LibcException::TypeRecord*>(_ZTVSt12system_error_nid_postfix.type)),
+        reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError, true); }
 
