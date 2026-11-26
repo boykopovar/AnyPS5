@@ -177,7 +177,7 @@ public:
         FoldWaterfallDescriptors();
         SplitDescriptorPhis();
         if (m_foldedWeb) {
-            DeadCodeEliminator{}.Eliminate(m_program);
+            DeadCodeEliminator{}.Eliminate(m_program, m_tableColumnRoots);
         }
         PlanTableColumns();
         std::unordered_map<const IrBlock*, std::uint32_t> blockIndices;
@@ -1318,7 +1318,7 @@ private:
         return false;
     }
 
-    bool TryMakeLaneTableColumn(IrValue& handle, bool implicitDerivatives, TableColumnPlan& plan) {
+    bool TryMakeLaneTableColumn(IrValue& handle, bool implicitDerivatives, IrValue* observed, TableColumnPlan& plan) {
         if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || handle.Parent() == nullptr) {
             return false;
         }
@@ -1387,11 +1387,17 @@ private:
             const std::array<IrValue*, 3> arguments {reads[0].written, key, &m_builder.Constant(std::numeric_limits<std::uint32_t>::max())};
             key = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
         }
+        if (observed != nullptr) {
+            const std::array<IrValue*, 3> arguments {observed, plan.loaded, &m_builder.Constant(0u)};
+            plan.loaded = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
+        }
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
         plan.handle = &handle;
         plan.source = InternSource(columnSource);
         plan.offset = key;
+        m_tableColumnRoots.push_back(plan.loaded);
+        m_tableColumnRoots.push_back(plan.offset);
         auto& shared = *m_sources[plan.source].tableColumn;
         shared.maxKey = std::max(shared.maxKey, column.maxKey);
         return true;
@@ -1513,7 +1519,7 @@ private:
         });
         static const bool tables = std::getenv("APS5_NO_IMAGE_TABLES") == nullptr;
         TableColumnPlan plan;
-        if (!accepted && tables && expected == IrOpcode::GetImageResource && TryMakeLaneTableColumn(*copy, ImplicitDerivatives(inst), plan)) {
+        if (!accepted && tables && expected == IrOpcode::GetImageResource && TryMakeLaneTableColumn(*copy, ImplicitDerivatives(inst), ObservingCondition(inst), plan)) {
             m_tableColumns.push_back(std::move(plan));
             accepted = true;
         }
@@ -1771,7 +1777,7 @@ private:
         return phi;
     }
 
-    void SplitDescriptorPhi(IrValue& inst) {
+    void SplitDescriptorPhi(IrValue& inst, bool foldedImage = false) {
         const auto info = ImageOpcodeInfoOf(inst.Opcode());
         const std::uint32_t handleCount = info.needsSampler ? 2u : 1u;
         if (inst.ArgumentCount() < handleCount || inst.Parent() == nullptr) {
@@ -1787,6 +1793,10 @@ private:
                 return;
             }
             handles[slot] = handle;
+            if (slot == 0u && foldedImage) {
+                split[slot] = false;
+                continue;
+            }
             std::vector<IrValue*> handlePhis;
             for (std::size_t dword = 0; dword < handle->ArgumentCount(); dword++) {
                 CollectDescriptorPhis(handle->Argument(dword), handlePhis, phiSearchDepth);
@@ -2259,10 +2269,9 @@ private:
             }
         }
         for (IrValue* inst : candidates) {
-            if (std::ranges::find(m_foldedHandles, inst->Argument(0)->Resolve()) != m_foldedHandles.end()) {
-                continue;
-            }
-            SplitDescriptorPhi(*inst);
+            const bool foldedImage = std::ranges::find(m_foldedHandles, inst->Argument(0)->Resolve()) != m_foldedHandles.end();
+            if (foldedImage && !ImageOpcodeInfoOf(inst->Opcode()).needsSampler) continue;
+            SplitDescriptorPhi(*inst, foldedImage);
         }
     }
 
@@ -2985,6 +2994,7 @@ private:
     std::unordered_map<std::uint32_t, std::vector<const IrValue*>> m_memoryUsers;
     bool m_memoryUsersIndexed = false;
     std::vector<TableColumnPlan> m_tableColumns;
+    std::vector<IrValue*> m_tableColumnRoots;
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
     std::vector<const IrValue*> m_unselectedHandles;

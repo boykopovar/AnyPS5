@@ -25,7 +25,7 @@ void DeadCodeEliminator::RemoveIdentities(IrProgram& program) const {
     RemoveIdentities(program.BlockOrder());
 }
 
-void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
+void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks, std::span<IrValue* const> roots) const {
     std::vector<IrValue*> released;
     bool changed;
     do {
@@ -36,7 +36,7 @@ void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
             while (it != instructions.begin()) {
                 --it;
                 IrValue* inst = *it;
-                if (inst->HasUses() || inst->MayHaveSideEffects()) {
+                if (std::ranges::find(roots, inst) != roots.end() || inst->HasUses() || inst->MayHaveSideEffects()) {
                     continue;
                 }
                 for (IrValue* argument : inst->Arguments()) {
@@ -51,8 +51,8 @@ void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
     } while (changed);
 }
 
-void DeadCodeEliminator::Eliminate(IrProgram& program) const {
-    Eliminate(program.BlockOrder());
+void DeadCodeEliminator::Eliminate(IrProgram& program, std::span<IrValue* const> roots) const {
+    Eliminate(program.BlockOrder(), roots);
 }
 
 }

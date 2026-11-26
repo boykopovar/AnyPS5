@@ -2319,12 +2319,11 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             for (std::uint32_t key = 0; key < column.keys; key++) {
                 const auto mapped = out.map[mapStart + key];
                 if (mapped == Abi::NullCode || (mapped & Abi::PoisonFlag) != 0u || (out.map[mapped + Abi::ImageRecordFlags] & Abi::PoisonFlag) != 0u) continue;
-                const auto mode = (out.map[mapped + Abi::ImageRecordFlags] >> Abi::ModeShift) & Abi::ModeMask;
-                if (shared.has_value() && *shared != mode) {
+                if (shared.has_value() && *shared != mapped) {
                     out.map[header + Abi::TableFault] = poison(resource, PoisonReason::LaneModes, nullptr);
                     break;
                 }
-                shared = mode;
+                shared = mapped;
             }
         } else if (sampler && out.map[header + Abi::TableFault] == 0u) {
             DescriptorValue zero;
