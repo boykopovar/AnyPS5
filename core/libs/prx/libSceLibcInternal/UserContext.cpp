@@ -1,5 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -21,6 +23,13 @@ constexpr int SignalArguments = 3;
 constexpr int MaximumSignal = 128;
 constexpr std::uint64_t FloatingPointFormatNone = 0x10000;
 constexpr std::uint64_t FloatingPointOwnedNone = 0x20000;
+constexpr int GuestEfault = 14;
+constexpr int GuestEinval = 22;
+
+int Fail(int error) {
+    *__error_nid_postfix() = error;
+    return -1;
+}
 
 }
 
@@ -108,27 +117,36 @@ void APS5_VABI makecontext_nid_postfix(UserUcontext* context, void (APS5_VABI* s
 }
 
 int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, ContextFunction handler) {
-    if (context == nullptr) std::abort();
-    auto stack = (context->mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15);
+    if (context == nullptr) return Fail(GuestEinval);
+    UserUcontext local{};
+    if (!GuestCopyIn_nid_no_patch(&local, context, sizeof(local))) return Fail(GuestEfault);
+    constexpr std::uint64_t MinimumHeadroom = 128 + sizeof(UserUcontext) + SignalInfoSize + 15 + SignalArguments * sizeof(std::uint64_t) + 16;
+    if (local.mcontext.rsp < MinimumHeadroom) return Fail(GuestEfault);
+    auto stack = (local.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15);
     auto* saved = reinterpret_cast<UserUcontext*>(stack);
-    std::memcpy(saved, context, sizeof(UserUcontext));
+    if (!GuestCopyOut_nid_no_patch(saved, &local, sizeof(local))) return Fail(GuestEfault);
     stack = (stack - SignalInfoSize) & ~static_cast<std::uint64_t>(15);
     auto* info = reinterpret_cast<std::uint8_t*>(stack);
-    std::memset(info, 0, SignalInfoSize);
-    std::memcpy(info, &signal, sizeof(signal));
+    std::uint8_t signalInfo[SignalInfoSize]{};
+    std::memcpy(signalInfo, &signal, sizeof(signal));
+    if (!GuestCopyOut_nid_no_patch(info, signalInfo, sizeof(signalInfo))) return Fail(GuestEfault);
     stack -= SignalArguments * sizeof(std::uint64_t);
     auto* arguments = reinterpret_cast<std::uint64_t*>(stack);
-    arguments[0] = static_cast<std::uint64_t>(static_cast<std::int64_t>(signal));
-    arguments[1] = reinterpret_cast<std::uint64_t>(info);
-    arguments[2] = reinterpret_cast<std::uint64_t>(saved);
+    const std::uint64_t callArguments[SignalArguments] = {
+        static_cast<std::uint64_t>(static_cast<std::int64_t>(signal)),
+        reinterpret_cast<std::uint64_t>(info),
+        reinterpret_cast<std::uint64_t>(saved),
+    };
+    if (!GuestCopyOut_nid_no_patch(arguments, callArguments, sizeof(callArguments))) return Fail(GuestEfault);
     stack -= 16;
-    *reinterpret_cast<std::uint64_t*>(stack) = 0;
-    std::memset(&context->mcontext, 0, sizeof(UserMcontext));
-    context->mcontext.fpformat = FloatingPointFormatNone;
-    context->mcontext.ownedfp = FloatingPointOwnedNone;
-    context->link = saved;
-    if (signal >= 1 && signal <= MaximumSignal) context->sigmask[(signal - 1) >> 5] &= ~(1u << ((signal - 1) & 31));
-    auto& machine = context->mcontext;
+    const std::uint64_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(stack), &zero, sizeof(zero))) return Fail(GuestEfault);
+    std::memset(&local.mcontext, 0, sizeof(UserMcontext));
+    local.mcontext.fpformat = FloatingPointFormatNone;
+    local.mcontext.ownedfp = FloatingPointOwnedNone;
+    local.link = saved;
+    if (signal >= 1 && signal <= MaximumSignal) local.sigmask[(signal - 1) >> 5] &= ~(1u << ((signal - 1) & 31));
+    auto& machine = local.mcontext;
     machine.len = sizeof(UserMcontext);
     machine.rdi = reinterpret_cast<std::uint64_t>(context);
     machine.rsi = reinterpret_cast<std::uint64_t>(handler);
@@ -137,6 +155,7 @@ int APS5_VABI signalcontext_nid_postfix(UserUcontext* context, int signal, Conte
     machine.rbx = machine.rbp;
     machine.rsp = machine.rbp;
     machine.rip = reinterpret_cast<std::uint64_t>(&Aps5MakecontextStart_nid_no_patch);
+    if (!GuestCopyOut_nid_no_patch(context, &local, sizeof(local))) return Fail(GuestEfault);
     return 0;
 }
 
