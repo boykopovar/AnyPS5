@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/PluralRulesBackend.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -100,7 +101,7 @@ UPluralRules* APS5_VABI uplrules_openForType_nid_postfix(const char* locale, std
         return nullptr;
     }
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     auto local = incoming;
     void* rules = Icu::PluralRulesBackend::OpenForType(localePtr, type, &local);
     WriteStatus(status, incoming, local, __func__);

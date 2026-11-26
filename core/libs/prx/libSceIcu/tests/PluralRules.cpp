@@ -98,9 +98,10 @@ void Run() {
             std::int32_t status = incoming;
             UPluralRules* rules = uplrules_openForType_nid_postfix("en", type, &status);
             if (rules != nullptr) {
+                Require(status <= 0 || status == 2);
                 uplrules_close_nid_postfix(rules);
             } else {
-                Require(status > 0);
+                Require(status == 2);
             }
         }
 
@@ -246,9 +247,10 @@ void Run() {
         uplrules_close_nid_postfix(realRules);
         RequireThrows([&] { uplrules_close_nid_postfix(realRules); });
     } else if (realRules != nullptr) {
+        Require(status == 2);
         uplrules_close_nid_postfix(realRules);
     } else {
-        Require(status > 0);
+        Require(status == 2);
     }
 }
 
