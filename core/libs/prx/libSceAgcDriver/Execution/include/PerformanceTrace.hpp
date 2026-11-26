@@ -946,15 +946,7 @@ public:
     static void BindThread(const char* name, std::size_t capacity = TraceThread::DefaultCapacity);
     static void Present(std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
 
-    static void GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch = 0) {
-        if (!buffering.load(std::memory_order_relaxed)) return;
-        std::lock_guard lock(gpuMutex);
-        if (gpuRanges.size() == gpuRanges.capacity()) {
-            ++gpuLost;
-            return;
-        }
-        gpuRanges.push_back({name, beginNs, endNs, batch});
-    }
+    static void GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch = 0);
 
     static bool Recording() {
         return AgcDriverTraceRecording_nid_postfix();
@@ -993,14 +985,15 @@ private:
 
     static std::atomic<bool> recording;
     static std::atomic<std::uint64_t> ownedDrawUnbound;
-    inline static std::atomic<bool> buffering{false};
+    static std::atomic<bool> buffering;
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
     static thread_local const char* localName;
     static std::atomic<TraceThread* (*)()> binder;
-    inline static std::mutex gpuMutex;
-    inline static std::vector<TraceGpuRange> gpuRanges;
-    inline static std::uint64_t gpuLost = 0;
+    static std::mutex gpuMutex;
+    static std::vector<TraceGpuRange> gpuRanges;
+    static std::size_t gpuCapacity;
+    static std::uint64_t gpuLost;
 };
 
 }

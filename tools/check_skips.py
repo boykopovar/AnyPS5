@@ -23,6 +23,7 @@ HDR_OUTPUT_STATUS = re.compile(
     r"\[videoout\] HDR output (?:available: peak [0-9]+\.[0-9] nits, full frame [0-9]+\.[0-9] nits, black [0-9]+\.[0-9]{4} nits"
     r"|unavailable \(display in HDR: (?:yes|no), surface offers HDR10: (?:yes|no)\))")
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
+SKIP_REASON = re.compile(r"\b(?:skipped,|skip:)\s*(.*)", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
 
@@ -32,7 +33,7 @@ ENVIRONMENT_LOADER_RETENTION = "environment binding: skipped unload checks becau
 
 
 def device_limitations(output, patterns):
-    reasons = [match.group(0) for line in output.splitlines() if (match := re.search(r"skipped,.*", line, re.IGNORECASE))]
+    reasons = [f"skipped, {match.group(1)}" for line in output.splitlines() if (match := SKIP_REASON.search(line))]
     return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
 
 
@@ -42,14 +43,14 @@ SYMLINK_PRIVILEGE_TESTS = tuple(f"guest_kernel_sys_paths_{case}{suffix}" for cas
 def symlink_privilege_limitation(name, output):
     if name not in SYMLINK_PRIVILEGE_TESTS:
         return False
-    reasons = [match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))]
+    reasons = [match.group(0).strip() for line in output.splitlines() if (match := SKIP_REASON.search(line))]
     return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
 
 
 def emulator_log_line(line):
     if HDR_OUTPUT_STATUS.fullmatch(line):
         return True
-    return bool(DEVICE_LOG_SOURCE.match(line) or DEVICE_LOG_SUBSYSTEM.match(line) or VULKAN_LOADER_LOG.match(line)) and not re.search(r"skipped,", line, re.IGNORECASE)
+    return bool(DEVICE_LOG_SOURCE.match(line) or DEVICE_LOG_SUBSYSTEM.match(line) or VULKAN_LOADER_LOG.match(line)) and not SKIP_REASON.search(line)
 
 
 def high_refresh_limitation(output):
@@ -60,8 +61,8 @@ def high_refresh_limitation(output):
             continue
         if emulator_log_line(reason):
             continue
-        if match := re.search(r"skipped,", reason, re.IGNORECASE):
-            reason = reason[match.end():].strip()
+        if match := SKIP_REASON.search(reason):
+            reason = match.group(1).strip()
         if reason:
             reasons.append(reason)
     return bool(reasons) and all(HIGH_REFRESH_LIMITATION.fullmatch(reason) for reason in reasons)
@@ -133,7 +134,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         found = sorted(skips(args.junit, require_tests=args.require_tests))
-    except (OSError, ET.ParseError, ValueError) as error:
+    except ET.ParseError as error:
+        parser.error(f"{args.junit}: {error}")
+    except (OSError, ValueError) as error:
         parser.error(str(error))
     if args.list:
         for name, output in found:

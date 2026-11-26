@@ -985,6 +985,16 @@ class PreparationTests(unittest.TestCase):
         (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/src/AnyPS5\n", encoding="utf-8")
         self.assertEqual(title_run.source_root(build), Path("C:/src/AnyPS5"))
 
+    def test_source_root_preserves_unicode_in_cmake_cache_paths(self):
+        build = self.root / "build"
+        build.mkdir()
+        cache = build / "CMakeCache.txt"
+        for encoding in ("utf-8", "utf-8-sig"):
+            with self.subTest(encoding=encoding):
+                source = "C:/src/Any\u2028PS5=checkout"
+                cache.write_bytes(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\r\n".encode(encoding))
+                self.assertEqual(title_run.source_root(build), Path(source))
+
     def test_discover_refuses_duplicates(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
@@ -1150,6 +1160,49 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(original.read_bytes(), b"linked source bytes")
         self.assertTrue(alias.is_symlink())
         self.assertFalse(staged.is_symlink())
+
+    def make_directory_link(self, link, target):
+        if os.name == "nt":
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.addCleanup(link.unlink)
+
+    def test_staged_linked_directories_get_independent_asset_copies(self):
+        source = self.root / "pkg"
+        shared = self.root / "shared"
+        source.mkdir()
+        (shared / "nested").mkdir(parents=True)
+        original = shared / "nested/data.bin"
+        original.write_bytes(b"source bytes")
+        for name in ("voices", "subtitles", "sce_module"):
+            self.make_directory_link(source / name, shared)
+        staged = self.root / "app0"
+
+        title_run.link_tree(source, staged, {"sce_module"})
+
+        voice = staged / "voices/nested/data.bin"
+        self.assertEqual(voice.read_bytes(), b"source bytes")
+        voice.write_bytes(b"changed")
+        self.assertEqual((staged / "subtitles/nested/data.bin").read_bytes(), b"source bytes")
+        self.assertEqual(original.read_bytes(), b"source bytes")
+        self.assertFalse(title_run.linked_path(staged / "voices"))
+        self.assertFalse((staged / "sce_module").exists())
+
+    def test_staging_rejects_an_asset_directory_cycle(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "assets").mkdir()
+        self.make_directory_link(source / "assets/back", source)
+
+        packages = []
+        found = title_run.discover([self.root], packages=packages)
+        self.assertEqual(found["PPSA00001"]["package"], source)
+        self.assertEqual(packages, [source])
+        with self.assertRaisesRegex(ValueError, "asset directory cycle"):
+            title_run.link_tree(source, self.root / "app0", set())
 
     def test_prepare_isolates_assets_and_keeps_module_inputs(self):
         source = package(self.root / "pkg", "PPSA00001")
@@ -1803,6 +1856,64 @@ class CompareTests(unittest.TestCase):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
+
+
+class SavedSmokeComparisonTests(unittest.TestCase):
+    def compare(self, baseline, candidate, *arguments):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("baseline summary.json", "candidate summary.json")]
+            for path, document in zip(paths, (baseline, candidate)):
+                path.write_text(json.dumps(document), encoding="utf-8-sig")
+            before = [path.read_bytes() for path in paths]
+            result = subprocess.run([sys.executable, str(title_run.ROOT / "tools/title_run.py"), "compare",
+                                     *paths, *arguments], cwd=directory, capture_output=True, encoding="utf-8")
+            self.assertEqual(sorted(Path(directory).iterdir()), paths)
+            self.assertEqual([path.read_bytes() for path in paths], before)
+            return result
+
+    def test_all_outcomes_are_counted_and_only_rendering_fps_is_sampled(self):
+        baseline = {"titles": {"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [
+            {"cache": "cold", "outcome": "rendering", "fps": 8.0},
+            {"cache": "warm", "outcome": "rendering", "fps": 10.0},
+            {"cache": "warm", "outcome": "stalled", "fps": 0.0},
+            {"cache": "warm", "outcome": "rendering", "fps": 30.0},
+            {"cache": "warm", "outcome": "rendering"},
+        ]}}}
+        candidate = {"titles": {"PPSA00001": {"name": "Game", "runs": [
+            {"cache": "cold", "outcome": "relink-failed", "fps": 0.0},
+            {"outcome": "rendering", "fps": 21.0},
+        ]}}}
+        result = self.compare(baseline, candidate, "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        title = json.loads(result.stdout)["titles"]["PPSA00001"]
+        warm = title["baseline"]["groups"]["warm"]
+        self.assertEqual(warm["outcomes"], ["rendering", "stalled", "rendering", "rendering"])
+        self.assertEqual(warm["fps"], {"count": 2, "min": 10.0, "median": 20.0, "max": 30.0})
+        self.assertEqual(title["baseline"]["groups"]["cold"]["fps"]["median"], 8.0)
+        self.assertEqual(title["candidate"]["groups"]["cold"]["fps"],
+                         {"count": 0, "min": None, "median": None, "max": None})
+        self.assertEqual(title["candidate"]["groups"]["unknown"]["fps"]["median"], 21.0)
+
+    def test_markdown_displays_titles_missing_from_one_side(self):
+        baseline = {"titles": {"PPSA00001": {"name": "Old | Title", "version": "01.000.000", "runs": [
+            {"cache": "cold", "outcome": "rendering", "fps": 7.5},
+        ]}}}
+        candidate = {"titles": {"PPSA00002": {"name": "Nouveau cinéma", "runs": [
+            {"cache": "warm", "outcome": "crashed", "fps": 0.0},
+        ]}}}
+        result = self.compare(baseline, candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Old \\| Title | PPSA00001 | Baseline | 01.000.000 | cold", result.stdout)
+        self.assertIn("Old \\| Title | PPSA00001 | Candidate | - | - | not recorded", result.stdout)
+        self.assertIn("Nouveau cinéma | PPSA00002 | Baseline | - | - | not recorded", result.stdout)
+        self.assertIn("Nouveau cinéma | PPSA00002 | Candidate | - | warm | crashed 1 | 0/1", result.stdout)
+
+    def test_performance_capture_is_rejected_as_a_smoke_summary(self):
+        result = self.compare({"titles": {}}, {"format": "anyps5-performance-capture/1", "titles": {}}, "--json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("candidate summary.json", result.stderr)
+        self.assertIn("expected a smoke-run summary", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 class DiagnosticComparisonTests(unittest.TestCase):

@@ -769,11 +769,12 @@ class ProgressHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "site"
             with patch.object(progress_history, "collect", return_value=[point]):
-                progress_history.main([str(output)])
+                progress_history.main([str(output), "--ref", "feature/a&b"])
             svg = (output / "history.svg").read_text(encoding="utf-8")
             self.assertIn("\u25cf", svg)
             html = (output / "history.html").read_text(encoding="utf-8")
             self.assertIn("<!DOCTYPE html>", html)
+            self.assertIn("<code>feature/a&amp;b</code>", html)
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
             badge = (output / "badge-week.svg").read_text(encoding="utf-8")

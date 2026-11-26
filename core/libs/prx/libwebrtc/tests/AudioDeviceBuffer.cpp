@@ -87,6 +87,125 @@ void TestRegisterAudioCallback() {
     RequireOnlyChanged(storage, 0, 0);
 }
 
+void FillFlags(Storage& storage, bool playing, bool recording) {
+    std::memset(storage.bytes, 0xA5, sizeof(storage.bytes));
+    auto* buffer = reinterpret_cast<WebRtcAudioDeviceBuffer*>(storage.bytes);
+    buffer->playing = playing;
+    buffer->recording = recording;
+}
+
+void RequireOnlyOffsetChanged(const Storage& before, const Storage& after, std::size_t offset) {
+    for (std::size_t index = 0; index < kStorageSize; ++index) {
+        if (index == offset) continue;
+        Require(after.bytes[index] == before.bytes[index]);
+    }
+}
+
+void TestStartStopPlayout() {
+    Storage storage;
+    FillFlags(storage, false, false);
+    auto* buffer = reinterpret_cast<WebRtcAudioDeviceBuffer*>(storage.bytes);
+
+    Storage before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(buffer) == 0);
+    Require(buffer->playing);
+    Require(!buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(buffer) == 0);
+    Require(buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(buffer) == 0);
+    Require(!buffer->playing);
+    Require(!buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(buffer) == 0);
+    Require(!buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    FillFlags(storage, true, false);
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(buffer) == 0);
+    Require(buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    FillFlags(storage, false, true);
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(buffer) == 0);
+    Require(!buffer->playing);
+    Require(buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 56);
+}
+
+void TestStartStopRecording() {
+    Storage storage;
+    FillFlags(storage, false, false);
+    auto* buffer = reinterpret_cast<WebRtcAudioDeviceBuffer*>(storage.bytes);
+
+    Storage before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(buffer) == 0);
+    Require(buffer->recording);
+    Require(!buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 57);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(buffer) == 0);
+    Require(buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 57);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(buffer) == 0);
+    Require(!buffer->recording);
+    Require(!buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 57);
+
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(buffer) == 0);
+    Require(!buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 57);
+
+    FillFlags(storage, false, true);
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(buffer) == 0);
+    Require(buffer->recording);
+    RequireOnlyOffsetChanged(before, storage, 57);
+
+    FillFlags(storage, true, false);
+    before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(buffer) == 0);
+    Require(!buffer->recording);
+    Require(buffer->playing);
+    RequireOnlyOffsetChanged(before, storage, 57);
+}
+
+void TestPlayoutAndRecordingAreIndependent() {
+    Storage storage;
+    FillFlags(storage, false, false);
+    auto* buffer = reinterpret_cast<WebRtcAudioDeviceBuffer*>(storage.bytes);
+
+    Require(_ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(buffer) == 0);
+    Require(_ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(buffer) == 0);
+    Require(buffer->playing);
+    Require(buffer->recording);
+
+    Storage before = storage;
+    Require(_ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(buffer) == 0);
+    RequireOnlyOffsetChanged(before, storage, 56);
+
+    Require(_ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(buffer) == 0);
+    Require(!buffer->playing);
+    Require(buffer->recording);
+
+    Require(_ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(buffer) == 0);
+    Require(!buffer->playing);
+    Require(!buffer->recording);
+}
+
 template <typename Call>
 void RequireInvalidArgument(Call call) {
     try {
@@ -103,6 +222,10 @@ void TestNullBufferThrows() {
     RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer20SetRecordingChannelsEm_nid_postfix(nullptr, 1); });
     RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer18SetPlayoutChannelsEm_nid_postfix(nullptr, 1); });
     RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer21RegisterAudioCallbackEPNS_14AudioTransportE_nid_postfix(nullptr, nullptr); });
+    RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(nullptr); });
+    RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(nullptr); });
+    RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(nullptr); });
+    RequireInvalidArgument([] { _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(nullptr); });
 }
 
 }
@@ -110,6 +233,9 @@ void TestNullBufferThrows() {
 int main() {
     TestSampleRatesAndChannels();
     TestRegisterAudioCallback();
+    TestStartStopPlayout();
+    TestStartStopRecording();
+    TestPlayoutAndRecordingAreIndependent();
     TestNullBufferThrows();
     return 0;
 }

@@ -244,10 +244,10 @@ std::shared_ptr<Buffer> stageGuestSamples(const Context& context, const Multisam
 
 class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
 public:
-    MultisampleTarget(const Context& context, const ColorTarget& target, bool guestSamples = false, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> preparedUpload = {}, std::vector<std::byte> initialBaseline = {}) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target), guestColorBaseline(std::move(initialBaseline)) {
+    MultisampleTarget(const Context& context, const ColorTarget& target, bool guestSamples = false, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> preparedUpload = {}, std::vector<std::byte> initialBaseline = {}, bool hasRegisterClear = true) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target), guestColorBaseline(std::move(initialBaseline)) {
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
-        const auto initial = initialClear ? *initialClear : initialDccClear(target);
+        const auto initial = initialClear ? *initialClear : initialDccClear(target, hasRegisterClear);
         if (target.dccAddress != 0) cleared = initial;
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
@@ -548,7 +548,7 @@ public:
         fmaskRange.reset();
         fmaskCopy = {};
         metadataValid = std::make_shared<std::atomic<bool>>(true);
-        const auto initial = initialDccClear(use);
+        const auto initial = initialDccClear(use, true);
         cleared = initial;
         drawn = false;
         ++contents;
@@ -817,6 +817,16 @@ public:
         return twinView;
     }
 
+    bool TakesRegisterState(const ColorTarget& use) const {
+        return fromTexture && !drawn && !storageWritten && dccRanges.size() == 2 && use.address == target.address && use.dccAddress == target.dccAddress && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor && (use.dccControl != target.dccControl || use.cmaskAddress != target.cmaskAddress || use.cmaskBytes != target.cmaskBytes);
+    }
+
+    void CheckTextureImport() const {
+        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
+        const auto keys = dccFill ? LandedUniformMetadataByte(dccRanges[1].address, dccRanges[1].bytes) : std::nullopt;
+        checkDccWrites(keys && *dccFill == *keys * 0x01010101u ? std::size_t{1} : dccRanges.size());
+    }
+
     bool Serves(const ColorTarget& use) const {
         if (use.format == target.format) return sameTarget(target, use);
         auto twin = use;
@@ -1071,7 +1081,7 @@ private:
         return upload;
     }
 
-    VkClearColorValue initialDccClear(const ColorTarget& use) {
+    VkClearColorValue initialDccClear(const ColorTarget& use, bool hasRegisterClear) {
         if (use.dccAddress == 0) return {};
         const auto dccBytes = MultisampledDccBytes(use);
         Require((use.dccAddress & 4095u) == 0, "multisampled DCC metadata base alignment is not implemented");
@@ -1092,6 +1102,7 @@ private:
                 continue;
             }
             Require(GuestMemory::Watched(range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            if (index != 0u) GuestMemory::MaterializeKnownZero(range.address, range.bytes);
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");
             watched.push_back(range);
@@ -1112,6 +1123,7 @@ private:
             fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
             Require(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
             if (!fmaskCopy.compared) {
+                GuestMemory::MaterializeKnownZero(range.address, range.bytes);
                 range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 Require(range.generation != 0, "native FMASK contents have no write generation");
             }
@@ -1125,6 +1137,7 @@ private:
         }
         std::vector<std::byte> fmaskBytes(fmaskCopy.compared ? fmaskRange->bytes : 0u);
         if (fmaskCopy.compared) GuestMemory::Read(fmaskRange->address, fmaskBytes);
+        Require(hasRegisterClear || bytes[1].front() != std::byte{0x20}, "multisampled texture DCC register clear requires a known render-target clear color");
         const auto clear = MultisampledDccClear(use, bytes[1], bytes[2]);
         Require((watched.empty() || GuestMemory::UnchangedSinceAll(watched)) && (!fmaskRange || fmaskCopy.compared || GuestMemory::UnchangedSinceAll(std::span(&*fmaskRange, 1u))), "initial multisampled DCC contents changed during import");
         for (std::size_t index = 0; index < dccRanges.size(); ++index) {
@@ -1142,15 +1155,7 @@ private:
         Require(false, text);
     }
 
-    void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
-        if (dccRanges.empty()) {
-            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
-            return;
-        }
-        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
-        static_cast<void>(MultisampledDccBytes(use));
-        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
-        const auto ranges = metadataRefilled ? std::size_t{1} : dccRanges.size();
+    void checkDccWrites(std::size_t ranges) const {
         for (std::size_t index = 0; index < ranges; ++index) requireDccRange(compared(index) || GuestMemory::Watched(dccRanges[index].address, dccRanges[index].bytes), dccRanges[index], "multisampled DCC target reuse requires watched guest memory");
         for (std::size_t index = 0; index < ranges; ++index) {
             const auto& range = dccRanges[index];
@@ -1162,6 +1167,17 @@ private:
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
         }
+    }
+
+    void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
+        if (dccRanges.empty()) {
+            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
+            return;
+        }
+        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
+        static_cast<void>(MultisampledDccBytes(use));
+        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
+        checkDccWrites(metadataRefilled ? std::size_t{1} : dccRanges.size());
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
             const auto& range = *fmaskRange;
@@ -1484,7 +1500,9 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
         if (target->context.device != context.device || !target->Serves(requested)) continue;
         auto use = requested;
         use.format = target->target.format;
-        if (recreated(target->target, use)) {
+        const bool takesRegisterState = target->TakesRegisterState(use);
+        if (takesRegisterState) target->CheckTextureImport();
+        if (takesRegisterState || recreated(target->target, use)) {
             {
                 std::unique_lock lock(guardedMutex());
                 if (!target->active->load(std::memory_order_acquire)) continue;
@@ -1573,6 +1591,19 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     RequireNoMultisampleColorTarget(use.address, static_cast<std::size_t>(bytes), "sampling a multisampled texture no draw rendered to");
     GuestMemory::FlushGpuWrites(use.address, static_cast<std::size_t>(bytes));
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(use.address), static_cast<std::size_t>(bytes))) refuse(std::string("whose color memory ") + range + " is not mapped");
+    if (!written && resource.dccAddress != 0u && use.tileMode == ColorTileMode::RenderTarget) {
+        use.dccAddress = resource.dccAddress;
+        use.dccPipeAligned = resource.dccPipeAligned;
+        use.dccAlphaOnMsb = resource.dccAlphaOnMsb;
+        auto target = std::make_shared<MultisampleTarget>(context, use, false, std::nullopt, std::shared_ptr<Buffer>{}, std::vector<std::byte>{}, false);
+        target->Keep();
+        targets().push_back(std::move(target));
+        auto& created = *targets().back();
+        created.use->hostOnly.store(false, std::memory_order_release);
+        guard(context, use, created.active, created.metadataValid, created.use, created.shared_from_this());
+        created.fromTexture = true;
+        return created;
+    }
     std::uint64_t htileBytes = 0;
     bool htileCleared = false;
     if (resource.dccAddress != 0) {
@@ -1882,13 +1913,18 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
     const auto bytes = MultisampledColorBytes(target);
     Require(bytes != 0u && bytes <= std::numeric_limits<std::size_t>::max() && target.address <= std::numeric_limits<std::uint64_t>::max() - bytes, "initial multisample color footprint is not implemented");
-    const auto requireUnowned = [&] {
-        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+    const auto requireNoColorOwner = [&] {
         std::shared_lock guardLock(guardedMutex());
         Require(std::ranges::none_of(guarded(), [&](const GuardedRange& range) { return range.active->load(std::memory_order_acquire) && target.address < range.address + range.bytes && range.address < target.address + bytes; }), "initial multisample color contents overlap another native owner");
     };
-    requireUnowned();
+    const auto requireUnowned = [&] {
+        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+        requireNoColorOwner();
+    };
+    requireNoColorOwner();
     Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
+    RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes), std::nullopt, true, DepthReadCause::Attachment);
+    requireUnowned();
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
     GuestMemory::Read(target.address, snapshot);
     requireUnowned();

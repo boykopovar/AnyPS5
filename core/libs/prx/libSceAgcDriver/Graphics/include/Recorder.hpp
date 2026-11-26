@@ -22,6 +22,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <string>
@@ -195,6 +196,7 @@ public:
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
+    void AfterRenderPass(std::function<void(Recorder&)> work);
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
@@ -258,6 +260,8 @@ public:
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
+    bool ShorterDrawSnapshotKept(std::uint64_t address, std::size_t bytes, SnapshotUse use) const;
+    bool GuestWritesPendingIn(std::uint64_t address, std::size_t bytes) const;
     struct OwnedDrawInputProof {
         std::vector<std::uint64_t> words;
         std::uint64_t since = 0;
@@ -283,6 +287,8 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    void OnDiscard(std::function<void()> action);
+    void ChangeUndoneOnDiscard(const std::function<void()>& change, std::function<void()> undo);
     void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
@@ -413,6 +419,7 @@ public:
         std::uint64_t recordedAtOnce;
         std::uint64_t segments;
         std::uint64_t folds;
+        std::uint64_t capacityFolds;
     };
     static SampleDumpStatistics SampleDumpCounts();
     struct QueuedWrite {
@@ -556,6 +563,7 @@ public:
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
     static void FailNextSubmitsForTest(unsigned count);
+    static void FailNextDiscardRegistrationsForTest(unsigned count);
     // Whether the lock-free pending-write snapshot (open, in-flight and finishing batches) overlaps
     // the range: false means no recorded work writes it, so a wait on it has nothing to submit.
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
@@ -689,7 +697,10 @@ public:
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
     static constexpr std::uint64_t DrawTimingFlag = std::uint64_t{1} << 63u;
+    static constexpr std::uint64_t DrawStageTimingFlag = std::uint64_t{1} << 62u;
     static constexpr std::uint64_t DrawTimingKey(std::uint64_t variantId) { return variantId | DrawTimingFlag; }
+    static bool DrawStageTimingEnabled();
+    static std::uint64_t DrawStageTimingKey(std::span<const std::pair<std::uint32_t, std::uint64_t>> stages);
     static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
@@ -815,6 +826,7 @@ private:
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
+        std::vector<std::function<void()>> discards;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::uint64_t> stampedNotes;
@@ -935,6 +947,7 @@ private:
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(CommandState&)> afterPass;
+            std::vector<std::function<void(Recorder&)>> afterEnd;
             PassBreak closedBy = PassBreak::NewBatch;
         } renderPass;
         PassHazards passHazards;

@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -33,7 +34,11 @@ static constexpr int SCE_NP_WEBAPI_ERROR_SIGNED_IN_USER_NOT_FOUND = static_cast<
 static constexpr int SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_MAX = static_cast<int>(0x8055291A);
 static constexpr int SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_FILTER_NOT_FOUND = static_cast<int>(0x8055291C);
 static constexpr int SCE_NP_WEBAPI_ERROR_EXTD_PUSH_EVENT_CALLBACK_NOT_FOUND = static_cast<int>(0x8055291D);
+static constexpr int SCE_NP_WEBAPI_ERROR_SERVER_JSON_BAD_CODE = static_cast<int>(0x8055A401);
+static constexpr int SCE_NP_WEBAPI_ERROR_SERVER_JSON_BAD_FORMAT = static_cast<int>(0x80552914);
 static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80960105);
+static constexpr int SCE_NP_SERVER_ERROR_JSON_BAD_CODE = static_cast<int>(0x80559C02);
+static constexpr int SCE_NP_SERVER_ERROR_JSON_BAD_FORMAT = static_cast<int>(0x80559C03);
 
 static constexpr int SCE_HTTP_ERROR_INVALID_ID = static_cast<int>(0x80431100);
 static constexpr int SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE = static_cast<int>(0x80432060);
@@ -526,8 +531,13 @@ int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* targ
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpWebApiGetErrorCode() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length) {
+    const int result = ApplicationCompiledSdkVersion() >= SDK_VERSION_2_50
+        ? sceNpServerErrorJsonMultiGetErrorCode(httpStatus, json, length)
+        : sceNpServerErrorJsonGetErrorCode(httpStatus, json, length);
+    if (result == SCE_NP_SERVER_ERROR_JSON_BAD_CODE) return SCE_NP_WEBAPI_ERROR_SERVER_JSON_BAD_CODE;
+    if (result == SCE_NP_SERVER_ERROR_JSON_BAD_FORMAT) return SCE_NP_WEBAPI_ERROR_SERVER_JSON_BAD_FORMAT;
+    return result;
 }
 
 int APS5_VABI sceNpWebApiInitializeForPresence(int libHttpCtxId, std::size_t poolSize) {
