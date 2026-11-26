@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -9,6 +10,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -180,10 +190,45 @@ static void CheckLongjmp() {
 
     Require(!JumpBuffer::JumpBufferSaveMask_nid_no_patch(nullptr));
     Require(!JumpBuffer::JumpBufferSaveMask_nid_no_patch(reinterpret_cast<unsigned char*>(0x10)));
+    Require(!JumpBuffer::JumpBufferPrepareNoMask_nid_no_patch(nullptr));
+    Require(!JumpBuffer::JumpBufferPrepareNoMask_nid_no_patch(reinterpret_cast<unsigned char*>(0x10)));
     Require(!JumpBuffer::JumpBufferRestoreMask_nid_no_patch(nullptr));
     Require(!JumpBuffer::JumpBufferRestoreMask_nid_no_patch(reinterpret_cast<const unsigned char*>(0x10)));
-    Require(setjmp_nid_postfix(nullptr) == -1);
-    Require(setjmp_nid_postfix(reinterpret_cast<std::uint64_t*>(0x10)) == -1);
+
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    Require(rawPageSize > 0);
+    pageSize = static_cast<std::size_t>(rawPageSize);
+    auto* pages = static_cast<unsigned char*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    auto* partial = pages + pageSize - 88;
+    Require(!JumpBuffer::JumpBufferSaveMask_nid_no_patch(partial));
+    Require(!JumpBuffer::JumpBufferPrepareNoMask_nid_no_patch(partial));
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, pageSize);
+        const auto noop = [](void*, std::uintptr_t, std::uintptr_t) {};
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), pageSize, noop, nullptr));
+        Require(JumpBuffer::JumpBufferSaveMask_nid_no_patch(pages));
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), pageSize, noop, nullptr));
+        Require(JumpBuffer::JumpBufferPrepareNoMask_nid_no_patch(pages));
+        Require(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pages, pageSize));
+    }
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, pageSize * 2);
+#endif
 }
 
 static void CheckInvalidHow() {

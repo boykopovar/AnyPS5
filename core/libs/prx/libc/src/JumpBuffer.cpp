@@ -34,6 +34,12 @@ bool APS5_VABI JumpBufferSaveMask_nid_no_patch(unsigned char* buffer) {
     return GuestCopyOut_nid_no_patch(buffer + MaskSavedOffset, &saved, sizeof(saved));
 }
 
+bool APS5_VABI JumpBufferPrepareNoMask_nid_no_patch(unsigned char* buffer) {
+    if (!buffer) return false;
+    const std::int32_t saved = 0;
+    return GuestCopyOut_nid_no_patch(buffer + MaskSavedOffset, &saved, sizeof(saved));
+}
+
 bool APS5_VABI JumpBufferRestoreMask_nid_no_patch(const unsigned char* buffer) {
     if (!buffer) return false;
     std::int32_t saved = 0;
@@ -84,8 +90,8 @@ asm(".text\n"
     "    xor %eax, %eax\n"
     "    ret\n"
     "2:\n"
-    "    mov $-1, %eax\n"
-    "    ret\n"
+    APS5_JUMP_ASM_CALL("abort")
+    "    ud2\n"
     APS5_ASM_FUNCTION("longjmp_nid_postfix")
     "    mov %rdi, %rbx\n"
     "    mov %esi, %r12d\n"
@@ -118,7 +124,11 @@ asm(".text\n"
     APS5_JUMP_ASM_CALL("abort")
     "    ud2\n"
     APS5_ASM_FUNCTION("_setjmp_nid_postfix")
-    "    movl $0, 88(%rdi)\n"
+    "    push %rdi\n"
+    APS5_JUMP_ASM_CALL("JumpBufferPrepareNoMask_nid_no_patch")
+    "    pop %rdi\n"
+    "    test %al, %al\n"
+    "    jz 2f\n"
     "    mov (%rsp), %rax\n"
     "    mov %rax, 0(%rdi)\n"
     "    mov %rbx, 8(%rdi)\n"
@@ -133,6 +143,9 @@ asm(".text\n"
     "    fnstcw 68(%rdi)\n"
     "    xor %eax, %eax\n"
     "    ret\n"
+    "2:\n"
+    APS5_JUMP_ASM_CALL("abort")
+    "    ud2\n"
     APS5_ASM_FUNCTION("_longjmp_nid_postfix")
 #ifdef _WIN32
     "    mov %rdi, %rbx\n"
