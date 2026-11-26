@@ -134,6 +134,12 @@ void TestNames() {
     failed.rootName = {nullptr, 0, &oversized, nullptr, 0};
     failed.subjectIssuerName = {nullptr, 1, nullptr, nullptr, 0};
     Require(failed.Check() == 29);
+
+    Fixture wrapped;
+    BufMem wrappedLength{0x100000002ull, nullptr, 0};
+    wrapped.rootName = {nullptr, 0, &wrappedLength, nullptr, 0};
+    wrapped.subjectIssuerName = {nullptr, 0, &wrappedLength, nullptr, 0};
+    Require(wrapped.Check() == 0);
 }
 
 void TestNameFailures() {
