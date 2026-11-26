@@ -9,8 +9,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -142,9 +144,15 @@ int main() {
         std::copy(TwoTexels.begin(), TwoTexels.end(), Texels.begin());
         Draw(*device, TextureDescriptor(Format8_8_8_8, Type2D), WithFilterMode(0u));
         const auto blended = Capture();
-        Draw(*device, TextureDescriptor(Format8_8_8_8, Type2D), WithFilterMode(1u));
-        const auto minimum = Capture();
-        Require(blended != minimum, "the bilinear and min samplers drew the same image, so the draw does not filter between texels");
+        std::optional<std::vector<std::uint8_t>> minimum;
+        try {
+            Draw(*device, TextureDescriptor(Format8_8_8_8, Type2D), WithFilterMode(1u));
+            minimum = Capture();
+        } catch (const std::exception& error) {
+            Require(std::string_view(error.what()).find("format 37 does not support min/max filtering is sampled through a min or max reduction sampler") != std::string_view::npos, std::string("filter mode 1: unexpected error: ") + error.what());
+            std::puts("min sampler control skipped, the device lacks min/max filtering of 8_8_8_8 UNORM");
+        }
+        if (minimum) Require(blended != *minimum, "the bilinear and min samplers drew the same image, so the draw does not filter between texels");
         Draw(*device, TextureDescriptor(Format8_8_8_8, Type2D), WithFilterMode(3u));
         const auto modeThree = Capture();
         for (std::size_t index = 0; index < blended.size(); ++index) {
