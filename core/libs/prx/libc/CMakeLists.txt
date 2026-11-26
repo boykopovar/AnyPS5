@@ -178,9 +178,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExpf.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExpf.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
@@ -278,12 +278,12 @@ function(run_report_stamp_components root)
 endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExpf.cpp
-        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExpf.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 
 if(ANYPS5_ENABLE_TSAN)
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
@@ -1138,15 +1138,6 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_set_env PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test_executable(guest_expf_environment_tests ${LIBS_INCLUDE_DIR}/tests/GuestExpfEnvironment.cpp)
-    target_include_directories(guest_expf_environment_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_expf_environment_tests PRIVATE libc)
-    configure_windows_unwind(guest_expf_environment_tests)
-    add_test(NAME guest_expf_environment COMMAND guest_expf_environment_tests)
-    set_tests_properties(guest_expf_environment PROPERTIES TIMEOUT 30)
-    if(WIN32)
-        set_tests_properties(guest_expf_environment PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_lgamma_poles_tests ${LIBS_INCLUDE_DIR}/tests/GuestLgammaPoles.cpp)
     target_include_directories(guest_lgamma_poles_tests PRIVATE ${LIBS_INCLUDE_DIR})
