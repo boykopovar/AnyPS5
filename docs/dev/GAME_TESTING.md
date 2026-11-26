@@ -111,6 +111,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 
 Save data is kept under the runtime's `_sd/` folder, and save-data memory under `_sd_mem/`. Copy them into a new runtime to continue from the same point.
 
+Make the copy after all processes of the source run have exited. Keep the source save files unchanged and use a separate writable copy for each runtime. Confirm in-game that the copied save loads and reaches the intended scene before starting a comparison.
+
 ## Reporting a result
 
 Include, in this order:
