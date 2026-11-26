@@ -15,11 +15,15 @@ void APS5_VABI ulistfmt_closeResult_nid_postfix(UFormattedList* result) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-std::int32_t APS5_VABI ulistfmt_format_nid_postfix(const UListFormatter*, const char16_t* const[],
-                                                   const std::int32_t*, std::int32_t, char16_t* result,
+std::int32_t APS5_VABI ulistfmt_format_nid_postfix(const UListFormatter*, const char16_t* const strings[],
+                                                   const std::int32_t*, std::int32_t stringCount, char16_t* result,
                                                    std::int32_t resultCapacity, std::int32_t* status) {
     if (Icu::Failure(status)) return -1;
     if ((result == nullptr) ? resultCapacity != 0 : resultCapacity < 0) {
+        *status = Icu::IllegalArgument;
+        return -1;
+    }
+    if (stringCount < 0 || (strings == nullptr && stringCount > 0)) {
         *status = Icu::IllegalArgument;
         return -1;
     }
@@ -45,6 +49,15 @@ UListFormatter* APS5_VABI ulistfmt_openForType_nid_postfix(const char*, UListFor
 
 UFormattedList* APS5_VABI ulistfmt_openResult_nid_postfix(std::int32_t* status) {
     if (Icu::Failure(status)) return nullptr;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+const UFormattedValue* APS5_VABI ulistfmt_resultAsValue_nid_postfix(const UFormattedList* result, std::int32_t* status) {
+    if (Icu::Failure(status)) return nullptr;
+    if (!result) {
+        *status = Icu::IllegalArgument;
+        return nullptr;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 

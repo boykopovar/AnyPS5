@@ -40,6 +40,7 @@ static constexpr int GUEST_RLIMIT_KQUEUES = 13;
 static constexpr int GUEST_RLIMIT_UMTXP = 14;
 static constexpr int GUEST_RLIM_NLIMITS = 15;
 static constexpr std::int64_t GUEST_RLIM_INFINITY = std::numeric_limits<std::int64_t>::max();
+static constexpr std::int64_t GUEST_OPEN_FILES_PER_PROCESS = 12555;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -86,6 +87,7 @@ static void CheckOpenFileLimit() {
     const GuestResourceLimit limit = GuestLimit(GUEST_RLIMIT_NOFILE);
     Require(limit.rlim_cur == limit.rlim_max);
 #ifdef _WIN32
+    Require(_getmaxstdio() >= 8192);
     Require(limit.rlim_cur == 8192);
     RequireDescriptorsEndAt(limit);
     RequireStreamsOpen();
@@ -95,34 +97,43 @@ static void CheckOpenFileLimit() {
     Require(host.rlim_cur == host.rlim_max);
     Require(host.rlim_cur == RLIM_INFINITY ? limit.rlim_cur == GUEST_RLIM_INFINITY : limit.rlim_cur == static_cast<std::int64_t>(host.rlim_cur));
 #endif
+#ifdef __linux__
+    if (std::FILE* nrOpenFile = std::fopen("/proc/sys/fs/nr_open", "r")) {
+        unsigned long long nrOpen = 0;
+        if (std::fscanf(nrOpenFile, "%llu", &nrOpen) == 1 && nrOpen > 0) {
+            Require(host.rlim_cur != RLIM_INFINITY);
+            Require(host.rlim_max != RLIM_INFINITY);
+            Require(host.rlim_cur <= static_cast<rlim_t>(nrOpen));
+            Require(host.rlim_max <= static_cast<rlim_t>(nrOpen));
+        }
+        std::fclose(nrOpenFile);
+    }
+#endif
 #ifdef __APPLE__
     int perProcess = 0;
     std::size_t size = sizeof(perProcess);
     Require(sysctlbyname("kern.maxfilesperproc", &perProcess, &size, nullptr, 0) == 0);
-    Require(perProcess > 0 && limit.rlim_cur <= perProcess);
+    Require(perProcess > 0 && host.rlim_cur != RLIM_INFINITY && host.rlim_max != RLIM_INFINITY);
+    Require(host.rlim_cur <= static_cast<rlim_t>(perProcess) && host.rlim_max <= static_cast<rlim_t>(perProcess));
+    Require(limit.rlim_cur <= perProcess);
     RequireDescriptorsEndAt(limit);
 #endif
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
-    const GuestResourceLimit lowered{limit.rlim_max > 1 ? limit.rlim_max - 1 : 1, limit.rlim_max};
+    const std::int64_t normalizedMax = std::min(limit.rlim_max, GUEST_OPEN_FILES_PER_PROCESS);
+    const std::int64_t normalizedCur = std::min(limit.rlim_cur, normalizedMax);
+    const GuestResourceLimit normalized = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(normalized.rlim_cur == normalizedCur && normalized.rlim_max == normalizedMax);
+    const GuestResourceLimit lowered{normalizedMax > 1 ? normalizedMax - 1 : 1, normalizedMax};
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &lowered) == 0);
     const GuestResourceLimit updated = GuestLimit(GUEST_RLIMIT_NOFILE);
-    Require(updated.rlim_cur == lowered.rlim_cur);
-    Require(updated.rlim_max == lowered.rlim_max);
-    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
+    Require(updated.rlim_cur == lowered.rlim_cur && updated.rlim_max == lowered.rlim_max);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &normalized) == 0);
     const GuestResourceLimit restored = GuestLimit(GUEST_RLIMIT_NOFILE);
-    Require(restored.rlim_cur == limit.rlim_cur);
-    Require(restored.rlim_max == limit.rlim_max);
-    if (limit.rlim_max != GUEST_RLIM_INFINITY) {
-        const GuestResourceLimit raised{limit.rlim_cur, limit.rlim_max + 1};
-        bool raisedRejected = false;
-        try {
-            setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &raised);
-
-        } catch (const std::runtime_error&) {
-            raisedRejected = true;
-        }
-        Require(raisedRejected);
-    }
+    Require(restored.rlim_cur == normalized.rlim_cur && restored.rlim_max == normalized.rlim_max);
+    const GuestResourceLimit aboveCap{GUEST_OPEN_FILES_PER_PROCESS + 1, GUEST_OPEN_FILES_PER_PROCESS + 1};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &aboveCap) == 0);
+    const GuestResourceLimit capped = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(capped.rlim_cur == GUEST_OPEN_FILES_PER_PROCESS && capped.rlim_max == GUEST_OPEN_FILES_PER_PROCESS);
 }
 
 static void RequireError(int resource, GuestResourceLimit* limit, int error) {

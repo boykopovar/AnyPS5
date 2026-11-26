@@ -26,6 +26,29 @@ std::shared_ptr<Context> ContextFor(EGLContext handle) {
     return it->second;
 }
 
+class Attributes {
+public:
+    explicit Attributes(const EGLint* list) : address(reinterpret_cast<std::uintptr_t>(list)) {}
+
+    bool Next(EGLint& word) {
+        if (position == available) {
+            const std::size_t room = (4096 - address % 4096) / sizeof(EGLint);
+            available = std::clamp<std::size_t>(room, 1, words.size());
+            if (!GuestCopyIn_nid_no_patch(words.data(), reinterpret_cast<const void*>(address), available * sizeof(EGLint))) return false;
+            address += available * sizeof(EGLint);
+            position = 0;
+        }
+        word = words[position++];
+        return true;
+    }
+
+private:
+    std::uintptr_t address;
+    std::array<EGLint, 64> words{};
+    std::size_t position = 0;
+    std::size_t available = 0;
+};
+
 void Collect() {
     std::erase_if(contexts, [](const auto& item) { return item.second->deleted && item.second.use_count() == 1; });
     std::erase_if(surfaces, [](const auto& item) { return item.second->deleted && item.second.use_count() == 1; });
@@ -94,9 +117,7 @@ EGLBoolean APS5_VABI eglGetConfigAttrib_nid_postfix(EGLDisplay display, EGLConfi
     if (it == configAttributes.end()) return EglError_nid_no_patch(0x3004);
     if (!value) return EglError_nid_no_patch(0x300c);
     const EGLint result = it->second;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }
@@ -107,14 +128,18 @@ EGLBoolean APS5_VABI eglChooseConfig_nid_postfix(EGLDisplay display, const EGLin
     if (!count || (configs && size < 0)) return EglError_nid_no_patch(0x300c);
     std::map<EGLint, EGLint> criteria{{0x3033, 4}, {0x3040, 1}, {0x303f, 0x308e}, {0x3034, 0x3038}, {0x3029, 0}};
     if (attributes) {
-        for (auto p = attributes; *p != 0x3038; p += 2) {
-            if (!configAttributes.contains(p[0]) && p[0] != 0x3041) return EglError_nid_no_patch(0x3004);
-            if (p[1] < 0 && p[1] != -1 && p[0] != 0x3029 && p[0] != 0x3041) return EglError_nid_no_patch(0x3004);
-            if (p[0] == 0x3027 && p[1] != -1 && p[1] != 0x3038 && p[1] != 0x3050 && p[1] != 0x3051) return EglError_nid_no_patch(0x3004);
-            if (p[0] == 0x3034 && p[1] != -1 && p[1] != 0x3038 && p[1] != 0x3052) return EglError_nid_no_patch(0x3004);
-            if (p[0] == 0x303f && p[1] != -1 && p[1] != 0x308e && p[1] != 0x308f) return EglError_nid_no_patch(0x3004);
-            if ((p[0] == 0x3039 || p[0] == 0x303a || p[0] == 0x302d) && p[1] != -1 && p[1] > 1) return EglError_nid_no_patch(0x3004);
-            criteria[p[0]] = p[1];
+        Attributes list(attributes);
+        for (EGLint key = 0, value = 0;;) {
+            if (!list.Next(key)) return EglError_nid_no_patch(0x300c);
+            if (key == 0x3038) break;
+            if (!configAttributes.contains(key) && key != 0x3041) return EglError_nid_no_patch(0x3004);
+            if (!list.Next(value)) return EglError_nid_no_patch(0x300c);
+            if (value < 0 && value != -1 && key != 0x3029 && key != 0x3041) return EglError_nid_no_patch(0x3004);
+            if (key == 0x3027 && value != -1 && value != 0x3038 && value != 0x3050 && value != 0x3051) return EglError_nid_no_patch(0x3004);
+            if (key == 0x3034 && value != -1 && value != 0x3038 && value != 0x3052) return EglError_nid_no_patch(0x3004);
+            if (key == 0x303f && value != -1 && value != 0x308e && value != 0x308f) return EglError_nid_no_patch(0x3004);
+            if ((key == 0x3039 || key == 0x303a || key == 0x302d) && value != -1 && value > 1) return EglError_nid_no_patch(0x3004);
+            criteria[key] = value;
         }
     }
     bool match = true;
@@ -128,15 +153,11 @@ EGLBoolean APS5_VABI eglChooseConfig_nid_postfix(EGLDisplay display, const EGLin
         else if (key != 0x3035 && key != 0x3036 && key != 0x3037) match &= actual == value;
     }
     const EGLint countValue = match && (!configs || size > 0) ? 1 : 0;
-    const int savedErrno = errno;
     const bool countCopied = GuestCopyOut_nid_no_patch(count, &countValue, sizeof(countValue));
-    errno = savedErrno;
     if (!countCopied) return EglError_nid_no_patch(0x300c);
     if (configs && countValue) {
         const EGLConfig config = &configToken;
-        const int savedErrno2 = errno;
         const bool configsCopied = GuestCopyOut_nid_no_patch(configs, &config, sizeof(config));
-        errno = savedErrno2;
         if (!configsCopied) return EglError_nid_no_patch(0x300c);
     }
     return 1;
@@ -146,9 +167,14 @@ EGLContext APS5_VABI eglCreateContext_nid_postfix(EGLDisplay display, EGLConfig 
     std::lock_guard lock(mutex);
     if (!Display_nid_no_patch(display) || !Config_nid_no_patch(config)) return nullptr;
     EGLint version = 1;
-    if (attributes) for (auto p = attributes; *p != 0x3038; p += 2) {
-        if (*p != 0x3098) { EglError_nid_no_patch(0x3004); return nullptr; }
-        version = p[1];
+    if (attributes) {
+        Attributes list(attributes);
+        for (EGLint key = 0;;) {
+            if (!list.Next(key)) { EglError_nid_no_patch(0x300c); return nullptr; }
+            if (key == 0x3038) break;
+            if (key != 0x3098) { EglError_nid_no_patch(0x3004); return nullptr; }
+            if (!list.Next(version)) { EglError_nid_no_patch(0x300c); return nullptr; }
+        }
     }
     if (version != 2) { EglError_nid_no_patch(0x3005); return nullptr; }
     std::shared_ptr<Context> other;
@@ -167,17 +193,24 @@ EGLSurface APS5_VABI eglCreatePbufferSurface_nid_postfix(EGLDisplay display, EGL
     if (!Display_nid_no_patch(display) || !Config_nid_no_patch(config)) return nullptr;
     EGLint width = 0, height = 0, largest = 0, textureFormat = 0x305c, textureTarget = 0x305c, mipmap = 0;
     EGLint colorspace = 0x3089, alphaFormat = 0x308b;
-    if (attributes) for (auto p = attributes; *p != 0x3038; p += 2) {
-        switch (*p) {
-        case 0x3057: width = p[1]; break;
-        case 0x3056: height = p[1]; break;
-        case 0x3058: largest = p[1]; break;
-        case 0x3080: textureFormat = p[1]; break;
-        case 0x3081: textureTarget = p[1]; break;
-        case 0x3082: mipmap = p[1]; break;
-        case 0x3087: colorspace = p[1]; break;
-        case 0x3088: alphaFormat = p[1]; break;
-        default: EglError_nid_no_patch(0x3004); return nullptr;
+    if (attributes) {
+        Attributes list(attributes);
+        for (EGLint key = 0;;) {
+            if (!list.Next(key)) { EglError_nid_no_patch(0x300c); return nullptr; }
+            if (key == 0x3038) break;
+            EGLint* target = nullptr;
+            switch (key) {
+            case 0x3057: target = &width; break;
+            case 0x3056: target = &height; break;
+            case 0x3058: target = &largest; break;
+            case 0x3080: target = &textureFormat; break;
+            case 0x3081: target = &textureTarget; break;
+            case 0x3082: target = &mipmap; break;
+            case 0x3087: target = &colorspace; break;
+            case 0x3088: target = &alphaFormat; break;
+            default: EglError_nid_no_patch(0x3004); return nullptr;
+            }
+            if (!list.Next(*target)) { EglError_nid_no_patch(0x300c); return nullptr; }
         }
     }
     if (width < 0 || height < 0) { EglError_nid_no_patch(0x300c); return nullptr; }
@@ -291,9 +324,7 @@ EGLBoolean APS5_VABI eglQueryContext_nid_postfix(EGLDisplay display, EGLContext 
     case 0x3086: result = context->bound ? 0x3084 : 0x3038; break;
     default: return EglError_nid_no_patch(0x3004);
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
-    errno = savedErrno;
     if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }

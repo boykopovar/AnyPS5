@@ -28,15 +28,23 @@
 
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <stdexcept>
 
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
+
 }
 
 extern "C" std::int64_t APS5_VABI PKAlloc_nid_postfix(void** memory, std::size_t size) {
     if (memory == nullptr) throw std::invalid_argument("PKAlloc: null output pointer");
-    *memory = calloc_nid_postfix(1, size);
-    return *memory ? WmpErrSuccess : WmpErrOutOfMemory;
+    void* const allocation = calloc_nid_postfix(1, size);
+    if (!GuestCopyOut_nid_no_patch(memory, &allocation, sizeof(allocation))) {
+        if (allocation) free_nid_postfix(allocation);
+        throw std::invalid_argument("PKAlloc: unwritable output pointer");
+    }
+    return allocation ? WmpErrSuccess : WmpErrOutOfMemory;
 }

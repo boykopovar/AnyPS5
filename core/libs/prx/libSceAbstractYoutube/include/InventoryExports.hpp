@@ -61,4 +61,32 @@ int APS5_VABI _ZN15AbstractStorage13YoutubeFolder13RemoveContentERKSbIcSt11char_
 int APS5_VABI _ZN15AbstractStorage13YoutubeFolder4OpenENS_8ItemTypeE();
 int APS5_VABI _ZN15AbstractStorage13YoutubeFolder5CloseEv();
 
+int APS5_VABI libSceAbstractYoutubeUnknown_26_plus_qh3cw_minus_Rk_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_2l4I9SCoQGo_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_2spIcbz9a4c_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_6A3QZpbCzqI_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_Bo7s49MExf4_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_C8lFlQympVw_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_Cz_minus_k0_plus_3Ko_minus_Y_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_Ds9ID4F7dNc_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_FkpEJ7DfAtE_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_GGzJcpDXRz4_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_HxZv0UgY_plus_7E_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_Ix3dt_minus_HaP9s_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_NBDWs6iIqNE_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_Pk1mFgNtLEM_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_RaO8sKI7L44_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_UJyqV64_minus_qNQ_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_UqZVYj1m2m4_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_aVE9tVODTHw_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_cobO1RmAxN4_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_gsLtb_minus_uKeH8_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_hdVPPVnBbZU_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_oWpmMJAVnI0_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_qrZ8UFLI1Us_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_uk6wVMRO9c0_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_uyA49_minus_ae2_plus_k_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_zNGleAOPtNs_nid_no_patch();
+int APS5_VABI libSceAbstractYoutubeUnknown_zp94FyokDLI_nid_no_patch();
+
 }

@@ -2,7 +2,6 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
 #include <algorithm>
-#include <cerrno>
 #include <iterator>
 #include <cstdint>
 #include <cstddef>
@@ -15,20 +14,6 @@ static_assert(offsetof(PlayGoDialogResult, result) == 4);
 static_assert(offsetof(PlayGoDialogResult, reserved) == 8);
 
 namespace {
-
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
-bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
 
 constexpr std::int32_t STATUS_NONE = 0;
 constexpr std::int32_t STATUS_INITIALIZED = 1;
@@ -68,6 +53,8 @@ int APS5_VABI scePlayGoDialogTerminate(void) {
 int APS5_VABI scePlayGoDialogOpen(const void* param) {
     if (!param) return ERROR_ARG_NULL;
     if (g_status.load() == STATUS_NONE) return ERROR_NOT_INITIALIZED;
+    std::uint8_t probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, param, sizeof(probe))) return ERROR_ARG_NULL;
     int expected = STATUS_INITIALIZED;
     if (!g_status.compare_exchange_strong(expected, STATUS_FINISHED)) {
         expected = STATUS_FINISHED;
@@ -94,7 +81,7 @@ int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     if (result == nullptr) return ERROR_ARG_NULL;
 
     PlayGoDialogResult guestResult{};
-    if (!CopyInPreservingErrno(
+    if (!GuestCopyIn_nid_no_patch(
             &guestResult, result, sizeof(guestResult))) {
         return ERROR_ARG_NULL;
     }
@@ -115,7 +102,7 @@ int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     PlayGoDialogResult completed{};
     completed.result = RESULT_OK;
 
-    if (!CopyOutPreservingErrno(
+    if (!GuestCopyOut_nid_no_patch(
             result, &completed, sizeof(completed))) {
         return ERROR_ARG_NULL;
     }

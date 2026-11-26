@@ -22,6 +22,7 @@
 #endif
 
 #if defined(__linux__)
+#include <fcntl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #endif
@@ -611,7 +612,11 @@ int TestPcmCapacityAddressLimit() {
     const pid_t child = fork();
     if (child < 0) return 1;
     if (child == 0) {
-        constexpr rlim_t capacity = 256ull * 1024 * 1024;
+        char statm[64]{};
+        const int file = open("/proc/self/statm", O_RDONLY);
+        if (file < 0 || read(file, statm, sizeof(statm) - 1) <= 0) _exit(6);
+        close(file);
+        const rlim_t capacity = std::strtoull(statm, nullptr, 10) * static_cast<rlim_t>(sysconf(_SC_PAGESIZE)) + 256ull * 1024 * 1024;
         const rlimit limit{capacity, capacity};
         if (setrlimit(RLIMIT_AS, &limit) != 0) _exit(1);
         if (sceAudiodecInitLibrary(2) != 0) _exit(2);

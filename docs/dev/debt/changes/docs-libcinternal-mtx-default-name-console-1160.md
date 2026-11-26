@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## change [std::_Mtx_init_with_default_name_override]
+
+- [std::_Mtx_init_with_default_name_override](../../../core/libs/prx/libSceLibcInternal/Mutex.cpp) (libSceLibcInternal, NID `naKdJL9d3nE`) forwards to `std::_Mtx_init_with_name` (`__sce_v219`) with the same type and name; a null or empty name creates an unnamed mutex, and `scePthreadMutexInit` ignores any other name. A payload process on firmware 11.60 (a title process may differ) measured that the console ends the process with an uncaught `std::__sce_v2::system_error` ('invalid argument') for names of 32, 33 and 40 characters (34 to 39 and over 40 not measured), where null, empty and 31-character names return 0, and a name of 32 characters or more throws the same exception here, the simplest reading of the 31/32 boundary, not a measured threshold; every type tried, valid or not, returned 0 with a handle. Whether the console substitutes a default name such as `SceLibcI_Mtx` for a null name, which the function's name suggests, cannot be observed from the guest and is not measured.
