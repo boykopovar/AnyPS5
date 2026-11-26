@@ -117,20 +117,21 @@ int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** stackaddr, 
 }
 
 int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
-    if (!thread || !attr || !*attr)
-        return SCE_KERNEL_ERROR_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     const auto live = LockLiveGuestThread(thread);
     if (!live) return SCE_KERNEL_ERROR_ESRCH;
-    (*attr)->_stacksize = thread->stackSize;
-    (*attr)->stackAddress = thread->stackAddress;
-    (*attr)->_detachstate = thread->_detached ? DETACH_DETACHED : DETACH_JOINABLE;
-    (*attr)->_schedpriority = thread->priority.load(std::memory_order_relaxed);
-    (*attr)->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
-    (*attr)->_inheritsched = thread->inheritSched;
-    (*attr)->_createSuspended = thread->createdSuspended;
-    (*attr)->_affinity = thread->affinity.load(std::memory_order_relaxed);
-    (*attr)->_affinityExplicit = true;
-    (*attr)->_scope = thread->scope;
+    handle->_stacksize = thread->stackSize;
+    handle->stackAddress = thread->stackAddress;
+    handle->_detachstate = thread->_detached ? DETACH_DETACHED : DETACH_JOINABLE;
+    handle->_schedpriority = thread->priority.load(std::memory_order_relaxed);
+    handle->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    handle->_inheritsched = thread->inheritSched;
+    handle->_createSuspended = thread->createdSuspended;
+    handle->_affinity = thread->affinity.load(std::memory_order_relaxed);
+    handle->_affinityExplicit = true;
+    handle->_scope = thread->scope;
     return SCE_OK;
 }
 
@@ -163,7 +164,7 @@ int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedPa
     if (const int error = LoadAttribute(attr, handle)) return error;
     if (!param) return SCE_KERNEL_ERROR_EINVAL;
     const int priority = handle->_schedpriority;
-    return StoreOutput<int>(&param->sched_priority, priority);
+    return StoreOutput<int>(reinterpret_cast<int*>(reinterpret_cast<std::uintptr_t>(param) + offsetof(KernelSchedParam, sched_priority)), priority);
 }
 
 int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy) {
@@ -244,8 +245,10 @@ int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size)
 }
 
 int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr) {
-    if (!attr || !*attr || !addr) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->stackAddress = addr;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    if (!addr) return SCE_KERNEL_ERROR_EINVAL;
+    handle->stackAddress = addr;
     return SCE_OK;
 }
 

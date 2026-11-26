@@ -198,6 +198,13 @@ void TestThreadCreationWithCustomStackAndGuard() {
 
     Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
     Require(attr == nullptr);
+
+    Require(scePthreadAttrGet(nullptr, reinterpret_cast<PthreadAttr*>(0x10)) == static_cast<int>(0x8002000E));
+    Require(scePthreadAttrSetstackaddr(reinterpret_cast<PthreadAttr*>(0x10), reinterpret_cast<void*>(0x1000)) == static_cast<int>(0x8002000E));
+    PthreadAttr liveAttr = nullptr;
+    Require(scePthreadAttrInit(&liveAttr) == 0 && liveAttr != nullptr);
+    Require(scePthreadAttrGetschedparam(&liveAttr, reinterpret_cast<KernelSchedParam*>(0x10)) == static_cast<int>(0x8002000E));
+    Require(scePthreadAttrDestroy(&liveAttr) == 0);
 }
 
 } // namespace
