@@ -3,15 +3,14 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
 
 using Callback = void (APS5_VABI *)(void*);
-
-extern "C" void APS5_VABI _ZNSt3__111__call_onceERVmPvPFvS2_E_nid_postfix(
-    std::uint64_t* flag, void* argument, Callback callback);
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -45,6 +44,75 @@ static void APS5_VABI Unreachable(void*) {
     std::abort();
 }
 
+template<typename Predicate>
+static void WaitFor(Predicate ready, const char* message) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            std::fputs(message, stderr);
+            std::fputc('\n', stderr);
+            std::abort();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+struct ExceptionWaiters {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> releaseThrow{false};
+    std::atomic<bool> caught{false};
+    std::atomic<int> started{0};
+    std::atomic<int> finished{0};
+    std::atomic<int> retries{0};
+    int value = 0;
+};
+
+static void APS5_VABI ThrowWithWaiters(void* argument) {
+    auto& state = *static_cast<ExceptionWaiters*>(argument);
+    state.entered.store(true, std::memory_order_release);
+    WaitFor([&] { return state.releaseThrow.load(std::memory_order_acquire); },
+        "call_once throwing initializer was not released");
+    throw 19;
+}
+
+static void APS5_VABI RetryWithWaiters(void* argument) {
+    auto& state = *static_cast<ExceptionWaiters*>(argument);
+    ++state.retries;
+    state.value = 37;
+}
+
+static void CheckExceptionWaiters() {
+    std::uint64_t flag = 0;
+    ExceptionWaiters state;
+    std::thread initializer([&] {
+        try { CallOnce(&flag, &state, ThrowWithWaiters); std::abort(); }
+        catch (int value) {
+            Require(value == 19);
+            state.caught.store(true, std::memory_order_release);
+        }
+    });
+    WaitFor([&] { return state.entered.load(std::memory_order_acquire); },
+        "call_once throwing initializer did not start");
+    std::array<std::thread, 2> waiters;
+    for (auto& waiter : waiters) waiter = std::thread([&] {
+        state.started.fetch_add(1, std::memory_order_release);
+        CallOnce(&flag, &state, RetryWithWaiters);
+        Require(state.value == 37);
+        state.finished.fetch_add(1, std::memory_order_release);
+    });
+    WaitFor([&] { return state.started.load(std::memory_order_acquire) == 2; },
+        "call_once waiting callers did not start");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(state.finished.load(std::memory_order_acquire) == 0);
+    state.releaseThrow.store(true, std::memory_order_release);
+    WaitFor([&] { return state.finished.load(std::memory_order_acquire) == 2; },
+        "call_once waiting callers did not retry after exception");
+    initializer.join();
+    for (auto& waiter : waiters) waiter.join();
+    Require(state.caught.load(std::memory_order_acquire));
+    Require(state.retries == 1 && flag == UINT64_MAX && state.value == 37);
+}
+
 int main() {
     std::uint64_t flag = 0;
     int token = 17;
@@ -64,6 +132,8 @@ int main() {
     catch (int value) { Require(value == 7 && throwingFlag == 0); }
     CallOnce(&throwingFlag, nullptr, ThrowThenSucceed);
     Require(throws == 2 && throwingFlag == UINT64_MAX);
+
+    CheckExceptionWaiters();
 
     std::uint64_t alreadyComplete = UINT64_MAX;
     CallOnce(&alreadyComplete, nullptr, nullptr);
