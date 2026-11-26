@@ -315,23 +315,11 @@ int APS5_VABI _ZN3JSC2VM14sharedInstanceEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_7Runtime20ExecutionContextTypeEEEN3WTF8OptionalIT_EERKNS5_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_4Page16CoordinateSystemEEEN3WTF8OptionalIT_EERKNS5_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector23TargetBackendDispatcher15setPauseOnStartElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZNK3JSC8Profiler8Database6toJSONEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector8Protocol16InspectorHelpers24parseEnumValueFromStringINS0_7Console14ConsoleMessage5LevelEEEN3WTF8OptionalIT_EERKNS6_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -467,10 +455,6 @@ int APS5_VABI _ZN3WTF6StringC2ENS_12ASCIILiteralE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URLC1ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14InjectedScript14callFunctionOnERN3WTF6StringERKS2_S5_S5_bbRNS1_6RefPtrINS_8Protocol7Runtime12RemoteObjectENS1_13DumbPtrTraitsIS9_EEEERNS1_8OptionalIbEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -572,10 +556,6 @@ int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtr
 }
 
 int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WTFLogAlwaysV() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -690,10 +670,6 @@ int APS5_VABI _ZN3JSC16callCustomSetterEPNS_14JSGlobalObjectENS_7JSValueEbPNS_8J
 }
 
 int APS5_VABI _ZNK3WTF8JSONImpl5Value8asStringERNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF3URL11setPasswordENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1488,10 +1464,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 }
 
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

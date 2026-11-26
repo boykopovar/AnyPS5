@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "tests/CommandLineArgument.hpp"
 #include <array>
@@ -667,6 +668,24 @@ void CheckWideNumPutConstruction() {
         threwInfo = true;
     }
     Require(threwObject && threwInfo, "num_put<wchar_t> constructor rejects null object or _Locinfo");
+
+    GuestLocale::Facet complete{&g_testFacet, 9, 7};
+    libSceLibcInternalInventory_133_nid_no_patch(&complete, &info, 0x500000003);
+    Require(complete.vtable == facet.vtable && complete.references == 3 && complete.reserved == 5,
+        "num_put<wchar_t> C1 installs the C2 vtable and the whole reference count");
+    bool completeThrewObject = false;
+    try {
+        libSceLibcInternalInventory_133_nid_no_patch(nullptr, &info, 0);
+    } catch (const std::invalid_argument&) {
+        completeThrewObject = true;
+    }
+    bool completeThrewInfo = false;
+    try {
+        libSceLibcInternalInventory_133_nid_no_patch(&complete, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        completeThrewInfo = true;
+    }
+    Require(completeThrewObject && completeThrewInfo, "num_put<wchar_t> C1 rejects null object or _Locinfo as C2 does");
 }
 
 }

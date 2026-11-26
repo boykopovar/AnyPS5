@@ -94,6 +94,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
         input.Exports.push_back({name, image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1)), flags});
     }
 
+    for (const auto& [index, alias] : guest.BindingAliases) {
+        const auto& symbol = guest.Symbols.at(index);
+        const auto flags = (symbol.Info >> 4) == 2 ? ExportWeakDefinition : std::uint64_t{0};
+        if ((symbol.Info & 15) == 6) input.TlsExports.push_back({"_" + alias, symbol.Value, flags});
+        else input.Exports.push_back({"_" + alias, image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1)), flags});
+    }
+
     for (const auto& dependency : dependencies) input.Dylibs.push_back(MachODependency(dependency, "@loader_path"));
     if (std::find(input.Dylibs.begin(), input.Dylibs.end(), "@rpath/libkernel.prx") == input.Dylibs.end())
         input.Dylibs.push_back("@rpath/libkernel.prx");
