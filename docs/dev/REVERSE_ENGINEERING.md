@@ -183,4 +183,6 @@ debt entry, never in code or test names.
   The `code` ranges are half-open and use RVAs, as do the symbol addresses. Add `image_base` for the preferred
   virtual address. `symbol_source` identifies the COFF table or the export fallback and can name the fallback
   even when no code symbols were found.
+- `python3 tools/nid_names.py --from-file symbols.txt --json` computes NIDs for a UTF-8 list without a database.
+  Put one symbol name per nonempty line. Repeat `--from-file` for several files or pass `--from-file -` to read stdin.
 - `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.
