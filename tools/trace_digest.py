@@ -165,7 +165,7 @@ class Trace:
 
 
 def load_trace(path):
-    opener = gzip.open if str(path).endswith(".gz") else open
+    opener = gzip.open if str(path).lower().endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
             document = json.load(handle, object_pairs_hook=unique_json_object)
@@ -224,7 +224,7 @@ def load_summary(path, trace_path):
     label = Path(path) if path else hint
     lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
-    alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
+    alternate = name[:-3] if name.lower().endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
         for line in reversed(lines):
             if line.get("trace") == filename:

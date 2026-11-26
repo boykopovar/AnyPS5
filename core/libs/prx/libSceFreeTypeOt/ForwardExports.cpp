@@ -55,6 +55,11 @@ void APS5_VABI FT_Done_GlyphForward_nid_no_patch(FreeType::GuestGlyphRec* glyph)
 }
 APS5_EXPORT("RdrrejUMiJ0", FT_Done_GlyphForward_nid_no_patch);
 
+int APS5_VABI FT_Face_GetCharVariantIsDefaultForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    return FT_Face_GetCharVariantIsDefault_nid_postfix(face, charcode, variantSelector);
+}
+APS5_EXPORT("Vrab2WK1mgk", FT_Face_GetCharVariantIsDefaultForward_nid_no_patch);
+
 int APS5_VABI FT_Done_SizeForward_nid_no_patch(FreeType::GuestSizeRec* size) {
     return FT_Done_Size_nid_postfix(size);
 }

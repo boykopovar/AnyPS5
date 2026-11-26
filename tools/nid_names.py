@@ -568,7 +568,10 @@ def symbol_file(path):
     if path == "-":
         text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
     else:
-        text = Path(path).read_text(encoding="utf-8-sig")
+        try:
+            text = Path(path).read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"{path}: {error}") from error
     return [line for raw in text.split("\n") if (line := raw.removesuffix("\r")).strip()]
 
 
@@ -625,7 +628,7 @@ def main(argv=None):
     if requested_options & {"--name", "--symbol", "--from-file"}:
         try:
             names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]
-        except (OSError, UnicodeError) as error:
+        except (OSError, ValueError) as error:
             parser.error(str(error))
         rows = [{"name": name, "nid": compute_nid(name)} for name in names]
         if args.json:
