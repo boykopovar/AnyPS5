@@ -14392,6 +14392,19 @@ void encoderAdaptiveSegmentWaitTests(const Device& device) {
 }
 
 template<typename Step>
+void completesHere(std::chrono::seconds limit, const std::string& what, Step&& step) {
+    auto done = std::make_shared<std::promise<void>>();
+    std::thread([limit, what, finished = done->get_future()] {
+        if (finished.wait_for(limit) != std::future_status::ready) {
+            std::cerr << "AGC graphics: " << what << " did not complete within " << limit.count() << " s" << std::endl;
+            std::_Exit(1);
+        }
+    }).detach();
+    step();
+    done->set_value();
+}
+
+template<typename Step>
 void completesWithin(std::chrono::seconds limit, const std::string& what, Step&& step) {
     auto done = std::make_shared<std::promise<void>>();
     auto finished = done->get_future();
@@ -14480,7 +14493,7 @@ void encoderFailedSegmentTests(const Device& device) {
     Require(caught([&] { recorder.Submit(); }) == "injected replay failure", "a second batch whose replay failed was submitted");
     cover.Draw(recorder);
     Require(recorder.DumpSamples(dump->DeviceAddress(), 0), "the occlusion counters were not dumped on the GPU after a discarded batch");
-    completesWithin(std::chrono::seconds(20), "a GPU sample dump after a discarded batch", [&] {
+    completesHere(std::chrono::seconds(20), "a GPU sample dump after a discarded batch", [&] {
         recorder.Submit();
         recorder.Sync();
     });
