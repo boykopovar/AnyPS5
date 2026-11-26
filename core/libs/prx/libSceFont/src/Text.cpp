@@ -127,7 +127,6 @@ FontTextCharacter* TextCharacters(FontStringData* data) {
 }
 
 bool IsRightToLeftLetter(std::uint32_t code) {
-    if ((code >= 0x0660u && code <= 0x0669u) || (code >= 0x06F0u && code <= 0x06F9u)) return false;
     return (code >= 0x0590u && code <= 0x08FFu) || (code >= 0xFB1Du && code <= 0xFDFFu) || (code >= 0xFE70u && code <= 0xFEFFu) ||
            (code >= 0x10800u && code <= 0x10FFFu) || (code >= 0x1E800u && code <= 0x1EFFFu);
 }
@@ -150,6 +149,7 @@ std::uint32_t DefaultStringForm(const std::vector<FontTextCharacter>& characters
             continue;
         }
         if (isolateDepth != 0) continue;
+        if ((code >= 0x0660u && code <= 0x066Cu) || (code >= 0x06F0u && code <= 0x06F9u)) continue;
         if (code == 0x200Eu) return WRITING_FORM_HORIZONTAL_LTR;
         if (code == 0x200Fu || IsRightToLeftLetter(code)) return WRITING_FORM_HORIZONTAL_RTL;
         if (!IsDirectionNeutral(code)) return WRITING_FORM_HORIZONTAL_LTR;
@@ -646,28 +646,33 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
     if (!fontWriting || !fontString || !fontCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* data = GetStringData(fontString);
     if (!data) return SCE_FONT_ERROR_INVALID_STRING;
-    std::memset(fontWriting, 0, sizeof(*fontWriting));
-    auto* writing = new (fontWriting->systemUse) FontWritingData{};
-    writing->string = fontString;
-    writing->defaultFont = data->defaultFont;
-    writing->writingForm = data->writingForm;
+    if (!Font::OutputWritable(fontWriting)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    FontWritingData writing{};
+    const auto publish = [&](int result) {
+        FontWriting record{};
+        std::memcpy(record.systemUse, &writing, sizeof(writing));
+        return Font::CopyOutGuest(fontWriting, record) ? result : SCE_FONT_ERROR_INVALID_PARAMETER;
+    };
+    writing.string = fontString;
+    writing.defaultFont = data->defaultFont;
+    writing.writingForm = data->writingForm;
     const FontTextCharacter* characters = TextCharacters(data);
     if (!characters || fontCharacter < characters || fontCharacter >= characters + data->textCount) {
-        writing->string = nullptr;
-        return SCE_FONT_ERROR_INVALID_PARAMETER;
+        writing.string = nullptr;
+        return publish(SCE_FONT_ERROR_INVALID_PARAMETER);
     }
-    writing->nextIndex = static_cast<std::size_t>(fontCharacter - characters);
-    writing->currentIndex = writing->nextIndex;
-    writing->hasCurrentStep = false;
-    if (!PopulateWritingStep(*writing, writing->nextIndex)) {
-        writing->string = nullptr;
-        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    writing.nextIndex = static_cast<std::size_t>(fontCharacter - characters);
+    writing.currentIndex = writing.nextIndex;
+    writing.hasCurrentStep = false;
+    if (!PopulateWritingStep(writing, writing.nextIndex)) {
+        writing.string = nullptr;
+        return publish(SCE_FONT_ERROR_INVALID_PARAMETER);
     }
-    writing->penX = 0.0f;
-    writing->penY = 0.0f;
-    writing->hasAggregateMetrics = false;
-    writing->metrics = {};
-    return SCE_FONT_OK;
+    writing.penX = 0.0f;
+    writing.penY = 0.0f;
+    writing.hasAggregateMetrics = false;
+    writing.metrics = {};
+    return publish(SCE_FONT_OK);
 }
 
 int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* fontWriting, FontWritingMetrics* writingMetrics) {

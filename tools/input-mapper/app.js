@@ -1,7 +1,7 @@
-import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, asciiTrim, canonicalValue, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
-import {parseIni, serialize, validate} from './validation.js';
+import {controllerDestinations, mouseStickTargets, parseIni, sdlControllerButtons, serialize, settings as settingDefinitions, validate, validateSettings} from './validation.js';
 import {diagnostic, initialLocale, locales, translate} from './i18n.js';
 import {createDropdown} from './dropdown.js';
 
@@ -10,7 +10,10 @@ let entries = [];
 let settings = [];
 let controllerRemaps = [];
 const configurationText = () => serialize(entries, settings, controllerRemaps);
-const snapshot = () => JSON.stringify([entries, settings, controllerRemaps]);
+const settingValue = name => settings.find(setting => setting.name === name)?.value ?? '';
+const snapshot = () => JSON.stringify([
+    entries, settingDefinitions.map(({name}) => settingValue(name)), controllerRemaps
+]);
 let savedConfiguration = snapshot();
 let replacementRequest = 0;
 let captureTarget;
@@ -19,8 +22,10 @@ let selectedGroup = groups[0].name;
 let locale = initialLocale();
 let languageControl;
 const bindingControls = new WeakMap();
+const settingControls = new Map();
 let activeView = ['controls', 'configuration', 'help'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'controls';
 let currentStatus;
+let saveRequest = 0;
 let importReport;
 const dialog = byId('capture-dialog');
 try {
@@ -103,6 +108,8 @@ function applyLocale() {
     byId('categories').replaceChildren();
     renderCategories();
     renderHelp();
+    renderControllerRemaps();
+    renderInputSettings();
     render();
     renderImportReport();
     if (currentStatus) setStatus(currentStatus.key, currentStatus.values);
@@ -272,6 +279,80 @@ function renderBinding(entry, position) {
     return row;
 }
 
+function renderControllerRemaps() {
+    byId('controller-remaps').replaceChildren(...sdlControllerButtons.map(button => {
+        const row = element('label');
+        const source = element('span', `SDLButton:${button}`);
+        source.dir = 'ltr';
+        const select = element('select');
+        for (const destination of ['', ...controllerDestinations]) {
+            const option = element('option', destination || t('noOverride'));
+            option.value = destination;
+            select.append(option);
+        }
+        select.value = controllerRemaps.find(remap => remap.button === button)?.destination || '';
+        select.addEventListener('change', () => {
+            const destination = select.value;
+            const remap = controllerRemaps.find(item => item.button === button);
+            if (!destination) controllerRemaps = controllerRemaps.filter(item => item.button !== button);
+            else if (remap) remap.destination = destination;
+            else controllerRemaps.push({button, destination});
+            updateOutput();
+        });
+        row.append(source, select);
+        return row;
+    }));
+}
+
+function renderInputSettings() {
+    settingControls.clear();
+    byId('input-setting-values').replaceChildren(...settingDefinitions.map(({name, kind, minimum, minimumExclusive, maximum, builtin}) => {
+        const choices = kind === 'stickTarget' ? mouseStickTargets : undefined;
+        const row = element('label');
+        const label = element('span', name);
+        label.id = `setting-${name}-label`;
+        label.dir = 'ltr';
+        const range = minimumExclusive ? `${minimum} < x ≤ ${maximum}` : `${minimum}–${maximum}`;
+        const hint = element('span', [minimum === undefined ? '' : `\u2066${range}\u2069`, builtin === undefined ? '' : t('builtin', {inputs: builtin})].filter(Boolean).join(' · '));
+        hint.className = 'hint';
+        hint.id = `setting-${name}-hint`;
+        const control = element(choices ? 'select' : 'input');
+        const value = settingValue(name);
+        control.dir = 'ltr';
+        control.setAttribute('aria-labelledby', label.id);
+        control.setAttribute('aria-describedby', hint.textContent ? `${hint.id} input-settings-help` : 'input-settings-help');
+        control.setAttribute('aria-errormessage', 'validation');
+        if (choices) {
+            for (const choice of ['', ...choices]) {
+                const option = element('option', choice || t('inheritSetting'));
+                option.value = choice;
+                control.append(option);
+            }
+            control.value = canonicalValue(value, choices) ?? '';
+        } else {
+            control.type = 'text';
+            control.autocomplete = 'off';
+            control.spellcheck = false;
+            control.placeholder = kind === 'padButtons' ? 'R2, L1' : t('inheritSetting');
+            if (kind !== 'padButtons') control.inputMode = kind === 'percent' ? 'numeric' : 'decimal';
+            control.value = value;
+        }
+        control.addEventListener(choices ? 'change' : 'input', () => {
+            const next = asciiTrim(control.value);
+            const current = settings.findIndex(setting => setting.name === name);
+            if (current === -1) {
+                if (next) settings.push({name, value: next});
+            } else if (next) settings[current].value = next;
+            else settings.splice(current, 1);
+            updateOutput();
+        });
+        settingControls.set(name, control);
+        row.append(label, control);
+        if (hint.textContent) row.append(hint);
+        return row;
+    }));
+}
+
 function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
@@ -348,7 +429,8 @@ function filterActions() {
 
 function updateOutput() {
     const result = validate(entries);
-    const valid = result.errors.length === 0;
+    const settingErrors = validateSettings(settings).errors;
+    const valid = result.errors.length === 0 && settingErrors.length === 0;
     byId('preview').value = valid ? configurationText() : '';
     byId('count').textContent = `${new Set(result.bindings.map(binding => binding.action)).size} / ${actions.length}`;
     const titleId = byId('profile-title-id');
@@ -360,7 +442,7 @@ function updateOutput() {
     byId('copy').disabled = !valid;
     const report = byId('validation');
     report.replaceChildren();
-    for (const [name, messages] of [['error', result.errors], ['warning', result.warnings]]) {
+    for (const [name, messages] of [['error', [...result.errors, ...settingErrors]], ['warning', result.warnings]]) {
         if (!messages.length) continue;
         const list = element('ul', undefined, name);
         for (const item of messages) list.append(element('li', diagnostic(locale, item.message)));
@@ -372,6 +454,8 @@ function updateOutput() {
         const invalid = result.errors.some(error => entries[error.index] === renderedEntries[index]);
         for (const control of row.querySelectorAll('.dropdown-trigger')) control.setAttribute('aria-invalid', String(invalid));
     });
+    const invalidSettings = new Set(settingErrors.map(error => settings[error.index].name));
+    for (const [name, control] of settingControls) control.setAttribute('aria-invalid', String(invalidSettings.has(name)));
     filterActions();
 }
 
@@ -422,8 +506,11 @@ byId('reset').addEventListener('click', async () => {
     controllerRemaps = [];
     savedConfiguration = snapshot();
     importReport = undefined;
+    saveRequest++;
     byId('import-report').hidden = true;
     byId('profile-title-id').value = '';
+    renderControllerRemaps();
+    renderInputSettings();
     render();
     setStatus('resetDone');
 });
@@ -442,12 +529,14 @@ byId('file').addEventListener('change', async event => {
         const report = byId('import-report');
         if (result.errors.length) {
             importReport = result;
+            saveRequest++;
             renderImportReport();
             report.focus();
             return;
         }
         if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
+        saveRequest++;
         renderImportReport();
         const titleId = inputTitleId(file.name);
         if (titleId !== undefined) byId('profile-title-id').value = titleId;
@@ -455,10 +544,13 @@ byId('file').addEventListener('change', async event => {
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
         savedConfiguration = snapshot();
+        renderControllerRemaps();
+        renderInputSettings();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
         if (request !== replacementRequest) return;
+        saveRequest++;
         setStatus('importFailed', {message: error instanceof TypeError ? t('invalidUtf8') : diagnostic(locale, error.message)});
     }
 });
@@ -478,16 +570,20 @@ byId('download').addEventListener('click', () => {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     savedConfiguration = snapshot();
+    saveRequest++;
     setStatus('downloaded');
 });
 byId('copy').addEventListener('click', async () => {
+    const request = ++saveRequest;
     try {
         const content = configurationText();
         const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
+        if (request !== saveRequest) return;
         savedConfiguration = copiedConfiguration;
         setStatus('copied');
     } catch {
+        if (request !== saveRequest) return;
         byId('preview').focus();
         byId('preview').select();
         setStatus('clipboardFailed');

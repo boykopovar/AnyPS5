@@ -1659,10 +1659,24 @@ void symbolCountApproachingUint32MaxBounds() {
     }, "Strict filter: symbol count exceeds image size", "Symbol count approaching UINT32_MAX without overflow was incorrectly accepted");
 }
 
+void defaultFilterExtraLandingPadRoots() {
+    auto input = fixture();
+    emit(input, 0, {0x0F, 0x0B});
+    importThunk(input, 64, 0x2000);
+    const auto bytes = elfFixture(input);
+    const std::vector<Relinker::NidReference> references = {{"target", {}, 6, 0x300, 0x2000, 0}};
+    const auto filter = Relinker::MakeUnusedNidFilter();
+    const auto pruned = filter->Filter(references, bytes, input.Text, input.TextVaddr, {});
+    require(pruned.empty(), "Default filter kept import in unreachable landing pad without extra root");
+    const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr, {input.TextVaddr + 64});
+    require(kept.size() == 1, "Default filter dropped import in landing pad added as extra root");
+}
+
 }
 
 int main() {
     try {
+        defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
         ud1DeadTail();
         conditionalTailCall();
