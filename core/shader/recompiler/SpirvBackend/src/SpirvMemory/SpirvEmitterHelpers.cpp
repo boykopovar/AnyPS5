@@ -341,6 +341,10 @@ void DefineInputs(SpirvEmitterState& state) {
                 }
                 location = relocated->second;
                 state.module.AddAnnotation(spv::OpDecorate, input.variableId, state.meshBarycentricPixel ? spv::DecorationPerPrimitiveEXT : spv::DecorationFlat);
+                if (state.meshBarycentricPixel) {
+                    state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
+                    state.module.EmitExtension("SPV_EXT_mesh_shader");
+                }
             } else if (input.perVertex) {
                 state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationPerVertexKHR);
             } else if (flat) {

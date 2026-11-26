@@ -876,7 +876,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         const auto& limits = *request.target.mesh;
         if (config.provokingVertex != 0u) throw std::runtime_error("barycentric emulation on the mesh path is only measured with the first provoking vertex");
         const std::uint64_t perVertexParameters = emulated.perVertex.size();
-        const std::uint64_t sharedBytes = 16ull * config.maxVertices * (1u + perVertexParameters) + DeviceMemoryLdsBytes(request);
+        const std::uint64_t stagedPositions = layout.positionsLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u;
+        const std::uint64_t sharedBytes = 16ull * config.maxVertices * (stagedPositions + perVertexParameters) + DeviceMemoryLdsBytes(request);
         if (sharedBytes > limits.maxSharedMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(sharedBytes) + " bytes of mesh shared memory for " + std::to_string(config.maxVertices) + " vertices, the device allows " + std::to_string(limits.maxSharedMemoryBytes));
         MeshOutputUse use;
         std::set<std::uint32_t> flatLocations;
@@ -1758,7 +1759,7 @@ MeshOutputBudget MeshBarycentricOutputBudget(const MeshConfiguration& mesh, cons
     const auto alignUp = [](std::uint64_t value, std::uint64_t granularity) { return granularity <= 1u ? value : (value + granularity - 1u) / granularity * granularity; };
     MeshOutputBudget budget;
     budget.vertexLocations = 1u + use.flatParameters + use.clipVaryings + (use.clipDistances + 3u) / 4u + (use.cullDistances + 3u) / 4u;
-    budget.primitiveLocations = 3u + 3u * use.perVertexParameters + 1u + (use.layer ? 1u : 0u);
+    budget.primitiveLocations = (use.clipVaryings != 0u ? 3u : 0u) + 3u * use.perVertexParameters + 1u + (use.layer ? 1u : 0u);
     budget.components = 4ull * (budget.vertexLocations + budget.primitiveLocations);
     budget.bytes = 16ull * (budget.vertexLocations * alignUp(mesh.maxVertices, limits.outputPerVertexGranularity) + budget.primitiveLocations * alignUp(mesh.maxPrimitives, limits.outputPerPrimitiveGranularity));
     return budget;

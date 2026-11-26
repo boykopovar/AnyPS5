@@ -1368,7 +1368,6 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
             throw std::runtime_error("barycentric emulation on the mesh path needs the mesh program to export a position");
         }
         const auto vec3 = TypeF32Vector(state, 3u);
-        state.meshPositionStaging = MeshArray(state, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), mesh.maxVertices);
         const auto defineClip = [&](std::uint32_t location, bool linear, const char* name) {
             if (location == BarycentricEmulationLayout::NoLocation) return 0u;
             const auto variable = MeshArray(state, spv::StorageClassOutput, vec3, mesh.maxVertices);
@@ -1380,15 +1379,18 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
         };
         state.meshClipSmooth = defineClip(state.barycentricSmoothLocation, false, "meshBarycentricClipSmooth");
         state.meshClipLinear = defineClip(state.barycentricLinearLocation, true, "meshBarycentricClipLinear");
-        if (state.barycentricPositionsLocation == BarycentricEmulationLayout::NoLocation) {
-            throw std::runtime_error("barycentric emulation on the mesh path has no location for the corner positions");
+        if ((state.meshClipSmooth != 0u || state.meshClipLinear != 0u) != (state.barycentricPositionsLocation != BarycentricEmulationLayout::NoLocation)) {
+            throw std::runtime_error("barycentric emulation on the mesh path needs the corner positions exactly when the pixel shader reads barycentrics");
         }
         const auto corners = state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u));
-        state.meshFlatPositions = MeshArray(state, spv::StorageClassOutput, corners, mesh.maxPrimitives);
-        state.interfaceVariables.push_back(state.meshFlatPositions);
-        state.module.AddName(state.meshFlatPositions, "meshBarycentricPositions");
-        state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationLocation, state.barycentricPositionsLocation);
-        state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationPerPrimitiveEXT);
+        if (state.barycentricPositionsLocation != BarycentricEmulationLayout::NoLocation) {
+            state.meshPositionStaging = MeshArray(state, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), mesh.maxVertices);
+            state.meshFlatPositions = MeshArray(state, spv::StorageClassOutput, corners, mesh.maxPrimitives);
+            state.interfaceVariables.push_back(state.meshFlatPositions);
+            state.module.AddName(state.meshFlatPositions, "meshBarycentricPositions");
+            state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationLocation, state.barycentricPositionsLocation);
+            state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationPerPrimitiveEXT);
+        }
         for (const auto& [sourceLocation, relocated] : state.meshPerVertexLocations) {
             const auto source = std::ranges::find_if(state.outputs, [sourceLocation = sourceLocation](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Parameter && output.location == sourceLocation; });
             if (source == state.outputs.end()) {
@@ -1570,7 +1572,7 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             }
             const auto position = std::ranges::find_if(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Position; });
             const auto value = MeshLoad(state, position->meshDataVariable, spv::StorageClassPrivate, TypeF32Vector(state, 4u), ConstantU32(state, half));
-            state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshPositionStaging, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), index), value);
+            if (state.meshPositionStaging != 0u) state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshPositionStaging, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), index), value);
             const auto clip = state.module.AllocateId();
             state.module.AddFunction(spv::OpVectorShuffle, TypeF32Vector(state, 3u), clip, value, value, 0u, 1u, 3u);
             for (const auto& parameter : state.meshVertexParameters) {
@@ -1650,13 +1652,15 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             EmitIfCondition(state, decision, [&]() { state.module.AddFunction(spv::OpStore, cullPointer, ConstantBool(state, true)); });
             if (emulating) {
                 const auto corners = state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u));
-                std::array<std::uint32_t, 3> staged {};
-                for (std::uint32_t component = 0; component < 3u; component++) {
-                    staged.at(component) = MeshLoad(state, state.meshPositionStaging, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), vertex.at(component));
+                if (state.meshFlatPositions != 0u) {
+                    std::array<std::uint32_t, 3> staged {};
+                    for (std::uint32_t component = 0; component < 3u; component++) {
+                        staged.at(component) = MeshLoad(state, state.meshPositionStaging, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), vertex.at(component));
+                    }
+                    const auto array = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeConstruct, corners, array, staged[0], staged[1], staged[2]);
+                    state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshFlatPositions, spv::StorageClassOutput, corners, index), array);
                 }
-                const auto array = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, corners, array, staged[0], staged[1], staged[2]);
-                state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshFlatPositions, spv::StorageClassOutput, corners, index), array);
                 for (const auto& parameter : state.meshVertexParameters) {
                     std::array<std::uint32_t, 3> values {};
                     for (std::uint32_t component = 0; component < 3u; component++) {

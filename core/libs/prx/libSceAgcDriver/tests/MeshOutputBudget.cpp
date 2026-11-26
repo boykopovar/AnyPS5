@@ -55,6 +55,12 @@ int main() {
         Require(more.vertexLocations == 8u + 2u + 1u, "five clip distances take 2 locations and one cull distance 1");
         Require(more.primitiveLocations == 11u, "the layer output takes one per-primitive location");
 
+        MeshOutputUse vertexValues = ccleste;
+        vertexValues.clipVaryings = 0u;
+        const auto values = MeshBarycentricOutputBudget(Mesh(128u, 128u), Limits(32u, 32u), vertexValues);
+        Require(values.vertexLocations == 7u, "without a clip varying the position and six flat exports make 7");
+        Require(values.primitiveLocations == 7u, "a pixel shader that reads no barycentrics needs no corners: two per-vertex parameters of three vertices and the cull flag make 7");
+
         std::puts("mesh output budget tests passed");
         return 0;
     } catch (const std::exception& error) {
