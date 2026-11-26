@@ -37,7 +37,7 @@ class Operation:
 
 def _parse_file(path, name, root, existing_files=None):
     operations, library, current, body_lines = [], None, None, None
-    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").split("\n"), 1):
         if line.startswith("# "):
             library, current, body_lines = line[2:].strip(), None, None
             try:

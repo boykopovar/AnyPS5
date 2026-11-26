@@ -151,7 +151,7 @@ bool InputEnded(InputIteratorState<TChar>& first, InputIteratorState<TChar>& las
     return (first.buffer == nullptr) == (last.buffer == nullptr);
 }
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id, GuestLocale::GlobalLocaleHold& hold) {
     std::atomic_ref<std::uint64_t> slot(id);
     if (slot.load() == 0) {
         _Locksyslock_nid_postfix();
@@ -162,8 +162,7 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return hold.Find(index);
 }
 
 template<typename TPunct>
@@ -192,7 +191,8 @@ PunctInfo<TChar> ReadPunctInfo(const GuestLocale::IosBase* stream);
 
 template<>
 PunctInfo<char> ReadPunctInfo<char>(const GuestLocale::IosBase* stream) {
-    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold);
     if (punct == nullptr) return {"", '.', '\0'};
     const auto& vtable = *reinterpret_cast<const GuestLocale::NumpunctVtable*>(punct->vtable);
     std::string grouping = TakePunctString(vtable.grouping, punct);
@@ -203,7 +203,8 @@ PunctInfo<char> ReadPunctInfo<char>(const GuestLocale::IosBase* stream) {
 
 template<>
 PunctInfo<std::uint16_t> ReadPunctInfo<std::uint16_t>(const GuestLocale::IosBase* stream) {
-    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix, hold);
     if (punct == nullptr) return {"", u'.', 0};
     const auto& vtable = *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(punct->vtable);
     std::string grouping = TakePunctString(vtable.grouping, punct);
@@ -217,7 +218,8 @@ void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], TC
 
 template<std::size_t TSize>
 void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], char (&atoms)[TSize]) {
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) {
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold)) {
         reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, src, src + TSize, atoms);
         return;
     }
@@ -226,7 +228,8 @@ void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], ch
 
 template<std::size_t TSize>
 void WidenAtoms(const GuestLocale::IosBase* stream, const char (&src)[TSize], std::uint16_t (&atoms)[TSize]) {
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix)) {
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix, hold)) {
         using WideWidenRange = const char* (APS5_VABI*)(const GuestLocale::Facet*, const char*, const char*, std::uint16_t*);
         const auto& vtable = *reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
         WideWidenRange widenRange{};
@@ -749,7 +752,8 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
             }
         }
     } else {
-        const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix);
+        GuestLocale::GlobalLocaleHold hold;
+        const GuestLocale::Facet* punct = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold);
         if (punct == nullptr) throw std::invalid_argument("num_get::do_get(bool): missing numpunct facet");
 
         const auto& vtable = *reinterpret_cast<const GuestLocale::NumpunctVtable*>(punct->vtable);

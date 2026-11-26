@@ -101,6 +101,11 @@ input::placeholder { color: #b6b9c4; }
 .configuration-panel { padding: 32px; max-width: 960px; margin: auto; animation: enter .35s var(--ease); }
 .output-heading { justify-content: space-between; }
 .output-heading h2 { font-size: 22px; font-weight: 300; margin: 0; }
+.configuration-editor { margin-block: 20px; }
+.configuration-editor summary { cursor: pointer; padding-block: 8px; }
+#controller-remaps, #input-setting-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 12px; }
+#controller-remaps label, #input-setting-values label { display: grid; gap: 4px; min-width: 0; margin: 0; direction: inherit; }
+#controller-remaps select, #input-setting-values input, #input-setting-values select { width: 100%; }
 .tag { font-size: 11px; color: #b6bcc9; white-space: nowrap; }
 .configuration-panel label { display: block; margin: 20px 0 10px; color: #d0d3db; font-size: 12px; direction: ltr; }
 #profile-title-id { width: min(100%, 32ch); }

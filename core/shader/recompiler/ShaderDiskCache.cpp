@@ -92,14 +92,14 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 560, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 920, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
-static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
+static_assert(sizeof(ImageResource) == 244, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
@@ -457,6 +457,46 @@ private:
     bool ok = true;
 };
 
+void encodeOverwrite(Writer& out, const ImageOverwrite& proof) {
+    out.Value(proof.proved);
+    out.Value(proof.fullGroups);
+    for (const auto& axis : proof.axes) {
+        out.Value(axis.groupAxis);
+        out.Value(axis.tile);
+        out.Value(axis.offsetRegister);
+        out.Value(axis.boundRegister);
+        out.Value(axis.boundImmediate);
+        out.Value(axis.maxLane);
+    }
+    for (const auto& range : proof.ranges) {
+        out.Value(range.groupAxis);
+        out.Value(range.scale);
+        out.Value(range.minLane);
+        out.Value(range.maxLane);
+        out.Value(range.bits);
+    }
+}
+
+void decodeOverwrite(Reader& in, ImageOverwrite& proof) {
+    in.Value(proof.proved);
+    in.Value(proof.fullGroups);
+    for (auto& axis : proof.axes) {
+        in.Value(axis.groupAxis);
+        in.Value(axis.tile);
+        in.Value(axis.offsetRegister);
+        in.Value(axis.boundRegister);
+        in.Value(axis.boundImmediate);
+        in.Value(axis.maxLane);
+    }
+    for (auto& range : proof.ranges) {
+        in.Value(range.groupAxis);
+        in.Value(range.scale);
+        in.Value(range.minLane);
+        in.Value(range.maxLane);
+        in.Value(range.bits);
+    }
+}
+
 void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Value(binding.kind);
     writer.Value(binding.role);
@@ -484,6 +524,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
+    writer.List(binding.imageOverwrites, [](Writer& out, const ImageOverwrite& proof) { encodeOverwrite(out, proof); });
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -514,6 +555,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
+    reader.List(binding.imageOverwrites, 133, [](Reader& in, ImageOverwrite& proof) { decodeOverwrite(in, proof); });
 }
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
@@ -838,6 +880,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.table);
         out.Value(image.tableOperation);
         out.Value(image.targetMerge);
+        encodeOverwrite(out, image.overwrite);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -903,7 +946,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
     });
-    reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
+    reader.List(info.images, 210, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
         in.Value(image.firstUsePc);
         in.Value(image.resourceClass);
@@ -956,6 +999,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.table);
         in.Value(image.tableOperation);
         in.Value(image.targetMerge);
+        decodeOverwrite(in, image.overwrite);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
@@ -1429,6 +1473,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
 constexpr std::string_view NeutralSwitches[] = {
     "APS5_PROFILE_DRAW",
     "APS5_DUMP_IR",
+    "APS5_DUMP_SPIRV",
     "APS5_NO_CODE_HASH_KEY",
     "APS5_NO_FAILURE_MEMO",
     "APS5_NO_PERF_FRONTEND_PAIR",
@@ -1438,6 +1483,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_LAYOUT_PAIR",
     "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
+    "APS5_NO_SPECIALIZED_CACHE",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
     "APS5_RESOURCE_PLAN_MB",
@@ -1543,6 +1589,22 @@ public:
         enqueue({std::move(key), nullptr, std::move(plan)});
     }
 
+    bool LoadSpecialized(std::span<const std::byte> key, std::vector<std::uint32_t>& words) {
+        return load(key, [&](std::span<const std::byte> file, std::shared_ptr<const void>) {
+            std::span<const std::byte> payload;
+            const auto status = unwrapEntry(file, key, payload);
+            if (status != LoadStatus::Loaded) return status;
+            if (payload.size() < 5u * sizeof(std::uint32_t) || payload.size() % sizeof(std::uint32_t) != 0) return LoadStatus::Rejected;
+            words.resize(payload.size() / sizeof(std::uint32_t));
+            std::memcpy(words.data(), payload.data(), payload.size());
+            return LoadStatus::Loaded;
+        }, specializedHits, specializedMisses, specializedLoadFailures);
+    }
+
+    void StoreSpecialized(std::vector<std::byte> key, std::vector<std::uint32_t> words) {
+        enqueue({std::move(key), nullptr, nullptr, std::move(words)});
+    }
+
     std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {
         const auto path = directory / EntryName(key);
         const auto file = EncodeEntry(key, variant);
@@ -1592,6 +1654,10 @@ public:
         counters.planMisses = planMisses.load(std::memory_order_relaxed);
         counters.planWrites = planWrites.load(std::memory_order_relaxed);
         counters.planLoadFailures = planLoadFailures.load(std::memory_order_relaxed);
+        counters.specializedHits = specializedHits.load(std::memory_order_relaxed);
+        counters.specializedMisses = specializedMisses.load(std::memory_order_relaxed);
+        counters.specializedWrites = specializedWrites.load(std::memory_order_relaxed);
+        counters.specializedLoadFailures = specializedLoadFailures.load(std::memory_order_relaxed);
         counters.prebuiltHits = prebuiltHits.load(std::memory_order_relaxed);
         counters.prebuiltMisses = prebuiltMisses.load(std::memory_order_relaxed);
         counters.prebuiltRejected = prebuiltRejected.load(std::memory_order_relaxed);
@@ -1658,6 +1724,7 @@ private:
         std::vector<std::byte> key;
         std::shared_ptr<const CompiledVariant> variant;
         std::shared_ptr<const IrResourcePlan> plan;
+        std::vector<std::uint32_t> words;
     };
 
     bool loadPrebuilt(std::span<const std::byte> key, CompiledVariant& variant) {
@@ -1789,9 +1856,9 @@ private:
     }
 
     void write(const Job& job) {
-        const auto file = job.plan != nullptr ? EncodePlanEntry(job.key, *job.plan) : EncodeEntry(job.key, *job.variant);
+        const auto file = job.plan != nullptr ? EncodePlanEntry(job.key, *job.plan) : !job.words.empty() ? wrapEntry(job.key, std::as_bytes(std::span(job.words))) : EncodeEntry(job.key, *job.variant);
         if (!file.empty() && WriteFileAtomically(directory / EntryName(job.key), file)) {
-            (job.plan != nullptr ? planWrites : writes).fetch_add(1, std::memory_order_relaxed);
+            (job.plan != nullptr ? planWrites : !job.words.empty() ? specializedWrites : writes).fetch_add(1, std::memory_order_relaxed);
             bytesWritten.fetch_add(file.size(), std::memory_order_relaxed);
         } else {
             const auto failures = writeFailures.fetch_add(1, std::memory_order_relaxed);
@@ -1873,13 +1940,14 @@ private:
         const auto totals = Totals();
         const auto loadNs = loadNanoseconds.load(std::memory_order_relaxed);
         const auto delta = [](std::uint64_t after, std::uint64_t before) { return static_cast<unsigned long long>(after - before); };
-        const auto baseChanged = totals.hits != reported.hits || totals.misses != reported.misses || totals.writes != reported.writes || totals.loadFailures != reported.loadFailures || totals.writeFailures != reported.writeFailures || totals.planHits != reported.planHits || totals.planMisses != reported.planMisses || totals.planWrites != reported.planWrites || totals.planLoadFailures != reported.planLoadFailures;
+        const auto baseChanged = totals.hits != reported.hits || totals.misses != reported.misses || totals.writes != reported.writes || totals.loadFailures != reported.loadFailures || totals.writeFailures != reported.writeFailures || totals.planHits != reported.planHits || totals.planMisses != reported.planMisses || totals.planWrites != reported.planWrites || totals.planLoadFailures != reported.planLoadFailures || totals.specializedHits != reported.specializedHits || totals.specializedMisses != reported.specializedMisses || totals.specializedWrites != reported.specializedWrites || totals.specializedLoadFailures != reported.specializedLoadFailures;
         const auto prebuiltChanged = totals.prebuiltHits != reported.prebuiltHits || totals.prebuiltMisses != reported.prebuiltMisses || totals.prebuiltRejected != reported.prebuiltRejected;
         if (!baseChanged && !prebuiltChanged) return;
-        if (baseChanged) std::fprintf(stderr, "[shader-disk-cache] (10 s): %llu hits, %llu misses, %llu writes (%.1f MiB), %llu load failures, %llu write failures; resource plans: %llu hits, %llu misses, %llu writes, %llu load failures; %.1f MiB read in %.1f ms (totals: %llu hits, %llu misses, %llu writes; plans %llu hits, %llu misses)\n",
+        if (baseChanged) std::fprintf(stderr, "[shader-disk-cache] (10 s): %llu hits, %llu misses, %llu writes (%.1f MiB), %llu load failures, %llu write failures; resource plans: %llu hits, %llu misses, %llu writes, %llu load failures; specialized modules: %llu hits, %llu misses, %llu writes, %llu load failures; %.1f MiB read in %.1f ms (totals: %llu hits, %llu misses, %llu writes; plans %llu hits, %llu misses)\n",
                      delta(totals.hits, reported.hits), delta(totals.misses, reported.misses), delta(totals.writes, reported.writes), static_cast<double>(totals.bytesWritten - reported.bytesWritten) / (1024.0 * 1024.0),
                      delta(totals.loadFailures, reported.loadFailures), delta(totals.writeFailures, reported.writeFailures),
                      delta(totals.planHits, reported.planHits), delta(totals.planMisses, reported.planMisses), delta(totals.planWrites, reported.planWrites), delta(totals.planLoadFailures, reported.planLoadFailures),
+                     delta(totals.specializedHits, reported.specializedHits), delta(totals.specializedMisses, reported.specializedMisses), delta(totals.specializedWrites, reported.specializedWrites), delta(totals.specializedLoadFailures, reported.specializedLoadFailures),
                      static_cast<double>(totals.bytesRead - reported.bytesRead) / (1024.0 * 1024.0), static_cast<double>(loadNs - reportedLoadNs) / 1e6,
                      static_cast<unsigned long long>(totals.hits), static_cast<unsigned long long>(totals.misses), static_cast<unsigned long long>(totals.writes), static_cast<unsigned long long>(totals.planHits), static_cast<unsigned long long>(totals.planMisses));
         if (prebuiltChanged && (!packs.empty() || !looseDirectories.empty())) std::fprintf(stderr, "[shader-prebuilt] interval: %llu hits, %llu misses, %llu rejected; lookup %.3f ms, file read %.3f ms, decode %.3f ms; total load %.3f ms, max %.3f ms (lifetime hits %llu)\n",
@@ -1903,6 +1971,7 @@ private:
     std::thread writer;
     std::atomic<std::uint64_t> hits{0}, misses{0}, writes{0}, loadFailures{0}, writeFailures{0}, bytesRead{0}, bytesWritten{0}, loadNanoseconds{0};
     std::atomic<std::uint64_t> planHits{0}, planMisses{0}, planWrites{0}, planLoadFailures{0};
+    std::atomic<std::uint64_t> specializedHits{0}, specializedMisses{0}, specializedWrites{0}, specializedLoadFailures{0};
     std::atomic<std::uint64_t> prebuiltHits{0}, prebuiltMisses{0}, prebuiltRejected{0}, lookupNanoseconds{0}, readNanoseconds{0}, decodeNanoseconds{0}, maxLoadNanoseconds{0}, prebuiltBytesRead{0}, prebuiltLoadNanoseconds{0};
     std::atomic<std::int64_t> lastReport{0};
     std::mutex reportMutex;
@@ -2082,6 +2151,23 @@ std::shared_ptr<const IrResourcePlan> LoadSharedPlan(std::span<const std::byte> 
 void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan) {
     auto& instance = store();
     if (instance.Enabled() && plan != nullptr) instance.StorePlan(std::move(key), std::move(plan));
+}
+
+bool LoadSpecialized(std::span<const std::byte> key, std::vector<std::uint32_t>& words) {
+    auto& instance = store();
+    if (!instance.Enabled()) return false;
+    const auto& switches = switchKey();
+    std::vector<std::byte> full(key.begin(), key.end());
+    full.insert(full.end(), switches.begin(), switches.end());
+    return instance.LoadSpecialized(full, words);
+}
+
+void StoreSpecialized(std::vector<std::byte> key, std::vector<std::uint32_t> words) {
+    auto& instance = store();
+    if (!instance.Enabled() || words.empty()) return;
+    const auto& switches = switchKey();
+    key.insert(key.end(), switches.begin(), switches.end());
+    instance.StoreSpecialized(std::move(key), std::move(words));
 }
 
 std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, const CompiledVariant& variant) {

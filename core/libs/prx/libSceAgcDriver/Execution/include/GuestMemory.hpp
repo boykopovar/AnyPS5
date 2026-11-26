@@ -32,6 +32,7 @@ struct Commitment {
 Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writable = false);
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes);
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment = 1);
+std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes);
 // Variants for resources in heaps the guest commits on demand (partially resident textures, GPU
 // scratch heaps): uncommitted pages read as zeros, are not compared, and are never stored.
 void ReadCommitted(std::uint64_t address, std::span<std::byte> destination);
@@ -207,6 +208,7 @@ std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool CpuWroteSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool UnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool StoreUnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Per 64 KiB tracker block of [address, address + bytes) (block 0 holds `address`): `changed[k]`
 // receives whether the block was stamped after generations[k] (UnchangedSince over that block
 // alone), `cpu[k]`, when given, whether a collect stamped it after (a CPU store, as

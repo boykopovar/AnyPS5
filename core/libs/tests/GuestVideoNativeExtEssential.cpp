@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -14,6 +15,18 @@ void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+void RequireAcceptedThrowsAndZeroes(std::int32_t type, std::uint32_t profile, std::uint32_t level) {
+    std::uint64_t queryOut = 0xA5A5A5A5A5A5A5A5ull;
+    errno = 71;
+    bool threw = false;
+    try {
+        libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(type, 1920, 1080, 0, profile, level, &queryOut);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && queryOut == 0 && errno == 71);
 }
 
 constexpr int notInitialized = static_cast<int>(0xF0000000u);
@@ -60,6 +73,50 @@ int main() {
         Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(type, 1, 2, 3, 4, 5, &output) == unknownType);
     }
     Require(output == 0);
+
+    std::uint64_t queryOut = 0;
+    for (const std::uint32_t badProfile : std::array<std::uint32_t, 4>{0, 3, 6, 0xFFFFu}) {
+        queryOut = 0xA5A5A5A5A5A5A5A5ull;
+        errno = 71;
+        Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(2, 1920, 1080, 0, badProfile, 4, &queryOut) == invalidArgument);
+        Require(queryOut == 0 && errno == 71);
+    }
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 3>{4, 5, 0x10004u}) {
+        for (const std::uint32_t badLevel : std::array<std::uint32_t, 7>{0, 3, 5, 7, 9, 11, 12}) {
+            queryOut = 0xA5A5A5A5A5A5A5A5ull;
+            errno = 71;
+            Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(2, 1920, 1080, 0, goodProfile, badLevel, &queryOut) == invalidArgument);
+            Require(queryOut == 0 && errno == 71);
+        }
+    }
+    for (const std::uint32_t badProfile : std::array<std::uint32_t, 7>{0, 0x41, 0x4E, 0x63, 0x65, 0x7F, 0x81}) {
+        queryOut = 0xA5A5A5A5A5A5A5A5ull;
+        errno = 71;
+        Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(4, 1920, 1080, 0, badProfile, 40, &queryOut) == invalidArgument);
+        Require(queryOut == 0 && errno == 71);
+    }
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 5>{0x42, 0x4D, 0x64, 0x80, 0x20064u}) {
+        for (const std::uint32_t badLevel : std::array<std::uint32_t, 10>{0, 9, 14, 19, 23, 33, 43, 52, 110, 112}) {
+            queryOut = 0xA5A5A5A5A5A5A5A5ull;
+            errno = 71;
+            Require(libSceVideoNativeExtEssentialUnknown_iwAQhvb9BvY_nid_no_patch(4, 1920, 1080, 0, goodProfile, badLevel, &queryOut) == invalidArgument);
+            Require(queryOut == 0 && errno == 71);
+        }
+    }
+
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 3>{4, 5, 0x10004u}) {
+        for (const std::uint32_t goodLevel : std::array<std::uint32_t, 5>{4, 6, 8, 10, 0x20004u}) {
+            RequireAcceptedThrowsAndZeroes(2, goodProfile, goodLevel);
+        }
+    }
+    for (const std::uint32_t goodProfile : std::array<std::uint32_t, 5>{0x42, 0x4D, 0x64, 0x80, 0x20064u}) {
+        for (const std::uint32_t goodLevel : std::array<std::uint32_t, 17>{10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 111, 0x30028u}) {
+            RequireAcceptedThrowsAndZeroes(4, goodProfile, goodLevel);
+        }
+    }
+    RequireAcceptedThrowsAndZeroes(3, 0, 0);
+    RequireAcceptedThrowsAndZeroes(3, 0xFFFFu, 0xFFFFu);
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;

@@ -14,10 +14,9 @@ int APS5_VABI libScePadUnknown_1YXygubV1Gc_nid_no_patch() {
 }
 APS5_EXPORT("1YXygubV1Gc", libScePadUnknown_1YXygubV1Gc_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_3LNwlXW4f54_nid_no_patch() {
+int APS5_VABI scePadInternalSetAssignLed() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("3LNwlXW4f54", libScePadUnknown_3LNwlXW4f54_nid_no_patch);
 
 int APS5_VABI libScePadUnknown_7xA_plus_hFtvBCA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -34,10 +33,9 @@ int APS5_VABI libScePadUnknown_Ql4q5ePNaw0_nid_no_patch() {
 }
 APS5_EXPORT("Ql4q5ePNaw0", libScePadUnknown_Ql4q5ePNaw0_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_UeUUvNOgXKU_nid_no_patch() {
+int APS5_VABI scePadIsChargingCableConnected() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("UeUUvNOgXKU", libScePadUnknown_UeUUvNOgXKU_nid_no_patch);
 
 int APS5_VABI libScePadUnknown_XFqNcPu1meI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -59,20 +57,17 @@ int APS5_VABI libScePadUnknown_qJgegDoE0g8_nid_no_patch() {
 }
 APS5_EXPORT("qJgegDoE0g8", libScePadUnknown_qJgegDoE0g8_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_r2S7Nuicg8s_nid_no_patch() {
+int APS5_VABI scePadSetVibrationRawStrength() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("r2S7Nuicg8s", libScePadUnknown_r2S7Nuicg8s_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_wMvV6XbeFd0_nid_no_patch() {
+int APS5_VABI scePadVirtualDeviceInsertTriggerState() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("wMvV6XbeFd0", libScePadUnknown_wMvV6XbeFd0_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_ybhL4IoyGZA_nid_no_patch() {
+int APS5_VABI scePadAstonGetDeviceInformation() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ybhL4IoyGZA", libScePadUnknown_ybhL4IoyGZA_nid_no_patch);
 
 }
 
@@ -105,14 +100,11 @@ int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, std::uint8_t
         return PAD_ERROR_INVALID_ARG;
     }
     if (!scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD) &&
-        !scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL) &&
-        !scePadIsValidHandle(handle, PAD_PORT_TYPE_REMOTE)) {
+        !scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL)) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     const std::uint8_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(out, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) {
         return PAD_ERROR_INVALID_ARG;
     }

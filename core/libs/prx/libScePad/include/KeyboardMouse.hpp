@@ -56,6 +56,7 @@ private:
 
 struct InputRequests {
     bool toggleFullscreen = false;
+    bool toggleBorderless = false;
     bool togglePerformanceOverlay = false;
     bool screenshot = false;
     bool showPadStatus = false;
