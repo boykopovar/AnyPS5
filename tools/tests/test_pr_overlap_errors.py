@@ -111,6 +111,7 @@ class ErrorReportTests(unittest.TestCase):
             out = Path(directory) / "reports"
             out.write_text("not a directory", encoding="utf-8")
             with patch.object(pr_overlap, "open_prs", return_value={}), \
+                    patch.object(pr_overlap, "BASE_REF", pr_overlap.BASE_REF), \
                     patch.object(pr_overlap, "base_commit", return_value="0" * 40), \
                     patch.object(pr_overlap, "fetch_heads"), \
                     patch.object(pr_overlap, "scan_all"), \
