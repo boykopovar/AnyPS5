@@ -1,16 +1,24 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
 static bool Fails(int result, int error) { return result == -1 && *__error_nid_postfix() == error; }
+static std::vector<std::pair<std::uintptr_t, std::size_t>> hostReads;
+static void NoteHostRead(std::uintptr_t address, std::size_t bytes) { hostReads.emplace_back(address, bytes); }
+static bool Announced(const KernelIovec& vector) {
+    return std::find(hostReads.begin(), hostReads.end(), std::pair{reinterpret_cast<std::uintptr_t>(vector.base), vector.length}) != hostReads.end();
+}
 static std::string Receive(int descriptor, std::size_t length) {
     std::string data(length, 0);
     std::size_t done = 0;
@@ -61,6 +69,11 @@ int main() {
     Require(sendfile_nid_postfix(file, pair[0], 0, 3, &nullHeaders, nullptr, 0) == 0);
     Require(Receive(pair[1], 6) == content.substr(0, 3) + "END");
     Require(lseek_nid_postfix(file, 0, 1) == 0);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(NoteHostRead);
+    Require(sendfile_nid_postfix(file, pair[0], 5, 10, &parts, &sent, 0) == 0 && sent == 17);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    Require(Receive(pair[1], 17) == "GET " + content.substr(5, 10) + "END");
+    Require(Announced(header[0]) && Announced(header[1]) && Announced(trailer[0]));
 
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, pair[0], -1, 0, nullptr, &sent, 0), 22) && sent == 77);
