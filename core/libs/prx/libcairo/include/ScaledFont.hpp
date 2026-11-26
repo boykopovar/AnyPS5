@@ -7,6 +7,7 @@
 #include <cstddef>
 
 struct CairoScaledFont;
+struct CairoFontFace;
 
 struct CairoFontExtents {
     double ascent;
@@ -36,6 +37,7 @@ void APS5_VABI cairo_scaled_font_destroy(CairoScaledFont* font);
 int APS5_VABI cairo_scaled_font_status(CairoScaledFont* font);
 void APS5_VABI cairo_scaled_font_get_font_matrix(CairoScaledFont* font, CairoMatrix* matrix);
 void APS5_VABI cairo_scaled_font_get_ctm(CairoScaledFont* font, CairoMatrix* ctm);
+CairoFontFace* APS5_VABI cairo_scaled_font_get_font_face(CairoScaledFont* font);
 void APS5_VABI cairo_scaled_font_extents(CairoScaledFont* font, CairoFontExtents* extents);
 void APS5_VABI cairo_scaled_font_text_extents(CairoScaledFont* font, const char* utf8,
                                               CairoTextExtents* extents);

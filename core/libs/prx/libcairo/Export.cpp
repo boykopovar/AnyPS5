@@ -4,10 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI cairo_scaled_font_get_font_face() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI cairo_arc_negative() {
     NotImplemented_nid_no_patch(__func__);

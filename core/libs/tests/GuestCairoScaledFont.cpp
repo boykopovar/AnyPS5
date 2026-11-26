@@ -19,6 +19,7 @@ using Reference = CairoScaledFont* (APS5_VABI*)(CairoScaledFont*);
 using Destroy = void (APS5_VABI*)(CairoScaledFont*);
 using Status = int (APS5_VABI*)(CairoScaledFont*);
 using GetMatrix = void (APS5_VABI*)(CairoScaledFont*, CairoMatrix*);
+using GetFontFace = CairoFontFace* (APS5_VABI*)(CairoScaledFont*);
 using GetExtents = void (APS5_VABI*)(CairoScaledFont*, CairoFontExtents*);
 using GetTextExtents = void (APS5_VABI*)(CairoScaledFont*, const char*, CairoTextExtents*);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_reference), Reference>);
@@ -26,6 +27,7 @@ static_assert(std::is_same_v<decltype(&cairo_scaled_font_destroy), Destroy>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_status), Status>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_get_font_matrix), GetMatrix>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_get_ctm), GetMatrix>);
+static_assert(std::is_same_v<decltype(&cairo_scaled_font_get_font_face), GetFontFace>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_extents), GetExtents>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_text_extents), GetTextExtents>);
 
@@ -128,6 +130,11 @@ void CompareNativeExample(const Example& example) {
     Compare(guestFontMatrix, std::bit_cast<CairoMatrix>(nativeFontMatrix), "font matrix");
     Compare(guestCtm, std::bit_cast<CairoMatrix>(nativeCtm), "ctm");
 
+    CairoFontFace* guestFace = cairo_scaled_font_get_font_face(guest);
+    cairo_font_face_t* nativeFace = aps5_cairo_scaled_font_get_font_face(native);
+    Check(guestFace != nullptr, "scaled font returns non-null font face");
+    Check(guestFace == reinterpret_cast<CairoFontFace*>(nativeFace), "font face matches pinned Cairo");
+
     CairoFontExtents guestFontExtents{};
     cairo_font_extents_t nativeFontExtents{};
     cairo_scaled_font_extents(guest, &guestFontExtents);
@@ -203,6 +210,7 @@ void CheckUnterminated() {
     std::vector<char> unterminated(1024 * 1024, 'x');
     CairoTextExtents extents{};
     Rejects([&] { cairo_scaled_font_text_extents(guest, unterminated.data(), &extents); });
+    Rejects([] { cairo_scaled_font_get_font_face(nullptr); });
     Check(aps5_cairo_scaled_font_status(native) == CAIRO_STATUS_SUCCESS,
           "unterminated UTF-8 did not reach native scaled-font parser");
     aps5_cairo_destroy(context);

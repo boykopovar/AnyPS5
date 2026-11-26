@@ -73,6 +73,10 @@ void APS5_VABI cairo_scaled_font_get_ctm(CairoScaledFont* font, CairoMatrix* ctm
     CopyResult(ctm, &native, sizeof(native), "cairo_scaled_font_get_ctm: invalid output");
 }
 
+CairoFontFace* APS5_VABI cairo_scaled_font_get_font_face(CairoScaledFont* font) {
+    return reinterpret_cast<CairoFontFace*>(aps5_cairo_scaled_font_get_font_face(Backend(font)));
+}
+
 void APS5_VABI cairo_scaled_font_extents(CairoScaledFont* font, CairoFontExtents* extents) {
     cairo_font_extents_t native{};
     aps5_cairo_scaled_font_extents(Backend(font), &native);
