@@ -95,6 +95,14 @@ class GuestTestTargets(unittest.TestCase):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
 
+    def test_a_product_library_source_change_selects_its_guest_consumer(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/GuestPad.cpp", fragment="libc.prx")
+        unrelated = self.target("guest_http_tests", source="core/libs/tests/GuestHttp.cpp", fragment="libc.prx")
+        product = self.target("libScePad", target_type="SHARED_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
+        guest["dependencies"] = [{"id": product["id"]}]
+        build = self.fixture([guest, unrelated, product])
+        self.assertEqual(self.selections(build, ["core/libs/prx/libScePad/Export.cpp"]), ["guest_pad_tests"])
+
     def test_changed_static_fixture_selects_its_guest_consumer(self):
         guest = self.target("guest_jxr_tests", source="core/libs/tests/GuestJxr.cpp", fragment="libc.prx")
         unrelated = self.target("guest_pad_tests", fragment="libc.prx")

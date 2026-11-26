@@ -469,11 +469,11 @@ export const messages = {
         "noOptions": "No hay opciones coincidentes."
     },
     "fr": {
-        "inputSettings": "Paramètres de saisie",
-        "inputSettingsHelp": "Laissez un paramètre vide pour hériter de sa valeur. Séparez les noms de boutons de ToggleActions par des virgules.",
-        "inheritSetting": "Hériter",
+        "inputSettings": "Réglages d’entrée",
+        "inputSettingsHelp": "Laissez un réglage vide pour conserver la valeur héritée. Séparez les noms de boutons de ToggleActions par des virgules.",
+        "inheritSetting": "Valeur héritée",
         "controllerButtons": "Boutons de la manette",
-        "noOverride": "Hériter de l’affectation",
+        "noOverride": "Affectation héritée",
         "controls": "Commandes",
         "configuration": "Configuration",
         "help": "Aide",
