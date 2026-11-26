@@ -411,9 +411,13 @@ void Amd64OnlyConverter::_convertSegment(
     const auto branchTargets = needsBranchTargets ? _collectBranchTargets(seg, matches, ph, fileBytes, segments) : std::set<std::uint64_t>{};
 
     std::set<std::size_t> pendingIndices;
-    for (const auto& item : pending)
-        pendingIndices.insert(item.Index);
     std::set<std::size_t> claimed;
+    for (const auto& item : pending) {
+        if (item.Substitution.Lowering == Amd64OnlyLowering::Kept)
+            claimed.insert(item.Index);
+        else
+            pendingIndices.insert(item.Index);
+    }
     std::set<std::size_t> consumed;
 
     std::size_t processed = 0;
@@ -512,6 +516,11 @@ void Amd64OnlyConverter::_convertSegment(
             break;
         }
         case Amd64OnlyLowering::Kept:
+            if (!substitution.Optional)
+                throw CodegenException("AMD-only instruction without Intel lowering: " + substitution.InstructionName, fileOffset);
+            ++result.KeptCount;
+            result.Reports.push_back({substitution.InstructionName, fileOffset, match.Length, 0, Amd64OnlyLowering::Kept});
+            continue;
         case Amd64OnlyLowering::Unsupported:
             throw CodegenException("AMD-only instruction without Intel lowering: " + substitution.InstructionName, fileOffset);
         }

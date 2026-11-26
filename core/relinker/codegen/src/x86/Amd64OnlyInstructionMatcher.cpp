@@ -307,8 +307,12 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         return _trampoline(kScalarCompare.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _emitScalarCompare(body, instr, *compare); }), true);
     if (const auto masked = _target == Amd64OnlyTarget::Rosetta ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt)
         return _trampoline(masked->Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMaskedStore(body, *masked); }));
-    if (const auto mulx = DecodeMulx(instr.Data, instr.Length))
+    if (const auto mulx = DecodeMulx(instr.Data, instr.Length)) {
+        const auto reserved = [](const std::uint8_t reg) { return reg == 2 || reg == 4; };
+        if (_target == Amd64OnlyTarget::Rosetta && mulx->Memory && reserved(mulx->HighDestination) && reserved(mulx->LowDestination))
+            return Amd64OnlyMatch{"MULX", instr.Length, Amd64OnlyLowering::Kept, {}, {}, 0, true};
         return _trampoline("MULX", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMulx(body, *mulx); }));
+    }
     return std::nullopt;
 }
 

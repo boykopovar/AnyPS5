@@ -63,9 +63,9 @@ void decoding() {
         Codegen::StubBodyBuilder body;
         Codegen::EmitMulx(body, *Codegen::DecodeMulx(overflow.data(), overflow.size()));
     } catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "An overflowing stack displacement was silently wrapped");
+    require(!rejected, "MULX changed a valid disp32 when preloading the memory source");
     for (const bool wide : {false, true}) {
-        for (const auto [displacement, rejects32, rejects64] : {std::tuple<std::int32_t, bool, bool>{-199, false, true}, {-195, true, true}, {-192, true, true}, {-184, true, true}, {-176, true, true}, {-169, true, true}, {-168, false, false}}) {
+        for (const std::int32_t displacement : {-199, -195, -192, -184, -176, -169, -168}) {
             Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>(wide ? 0xF3 : 0x73), 0xF6, 0x84, 0x24};
             for (unsigned shift = 0; shift < 32; shift += 8)
                 site.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
@@ -74,8 +74,18 @@ void decoding() {
                 Codegen::StubBodyBuilder body;
                 Codegen::EmitMulx(body, *Codegen::DecodeMulx(site.data(), site.size()));
             } catch (const Codegen::CodegenException&) { rejected = true; }
-            require(rejected == (wide ? rejects64 : rejects32), "MULX spill alias detection has an incorrect boundary");
+            require(!rejected, "MULX rejected a stack source that is read before its spill frame is written");
         }
+    }
+    for (const auto [high, low] : {std::pair<std::uint8_t, std::uint8_t>{2, 2}, {2, 4}, {4, 2}, {4, 4}}) {
+        auto site = instruction(true, high, low, 1);
+        site[4] = static_cast<std::uint8_t>(((high & 7) << 3) | 1);
+        rejected = false;
+        try {
+            Codegen::StubBodyBuilder body;
+            Codegen::EmitMulx(body, *Codegen::DecodeMulx(site.data(), site.size()));
+        } catch (const Codegen::CodegenException&) { rejected = true; }
+        require(rejected, "MULX accepted a memory source without a safe destination register for preloading");
     }
 }
 
@@ -89,6 +99,26 @@ void matching() {
     const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
     require(rosetta->MatchSequence(sequence, {}).has_value(), "A MULX sequence could not move out of line");
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto avxConverter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx);
+    for (const auto [high, low] : {std::pair<std::uint8_t, std::uint8_t>{2, 2}, {2, 4}, {4, 2}, {4, 4}}) {
+        auto site = instruction(true, high, low, 1);
+        site[4] = static_cast<std::uint8_t>(((high & 7) << 3) | 1);
+        const auto kept = rosetta->Match(site.data(), site.size());
+        require(kept && kept->InstructionName == "MULX" && kept->Lowering == Codegen::Amd64OnlyLowering::Kept && kept->Optional,
+                "A MULX memory form without a preload destination was not marked for the optional kept fallback");
+        Bytes file(0x300, 0xCC);
+        std::copy(site.begin(), site.end(), file.begin() + 0x200);
+        const Domain::ProgramHeader segment{1, 5, 0x200, 0x1000, 0, site.size(), site.size(), 16};
+        const auto converted = converter->Convert(file, {segment});
+        require(converted.Trampolines.empty() && converted.KeptCount == 1 && converted.Reports.size() == 1
+                    && converted.Reports[0].InstructionName == "MULX" && converted.Reports[0].Lowering == Codegen::Amd64OnlyLowering::Kept
+                    && converted.Bytes == file,
+                "A MULX memory form without a preload destination caused a conversion failure or was rewritten");
+        bool avxRejected = false;
+        try { (void)avxConverter->Convert(file, {segment}); }
+        catch (const Codegen::CodegenException&) { avxRejected = true; }
+        require(avxRejected, "The AVX-only target kept a native MULX instruction that requires BMI2");
+    }
     for (const Bytes site : {bytes, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x05, 0x40, 0, 0, 0}}) {
         Bytes file(0x300, 0xCC);
         std::copy(site.begin(), site.end(), file.begin() + 0x200);
@@ -118,7 +148,8 @@ struct State {
 
 class Execution {
 public:
-    Execution(const Bytes& site, std::uint64_t memoryValue, std::optional<std::size_t> clobberOffset = std::nullopt) {
+    Execution(const Bytes& site, std::uint64_t memoryValue, std::optional<std::size_t> clobberOffset = std::nullopt,
+              std::optional<std::uint8_t> stackAliasRegister = std::nullopt, std::optional<std::int32_t> stackAliasOffset = std::nullopt) {
         auto operands = Codegen::DecodeMulx(site.data(), site.size());
         require(operands.has_value(), "Execution site was not MULX");
         for (auto reg : {3, 5, 6, 7, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
@@ -136,6 +167,16 @@ public:
         append64(kSentinel);
         for (int displacement = -128; displacement < 0; displacement += 8)
             memory(0x89, 0, 4, displacement);
+        if (stackAliasOffset) {
+            bytes.insert(bytes.end(), {0x48, 0xB8});
+            append64(memoryValue);
+            memory(0x89, 0, 4, *stackAliasOffset);
+            if (stackAliasRegister) {
+                bytes.insert(bytes.end(), {0x48, 0x8D, 0x84, 0x24});
+                append32(*stackAliasOffset);
+                memory(0x89, 0, 7, *stackAliasRegister * 8);
+            }
+        }
         memory(0x8B, 0, 7, 16 * 8);
         memory(0x89, 0, 4, 64);
         for (std::uint8_t reg = 0; reg < 16; ++reg)
@@ -318,6 +359,7 @@ void execution() {
         for (std::uint8_t base = 0; base < 16; ++base) {
             for (std::uint8_t high = 0; high < 16; ++high) {
                 for (std::uint8_t low = 0; low < 16; ++low) {
+                    if ((high == 2 || high == 4) && (low == 2 || low == 4)) continue;
                     auto site = instruction(wide, high, low, base);
                     site[4] = static_cast<std::uint8_t>(0x80 | ((high & 7) << 3) | (base & 7));
                     if ((base & 7) == 4) site.push_back(0x24);
@@ -332,6 +374,31 @@ void execution() {
                     check(state, *Codegen::DecodeMulx(site.data(), site.size()), value);
                 }
             }
+        }
+        for (const std::int32_t offset : {-184, -176}) {
+            for (const std::uint8_t base : {std::uint8_t{0}, std::uint8_t{1}}) {
+                auto aliasSite = instruction(wide, 8, 9, base);
+                aliasSite[4] = static_cast<std::uint8_t>(base & 7);
+                constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                Execution alias(aliasSite, value, std::nullopt, base, offset);
+                auto state = initialState();
+                state.Output[0] = value;
+                state.InputFlags |= 0x895;
+                alias.Run(state);
+                check(state, *Codegen::DecodeMulx(aliasSite.data(), aliasSite.size()), value);
+            }
+            auto stackSite = instruction(wide, 8, 9, 4);
+            stackSite[4] = 0x84;
+            stackSite.push_back(0x24);
+            for (unsigned shift = 0; shift < 32; shift += 8)
+                stackSite.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(offset) >> shift));
+            constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+            Execution alias(stackSite, value, std::nullopt, std::nullopt, offset);
+            auto state = initialState();
+            state.Output[0] = value;
+            state.InputFlags |= 0x895;
+            alias.Run(state);
+            check(state, *Codegen::DecodeMulx(stackSite.data(), stackSite.size()), value);
         }
         for (const Bytes tail : {Bytes{0x06}, Bytes{0x46, 0x10}, Bytes{0x84, 0x24, 0x40, 0, 0, 0}, Bytes{0x04, 0xCA}, Bytes{0x85, 0x10, 0, 0, 0}, Bytes{0x05, 0, 0, 0, 0}}) {
             Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>(wide ? 0xF3 : 0x73), 0xF6};
@@ -371,7 +438,7 @@ void execution() {
             }
         }
     }
-    std::cout << "Executed 73,868 MULX cases with register, flag and red-zone checks\n";
+    std::cout << "MULX execution checks passed with register, flag and red-zone checks\n";
 }
 #else
 void execution() { std::cout << "MULX execution checks require an x86-64 build\n"; }
