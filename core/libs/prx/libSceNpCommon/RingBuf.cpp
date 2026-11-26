@@ -1,4 +1,6 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -7,6 +9,7 @@
 
 namespace {
 
+constexpr int NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80558009);
 constexpr int NP_RING_BUF_ERROR_NO_SPACE = static_cast<int>(0x80559E0A);
 constexpr int NP_RING_BUF_ERROR_NO_DATA = static_cast<int>(0x80559E0B);
 constexpr int NP_RING_BUF_ERROR_OUT_OF_MEMORY = static_cast<int>(0x80559E09);
@@ -88,6 +91,28 @@ void ReleaseBuffer(NpRingBufMemory& ringBuf) {
     ringBuf.allocator->allocator.release(ringBuf.ringBuf.buf, ringBuf.allocator->allocator.context);
 }
 
+bool CopyInGuest(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutGuest(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool WriteRingBufFields(NpRingBuf* self, const NpRingBuf& ringBuf) {
+    constexpr std::size_t offset = offsetof(NpRingBuf, buf);
+    const auto address = reinterpret_cast<std::uintptr_t>(self);
+    if (self == nullptr || address > UINTPTR_MAX - offset) return false;
+    return CopyOutGuest(reinterpret_cast<void*>(address + offset),
+        reinterpret_cast<const std::uint8_t*>(&ringBuf) + offset, sizeof(ringBuf) - offset);
+}
+
 } // namespace
 
 extern "C" {
@@ -104,7 +129,8 @@ void APS5_VABI _ZN3sce2np7RingBufC2Ev(NpRingBuf* self) {
 
 void APS5_VABI _ZN3sce2np7RingBufD1Ev(NpRingBuf* self) {
     if (self == nullptr) return;
-    self->vtable = &RingBufVtable[2];
+    const void* const* vtable = &RingBufVtable[2];
+    (void)CopyOutGuest(self, &vtable, sizeof(vtable));
 }
 
 void APS5_VABI _ZN3sce2np7RingBufD2Ev(NpRingBuf* self) {
@@ -118,16 +144,22 @@ void APS5_VABI _ZN3sce2np7RingBufD0Ev(NpRingBuf* self) {
 
 void APS5_VABI _ZN3sce2np7RingBuf4ctorEv(NpRingBuf* self) {
     if (self == nullptr) return;
-    ClearFields(*self);
+    NpRingBuf cleared{};
+    ClearFields(cleared);
+    (void)WriteRingBufFields(self, cleared);
 }
 
 void APS5_VABI _ZN3sce2np7RingBuf4dtorEv(NpRingBuf*) {}
 
 int APS5_VABI _ZN3sce2np7RingBuf4InitEPvm(NpRingBuf* self, void* buf, std::size_t bufSize) {
-    Require(self->buf == nullptr, "sce::np::RingBuf::Init: the ring buffer already has a buffer");
+    if (self == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    NpRingBuf local{};
+    if (!CopyInGuest(&local, self, sizeof(local))) return NP_ERROR_INVALID_ARGUMENT;
+    Require(local.buf == nullptr, "sce::np::RingBuf::Init: the ring buffer already has a buffer");
     Require(buf != nullptr, "sce::np::RingBuf::Init: null buffer");
     Require(bufSize != 0, "sce::np::RingBuf::Init: empty buffer");
-    Attach(*self, static_cast<std::uint8_t*>(buf), bufSize);
+    Attach(local, static_cast<std::uint8_t*>(buf), bufSize);
+    if (!WriteRingBufFields(self, local)) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
