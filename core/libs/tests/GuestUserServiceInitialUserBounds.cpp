@@ -79,13 +79,12 @@ public:
 
 void TestInitialAndForegroundUserInvariants() {
     int initialUser = -1;
-    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK);
-    Require(initialUser == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
 
     int foregroundUser = -1;
-    Require(sceUserServiceGetForegroundUser(&foregroundUser) == USER_SERVICE_OK);
-    Require(foregroundUser == USER_SERVICE_INITIAL_USER_ID);
-    Require(initialUser == foregroundUser);
+    Require(sceUserServiceGetForegroundUser(&foregroundUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(foregroundUser == -1);
 
     Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
@@ -163,13 +162,14 @@ void TestInitialAndForegroundUserInvariants() {
 
     initialUser = 0;
     foregroundUser = 0;
-    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK);
-    Require(initialUser == USER_SERVICE_INITIAL_USER_ID);
-    Require(sceUserServiceGetForegroundUser(&foregroundUser) == USER_SERVICE_OK);
-    Require(foregroundUser == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == 0);
+    Require(sceUserServiceGetForegroundUser(&foregroundUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(foregroundUser == 0);
 }
 
 void TestPointerFaultBounds() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 

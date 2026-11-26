@@ -1299,6 +1299,7 @@ void CheckSilentStubs() {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK, "user service init failed");
     CheckNpOfflineGetters();
     CheckRequestIds();
     CheckAsmLifecycle();
