@@ -1,0 +1,10 @@
+add_test_executable(guest_libc_abort_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcAbort.cpp)
+target_include_directories(guest_libc_abort_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libc_abort_tests PRIVATE libc)
+configure_windows_unwind(guest_libc_abort_tests)
+add_test(NAME guest_libc_abort COMMAND ${Python3_EXECUTABLE} ${LIBS_INCLUDE_DIR}/tests/GuestLibcAbort.py $<TARGET_FILE:guest_libc_abort_tests>)
+set_tests_properties(guest_libc_abort PROPERTIES TIMEOUT 30)
+if(WIN32)
+    set_tests_properties(guest_libc_abort PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

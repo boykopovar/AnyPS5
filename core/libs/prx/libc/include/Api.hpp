@@ -1181,6 +1181,8 @@ int APS5_VABI wcstombs_s_nid_postfix( std::size_t* result, char* destination, st
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state);
 std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
 void APS5_VABI exit_nid_postfix(int code);
+[[noreturn]] void APS5_VABI abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix();
 int* APS5_VABI libc_error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(GuestExitCallback func);
 int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func);
