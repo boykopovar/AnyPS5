@@ -273,6 +273,23 @@ void CheckErrors() {
     Require(invalid.mcontext.len == 0 && invalid.mcontext.rip == context.mcontext.rip, "makecontext leaves a context without a valid mc_len untouched");
     makecontext_nid_postfix(nullptr, &EntryThunk, 0);
 
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(nullptr, 15, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "signalcontext rejects a null context");
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10), 15, nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "signalcontext rejects an invalid context pointer");
+    UserUcontext badStack = context;
+    badStack.mcontext.rsp = 0x10;
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(&badStack, 15, nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "signalcontext rejects an unmapped stack pointer");
+
+    UserUcontext signalContext = context;
+    signalContext.mcontext.rsp = reinterpret_cast<std::uint64_t>(g_contextStack.bytes + StackBytes);
+    signalContext.sigmask[0] = 0xffffffffu;
+    *__error_nid_postfix() = 42;
+    Require(signalcontext_nid_postfix(&signalContext, 15, nullptr) == 0 && *__error_nid_postfix() == 42, "signalcontext preserves errno on a valid context and stack");
+    Require(signalContext.link != nullptr && signalContext.mcontext.len == sizeof(UserMcontext), "signalcontext links the saved context and initializes mcontext");
+    Require((signalContext.sigmask[0] & (1u << 14)) == 0, "signalcontext unmasks the delivered signal");
+    Require(signalContext.mcontext.rdi == reinterpret_cast<std::uint64_t>(&signalContext), "signalcontext passes the context pointer as rdi");
 }
 
 void CheckCapture() {
