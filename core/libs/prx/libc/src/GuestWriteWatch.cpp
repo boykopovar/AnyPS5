@@ -99,6 +99,13 @@ class Watch {
         int protection;
     };
     static constexpr std::size_t PublicationRunCapacity = 1024;
+    static constexpr std::size_t RecentPublicationRangeCount = 8;
+
+    struct RecentPublicationRange {
+        std::atomic<std::uint64_t> generation{0};
+        std::atomic<std::uintptr_t> begin{0};
+        std::atomic<std::uintptr_t> end{0};
+    };
 
 public:
     static Watch& Get() {
@@ -180,6 +187,7 @@ public:
             if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection) != 0) restored = false;
         }
         if (restored) {
+            recordPublicationRangeLocked();
             _publicationRunCount.store(0, std::memory_order_release);
             _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
@@ -196,6 +204,7 @@ public:
         }
         const auto count = _publicationRunCount.load(std::memory_order_acquire);
         if (count == 0) {
+            recordPublicationRangeLocked();
             _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
             _publicationState.unlock();
@@ -208,15 +217,39 @@ public:
             return;
         }
         armPublicationRuns(runs);
+        recordPublicationRangeLocked();
         _publicationRunCount.store(0, std::memory_order_release);
         _publicationRecovery.store(false, std::memory_order_release);
         _publication.store(false, std::memory_order_release);
         _publicationState.unlock();
     }
 
+    void recordPublicationRangeLocked() noexcept {
+        const auto begin = _publicationBegin.load(std::memory_order_relaxed);
+        const auto end = _publicationEnd.load(std::memory_order_relaxed);
+        if (begin == 0 || end <= begin) return;
+        auto& slot = _recentPublications[_recentPublicationNext.fetch_add(1, std::memory_order_relaxed) % RecentPublicationRangeCount];
+        slot.generation.fetch_add(1, std::memory_order_release);
+        slot.begin.store(begin, std::memory_order_relaxed);
+        slot.end.store(end, std::memory_order_relaxed);
+        slot.generation.fetch_add(1, std::memory_order_release);
+    }
+
+    bool recentPublicationRange(std::uintptr_t address) const noexcept {
+        for (const auto& slot : _recentPublications) {
+            const auto before = slot.generation.load(std::memory_order_acquire);
+            if ((before & 1u) != 0u) continue;
+            const auto begin = slot.begin.load(std::memory_order_relaxed);
+            const auto end = slot.end.load(std::memory_order_relaxed);
+            const auto after = slot.generation.load(std::memory_order_acquire);
+            if (before == after && address >= begin && address < end) return true;
+        }
+        return false;
+    }
+
     bool HandleFault(std::uintptr_t address, bool write) {
         if (!write) return false;
-        if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return publicationPageWritable(address);
+        if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return recentPublicationRange(address) && publicationPageWritable(address);
         timespec started{};
         static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &started));
         unsigned spins = 0;
@@ -698,6 +731,7 @@ private:
     bool recoverPublicationLocked() noexcept {
         const auto count = _publicationRunCount.load(std::memory_order_acquire);
         if (count == 0) {
+            recordPublicationRangeLocked();
             _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
             return true;
@@ -705,6 +739,7 @@ private:
         const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
         if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) return false;
         armPublicationRuns(runs);
+        recordPublicationRangeLocked();
         _publicationRunCount.store(0, std::memory_order_release);
         _publicationRecovery.store(false, std::memory_order_release);
         _publication.store(false, std::memory_order_release);
@@ -820,6 +855,8 @@ private:
     std::atomic<std::uintptr_t> _publicationEnd{0};
     std::array<PublicationRun, PublicationRunCapacity> _publicationRuns{};
     std::atomic<std::size_t> _publicationRunCount{0};
+    std::array<RecentPublicationRange, RecentPublicationRangeCount> _recentPublications{};
+    std::atomic<std::size_t> _recentPublicationNext{0};
 };
 
 const bool g_opened = (Watch::Get(), true);

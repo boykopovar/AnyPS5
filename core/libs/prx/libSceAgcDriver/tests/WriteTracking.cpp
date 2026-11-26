@@ -611,19 +611,20 @@ void CheckPublicationKeepsPageProtection() {
 
 void CheckFaultAfterAnotherPublication() {
     constexpr std::size_t Page = 4096;
-    void* memory = AllocateWatched(2 * Page);
+    void* memory = AllocateWatched(3 * Page);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
-    std::memset(memory, 0x11, 2 * Page);
-    Require(CollectWrites(base, 2 * Page) != 0, "the two-publication block is not collected");
+    std::memset(memory, 0x11, 3 * Page);
+    Require(CollectWrites(base, 3 * Page) != 0, "the two-publication block is not collected");
     Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base, Page), "cannot begin the first publication");
     GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
     Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base + Page, Page), "cannot begin the second publication");
     Require(GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base, true), "a fault from the first publication was not retried after the second started");
+    Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base + 2 * Page, true), "a writable address outside every publication was retried");
     Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base, false), "a non-write fault on a writable page was retried");
     Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(0x10, true), "an unmapped address was retried as a publication fault");
     GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
-    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, 2 * Page);
-    Require(::munmap(memory, 2 * Page) == 0, "cannot release the two-publication block");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, 3 * Page);
+    Require(::munmap(memory, 3 * Page) == 0, "cannot release the two-publication block");
 }
 
 void IgnorePublicationWrite(void*, std::uintptr_t, std::uintptr_t) {}
@@ -2961,9 +2962,9 @@ int main(int argc, char** argv) {
         CheckOwnStoreImages();
 #endif
 #if defined(__linux__)
+        CheckFaultAfterAnotherPublication();
         CheckWriteChangedIfHeldSameValue();
         CheckPublicationKeepsPageProtection();
-        CheckFaultAfterAnotherPublication();
 #elif defined(_WIN32)
         std::cout << "same-value publication regression skipped: the ordering fix needs an alias for a host write to a read-only guest page, which this platform does not provide (docs/dev/debt/changes/agc-same-value-publication-windows.md)\n";
 #else
