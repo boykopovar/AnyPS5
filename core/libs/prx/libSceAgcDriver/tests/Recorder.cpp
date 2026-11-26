@@ -5272,6 +5272,8 @@ bool importedEpochReuseTests(const Device& device, Recorder& recorder) {
     const auto reusesBefore = EpochProofCounts().resourceReuses.Sum();
     Require(resources->Revalidate(compute), "the imported build did not prove current through the epoch exit");
     Require(EpochProofCounts().resourceReuses.Sum() == reusesBefore + 1, "the imported build did not take the epoch exit before its import was replaced");
+    const auto importBefore = HostImportSerial(context, element, elementBytes, true);
+    Require(importBefore != 0, "the imported build's element has no import serial before it is replaced");
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
@@ -5282,6 +5284,7 @@ bool importedEpochReuseTests(const Device& device, Recorder& recorder) {
         mutation.Add(block, bytes, true, true, true);
     }
     const auto importAfter = HostImportFor(context, element, elementBytes);
+    const auto serialAfter = HostImportSerial(context, element, elementBytes, true);
     const auto exitBefore = EpochProofCounts().resourceReuses.Sum();
     const auto provedBefore = EpochProofCounts().resourceProofs.Sum();
     const bool exitProved = resources->Revalidate(compute);
@@ -5292,6 +5295,7 @@ bool importedEpochReuseTests(const Device& device, Recorder& recorder) {
     const auto provedAfterFull = EpochProofCounts().resourceProofs.Sum();
     std::cout << "imported epoch reuse: after the block's import was retired and remade the exit " << (exited ? "was taken and " : "was not taken and ") << (exitProved ? "proved" : "refused") << " the build, the full proof " << (fullProved ? "proved" : "refused") << " it\n";
     Require(importAfter != nullptr, "the block's import was not remade after its allocation was added again");
+    Require(serialAfter != 0 && serialAfter != importBefore, "the block's import kept its identity after its allocation was removed and added again");
     Require(!exitProved || fullProved, "the epoch exit reused a build bound to an import the full proof refuses");
     Require(exited || exitProved || provedAfterExit == provedBefore, "a refused resource proof was counted as proved");
     Require(fullProved || provedAfterFull == provedAfterExit, "a refused full resource proof was counted as proved");
