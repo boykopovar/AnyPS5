@@ -436,14 +436,9 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
         inside(block, block + FrameCaptureWriter::BlockBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, since}); });
     }
     const auto blockSpans = spans.size();
-    std::vector<std::uint64_t> pages;
-    for (const auto page : hostPages) {
-        std::uint64_t covered = 0;
-        inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { covered += stop - first; });
-        if (covered == HostPageBytes) pages.push_back(page);
-        else inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, startGeneration}); });
-    }
-    writeDelta(spans, pages, added);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> hostSpans;
+    for (const auto page : hostPages) inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { hostSpans.emplace_back(first, stop); });
+    writeDelta(spans, hostSpans, added);
     std::map<std::uint64_t, std::uint64_t> marks;
     for (std::size_t index = 0; index < blockSpans; ++index) {
         const auto block = spans[index].address & ~std::uint64_t{FrameCaptureWriter::BlockBytes - 1};
@@ -508,7 +503,7 @@ void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, 
     blocks.resize(merged);
 }
 
-void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
+void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::pair<std::uint64_t, std::uint64_t>> hostSpans, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
@@ -528,7 +523,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         ~Hold() { driver.ReleaseSettled(); }
     } hold{driver};
     auto [accepted, completed] = driver.SerialProgress();
-    if (completed < accepted && (!added.empty() || !blocks.empty() || !hostPages.empty())) {
+    if (completed < accepted && (!added.empty() || !blocks.empty() || !hostSpans.empty())) {
         if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
             stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
             return;
@@ -575,16 +570,16 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             at += bytes.size();
         }
     }
-    for (const auto page : hostPages) {
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page)), HostPageBytes)) continue;
-        bytes.resize(HostPageBytes);
-        std::memcpy(bytes.data(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page)), HostPageBytes);
+    for (const auto& [begin, end] : hostSpans) {
+        const auto* host = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(begin));
+        if (!GuestMemory::Accessible(host, static_cast<std::size_t>(end - begin))) continue;
+        bytes.assign(host, host + (end - begin));
         const auto hash = contentHash(bytes);
-        if (const auto found = hostPageHashes.find(page); found != hostPageHashes.end() && found->second == hash) continue;
-        GuestMemory::UpdateComparedPages(page, bytes);
-        forgetHostPages(page, page + HostPageBytes);
-        hostPageHashes[page] = hash;
-        writeTitleWords(page);
+        if (const auto found = hostPageHashes.find(begin); found != hostPageHashes.end() && found->second == hash) continue;
+        GuestMemory::UpdateComparedPages(begin, bytes);
+        forgetHostPages(begin, end);
+        hostPageHashes[begin] = hash;
+        writeTitleWords(begin);
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));

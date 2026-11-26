@@ -115,7 +115,7 @@ private:
     void emitDelta();
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
-    void writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void writeDelta(std::span<Span> spans, std::span<const std::pair<std::uint64_t, std::uint64_t>> hostSpans, std::span<const Range> added = {});
     void frameBoundaryLocked();
     bool triggered();
     void start();

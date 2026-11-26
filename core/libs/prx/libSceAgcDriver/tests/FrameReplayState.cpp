@@ -1376,6 +1376,40 @@ void testBlockingSubmission(const std::filesystem::path& directory) {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+void testClippedHostShader(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = AgcDriver::FrameRecorder::HostPageBytes;
+    constexpr std::size_t CodeBytes = 256;
+#ifdef _WIN32
+    auto* memory = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * Page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    void* mapped = mmap(nullptr, 2 * Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* memory = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
+    check(memory != nullptr, "host shader allocation failed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory + 32, Page / 2, true, false, true);
+    }
+    auto* shader = reinterpret_cast<Shader*>(memory + 64);
+    auto* code = memory + 64 + sizeof(Shader);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    shader->shader_size = CodeBytes;
+    shader->code = code;
+    std::fill_n(code, CodeBytes, std::byte{0x51});
+    recorder->RegisterShader(shader);
+    std::fill_n(code, CodeBytes, std::byte{0x52});
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(lastDeltaByte(reader, code) == std::byte{0x52}, "the capture lost a rewrite of host shader code in a page a captured range covers only in part");
+}
+
 void testShaderCode(const std::filesystem::path& directory, bool host, std::string_view mode = {}) {
     const bool prologue = mode.starts_with("shader_prologue_");
     const bool readOnly = mode.ends_with("readonly");
@@ -2001,6 +2035,7 @@ int main(int argc, char** argv) {
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
+        else if (mode == "shader_host_clipped") testClippedHostShader(directory);
         else if (mode == "shader_host_rewritten" || mode == "shader_host_restored" || mode == "shader_unaligned_restored") testDeltaPaths(directory, mode);
         else if (mode == "shader_host_gpu_store") testHostShaderPageGpuStore(directory);
         else if (mode == "shader_hole") testShaderBlockHole(directory);
