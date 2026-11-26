@@ -382,7 +382,7 @@ void TestCaption(std::vector<std::uint16_t> caption, bool banded, bool shortOnly
     auto* stream = MemoryStream(output, output.size());
     auto* encoder = CreateEncoder();
     Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
-    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setPixelFormat(encoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     Require(encoder->setSize(encoder, Width, Height) == 0);
     Require(encoder->setDescriptiveMetadata(encoder, description.data()) == 0);
     const auto blocksWithCaption = liveBlocks;
