@@ -4,6 +4,10 @@ Running a game is a big effort for the community: a legally dumped title, a suit
 
 For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE](ARCHITECTURE.md).
 
+Before rebasing a branch used for testing, save its tip as a local ref or record its hash. Run
+`python3 tools/rebase_verify.py <old> <new>` before collecting results on the rebased tip. Exit status 1
+lists differences to review. Status 2 means the comparison could not run.
+
 ## Before a run
 
 - Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
