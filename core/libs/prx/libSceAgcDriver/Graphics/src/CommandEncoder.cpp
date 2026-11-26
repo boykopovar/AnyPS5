@@ -54,6 +54,7 @@ constexpr std::size_t aligned(std::size_t bytes) {
 
 struct SlotState {
     std::atomic<CommandEncoder*> encoder{nullptr};
+    std::atomic<unsigned> lookups{0};
     DeviceFunctions real;
     VkDevice device = VK_NULL_HANDLE;
     bool claimed = false;
@@ -575,6 +576,12 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::siz
 }
 
 CommandEncoder::~CommandEncoder() {
+    {
+        std::lock_guard lock(slotMutex());
+        slots()[slot].encoder.store(nullptr, std::memory_order_release);
+    }
+    auto& lookups = slots()[slot].lookups;
+    for (auto held = lookups.load(std::memory_order_acquire); held != 0; held = lookups.load(std::memory_order_acquire)) lookups.wait(held, std::memory_order_acquire);
     Quiesce(WaitSite{Wait::Teardown, nullptr, 0});
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
@@ -590,7 +597,6 @@ CommandEncoder::~CommandEncoder() {
     }
     std::lock_guard lock(slotMutex());
     table = real;
-    slots()[slot].encoder.store(nullptr, std::memory_order_release);
     slots()[slot].claimed = false;
 }
 
@@ -1017,9 +1023,29 @@ void CommandEncoder::SetBlockedHookForTesting(std::function<void()> blocked) {
 
 void BeforeCommandLookup(VkDevice device, std::source_location where) {
     const auto site = CommandEncoder::WaitSite::At(CommandEncoder::Wait::Lookup, where);
-    for (auto& state : slots()) {
-        auto* encoder = state.encoder.load(std::memory_order_acquire);
-        if (encoder == nullptr || state.device != device) continue;
+    std::array<CommandEncoder*, CommandEncoder::Slots> pinned{};
+    {
+        std::lock_guard lock(slotMutex());
+        for (std::size_t index = 0; index < CommandEncoder::Slots; ++index) {
+            auto& state = slots()[index];
+            auto* encoder = state.encoder.load(std::memory_order_relaxed);
+            if (encoder == nullptr || state.device != device) continue;
+            state.lookups.fetch_add(1, std::memory_order_relaxed);
+            pinned[index] = encoder;
+        }
+    }
+    struct Unpin {
+        std::size_t index;
+        ~Unpin() {
+            auto& lookups = slots()[index].lookups;
+            lookups.fetch_sub(1, std::memory_order_release);
+            lookups.notify_all();
+        }
+    };
+    for (std::size_t index = 0; index < CommandEncoder::Slots; ++index) {
+        auto* encoder = pinned[index];
+        if (encoder == nullptr) continue;
+        const Unpin unpin{index};
         if (encoder->OpenOnThisThread()) encoder->Quiesce(site);
         else encoder->Settle(site);
     }
