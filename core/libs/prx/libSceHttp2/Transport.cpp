@@ -1169,6 +1169,11 @@ int Request::Send(const void* data, std::size_t size) {
     const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
     Require(disconnected || state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
     Require(disconnected || state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
+    std::vector<std::uint8_t> nativeBody;
+    if (size) {
+        nativeBody.resize(size);
+        if (!Http2Guest::CopyIn(nativeBody.data(), data, size)) return InvalidValue;
+    }
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
@@ -1176,7 +1181,7 @@ int Request::Send(const void* data, std::size_t size) {
             state->Check(state->Total());
             state->Raise(NetworkError, "sceHttp2: network disconnected");
         }
-        const void* payload = data;
+        const void* payload = size ? nativeBody.data() : data;
         std::size_t payloadSize = size;
         for (unsigned redirects = 0;; ++redirects) {
             const int active = state->capacity->active.fetch_add(1);
@@ -1279,9 +1284,21 @@ int Request::Read(void* data, std::size_t size) {
     if (state->ended && state->body.empty()) return 0;
     try {
         if (state->version < 3 && !state->Inflating() && !state->inflatedGzip) {
-            const int count = state->ReadHttp1(data, size, state->Deadline(state->settings.recvTimeout, ReceiveTimedOut));
+            const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
+            std::array<std::uint8_t, 16384> staging;
+            const auto limit = std::min(size, static_cast<std::size_t>(std::numeric_limits<int>::max()));
+            std::size_t total = 0;
+            while (total < limit) {
+                const auto chunk = std::min<std::size_t>(limit - total, staging.size());
+                const int count = state->ReadHttp1(staging.data(), chunk, deadline);
+                if (count <= 0) break;
+                if (!Http2Guest::CopyOut(static_cast<std::uint8_t*>(data) + total, staging.data(), static_cast<std::size_t>(count)))
+                    throw RequestFailure{InvalidValue};
+                total += static_cast<std::size_t>(count);
+                if (static_cast<std::size_t>(count) < chunk) break;
+            }
             if (state->ended) state->Close();
-            return count;
+            return static_cast<int>(total);
         }
         const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
         state->Check(deadline);
@@ -1292,7 +1309,7 @@ int Request::Read(void* data, std::size_t size) {
         }
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
-        if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
+        if (count && !Http2Guest::CopyOut(data, state->body.data() + state->bodyOffset, count)) throw RequestFailure{InvalidValue};
         state->bodyOffset += count;
         if (state->bodyOffset == state->body.size()) { state->body.clear(); state->bodyOffset = 0; }
         if (count && !state->ended) CheckNg(nghttp2_session_consume(state->session, state->stream, count));
