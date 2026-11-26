@@ -184,7 +184,8 @@ namespace ShaderRecompiler
             EmitSubgroupShuffle(state, type, result, value, EmitHostSubgroupLane(state, lane));
             return;
         }
-        if (state.spannedAnySubgroup) {
+        const bool exchangeable = type == TypeBool(state) || type == TypeU32(state) || type == TypeF32(state);
+        if (state.spannedAnySubgroup || (state.spannedShuffleThroughMemory && exchangeable)) {
             const auto half = EmitBinaryU32(state, spv::OpBitwiseAnd, SpannedLane(state), ConstantU32(state, 32u));
             SpannedShuffle(state, type, result, value, EmitBinaryU32(state, spv::OpBitwiseOr, half, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u))));
             return;
@@ -336,6 +337,11 @@ namespace ShaderRecompiler
 
     std::uint32_t EmitDppQuadRead(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t control) {
         state.module.EmitCapability(spv::CapabilityGroupNonUniformQuad);
+        if (control == (control & 3u) * 0x55u) {
+            const auto broadcast = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, type, broadcast, ConstantU32(state, spv::ScopeSubgroup), value, ConstantU32(state, control & 3u));
+            return broadcast;
+        }
         const auto quadLane = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitSubgroupLocalInvocationId(state), ConstantU32(state, 3u));
         const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, quadLane, ConstantU32(state, 1u));
         const auto source = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, control), shift), ConstantU32(state, 3u));

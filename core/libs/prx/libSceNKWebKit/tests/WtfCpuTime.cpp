@@ -111,7 +111,10 @@ void TestGuestClockCountsOnlyThisThread() {
     const double before = ForCurrentThread();
     start.count_down();
     worker.join();
-    std::this_thread::sleep_until(wallStart + std::chrono::milliseconds(150));
+    const auto wallDeadline = wallStart + std::chrono::milliseconds(150);
+    do {
+        std::this_thread::sleep_until(wallDeadline);
+    } while (std::chrono::steady_clock::now() < wallDeadline);
     const double after = ForCurrentThread();
     const std::chrono::duration<double> wall = std::chrono::steady_clock::now() - wallStart;
     Require(workerBurned);

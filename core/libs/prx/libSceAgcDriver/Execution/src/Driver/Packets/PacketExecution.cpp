@@ -323,7 +323,7 @@ void Driver::execute(Submission& submission) {
         if (submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled()) noteRingPacket(submission.queue, submission.serial, opcode, header);
         PerformanceTimer timing("Driver.Packet");
         if (!predicated) noteLabelIssue(packet, submission.queue);
-        if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue))) {
+        if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue, queue.sampleDumpBlocks))) {
             traceLabel(packet, submission.queue);
             recent.Record(cursor);
             cursor = nextCursor;
@@ -582,7 +582,7 @@ void Driver::execute(Submission& submission) {
             recordQueuedLabelsBeforeRead(submission.queue);
             Pm4::Execute(packet, queue);
         } else if (sampleDump && !wroteOnGpu) {
-            dumpSampleCounters(Pm4::SampleDumpAddress(packet));
+            dumpSampleCounters(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         } else if (submission.queue == 0 && sealsWriteOnly(packet, opcode)) {
             if (std::exchange(drawnSinceSeal(), false)) {
                 const auto seal = [this] {
@@ -593,7 +593,7 @@ void Driver::execute(Submission& submission) {
                 if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, seal, {});
                 else seal();
             }
-        } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
+        } else if (opcode != 0x42 && (opcode != 0x46 || Pm4::SampleControl(packet)) && opcode != 0x58) {
             if (!wroteOnGpu) {
                 if (Pm4::IndirectRegisterOpcode(opcode)) {
                     const auto& listed = submission.registerLists.at(cursor);

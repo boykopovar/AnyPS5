@@ -54,8 +54,8 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (options.MacosFixedBase && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("A fixed macOS base requires the macOS target");
     const bool windows = options.Target == TargetSystem::Windows;
     const bool macos = options.Target == TargetSystem::MacOs;
-    for (const auto& [copy, kept] : RemoveBackupCopies(input.Modules, options.FunctionSymbolRoots))
-        inputProgress.Message("Skipping backup copy: " + copy.lexically_relative(input.ModuleRoot).generic_string() + " (same SONAME as "
+    for (const auto& [copy, kept, match] : RemoveBackupCopies(input.Modules, options.FunctionSymbolRoots))
+        inputProgress.Message("Skipping backup copy: " + copy.lexically_relative(input.ModuleRoot).generic_string() + " (" + match + " as "
                               + kept.lexically_relative(input.ModuleRoot).generic_string() + ")\n");
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 0, 1});
     auto sourceBytes = std::move(input.Executable);
@@ -72,7 +72,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); }, options.Target == TargetSystem::MacOs)->Convert(std::move(sourceBytes), segments);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});

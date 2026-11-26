@@ -88,6 +88,17 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
 std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, const GuestTextureResource& resource);
+const ShaderRecompiler::ImageOverwriteDispatch*& OverwriteDispatch();
+class OverwriteDispatchScope {
+public:
+    explicit OverwriteDispatchScope(const ShaderRecompiler::ImageOverwriteDispatch* dispatch) : previous(OverwriteDispatch()) { OverwriteDispatch() = dispatch; }
+    ~OverwriteDispatchScope() { OverwriteDispatch() = previous; }
+    OverwriteDispatchScope(const OverwriteDispatchScope&) = delete;
+    OverwriteDispatchScope& operator=(const OverwriteDispatchScope&) = delete;
+
+private:
+    const ShaderRecompiler::ImageOverwriteDispatch* previous;
+};
 std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, const GuestTextureResource& resource, std::uint32_t firstLayer, std::uint32_t layerCount);
 // Whether `image` is still the storage cache's image of its surface (what CachedStorageSurface
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
@@ -185,6 +196,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
     std::uint64_t arrayViewsShared = 0;
+    std::uint64_t entryMemoHits = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -272,6 +284,7 @@ public:
         MoveRefusal refusal = MoveRefusal::None;
         std::size_t buffers = 0;
         std::size_t bytes = 0;
+        std::size_t inPlace = 0;
     };
     static const char* MoveRefusalName(MoveRefusal refusal);
     std::optional<std::vector<MovedBuffer>> MovedDispatchBuffers(const CompiledShader& shader, Recorder* recorder, std::size_t maxBytes, MoveProof& proof) const;
@@ -318,6 +331,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     void InPlaceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.InPlaceReads(out); }
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
+    void StorageImages(std::vector<std::pair<VkImage, bool>>& out) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.DeviceReads(out); }
     bool ReadsImage(const StorageTexture* image) const;
@@ -353,6 +367,7 @@ public:
     void PrecollectSurfaces() const;
     bool Reusable() const { return reusable; }
     void KeepStorageImageBytes(Recorder& recorder) const;
+    std::size_t RefreshStorageChangedOutsideWatch();
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     static std::uint64_t DepthGuardRefusals();
@@ -553,7 +568,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
-    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
+    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry, bool counted = true) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
@@ -646,6 +661,7 @@ private:
         bool sourceEligible = false;
         bool depthCompare = false;
         bool sourceRefreshed = false;
+        const StorageTexture* alias = nullptr;
     };
     // `serialBefore` is StorageTexture::PendingSerial() loaded before any check of this Revalidate;
     // `refreshed` the surfaces refreshOwnObjects resolved earlier in the same Revalidate (empty on

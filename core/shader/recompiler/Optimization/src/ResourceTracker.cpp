@@ -567,12 +567,12 @@ private:
         return true;
     }
 
-    static bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) {
+    bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) const {
         value = value->Resolve();
         if (value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
             const auto* activeMask = value->Argument(1)->Resolve();
             value = value->Argument(0)->Resolve();
-            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(activeMask, value->Argument(0))) {
+            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), activeMask, value->Argument(0))) {
                 value = value->Argument(1)->Resolve();
             }
         }
@@ -605,15 +605,15 @@ private:
         return MatchScale(scaled, key, stride) && std::has_single_bit(stride) && stride >= 4u && (mask & ~(stride - 1u)) != 0u && key->Type() == IrType::U32;
     }
 
-    static IrValue* ActiveLaneValue(IrValue* value, const IrValue* mask) {
+    IrValue* ActiveLaneValue(IrValue* value, const IrValue* mask) const {
         value = value->Resolve();
-        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), mask, value->Argument(0))) {
             value = value->Argument(1)->Resolve();
         }
         return value;
     }
 
-    static std::uint32_t ScaledBase(IrValue* value, const IrValue* mask, IrValue*& base) {
+    std::uint32_t ScaledBase(IrValue* value, const IrValue* mask, IrValue*& base) const {
         value = ActiveLaneValue(value, mask);
         std::uint32_t immediate = 0;
         std::uint32_t scale = 1u;
@@ -781,10 +781,10 @@ private:
         std::uint32_t addend = 0;
     };
 
-    static bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) {
+    bool ParseFirstLaneOffset(IrValue* value, const IrValue* mask, FirstLaneOffset& form, std::uint32_t depth) const {
         std::uint32_t addend = 0;
         value = SplitImmediateAddend(value, addend);
-        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(m_program.Resources(), mask, value->Argument(0))) {
             value = SplitImmediateAddend(value->Argument(1), addend);
         }
         std::uint32_t shift = 0;
@@ -2731,7 +2731,7 @@ private:
         image.sampledOnly = image.sampledOnly && ImageOpcodeInfoOf(op).needsSampler;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
             constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
-            if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;
+            if ((memory.imageSampleFlags & unsupported) != 0u || (op == IrOpcode::ImageGatherRaw && (memory.imageSampleFlags & RdnaImageSampleFlagGatherHorizontal) != 0u)) image.emulatedCompare |= EmulatedCompare::Unsupported;
             if ((memory.imageSampleFlags & RdnaImageSampleFlagLevelZero) == 0u) image.emulatedCompare |= EmulatedCompare::RequiresSingleLevel;
         } else if (ImageOpcodeInfoOf(op).needsSampler) {
             if (op != IrOpcode::ImageSampleRaw) image.emulatedCompare |= EmulatedCompare::ConvertedSampleUnsupported;

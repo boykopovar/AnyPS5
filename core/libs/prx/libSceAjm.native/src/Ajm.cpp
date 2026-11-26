@@ -37,6 +37,7 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_INVALID_FLAGS = static_cast<int>(0x8093000C);
 constexpr int SCE_AJM_ERROR_INVALID_PRIORITY = static_cast<int>(0x8093000E);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
 constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
@@ -62,6 +63,8 @@ constexpr std::uint64_t M4AAC_ENABLE_SBR_DECODE = 1ull << 32;
 constexpr std::uint64_t M4AAC_ENABLE_NONDELAY_OUTPUT = 1ull << 33;
 constexpr std::uint64_t M4AAC_SURROUND_INTERLEAVE_ORDERS = 3ull << 34;
 constexpr std::uint32_t M4AAC_DELAY_FRAMES = 2;
+
+constexpr std::uint64_t INSTANCE_RESERVED_FLAGS = 0xF0000000FFFFC000ull;
 
 // APS5_TRACE_AJM=1 logs every job the title submits and what the library writes back.
 bool TraceEnabled() {
@@ -999,7 +1002,7 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     if (!stream || streamSize < 4 || !frame) return SCE_AJM_ERROR_INVALID_PARAMETER;
     static constexpr std::uint32_t sampleRates[4][4] = {{11025, 12000, 8000, 0}, {0, 0, 0, 0}, {22050, 24000, 16000, 0}, {44100, 48000, 32000, 0}};
     static constexpr std::uint32_t kbps[4][16] = {
-        {0, 8, 16, 24, 32, 40, 48, 56, 64, 0, 0, 0, 0, 0, 0, 0},
+        {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 0, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
         {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0},
         {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0},
@@ -1009,10 +1012,9 @@ int ParseMp3Header(const std::uint8_t* stream, std::uint32_t streamSize, int par
     const std::uint32_t layer = (header >> 17u) & 3u;
     const std::uint32_t sampleRate = sampleRates[version][(header >> 10u) & 3u];
     const std::uint32_t bitrate = kbps[version][(header >> 12u) & 15u] * 1000u;
-    const bool valid = (header >> 21u) == 0x7FFu && layer != 0 && sampleRate != 0 && bitrate != 0;
+    const bool valid = (header >> 21u) == 0x7FFu && layer == 1u && sampleRate != 0 && bitrate != 0;
     AJM_TRACE("[ajm] parse mp3 frame %02x %02x %02x %02x (%u bytes, parse ofl %d) -> %s, %u Hz, %u bps\n", stream[0], stream[1], stream[2], stream[3], streamSize, parseOfl, valid ? "ok" : "invalid", sampleRate, bitrate);
     if (!valid) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    if (parseOfl && layer != 1u) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const bool mpeg1 = version == 3;
     frame->frame_size = (mpeg1 ? 144u : 72u) * bitrate / sampleRate + ((header >> 9u) & 1u);
     frame->num_channels = ((header >> 6u) & 3u) == 3u ? 1u : 2u;
@@ -1838,16 +1840,12 @@ constexpr std::size_t CONSOLE_WORDS_BYTES = 2 * sizeof(std::uint32_t);
 constexpr std::size_t CONSOLE_BUFFER_BYTES = CONSOLE_WORDS_BYTES + sizeof(const void*);
 
 void CopyBatchIn(void* destination, const void* source, std::size_t bytes, const char* message) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
 void CopyBatchOut(void* destination, const void* source, std::size_t bytes, const char* message) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
@@ -1981,9 +1979,7 @@ int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::lock_guard<std::mutex> lock(g_lock);
     const uint32_t id = g_nextContext.fetch_add(1, std::memory_order_relaxed);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         g_nextContext.fetch_sub(1, std::memory_order_relaxed);
         return SCE_AJM_ERROR_INVALID_PARAMETER;
@@ -2023,8 +2019,9 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 }
 
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
-    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if ((flags & 0x380u) >= 0x180u || (flags & 0x2400u) == 0x2000u || (flags & INSTANCE_RESERVED_FLAGS) != 0) return SCE_AJM_ERROR_INVALID_FLAGS;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     auto created = std::make_unique<Instance>();
     created->context = context;
     created->codec = codec;
@@ -2038,9 +2035,7 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     for (std::uint32_t attempt = 0; attempt < 0x4000; ++attempt) {
         const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
         if (g_instances.contains(id)) continue;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(instance, &id, sizeof(id));
-        errno = savedErrno;
         if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
         g_instances.emplace(id, std::move(created));
         AJM_TRACE("[ajm] instance create: context %u, codec %u, flags 0x%llx -> instance %u\n", context, codec, static_cast<unsigned long long>(flags), id);
@@ -2068,7 +2063,10 @@ int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9Conf
         return SCE_AJM_ERROR_INVALID_PARAMETER;
     }
     Atrac9CodecInfo info{};
-    const bool valid = DescribeAt9Config(config, info);
+    const unsigned rateIndex = config[1] >> 4u;
+    const bool vibrationProfile = ((config[1] >> 1u) & 7u) >= 6u && (rateIndex == 1u || rateIndex == 4u || rateIndex == 7u);
+    const bool rejectedFields = config[0] == 0xFEu && !vibrationProfile && (rateIndex >= 8u || ((config[1] >> 1u) & 7u) >= 6u || (((config[3] >> 3u) & 3u) & 1u) != 0u || (config[3] & 7u) != 0u);
+    const bool valid = !rejectedFields && DescribeAt9Config(config, info);
     AJM_TRACE("[ajm] parse config %02x %02x %02x %02x -> %s, %d channels, %d Hz, superframe %d bytes (%d frames of %d samples)\n", config[0], config[1], config[2], config[3], valid ? "ok" : "invalid", info.channels, info.samplingRate, info.superframeSize, info.framesInSuperframe, info.frameSamples);
     if (!valid) {
         errno = savedErrno;
@@ -2098,9 +2096,7 @@ int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* inf
     local.p_buffer = buffer;
     local.offset = 0;
     local.size = size;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
-    errno = savedErrno;
     if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -2282,9 +2278,7 @@ int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* erro
     (void)info;
     if (error) {
         constexpr AjmBatchError localError{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError));
-        errno = savedErrno;
         if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     }
     return 0;
