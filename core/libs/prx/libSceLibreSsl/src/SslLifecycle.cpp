@@ -1,7 +1,7 @@
 // Adapted from the LibreSSL 2.5.4 release tarball (libressl-2.5.4.tar.gz, sha256 107a5b522fbb8318d4c3be668075e5e607296f0a9255d71674caa94571336efa),
 // the version identified in docs/dev/debt/libSceLibreSsl.md, which corresponds to the openbsd
 // mirror commit 2e2c612066aa993717528a0249c15c51128d61cb. Source files used:
-//   ssl/ssl_lib.c - SSL_new, SSL_free, SSL_CTX_new, SSL_CTX_free, SSL_clear, SSL_set_bio, SSL_set_fd, SSL_get_fd
+//   ssl/ssl_lib.c - SSL_new, SSL_free, SSL_set_SSL_CTX, SSL_CTX_new, SSL_CTX_free, SSL_clear, SSL_set_bio, SSL_set_fd, SSL_get_fd
 //   ssl/ssl_cert.c - ssl_cert_new, ssl_cert_dup, ssl_cert_free
 // The original copyright and licence notices of those files follow unchanged.
 /* $OpenBSD: ssl_lib.c,v 1.158 2017/02/28 14:08:49 jsing Exp $ */
@@ -604,6 +604,27 @@ void APS5_VABI SSL_free_nid_postfix(LibreSslSsl* ssl) {
     if (!ssl) return;
     if (std::atomic_ref<int>(ssl->references).fetch_sub(1) - 1 > 0) return;
     DestroySsl(*ssl, true, true);
+}
+
+LibreSslCtx* APS5_VABI SSL_set_SSL_CTX_nid_postfix(LibreSslSsl* ssl, LibreSslCtx* ctx) {
+    if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
+    if (ssl->ctx == ctx) return ctx;
+    if (!ctx) ctx = static_cast<LibreSslCtx*>(ssl->initialCtx);
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": connection without an initial context");
+    const auto* source = static_cast<const Certificate*>(InternalOf(*ctx, __func__).cert);
+    if (!source) throw std::invalid_argument(std::string(__func__) + ": context without a certificate");
+    auto* previous = static_cast<Certificate*>(ssl->cert);
+    auto* certificate = DuplicateCertificate(*source);
+    ssl->cert = certificate;
+    if (previous) {
+        if (certificate)
+            for (std::size_t i = 0; i < std::size(certificate->keys); ++i) certificate->keys[i].digest = previous->keys[i].digest;
+        FreeCertificate(previous);
+    }
+    std::atomic_ref<int>(ctx->references).fetch_add(1);
+    SSL_CTX_free_nid_postfix(static_cast<LibreSslCtx*>(ssl->ctx));
+    ssl->ctx = ctx;
+    return ctx;
 }
 
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd) {

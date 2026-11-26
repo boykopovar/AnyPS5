@@ -484,11 +484,6 @@ int APS5_VABI SSL_library_init_nid_postfix(void) {
 
 void APS5_VABI SSL_load_error_strings_nid_postfix(void) {}
 
-int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_set_session_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
