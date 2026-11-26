@@ -5,17 +5,66 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <iterator>
 #include <initializer_list>
+#include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (!memory) std::abort();
+        DWORD previous = 0;
+        if (VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) == 0) std::abort();
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        if (size <= 0) std::abort();
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (memory == MAP_FAILED) std::abort();
+        if (mprotect(memory + page, page, PROT_NONE) != 0) std::abort();
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    char* RW() const { return memory; }
+    std::size_t PageSize() const { return page; }
+    void* Unwritable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
 
 constexpr int GUEST_EDEADLK = 11;
 constexpr int GUEST_EFAULT = 14;
@@ -32,6 +81,21 @@ constexpr int KIND_ADAPTIVE = 4;
 using MutexInit = int (APS5_VABI*)(PthreadMutex*, const PthreadMutexattr*);
 
 int failures = 0;
+
+struct StackQueryState {
+    std::atomic<bool> queried{false};
+    std::atomic<bool> release{false};
+    void* address = nullptr;
+    std::size_t size = 0;
+};
+
+void* APS5_VABI QueryStack(void* argument) {
+    auto* state = static_cast<StackQueryState*>(argument);
+    pthread_getstack_np_nid_postfix(&state->address, &state->size);
+    state->queried.store(true, std::memory_order_release);
+    while (!state->release.load(std::memory_order_acquire)) scePthreadYield();
+    return argument;
+}
 
 template<typename TCall>
 void Case(const char* name, TCall call) {
@@ -129,12 +193,45 @@ void TestRwlockattr() {
     });
 }
 
+void TestStack() {
+    Case("pthread_getstack_np", [] {
+        void* address = nullptr;
+        std::size_t size = 0;
+        pthread_getstack_np_nid_postfix(&address, &size);
+        if (!address || size < 16384) return false;
+        if (pthread_getstack_np_nid_postfix(nullptr, &size) != GUEST_EFAULT) return false;
+        address = nullptr;
+        if (pthread_getstack_np_nid_postfix(&address, nullptr) != GUEST_EFAULT || !address) return false;
+        PthreadAttr attr = nullptr;
+        if (pthread_attr_init_nid_postfix(&attr) != 0) return false;
+        constexpr std::size_t ChildStackSize = 256 * 1024;
+        if (pthread_attr_setstacksize_nid_postfix(&attr, ChildStackSize) != 0) return false;
+        StackQueryState state;
+        Pthread child = nullptr;
+        if (pthread_create_nid_postfix(&child, &attr, QueryStack, &state) != 0) return false;
+        while (!state.queried.load(std::memory_order_acquire)) scePthreadYield();
+        if (!state.address || state.size != ChildStackSize) return false;
+        state.release.store(true, std::memory_order_release);
+        void* result = nullptr;
+        if (pthread_join_nid_postfix(child, &result) != 0 || result != &state) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+}
+
 void TestAttr() {
     Case("pthread_attr_setstackaddr", [] {
         PthreadAttr attr = nullptr;
         void* dummy = reinterpret_cast<void*>(0x1000000);
-        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL) return false;
-        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL) return false;
+        GuardPage guard;
+        auto* unmappedAttr = reinterpret_cast<PthreadAttr*>(0x10);
+        auto* guardAttr = static_cast<PthreadAttr*>(guard.Unwritable());
+        auto* boundaryAttr = reinterpret_cast<PthreadAttr*>(guard.RW() + guard.PageSize() - sizeof(PthreadAttr) / 2);
+        errno = 71;
+        if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(nullptr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(unmappedAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(guardAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
+        if (pthread_attr_setstackaddr_nid_postfix(boundaryAttr, dummy) != GUEST_EINVAL || errno != 71) return false;
         if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
         if (pthread_attr_setstackaddr_nid_postfix(&attr, nullptr) != GUEST_EINVAL) return false;
         if (pthread_attr_setstackaddr_nid_postfix(&attr, dummy) != 0) return false;
@@ -216,6 +313,10 @@ void TestAttr() {
         if (pthread_get_specificarray_np_nid_postfix(1, -1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(513, 1, array) != GUEST_EINVAL) return false;
         if (pthread_get_specificarray_np_nid_postfix(512, 2, array) != GUEST_EINVAL) return false;
+        constexpr int IntMax = std::numeric_limits<int>::max();
+        for (const PthreadKey key : {2, 512, IntMax}) {
+            if (pthread_get_specificarray_np_nid_postfix(key, IntMax, nullptr) != GUEST_EINVAL) return false;
+        }
         if (pthread_get_specificarray_np_nid_postfix(1, 1, nullptr) != GUEST_EFAULT) return false;
         PthreadKey key1 = 0;
         PthreadKey key2 = 0;
@@ -245,6 +346,17 @@ void TestAttr() {
             for (auto k : createdKeys) scePthreadKeyDelete(k);
             return false;
         }
+        GuardPage guard;
+        auto* boundary = reinterpret_cast<void**>(guard.RW() + guard.PageSize() - sizeof(void*));
+        void* sentinel = reinterpret_cast<void*>(0x1234);
+        boundary[0] = sentinel;
+        errno = 71;
+        if (pthread_get_specificarray_np_nid_postfix(key1, 1, reinterpret_cast<void**>(0x10)) != GUEST_EFAULT || errno != 71 ||
+            pthread_get_specificarray_np_nid_postfix(key1, 2, static_cast<void**>(guard.Unwritable())) != GUEST_EFAULT || errno != 71 ||
+            pthread_get_specificarray_np_nid_postfix(key1, 2, boundary) != GUEST_EFAULT || boundary[0] != sentinel || errno != 71) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
         for (auto k : createdKeys) scePthreadKeyDelete(k);
         return true;
     });
@@ -256,6 +368,7 @@ int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "rwlockattr") TestRwlockattr();
     else if (mode == "kind") TestKind();
+    else if (mode == "stack") TestStack();
     else if (mode == "attr") TestAttr();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");

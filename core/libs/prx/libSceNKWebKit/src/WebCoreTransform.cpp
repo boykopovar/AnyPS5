@@ -422,6 +422,7 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5scale
 
 WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix6rotateEd(
     WebCore::TransformationMatrix* self, double a) {
+    if (std::fmod(a, 360.0) == 0.0) return *self;
     return _ZN7WebCore20TransformationMatrix8rotate3dEddd(self, 0.0, 0.0, a);
 }
 

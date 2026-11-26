@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCES_HPP
 
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
+#include "ImageOverwrite.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
@@ -125,6 +126,7 @@ struct ImageResource {
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
     bool targetMerge = false;
+    ImageOverwrite overwrite;
 
     bool operator==(const ImageResource& other) const = default;
 };
@@ -139,6 +141,7 @@ enum SamplerUse : std::uint16_t {
     SamplerUseQueryLod = 1u << 6u,
     SamplerUseAdjust = 1u << 7u,
     SamplerUseNonZeroLod = 1u << 8u,
+    SamplerUseGatherLod = 1u << 9u,
 };
 
 inline bool ImageSampleExplicitLod(std::uint32_t flags, IrShaderStage stage) {

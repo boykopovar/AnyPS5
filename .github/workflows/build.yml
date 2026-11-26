@@ -293,7 +293,7 @@ jobs:
     needs: eligibility
     if: ${{ needs.eligibility.outputs.relinker == 'true' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -515,7 +515,7 @@ jobs:
     needs: eligibility
     if: ${{ !github.event.repository.fork && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
     runs-on: [self-hosted, linux, x64, anyps5]
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CCACHE_DIR: /var/cache/anyps5/ccache
       CCACHE_MAXSIZE: 30G
@@ -533,11 +533,41 @@ jobs:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
           submodules: recursive
-      - name: Empty the workspace after a failed checkout
+      - id: broken
+        name: Remove the submodules a failed checkout left without a current revision
         if: ${{ steps.checkout.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          broken() {
+            git -C "$1" ls-tree -r HEAD | while IFS=$'\t' read -r entry path; do
+              case $entry in "160000 commit "*) ;; *) continue ;; esac
+              [ -e "$1/$path/.git" ] || continue
+              if git -C "$1/$path" rev-parse -q --verify 'HEAD^{commit}' > /dev/null 2>&1; then broken "$1/$path"; else echo "$1/$path"; fi
+            done
+          }
+          ws=$(realpath -m "${GITHUB_WORKSPACE:?}")
+          remove=()
+          while IFS= read -r path; do
+            gitdir=$(sed -n 's/^gitdir: //p' "$path/.git" 2> /dev/null || true)
+            case $gitdir in /*) gitdir=$(realpath -m "$gitdir") ;; ?*) gitdir=$(realpath -m "$path/$gitdir") ;; esac
+            case $(realpath -m "$path")/ in "$ws"/?*) ;; *) echo "outside the workspace: $path"; remove=(); break ;; esac
+            [ -z "$gitdir" ] || case $gitdir/ in "$ws"/.git/modules/?*) ;; *) echo "not a module directory of the workspace: $gitdir"; remove=(); break ;; esac
+            remove+=("$path" "$gitdir")
+          done < <(broken "$ws")
+          found=false
+          for ((i = 0; i < ${#remove[@]}; i += 2)); do
+            [ -z "${remove[i+1]}" ] || rm -rf "${remove[i+1]}"
+            rm -rf "${remove[i]}" && mkdir -p "${remove[i]}"
+            echo "removed ${remove[i]}${remove[i+1]:+ and ${remove[i+1]}}"
+            found=true
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' && steps.broken.outputs.found != 'true' }}
         shell: bash
         run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-      - name: Check out again into the emptied workspace
+      - name: Check out again after a failed checkout
         if: ${{ steps.checkout.outcome == 'failure' }}
         uses: actions/checkout@v7
         with:
@@ -615,14 +645,11 @@ jobs:
           mem_mb=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
           slots=$(( (mem_mb - 2048) / 1024 ))
           slots=$(( slots < 1 ? 1 : slots ))
-          tests=$(( cpus - busy ))
-          tests=$(( tests < 1 ? 1 : tests ))
           slot_dir=$CCACHE_DIR/compile-slots
           mkdir -p -m 1777 "$slot_dir"
           test -w "$slot_dir"
-          echo "cpus=$cpus load=$busy mem_total_mb=$mem_mb -> build jobs $cpus, cold compiles $slots per host, tests $tests"
+          echo "cpus=$cpus load=$busy mem_total_mb=$mem_mb -> build jobs $cpus, cold compiles $slots per host"
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$cpus" >> "$GITHUB_ENV"
-          echo "CTEST_PARALLEL_LEVEL=$tests" >> "$GITHUB_ENV"
           echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
@@ -672,7 +699,14 @@ jobs:
           if [ -f build/select.ninja ]; then ninja -C build -f select.ninja -j "$CMAKE_BUILD_PARALLEL_LEVEL" -l "$(nproc)" selected; else cmake --build build -- -l "$(nproc)"; fi
       - id: libs
         run: cmake --build build --target libs -- -l "$(nproc)"
-      - run: python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
+      - name: Run the tests
+        run: |
+          cpus=$(nproc)
+          busy=$(awk '{ printf "%d", $1 + 0.5 }' /proc/loadavg)
+          tests=$(( cpus - busy ))
+          tests=$(( tests < 4 ? 4 : tests ))
+          echo "cpus=$cpus load=$busy -> tests $tests"
+          CTEST_PARALLEL_LEVEL=$tests python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
@@ -770,6 +804,19 @@ jobs:
             if [ -f "$bundle" ]; then echo "SSL_CERT_FILE=$bundle" >> "$GITHUB_ENV"; exit 0; fi
           done
           echo "::error::No CA bundle found in Git for Windows"; exit 1
+      - name: Unpack lavapipe
+        if: github.event_name != 'pull_request'
+        run: |
+          curl -sSfL --max-time 300 --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/mesa.7z" "https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z"
+          echo "b2e00615feaba45942343c265cc8c5f576142ca682c1ac6661922d4b72492877  $RUNNER_TEMP/mesa.7z" | sha256sum -c -
+          7z x "$RUNNER_TEMP/mesa.7z" -o"$RUNNER_TEMP/mesa" 'x64/*' > /dev/null
+          json=$(find "$RUNNER_TEMP/mesa" -iname '*lvp*.json' | head -1)
+          if [ -z "$json" ]; then
+            find "$RUNNER_TEMP/mesa" -maxdepth 2 | head -40
+            echo "::error::mesa-dist-win did not contain a lavapipe ICD json"
+            exit 1
+          fi
+          echo "lavapipe json: $json"
       - id: toolchain
         uses: actions/cache@v6
         with:
@@ -781,6 +828,26 @@ jobs:
           echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+      - name: Build the Vulkan loader
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -f /c/Windows/System32/vulkan-1.dll ]; then echo "runner already has the loader"; exit 0; fi
+          git clone --depth 1 --branch v1.4.304 --recurse-submodules --shallow-submodules https://github.com/KhronosGroup/Vulkan-Loader.git "$RUNNER_TEMP/vulkan-loader"
+          actual=$(git -C "$RUNNER_TEMP/vulkan-loader" rev-parse HEAD)
+          if [ "$actual" != "804a7a4efd865532646e54ad98807c0f318da413" ]; then
+            echo "::error::Vulkan-Loader v1.4.304 resolved to $actual, expected 804a7a4efd865532646e54ad98807c0f318da413"
+            exit 1
+          fi
+          cmake -S "$RUNNER_TEMP/vulkan-loader" -B "$RUNNER_TEMP/vulkan-loader/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_LOADER=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          cmake --build "$RUNNER_TEMP/vulkan-loader/build" --target vulkan
+          dll=$(find "$RUNNER_TEMP/vulkan-loader/build" -iname 'vulkan-1.dll' | head -1)
+          if [ -z "$dll" ]; then
+            find "$RUNNER_TEMP/vulkan-loader/build" -iname '*.dll' | head -10
+            echo "::error::the loader build produced no vulkan-1.dll"
+            exit 1
+          fi
+          echo "$(cygpath -w "$(dirname "$dll")")" >> "$GITHUB_PATH"
+          echo "loader: $dll"
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}
@@ -801,7 +868,7 @@ jobs:
         shell: bash
         run: mkdir -p build/.cmake/api/v1/query && touch build/.cmake/api/v1/query/codemodel-v2
       - shell: cmd
-        run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
+        run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_VIDEO_OUT_TEST_DRIVER=windows" "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_VIDEO_OUT_TEST_DRIVER=windows" "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
       - if: steps.seed-cache.outputs.cache-hit != 'true'
         shell: cmd
         run: python tools/configure_seed.py build/CMakeCache.txt configure-seed.cmake
@@ -842,7 +909,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
-        run: git diff --name-only "$BASE" HEAD > changed.txt
+        run: git diff --name-only -z "$BASE" HEAD -- > changed.txt
       - name: Link changed host-only core/libs test executables
         if: github.event_name == 'pull_request'
         shell: cmd
@@ -855,6 +922,40 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: cmd
         run: cmake --build build --target libs
+      - name: Build the video_out test executables excluded from the default build
+        if: github.event_name != 'pull_request'
+        shell: cmd
+        run: cmake --build build --target video_out_flip_tests video_out_mouse_tests video_out_dialog_input_tests
+      - name: Register the lavapipe ICD for the video output tests
+        if: github.event_name != 'pull_request'
+        run: |
+          json=$(find "$RUNNER_TEMP/mesa" -iname '*lvp*.json' | head -1)
+          regkey='HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+          powershell -NoProfile -Command "New-Item -Path '$regkey' -Force | Out-Null; New-ItemProperty -Path '$regkey' -Name '$(cygpath -w "$json")' -PropertyType DWord -Value 0 -Force | Out-Null"
+      - name: Run the video output tests
+        if: github.event_name != 'pull_request'
+        shell: cmd
+        run: ctest --test-dir build -R video_out --no-tests=error --output-on-failure --timeout 120 --parallel 4 --output-log video_out.log --output-junit video_out.xml
+        env:
+          ANYPS5_REQUIRE_VULKAN: 1
+          ANYPS5_NO_SHADER_CACHE: 1
+      - name: Check the video output skips
+        if: github.event_name != 'pull_request'
+        run: python tools/check_skips.py build/video_out.xml --job windows --require-tests
+      - name: Upload the video output test report
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: video-out-report
+          path: |
+            build/video_out.xml
+            video_out.log
+          if-no-files-found: ignore
+      - name: Unregister the lavapipe ICD
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        run: |
+          json=$(find "$RUNNER_TEMP/mesa" -iname '*lvp*.json' | head -1)
+          powershell -NoProfile -Command "Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers' -Name '$(cygpath -w "$json")' -Force"
       - if: github.event_name != 'pull_request'
         shell: cmd
         run: python tools/select_tests.py ctest build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
@@ -871,6 +972,9 @@ jobs:
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ github.sha }}
+      - name: Report compiler cache statistics
+        if: ${{ !cancelled() }}
+        run: ccache --show-stats
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

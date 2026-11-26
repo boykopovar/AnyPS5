@@ -8,6 +8,10 @@
 namespace {
 
 using FreeType::GuestBitmapLibrary;
+using FreeType::GuestDriverClassPrefix;
+using FreeType::GuestDriverRec;
+using FreeType::GuestGlyphLoaderRec;
+using FreeType::GuestModuleClass;
 using FreeType::GuestFaceRec;
 using FreeType::GuestGlyphSlotRec;
 using FreeType::GuestMemoryRec;
@@ -20,6 +24,7 @@ struct Recorder {
     std::int64_t lastSize = 0;
     void* lastFreed = nullptr;
     bool fail = false;
+    int failAt = 0;
 };
 
 Recorder* Owner(GuestMemoryRec* memory) {
@@ -30,7 +35,7 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     auto* recorder = Owner(memory);
     ++recorder->allocs;
     recorder->lastSize = size;
-    if (recorder->fail) return nullptr;
+    if (recorder->fail || recorder->allocs == recorder->failAt) return nullptr;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
     return block;
@@ -202,6 +207,139 @@ void OwnershipErrors() {
     Require(!fixture.slot.bitmap.buffer && fixture.internal.flags == FreeType::GlyphOwnBitmap, "Own_Bitmap of an empty bitmap stores null and marks it owned");
 }
 
+struct SlotCalls {
+    int inits = 0;
+    int dones = 0;
+    GuestGlyphSlotRec* initSlot = nullptr;
+    GuestGlyphSlotRec* doneSlot = nullptr;
+    int initResult = 0;
+    bool fillOnInit = false;
+};
+
+SlotCalls calls;
+
+int APS5_VABI RecordInitSlot(GuestGlyphSlotRec* slot) {
+    ++calls.inits;
+    calls.initSlot = slot;
+    if (calls.fillOnInit) {
+        auto* memory = static_cast<GuestFaceRec*>(slot->face)->memory;
+        auto* recorder = Owner(static_cast<GuestMemoryRec*>(memory));
+        auto* loader = static_cast<GuestGlyphLoaderRec*>(static_cast<GuestSlotInternalRec*>(slot->internal)->loader);
+        loader->base.outline.points = static_cast<FreeType::GuestVector*>(recorder->memory.alloc(&recorder->memory, 16));
+        loader->base.subglyphs = recorder->memory.alloc(&recorder->memory, 8);
+        Require(ft_glyphslot_alloc_bitmap_nid_postfix(slot, 4) == 0, "init_slot allocates an owned bitmap");
+    }
+    return calls.initResult;
+}
+
+void APS5_VABI RecordDoneSlot(GuestGlyphSlotRec* slot) {
+    ++calls.dones;
+    calls.doneSlot = slot;
+}
+
+struct DriverFixture {
+    Recorder recorder;
+    GuestFaceRec face{};
+    GuestModuleClass moduleClass{};
+    GuestDriverClassPrefix clazz{};
+    GuestDriverRec driver{};
+    int library = 0;
+
+    DriverFixture() {
+        calls = {};
+        recorder.memory = {&recorder, RecordAlloc, RecordFree, RecordRealloc};
+        face.memory = &recorder.memory;
+        face.driver = &driver;
+        clazz.slot_object_size = sizeof(GuestGlyphSlotRec) + 16;
+        clazz.init_slot = RecordInitSlot;
+        clazz.done_slot = RecordDoneSlot;
+        driver.root_clazz = &moduleClass;
+        driver.root_library = &library;
+        driver.root_memory = &recorder.memory;
+        driver.clazz = &clazz;
+    }
+
+    DriverFixture(const DriverFixture&) = delete;
+    DriverFixture& operator=(const DriverFixture&) = delete;
+
+    void Release(GuestGlyphSlotRec* slot) {
+        auto* internal = static_cast<GuestSlotInternalRec*>(slot->internal);
+        std::free(internal->loader);
+        std::free(internal);
+        std::free(slot);
+    }
+};
+
+void NewSlot() {
+    DriverFixture fixture;
+    GuestGlyphSlotRec previous{};
+    fixture.face.glyph = &previous;
+    GuestGlyphSlotRec* slot = nullptr;
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0, "New_GlyphSlot succeeds");
+    Require(slot && fixture.face.glyph == slot && slot->next == &previous, "New_GlyphSlot links the slot at the head of the face list");
+    Require(slot->face == &fixture.face && slot->library == &fixture.library, "New_GlyphSlot sets the face and the driver library");
+    Require(fixture.recorder.allocs == 3 && fixture.recorder.frees == 0, "New_GlyphSlot allocates the slot, internal record and glyph loader");
+    auto* internal = static_cast<GuestSlotInternalRec*>(slot->internal);
+    auto* loader = static_cast<GuestGlyphLoaderRec*>(internal->loader);
+    Require(internal->flags == 0 && loader && loader->memory == &fixture.recorder.memory, "New_GlyphSlot creates a glyph loader on the driver memory");
+    Require(Zeroed(reinterpret_cast<const unsigned char*>(loader) + 8, sizeof(GuestGlyphLoaderRec) - 8), "New_GlyphSlot clears the glyph loader");
+    Require(Zeroed(reinterpret_cast<const unsigned char*>(slot) + sizeof(GuestGlyphSlotRec), 16), "New_GlyphSlot clears slot_object_size bytes");
+    Require(calls.inits == 1 && calls.initSlot == slot && calls.dones == 0, "New_GlyphSlot calls init_slot once");
+    fixture.Release(slot);
+}
+
+void NewSlotWithoutOutlines() {
+    DriverFixture fixture;
+    fixture.moduleClass.module_flags = FreeType::ModuleDriverNoOutlines;
+    fixture.clazz.init_slot = nullptr;
+    GuestGlyphSlotRec* slot = nullptr;
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0, "New_GlyphSlot without outlines succeeds");
+    Require(fixture.recorder.allocs == 2 && !static_cast<GuestSlotInternalRec*>(slot->internal)->loader, "New_GlyphSlot without outlines creates no glyph loader");
+    Require(fixture.face.glyph == slot && !slot->next && calls.inits == 0, "New_GlyphSlot without init_slot links the slot");
+    fixture.Release(slot);
+    DriverFixture unnamed;
+    Require(FT_New_GlyphSlot_nid_postfix(&unnamed.face, nullptr) == 0 && unnamed.face.glyph, "New_GlyphSlot with a null slot pointer links the slot");
+    unnamed.Release(unnamed.face.glyph);
+}
+
+void NewSlotArguments() {
+    GuestGlyphSlotRec sentinel{};
+    GuestGlyphSlotRec* slot = &sentinel;
+    Require(FT_New_GlyphSlot_nid_postfix(nullptr, &slot) == 0x06 && slot == &sentinel, "New_GlyphSlot of a null face returns Invalid_Argument");
+    DriverFixture fixture;
+    fixture.face.driver = nullptr;
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06 && slot == &sentinel, "New_GlyphSlot of a face without driver returns Invalid_Argument");
+    fixture.face.driver = &fixture.driver;
+    fixture.clazz.slot_object_size = -1;
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x06, "New_GlyphSlot of a negative slot size returns Invalid_Argument");
+    Require(!slot && fixture.recorder.allocs == 0 && !fixture.face.glyph, "New_GlyphSlot of a negative slot size clears the slot pointer");
+}
+
+void NewSlotFailures() {
+    DriverFixture fixture;
+    GuestGlyphSlotRec sentinel{};
+    GuestGlyphSlotRec* slot = &sentinel;
+    fixture.recorder.failAt = 1;
+    Require(FT_New_GlyphSlot_nid_postfix(&fixture.face, &slot) == 0x40 && !slot, "a failed slot allocation returns Out_Of_Memory and clears the slot pointer");
+    Require(calls.dones == 0 && fixture.recorder.frees == 0 && !fixture.face.glyph, "a failed slot allocation calls nothing");
+    for (int failAt = 2; failAt <= 3; ++failAt) {
+        DriverFixture partial;
+        partial.recorder.failAt = failAt;
+        slot = &sentinel;
+        Require(FT_New_GlyphSlot_nid_postfix(&partial.face, &slot) == 0x40 && slot == &sentinel, "a failed slot initialisation returns Out_Of_Memory");
+        Require(calls.inits == 0 && calls.dones == 1 && partial.recorder.frees == failAt - 1, "a failed slot initialisation calls done_slot and frees what it allocated");
+        Require(!partial.face.glyph, "a failed slot initialisation does not link the slot");
+    }
+    DriverFixture rejected;
+    calls.initResult = 0x24;
+    calls.fillOnInit = true;
+    slot = &sentinel;
+    Require(FT_New_GlyphSlot_nid_postfix(&rejected.face, &slot) == 0x24 && slot == &sentinel, "New_GlyphSlot returns the init_slot error");
+    Require(calls.inits == 1 && calls.dones == 1 && calls.doneSlot == calls.initSlot, "a rejected slot is passed to done_slot");
+    Require(rejected.recorder.allocs == 6 && rejected.recorder.frees == 6 && !rejected.face.glyph, "a rejected slot frees its bitmap, loader arrays, loader, internal record and slot");
+    Require(rejected.recorder.lastFreed == calls.initSlot, "a rejected slot is freed last");
+}
+
 }
 
 int main() {
@@ -212,6 +350,10 @@ int main() {
     Ownership();
     OwnershipSkips();
     OwnershipErrors();
+    NewSlot();
+    NewSlotWithoutOutlines();
+    NewSlotArguments();
+    NewSlotFailures();
     std::puts("Guest FreeType Ot glyph slot tests passed");
     return 0;
 }

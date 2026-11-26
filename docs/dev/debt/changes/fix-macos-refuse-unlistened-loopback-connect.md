@@ -1,0 +1,6 @@
+# libSceNet
+
+## add Functional
+
+- [sceNetConnect](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) to a loopback port that a guest socket holds without listening returns `ECONNREFUSED` on macOS when the connecting socket is blocking, as FreeBSD's reset for the same SYN would. XNU drops that SYN instead, so the host connect only ever times out. The check covers a port that a guest socket in the same family binds to the loopback or wildcard address. It does not cover a non-blocking connect, which still waits for the host's TCP connect timeout, or a port held by a host socket outside the guest set. Closes when: compared with a console module, and the non-blocking and host-socket cases are handled.
+- [sceNetListen](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - a backlog of 0 does not bound the pending accept queue on macOS: 64 connects to such a listener complete without any accept (measured with a host socket on macOS 27.0.1, x86-64 under Rosetta 2), where the console stops completing them and later connects wait. `guest_sce_net`'s connect-expiry case expects that queue to fill and still fails for this reason. The console's queue depth for a backlog of 0, and how it counts completed but unaccepted connections, are unmeasured. Closes when: measured on a console and the queue depth is modelled.

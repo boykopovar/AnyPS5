@@ -7,8 +7,12 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_pipeline_profile COMMAND agc_driver_pipeline_profile_tests)
     set_tests_properties(agc_driver_pipeline_profile PROPERTIES TIMEOUT 40
         ENVIRONMENT "APS5_PIPELINE_STATS=1;APS5_PIPELINED_DRAWS=8")
+    add_test(NAME agc_driver_pipeline_untimed COMMAND agc_driver_pipeline_profile_tests --untimed)
+    set_tests_properties(agc_driver_pipeline_untimed PROPERTIES TIMEOUT 20
+        ENVIRONMENT "APS5_PIPELINED_DRAWS=8")
     if(WIN32)
-        set_tests_properties(agc_driver_pipeline_profile PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_pipeline_profile agc_driver_pipeline_untimed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
+    set_property(TEST agc_driver_pipeline_untimed APPEND PROPERTY ENVIRONMENT_MODIFICATION "APS5_PROFILE_DRAW=unset:" "APS5_PIPELINE_STATS=unset:")
 endif()
