@@ -858,6 +858,7 @@ void remappedEpochTests(Context context) {
             const bool relooked = sampled && Sampled(context, surface.Address()) != bound;
             std::printf("remapped allocation (%s): a %s template, exit inputs moved: %s; the next proof %s the exit and %s; the full proof %s%s\n", pages ? "fresh pages" : "registry only", kind, moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", exitProved ? "proved current" : "refused", fullProved ? "proved current" : "refused", sampled ? (relooked ? "; a new lookup makes another texture" : "; a new lookup hands back the bound texture") : "");
             Require(!exitProved || fullProved, std::string("a ") + kind + " template proved current through the epoch exit over an image whose guest allocation was replaced, which the full proof refuses");
+            Require(!exited, std::string("a ") + kind + " template took the epoch exit over an image whose guest allocation was replaced");
             Require(!sampled || !pages || !fullProved, "the full proof kept a sampled image over fresh pages, so the case tests nothing");
             resources.reset();
             ClearCachedTextures(context.device);
@@ -917,6 +918,7 @@ void remappedEpochTests(Context context) {
         std::printf("remapped allocation (section view replaced): a %s template %s, exit inputs moved: %s; the next proof %s the exit and %s; the full proof %s\n", kind, settled ? "on the exit" : "never on the exit", moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", exitProved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
         Require(settled, std::string("an unchanged section-backed ") + kind + " template in the same collect epoch never took the epoch exit");
         Require(!exitProved || fullProved, std::string("a ") + kind + " template proved current through the epoch exit over a section view replaced under its image, which the full proof refuses");
+        Require(!exited, std::string("a ") + kind + " template took the epoch exit over a section view replaced under its image");
         Require(!sampled || !fullProved, "the full proof kept a sampled image over a replaced section view, so the case tests nothing");
         resources.reset();
         ClearCachedTextures(context.device);
