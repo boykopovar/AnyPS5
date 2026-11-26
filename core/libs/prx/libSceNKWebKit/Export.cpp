@@ -9264,46 +9264,6 @@ int APS5_VABI WKWebsiteDataStoreSetClientCertificate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugModeWithCompletionHandler() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDomainForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsPrevalentResourceForDebugMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreSetStatisticsCacheMaxAgeCap() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -717,4 +717,15 @@ const void* APS5_VABI WKPluginInformationPluginURLKey();
 const void* APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
 const void* APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
 
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsEnabled(const void* dataStore, bool enable);
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugMode(const void* dataStore, bool enable);
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugModeWithCompletionHandler(const void* dataStore, bool enable, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsPrevalentResourceForDebugMode(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting(const void* dataStore, bool value, std::uint32_t policy, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDomainForTesting(const void* dataStore, const void* firstPartyURLString, const void* cnameURLString, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+
 }
