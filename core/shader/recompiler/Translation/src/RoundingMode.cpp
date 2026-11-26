@@ -109,6 +109,14 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
         return {round1664 | denorm1664Out, RoundingUseKind::Directed16};
     case RdnaOpcode::VDivFixupF64:
     case RdnaOpcode::VLdexpF16:
+    case RdnaOpcode::VAddF16:
+    case RdnaOpcode::VSubF16:
+    case RdnaOpcode::VSubrevF16:
+    case RdnaOpcode::VMulF16:
+    case RdnaOpcode::VFmacF16:
+    case RdnaOpcode::VFmamkF16:
+    case RdnaOpcode::VFmaakF16:
+    case RdnaOpcode::VFmaF16:
         return {round1664 | denorm1664, RoundingUseKind::Directed16};
     case RdnaOpcode::VDivFixupF16:
         return {round1664 | denorm1664In, RoundingUseKind::Directed16};
@@ -151,14 +159,6 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
         return {round32, RoundingUseKind::Unmodelled};
     case RdnaOpcode::VCvtF32F64:
         return {round32 | denorm32Out, RoundingUseKind::Unmodelled};
-    case RdnaOpcode::VAddF16:
-    case RdnaOpcode::VSubF16:
-    case RdnaOpcode::VSubrevF16:
-    case RdnaOpcode::VMulF16:
-    case RdnaOpcode::VFmacF16:
-    case RdnaOpcode::VFmamkF16:
-    case RdnaOpcode::VFmaakF16:
-    case RdnaOpcode::VFmaF16:
     case RdnaOpcode::VFractF16:
     case RdnaOpcode::VFmaF64:
     case RdnaOpcode::VAddF64:

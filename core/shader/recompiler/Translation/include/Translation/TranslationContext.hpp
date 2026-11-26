@@ -243,6 +243,9 @@ private:
     bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     IrF32 floatUnaryValue(const RdnaInstruction& inst, IrOpcode opcode);
+    IrU32 directedF16(IrValue& lhs, IrValue& rhs, IrValue& addend, bool negateLhs = false, bool negateAddend = false);
+    IrU32 directedF16Binary(IrOpcode opcode, IrF32 lhs, IrF32 rhs, bool reverse);
+    void writeDirectedF16(const RdnaOperand& operand, IrU32 bits, std::initializer_list<IrValue*> sources, const std::array<IrU32, 3>& halves);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatUnaryClampInfinity(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
