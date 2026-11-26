@@ -52,7 +52,7 @@ The report is written once, when the run ends through the guest's `exit` or `_ex
 
 ## What `anyps5.modified` means
 
-`false` means the build's git tree had no change to tracked files, no untracked files that git does not ignore, and no change inside a submodule. `true` means any of those. `null` means the build did not come from a git checkout. A mixed set of libraries from different builds is not detected.
+`true` means the build's Git tree had tracked changes, unignored untracked files, or a modified submodule. A registered library built from a different commit or a modified tree also makes it `true` when library provenance is checked. `false` means the build and all checked libraries were clean and matched. The value is `null` when the build's Git state is unknown, or when an otherwise clean build can't verify a required library.
 
 ## Unknown is null
 
