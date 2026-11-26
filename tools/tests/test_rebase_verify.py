@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -331,6 +332,288 @@ class RebaseVerifyTests(unittest.TestCase):
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
         problems = self.verify()
         self.assertTrue(any("a line is added that the branch did not add" in problem for problem in problems), problems)
+
+    def test_a_line_already_added_upstream_needs_no_second_addition(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.git("checkout", "-q", "main")
+        self.write("f.txt", "a\nshared\nb\nc\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the shared line upstream")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.assertEqual(self.verify(), [])
+
+    def test_an_extra_copy_of_a_line_already_added_upstream_is_reported(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.git("checkout", "-q", "main")
+        self.write("f.txt", "a\nshared\nb\nc\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the shared line upstream")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.write("f.txt", "a\nshared\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        problems = self.verify()
+        self.assertTrue(any("a line is added that the branch did not add" in problem and "shared" in problem
+                            for problem in problems), problems)
+
+    def test_large_duplicate_hunk_is_matched_without_recursion(self):
+        base = "header\nsection B\nfooter\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add duplicate scale fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        repeated = "repeated entry\n" * 1001
+        self.write("f.txt", "header\n" + repeated + "section B\nbranch-only\nfooter\n")
+        self.git("commit", "-q", "-am", "feat(tools): add repeated and unique lines")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "header\n" + repeated + "section B\nfooter\n")
+        self.git("commit", "-q", "-am", "docs(tools): add repeated lines upstream")
+        self.git("checkout", "-q", "-B", "new", "old")
+        self.git("rebase", "-q", "main")
+        started = time.perf_counter()
+        self.assertEqual(self.verify(), [])
+        self.assertLess(time.perf_counter() - started, 10.0)
+
+    def prepare_separated_shared_line_rebase(self):
+        base = "section A\na1\na2\na3\nsection B\nb1\nb2\nb3\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add separated sections")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "section A\nshared\nbranch-only\na1\na2\na3\nsection B\nb1\nb2\nb3\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared branch behavior")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "section A\na1\na2\na3\nsection B\nshared\nb1\nb2\nb3\n")
+        self.git("commit", "-q", "-am", "docs(tools): add distant shared text upstream")
+        self.git("checkout", "-q", "-B", "new", "old")
+        self.git("rebase", "-q", "main")
+
+    def test_a_distant_upstream_copy_does_not_replace_a_branch_addition(self):
+        self.prepare_separated_shared_line_rebase()
+        self.assertEqual(self.verify(), [])
+
+    def test_dropping_a_branch_addition_with_a_distant_upstream_copy_is_reported(self):
+        self.prepare_separated_shared_line_rebase()
+        self.write("f.txt", "section A\nbranch-only\na1\na2\na3\nsection B\nshared\nb1\nb2\nb3\n")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "shared" in problem for problem in problems), problems)
+
+    def prepare_moved_shared_line_rebase(self, keep_upstream_copy):
+        base = "section A\nshared\nsection B\nextra\nsection C\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add moved-line fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "section A\nsection B\nsection C\nshared\nbranch-only\n")
+        self.git("commit", "-q", "-am", "feat(tools): move shared line and remove extra")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "section A\nshared\nsection B\nextra\nsection C\nshared\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the moved line upstream")
+        self.git("checkout", "-q", "-B", "new", "old")
+        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_EDITOR": "true"}
+        result = subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
+                                 "-c", "commit.gpgsign=false", "rebase", "main"], capture_output=True, text=True, env=environment)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        resolved = ("section A\nsection B\nsection C\nshared\nbranch-only\n" if keep_upstream_copy
+                    else "section A\nshared\nsection B\nsection C\nbranch-only\n")
+        self.write("f.txt", resolved)
+        self.git("add", "f.txt")
+        self.git("-c", "core.editor=true", "commit", "--amend", "--no-edit")
+
+    def verify_with_inter_hunk_context(self):
+        global_config = self.root / "empty-global-config"
+        global_config.write_text("")
+        environment = {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": str(global_config),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "diff.interHunkContext",
+            "GIT_CONFIG_VALUE_0": "1",
+        }
+        previous = {key: os.environ.get(key) for key in environment}
+        try:
+            os.environ.update(environment)
+            return self.verify()
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_moved_line_keeps_the_upstream_occurrence_that_satisfies_it(self):
+        self.prepare_moved_shared_line_rebase(True)
+        self.assertEqual(self.verify_with_inter_hunk_context(), [])
+
+    def test_moved_line_cannot_keep_the_original_and_delete_its_upstream_copy(self):
+        self.prepare_moved_shared_line_rebase(False)
+        problems = self.verify_with_inter_hunk_context()
+        self.assertTrue(any("upstream-added line credited for a branch addition was removed at line 6" in problem
+                            for problem in problems), problems)
+
+
+    def prepare_adjacent_shared_line_rebase(self, side, replacement, shared_at_boundary=True, branch_only_at_boundary=False,
+                                            boundary_lines=("shared",)):
+        base = "line 1\nline 2\nline 3\nline 4\nline 5\nsection B\nb1\nb2\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add adjacent-rebase fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        branch_additions = list(boundary_lines)
+        if branch_only_at_boundary:
+            branch_additions = (["branch-only"] + list(boundary_lines) if side == "following"
+                                else list(boundary_lines) + ["branch-only"])
+        topic = ["line 1", "line 2", "line 3", *branch_additions, "line 4", "line 5", "section B"]
+        if not branch_only_at_boundary:
+            topic.append("branch-only")
+        topic.extend(["b1", "b2"])
+        self.write("f.txt", "\n".join(topic) + "\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared branch behavior")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        if side == "following":
+            replacement_lines = (list(boundary_lines) + ["upstream replacement"] if shared_at_boundary
+                                 else ["upstream replacement"] + list(boundary_lines)) if replacement else list(boundary_lines)
+            upstream = ["line 1", "line 2", "line 3", *replacement_lines, "line 5", "section B", "b1", "b2"]
+        else:
+            replacement_lines = (["upstream replacement"] + list(boundary_lines) if shared_at_boundary
+                                 else list(boundary_lines) + ["upstream replacement"]) if replacement else list(boundary_lines)
+            upstream = ["line 1", "line 2", *replacement_lines, "line 4", "line 5", "section B", "b1", "b2"]
+        upstream_text = "\n".join(upstream) + "\n"
+        self.write("f.txt", upstream_text)
+        self.git("commit", "-q", "-am", "docs(tools): change the adjacent line upstream")
+        self.git("checkout", "-q", "-B", "new", "old")
+        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_EDITOR": "true"}
+        result = subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
+                                 "-c", "commit.gpgsign=false", "rebase", "main"], capture_output=True, text=True, env=environment)
+        self.assertNotEqual(result.returncode, 0, (side, replacement, result.stdout, result.stderr))
+        if branch_only_at_boundary:
+            if side == "following":
+                resolved = upstream_text.replace(boundary_lines[0] + "\n", "branch-only\n" + boundary_lines[0] + "\n", 1)
+            else:
+                resolved = upstream_text.replace(boundary_lines[-1] + "\n",
+                                                  boundary_lines[-1] + "\nbranch-only\n", 1)
+        else:
+            resolved = upstream_text.replace("section B\n", "section B\nbranch-only\n", 1)
+        self.write("f.txt", resolved)
+        self.git("add", "f.txt")
+        self.git("-c", "core.editor=true", "rebase", "--continue")
+
+    def test_upstream_addition_at_boundary_survives_following_replacement(self):
+        self.prepare_adjacent_shared_line_rebase("following", True)
+        self.assertEqual(self.verify(), [])
+
+    def test_upstream_addition_at_boundary_survives_following_deletion(self):
+        self.prepare_adjacent_shared_line_rebase("following", False)
+        self.assertEqual(self.verify(), [])
+
+    def test_upstream_addition_at_boundary_survives_preceding_replacement(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True)
+        self.assertEqual(self.verify(), [])
+
+    def test_upstream_addition_at_boundary_survives_preceding_deletion(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", False)
+        self.assertEqual(self.verify(), [])
+
+    def test_branch_only_before_following_boundary_match_is_preserved(self):
+        self.prepare_adjacent_shared_line_rebase("following", True, branch_only_at_boundary=True)
+        self.assertEqual(self.verify(), [])
+
+    def test_branch_only_after_preceding_boundary_match_is_preserved(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True, branch_only_at_boundary=True)
+        self.assertEqual(self.verify(), [])
+
+    def test_two_following_boundary_lines_keep_their_order(self):
+        self.prepare_adjacent_shared_line_rebase("following", True, boundary_lines=("first", "second"))
+        self.assertEqual(self.verify(), [])
+
+    def test_two_preceding_boundary_lines_keep_their_order(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True, boundary_lines=("first", "second"))
+        self.assertEqual(self.verify(), [])
+
+    def test_two_following_boundary_lines_in_wrong_order_do_not_match(self):
+        self.prepare_adjacent_shared_line_rebase("following", True, shared_at_boundary=False,
+                                                 boundary_lines=("first", "second"))
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "first" in problem for problem in problems), problems)
+        self.assertTrue(any("an added line is missing" in problem and "second" in problem for problem in problems), problems)
+
+    def test_two_preceding_boundary_lines_in_wrong_order_do_not_match(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True, shared_at_boundary=False,
+                                                 boundary_lines=("first", "second"))
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "first" in problem for problem in problems), problems)
+        self.assertTrue(any("an added line is missing" in problem and "second" in problem for problem in problems), problems)
+
+    def test_branch_only_before_two_following_boundary_lines_is_preserved(self):
+        self.prepare_adjacent_shared_line_rebase("following", True, branch_only_at_boundary=True,
+                                                 boundary_lines=("first", "second"))
+        self.assertEqual(self.verify(), [])
+
+    def test_branch_only_after_two_preceding_boundary_lines_is_preserved(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True, branch_only_at_boundary=True,
+                                                 boundary_lines=("first", "second"))
+        self.assertEqual(self.verify(), [])
+
+    def prepare_double_credit_boundary_rebase(self, keep_branch_copy):
+        base = "line 1\nline 2\nline 3\nold pivot\nline 5\nsection B\nb1\nb2\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add double-credit fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        topic = "line 1\nline 2\nline 3\nmatching line\nold pivot\nmatching line\nline 5\nsection B\nbranch-only\nb1\nb2\n"
+        self.write("f.txt", topic)
+        self.git("commit", "-q", "-am", "feat(tools): add matching boundary lines")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        upstream = "line 1\nline 2\nline 3\nmatching line\nline 5\nsection B\nb1\nb2\n"
+        self.write("f.txt", upstream)
+        self.git("commit", "-q", "-am", "docs(tools): replace pivot upstream")
+        self.git("checkout", "-q", "-B", "new", "old")
+        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_EDITOR": "true"}
+        result = subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
+                                 "-c", "commit.gpgsign=false", "rebase", "main"], capture_output=True, text=True, env=environment)
+        self.assertNotEqual(result.returncode, 0, (result.stdout, result.stderr))
+        resolved = "line 1\nline 2\nline 3\nmatching line\n" + ("matching line\n" if keep_branch_copy else "") + "line 5\nsection B\nbranch-only\nb1\nb2\n"
+        self.write("f.txt", resolved)
+        self.git("add", "f.txt")
+        self.git("-c", "core.editor=true", "rebase", "--continue")
+
+    def test_one_upstream_occurrence_cannot_satisfy_two_branch_additions_when_one_is_lost(self):
+        self.prepare_double_credit_boundary_rebase(keep_branch_copy=False)
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "matching line" in problem for problem in problems), problems)
+        self.assertFalse(any("a line is added that the branch did not add" in problem and "matching line" in problem for problem in problems), problems)
+
+    def test_one_upstream_occurrence_can_satisfy_only_one_of_two_branch_additions(self):
+        self.prepare_double_credit_boundary_rebase(keep_branch_copy=True)
+        self.assertEqual(self.verify(), [])
+
+    def test_following_replacement_only_satisfies_its_boundary_prefix(self):
+        self.prepare_adjacent_shared_line_rebase("following", True, shared_at_boundary=False)
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "shared" in problem for problem in problems), problems)
+
+    def test_preceding_replacement_only_satisfies_its_boundary_suffix(self):
+        self.prepare_adjacent_shared_line_rebase("preceding", True, shared_at_boundary=False)
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "shared" in problem for problem in problems), problems)
 
     def amend_bytes(self, branch, data):
         self.git("checkout", "-q", branch)

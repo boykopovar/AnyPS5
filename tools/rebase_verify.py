@@ -72,6 +72,221 @@ def changed_lines(root, base, tip):
     return added, deleted
 
 
+def added_hunks(root, base, tip):
+    hunks = collections.defaultdict(lambda: collections.defaultdict(list))
+    positions = collections.defaultdict(lambda: collections.defaultdict(list))
+    new_path, in_hunk, old_range, new_line = None, False, None, 0
+    diff = git(root, "diff", "-U0", "--inter-hunk-context=0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/",
+               "--output-indicator-new=+", "--output-indicator-old=-", "--output-indicator-context= ",
+               base, tip, "--", raw=True)
+    lines = diff.decode("utf-8", "surrogateescape").split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("diff --git "):
+            new_path, in_hunk, old_range = None, False, None
+        elif not in_hunk and line.startswith("+++ "):
+            new_path = patch_path(line, "b/")
+        elif line.startswith("@@"):
+            in_hunk = True
+            old_token, new_token = line.split()[1:3]
+            old_start, separator, count = old_token[1:].partition(",")
+            old_range = int(old_start), int(count) if separator else 1
+            new_start, _, _ = new_token[1:].partition(",")
+            new_line = int(new_start)
+        elif in_hunk and line.startswith("+") and new_path is not None:
+            text = line[1:]
+            if lines[index + 1:index + 2] == [NO_NEWLINE]:
+                text += "\n" + NO_NEWLINE
+            hunks[new_path][old_range].append(text)
+            positions[new_path][old_range].append(new_line)
+            new_line += 1
+    return hunks, positions
+
+
+def deleted_line_numbers(root, base, tip):
+    deleted = collections.defaultdict(set)
+    old_path, in_hunk, old_line = None, False, 0
+    diff = git(root, "diff", "-U0", "--inter-hunk-context=0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/",
+               "--output-indicator-new=+", "--output-indicator-old=-", "--output-indicator-context= ",
+               base, tip, "--", raw=True)
+    lines = diff.decode("utf-8", "surrogateescape").split("\n")
+    for line in lines:
+        if line.startswith("diff --git "):
+            old_path, in_hunk = None, False
+        elif not in_hunk and line.startswith("--- "):
+            old_path = patch_path(line, "a/")
+        elif line.startswith("@@"):
+            in_hunk = True
+            token = line.split(maxsplit=2)[1][1:]
+            old_line = int(token.partition(",")[0])
+        elif in_hunk and line.startswith("-") and old_path is not None:
+            deleted[old_path].add(old_line)
+            old_line += 1
+    return deleted
+
+def prefix_suffix_overlap(pattern, sequence):
+    if not pattern:
+        return 0
+    prefix = [0] * len(pattern)
+    for index in range(1, len(pattern)):
+        matched = prefix[index - 1]
+        while matched and pattern[index] != pattern[matched]:
+            matched = prefix[matched - 1]
+        if pattern[index] == pattern[matched]:
+            matched += 1
+        prefix[index] = matched
+    matched = 0
+    for value in sequence:
+        while matched and (matched == len(pattern) or pattern[matched] != value):
+            matched = prefix[matched - 1]
+        if matched < len(pattern) and pattern[matched] == value:
+            matched += 1
+    return matched
+
+
+def upstream_boundary_additions_at_old_range(hunks, old_range, expected):
+    matches = collections.defaultdict(set)
+    start, count = old_range
+    if count:
+        return matches
+    for upstream_range, lines in hunks.items():
+        upstream_start, upstream_count = upstream_range
+        if not upstream_count:
+            continue
+        upstream_end = upstream_start + upstream_count - 1
+        if upstream_start == start + 1:
+            overlap = prefix_suffix_overlap(lines[:len(expected)], expected)
+            branch_start = len(expected) - overlap
+            for offset in range(overlap):
+                matches[branch_start + offset].add((upstream_range, offset))
+        if upstream_end == start:
+            overlap = prefix_suffix_overlap(expected[:len(lines)], lines)
+            upstream_start_index = len(lines) - overlap
+            for offset in range(overlap):
+                matches[offset].add((upstream_range, upstream_start_index + offset))
+    return matches
+
+def additions_satisfied_upstream(root, old_base, old, new_base):
+    if old_base == new_base:
+        return {}, {}
+    original, _ = added_hunks(root, old_base, old)
+    upstream, upstream_positions = added_hunks(root, old_base, new_base)
+    satisfied = collections.defaultdict(collections.Counter)
+    credited = collections.defaultdict(set)
+    for path, hunks in original.items():
+        upstream_hunks = upstream.get(path, {})
+        exact_occurrences = collections.defaultdict(list)
+        for upstream_range, lines in upstream_hunks.items():
+            for upstream_index, line in enumerate(lines):
+                exact_occurrences[(upstream_range, line)].append((upstream_range, upstream_index))
+
+        branch_lines = []
+        for old_range, lines in hunks.items():
+            boundary_matches = upstream_boundary_additions_at_old_range(upstream_hunks, old_range, lines)
+            for index, line in enumerate(lines):
+                exact_group = (old_range, line)
+                if exact_group not in exact_occurrences:
+                    exact_group = None
+                branch_lines.append((line, exact_group, boundary_matches.get(index, set())))
+        if not branch_lines:
+            continue
+
+        exact_groups = sorted({group for _, group, _ in branch_lines if group is not None})
+        upstream_occurrences = set()
+        for group in exact_groups:
+            upstream_occurrences.update(exact_occurrences[group])
+        for _, _, boundary in branch_lines:
+            upstream_occurrences.update(boundary)
+        if not upstream_occurrences:
+            continue
+
+        source = 0
+        branch_start = 1
+        group_start = branch_start + len(branch_lines)
+        group_nodes = {group: group_start + index for index, group in enumerate(exact_groups)}
+        upstream_start = group_start + len(group_nodes)
+        occurrence_nodes = {occurrence: upstream_start + index
+                            for index, occurrence in enumerate(sorted(upstream_occurrences))}
+        sink = upstream_start + len(occurrence_nodes)
+        graph = [[] for _ in range(sink + 1)]
+
+        def add_edge(start_node, end_node):
+            forward = [end_node, len(graph[end_node]), 1]
+            reverse = [start_node, len(graph[start_node]), 0]
+            graph[start_node].append(forward)
+            graph[end_node].append(reverse)
+            return forward
+
+        source_edges = []
+        for index, (line, exact_group, boundary) in enumerate(branch_lines):
+            branch_node = branch_start + index
+            source_edges.append(add_edge(source, branch_node))
+            if exact_group is not None:
+                add_edge(branch_node, group_nodes[exact_group])
+            for occurrence in sorted(boundary):
+                add_edge(branch_node, occurrence_nodes[occurrence])
+        for group, node in group_nodes.items():
+            for occurrence in exact_occurrences[group]:
+                add_edge(node, occurrence_nodes[occurrence])
+        occurrence_edges = {
+            occurrence: add_edge(node, sink)
+            for occurrence, node in occurrence_nodes.items()
+        }
+
+        while True:
+            levels = [-1] * len(graph)
+            levels[source] = 0
+            pending = collections.deque([source])
+            while pending:
+                node = pending.popleft()
+                for target, _, capacity in graph[node]:
+                    if capacity and levels[target] < 0:
+                        levels[target] = levels[node] + 1
+                        pending.append(target)
+            if levels[sink] < 0:
+                break
+
+            current = [0] * len(graph)
+            while True:
+                nodes = [source]
+                augmenting_path = []
+                while nodes:
+                    node = nodes[-1]
+                    if node == sink:
+                        for previous, edge_index in augmenting_path:
+                            edge = graph[previous][edge_index]
+                            edge[2] -= 1
+                            graph[edge[0]][edge[1]][2] += 1
+                        nodes = [source]
+                        augmenting_path = []
+                        continue
+
+                    while current[node] < len(graph[node]):
+                        edge = graph[node][current[node]]
+                        if edge[2] and levels[edge[0]] == levels[node] + 1:
+                            break
+                        current[node] += 1
+                    if current[node] == len(graph[node]):
+                        nodes.pop()
+                        if augmenting_path:
+                            previous, _ = augmenting_path.pop()
+                            current[previous] += 1
+                    else:
+                        edge_index = current[node]
+                        augmenting_path.append((node, edge_index))
+                        nodes.append(graph[node][edge_index][0])
+                break
+
+        for index, edge in enumerate(source_edges):
+            if edge[2] == 0:
+                satisfied[path][branch_lines[index][0]] += 1
+        for occurrence, edge in occurrence_edges.items():
+            if edge[2] == 0:
+                upstream_range, upstream_index = occurrence
+                credited[path].add(upstream_positions[path][upstream_range][upstream_index])
+    return satisfied, credited
+
 def differences(old, new, deleted=False):
     problems = []
     for path in sorted(set(old) | set(new)):
@@ -194,8 +409,18 @@ def verify(root, old, new, onto):
         problems.append(f"the branch has {count_new} commits on {onto}, and had {count_old} on its old base")
     old_added, old_deleted = changed_lines(root, old_base, old)
     new_added, new_deleted = changed_lines(root, new_base, new)
-    problems += differences(old_added, new_added)
-    upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_deleted else ({}, {})
+    upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_added or old_deleted else ({}, {})
+    satisfied_added, credited_upstream = additions_satisfied_upstream(root, old_base, old, new_base) if old_added else ({}, {})
+    expected_added = {
+        path: lines - satisfied_added.get(path, collections.Counter())
+        for path, lines in old_added.items()
+    }
+    problems += differences(expected_added, new_added)
+    if credited_upstream:
+        removed_upstream = deleted_line_numbers(root, new_base, new)
+        for path, line_numbers in credited_upstream.items():
+            for line_number in sorted(line_numbers & removed_upstream.get(path, set())):
+                problems.append(f"{path}: an upstream-added line credited for a branch addition was removed at line {line_number}")
     expected_deleted = {
         path: lines - (upstream_deleted.get(path, collections.Counter()) - text_only(upstream_added.get(path, collections.Counter())))
         for path, lines in old_deleted.items()
