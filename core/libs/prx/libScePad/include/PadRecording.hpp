@@ -92,8 +92,11 @@ public:
         } else if (state == last) {
             return;
         }
+        const std::uint64_t elapsedMs = nowUs > startUs ? (nowUs - startUs) / 1000u : 0;
+        const std::uint64_t sampleMs = std::max(lastMs, elapsedMs);
+        lastMs = sampleMs;
         last = state;
-        file << FormatRecordedSample({(nowUs - startUs) / 1000u, state}) << std::flush;
+        file << FormatRecordedSample({sampleMs, state}) << std::flush;
         if (!file) throw std::runtime_error("APS5_PAD_RECORD: cannot write '" + filePath.string() + "'");
     }
 
@@ -102,6 +105,7 @@ private:
     std::ofstream file;
     bool started = false;
     std::uint64_t startUs = 0;
+    std::uint64_t lastMs = 0;
     RecordedState last;
 };
 
@@ -132,7 +136,7 @@ public:
             started = true;
             startUs = nowUs;
         }
-        const auto elapsed = (nowUs - startUs) / 1000u;
+        const std::uint64_t elapsed = nowUs > startUs ? (nowUs - startUs) / 1000u : 0;
         const auto next = std::upper_bound(samples.begin(), samples.end(), elapsed,
             [](std::uint64_t time, const RecordedSample& sample) { return time < sample.ms; });
         if (next == samples.begin()) return RecordedState{};
