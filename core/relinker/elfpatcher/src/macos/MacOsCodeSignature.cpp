@@ -17,6 +17,7 @@ constexpr std::uint32_t CsSlotRequirements = 2;
 constexpr std::uint32_t CsSlotSignature = 0x10000;
 constexpr std::uint32_t CsSupportsExecSeg = 0x20400;
 constexpr std::uint32_t CsAdhoc = 0x2;
+constexpr std::uint32_t CsLinkerSigned = 0x20000;
 constexpr std::uint8_t CsHashTypeSha256 = 2;
 constexpr std::uint64_t CsExecSegMainBinary = 0x1;
 
@@ -149,7 +150,7 @@ void AppendCodeSignature(std::vector<std::uint8_t>& file, const std::string& ide
     AppendU32Be(signature, CsMagicCodeDirectory);
     AppendU32Be(signature, static_cast<std::uint32_t>(codeDirectorySize));
     AppendU32Be(signature, CsSupportsExecSeg);
-    AppendU32Be(signature, CsAdhoc);
+    AppendU32Be(signature, CsAdhoc | CsLinkerSigned);
     AppendU32Be(signature, static_cast<std::uint32_t>(hashOffset));
     AppendU32Be(signature, static_cast<std::uint32_t>(identifierOffset));
     AppendU32Be(signature, SpecialSlots);

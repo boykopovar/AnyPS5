@@ -110,7 +110,7 @@ macOS output (x86-64 Mach-O, which runs under Rosetta on Apple silicon):
 relinker --macos source/input.elf eboot
 ```
 
-The executable and the module libraries carry an ad-hoc code signature, so they run without `codesign`. Signing one again with `codesign -s - -f` or your own identity replaces it. After editing one with `install_name_tool` or `strip`, sign it again.
+The executable and the module libraries carry an ad-hoc code signature that is marked linker-signed, so they run without `codesign` and `strip` re-signs them instead of invalidating them. `install_name_tool` cannot change them: the writer reserves no header padding, so it stops with `larger updated load commands do not fit` and leaves the file valid. Signing one again with `codesign -s - -f` or your own identity replaces the signature and drops the linker-signed mark.
 
 Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
