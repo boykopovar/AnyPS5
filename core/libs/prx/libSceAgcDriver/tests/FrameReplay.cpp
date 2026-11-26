@@ -1933,10 +1933,11 @@ void testFillWordHalfStored(const std::filesystem::path& tool) {
         return chunk.kind == FrameMemoryKind::Delta && chunk.address <= at(title) && at(title) + 4 <= chunk.address + chunk.bytes;
     }), "the memory delta lost the word the title wrote beside the filled word");
     check(!deltaStoredBytes(reader, word), "the memory delta holds bytes of a word the fill and a later 2-byte store wrote, so the replay restores them before that work");
-    const auto replayedWord = replayed(tool, capture, word, 4);
-    std::uint32_t value = 0;
-    std::memcpy(&value, replayedWord.data(), sizeof(value));
-    check(value == expected, "the replay did not reproduce the filled word with its stored half");
+    const auto replayedWords = replayed(tool, capture, word, 8);
+    std::array<std::uint32_t, 2> values{};
+    std::memcpy(values.data(), replayedWords.data(), sizeof(values));
+    check(values[0] == expected, "the replay did not reproduce the filled word with its stored half");
+    check(values[1] == Stored, "the replay did not reproduce the word the title wrote beside the filled word");
 }
 
 void testFenceReused(const std::filesystem::path& tool) {
