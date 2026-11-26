@@ -2773,6 +2773,18 @@ void deferredBatchTests(const Device& device) {
         VkSemaphore gate = VK_NULL_HANDLE;
         Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &gate) == VK_SUCCESS, "no timeline semaphore to hold the GPU");
         std::uint64_t submitted = 0;
+            struct OpenGate {
+                const Context& context;
+                VkSemaphore gate;
+                const std::thread& release;
+                ~OpenGate() {
+                    if (release.joinable()) return;
+                    VkSemaphoreSignalInfoKHR signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR};
+                    signal.semaphore = gate;
+                    signal.value = 1;
+                    context.Function<PFN_vkSignalSemaphoreKHR>("vkSignalSemaphoreKHR")(context.device, &signal);
+                }
+            } openGate{context, gate, release};
         std::thread release;
         {
             Recorder recorder(failing, true, true, context.queueFamily);
