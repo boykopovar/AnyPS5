@@ -162,7 +162,10 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     }
     static_cast<void>(GetNativeStream(stream));
     if (!stream->OpenForReading()) return -1;
-    if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
+    if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+    errno = previousError;
     const char16_t low = value >= 0xd800 && value < 0xdc00 ? stream->TakeLowSurrogate() : 0;
     const std::uint32_t code = low != 0 ? 0x10000 + ((static_cast<std::uint32_t>(value) & 0x3ff) << 10) + (low & 0x3ffu) : static_cast<std::uint32_t>(value);
     unsigned char bytes[4];
@@ -284,9 +287,16 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (value != EOF && stream && !stream->OpenForReading()) return -1;
     static_cast<void>(GetNativeStream(stream));
     stream->Orientation(-1);
-    if (value != EOF && !stream->SwitchToReading()) return -1;
+    if (value != EOF) {
+        const int previousError = errno;
+        errno = 0;
+        if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
+        errno = previousError;
+    }
+    const bool wasLive = stream->PushbackLive();
     const int result = stream->PushBack(value);
     stream->SyncStatus();
+    if (result != EOF && stream->IsRegularFile()) stream->NotePushedBackByte(static_cast<char>(result), wasLive);
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
