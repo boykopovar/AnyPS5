@@ -19887,6 +19887,7 @@ int main(int argc, char** argv) {
             }
             device.UsePushDescriptors();
         }
+        RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
         Recorder recorder(device.GetContext(), false, argc == 1 ? device.UseFunctionTable() : nullptr, device.GetContext().queueFamily);
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
