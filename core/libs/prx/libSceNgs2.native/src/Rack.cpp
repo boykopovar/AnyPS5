@@ -109,12 +109,21 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         options = DefaultRackOption(rackId);
         return SCE_NGS2_OK;
     }
-    if (option->size != size) {
-        if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
-        throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
+    if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_SAMPLER && option->size == 168) {
+        options = {};
+        options.common.size = size;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(option);
+        std::memcpy(options.common.name, bytes + 8, 16);
+        std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
+        std::memcpy(&options.sampler.max_channel_works, bytes + 128, 9 * sizeof(std::uint32_t));
+    } else {
+        if (option->size != size) {
+            if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
+            throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
+        }
+        options = {};
+        std::memcpy(&options, option, size);
     }
-    options = {};
-    std::memcpy(&options, option, size);
     if (!PS4_LIBRARY && (rackId == SCE_NGS2_RACK_ID_SAMPLER || rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER)) {
         const auto blocks = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_waveform_blocks : options.customSampler.max_waveform_blocks;
         if (blocks == 0 || blocks > MAX_WAVEFORM_BLOCKS) return SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS;

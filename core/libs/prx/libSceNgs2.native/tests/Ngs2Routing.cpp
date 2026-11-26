@@ -660,6 +660,32 @@ static void TestFft() {
 }
 #endif
 
+static void TestPs4SamplerOption() {
+    alignas(Ngs2RackOption) std::array<unsigned char, 168> raw{};
+    const std::uint64_t size = raw.size();
+    std::memcpy(raw.data(), &size, sizeof(size));
+    const std::uint32_t header[] {0, 512, 256, 0, 1, 8};
+    std::memcpy(raw.data() + 24, header, sizeof(header));
+    const std::uint32_t specific[] {256, 32, 4, 4, 8, 256, 256, 0, 8, 0};
+    std::memcpy(raw.data() + 128, specific, sizeof(specific));
+    const auto* option = reinterpret_cast<const Ngs2RackOption*>(raw.data());
+    const auto system = CreateSystem();
+    Ngs2ContextBufferInfo query{};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, option, &query) == SCE_NGS2_OK && query.host_buffer_size != 0);
+    const auto info = Buffer(query);
+    std::uintptr_t rack = 0;
+    Require(TestRackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, option, &info, &rack) == SCE_NGS2_OK && rack != 0);
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+#else
+    bool rejected = false;
+    try { sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, option, &query); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
 #ifdef APS5_NGS2_PS4_LIBRARY
     const std::uint64_t processSize = processParameters.size();
@@ -674,6 +700,7 @@ int main() {
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
+    TestPs4SamplerOption();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
     TestSubmixerCompressor();
