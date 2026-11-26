@@ -3929,6 +3929,120 @@ void CheckBarePlanePublication(Context context, std::uint32_t samples, BarePubli
     std::printf("Native D32 without stencil or HTILE publication samples=%u mode=%u checked\n", samples, static_cast<std::uint32_t>(mode));
 }
 
+bool CheckFillOverPendingImport(Context context, Recorder& recorder, std::uint32_t fragments) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    TargetMemory memory(bytes), metadata(65536u, true);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, 65536u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        std::uint64_t htile;
+        ImportWatch decided;
+        ~Cleanup() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            ClearDepthSurfaces(context.device);
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                static_cast<void>(WatchedAfterSettle(context, htile, 65536u));
+            }
+            SetImportWatch(context, decided);
+            ClearHostImports(context.device);
+        }
+    } cleanup{recorder, context, metadata.Address(), PrepareImportWatch(context)};
+    DepthSurfaceView(context, target);
+    const auto words = DepthSampleWords(target);
+    Require(CachedSampledTexture(context, words) != nullptr, "native depth for the fill over a pending import was not imported");
+    SetImportWatch(context, ImportWatch::Unwatch);
+    const auto* import = HostImportFor(context, metadata.Address(), 65536u);
+    SetImportWatch(context, cleanup.decided);
+    if (import == nullptr || !import->unwatched || AgcDriver::GuestMemory::Watched(metadata.Address(), metadataBytes)) return false;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] { std::memset(metadata.Data(), 0, metadataBytes); });
+    std::string error;
+    std::shared_ptr<Texture> sampled;
+    try {
+        sampled = CachedSampledTexture(context, words);
+    } catch (const std::runtime_error& refusal) {
+        error = refusal.what();
+    }
+    Require(error.empty(), "native depth sampled after a whole HTILE fill over a pending import refused: " + error);
+    Require(sampled != nullptr, "native depth sampled after a whole HTILE fill over a pending import gave no texture");
+    std::printf("Native depth HTILE fill over a pending import samples=%u: the import is settled before the fill's watch check and sampling continues\n", fragments);
+    return true;
+}
+
+bool CheckSettleKeepsImportOwner(Context owner, Context other) {
+    TargetMemory metadata(65536u, true);
+    std::memset(metadata.Data(), 0, 65536u);
+    struct Cleanup {
+        Context owner;
+        Context other;
+        std::uint64_t htile;
+        ImportWatch decided;
+        ~Cleanup() {
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                static_cast<void>(WatchedAfterSettle(owner, htile, 65536u));
+            }
+            SetImportWatch(owner, decided);
+            ClearHostImports(owner.device);
+            ClearHostImports(other.device);
+        }
+    } cleanup{owner, other, metadata.Address(), PrepareImportWatch(owner)};
+    SetImportWatch(owner, ImportWatch::Unwatch);
+    const auto* import = HostImportFor(owner, metadata.Address(), 65536u);
+    SetImportWatch(owner, cleanup.decided);
+    if (import == nullptr || !import->unwatched || AgcDriver::GuestMemory::Watched(metadata.Address(), 65536u)) return false;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        SettleOwnImports(other, metadata.Address(), 65536u);
+        SettleOwnImports(owner, metadata.Address(), 65536u);
+    }
+    Require(AgcDriver::GuestMemory::Watched(metadata.Address(), 65536u), "a pending host import did not settle when another device settled the same range first");
+    std::printf("A settle for a device that does not own the host imports leaves the owner's pending import, which then settles\n");
+    return true;
+}
+
+int CheckFillOverPendingImports() {
+    std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
+    if (device == nullptr) return VulkanTestSkipped;
+    AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
+    const int result = [&] {
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr && recorder->Device() == context.device, "the driver's device did not activate its recorder");
+        std::uint32_t checked = 0u, unavailable = 0u;
+        for (const auto samples : {2u, 4u, 8u}) {
+            if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) { ++unavailable; continue; }
+            if (CheckFillOverPendingImport(context, *recorder, samples)) ++checked;
+            else ++unavailable;
+        }
+        if (const auto otherDevice = OpenVulkanTestDevice()) {
+            recorder->Activate();
+            if (CheckSettleKeepsImportOwner(context, AgcDriver::VulkanDeviceTestAccess::ContextOf(*otherDevice))) ++checked;
+            else ++unavailable;
+        }
+        recorder->Activate();
+        AgcDriverWaitIdle_nid_postfix();
+        if (checked == 0u) {
+            std::printf("skipped, the device does not defer the settle of a small host import: an HTILE fill over a pending import not tested\n");
+            return VulkanTestSkipped;
+        }
+        std::printf("Native depth HTILE fill over a pending import cases checked=%u unavailable=%u\n", checked, unavailable);
+        return 0;
+    }();
+    device.reset();
+    AgcDriver::DriverDetail::DriverTestAccess::Stop();
+    return result;
+}
+
 void CheckSmallerExtent(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{104u, 67u}, smaller{97u, 66u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -5318,6 +5432,7 @@ int main(int argc, char** argv) {
         const SharedBackingScope sharedBacking;
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--driver-path") return CheckDriverPath(false);
+        if (argc == 2 && std::string_view(argv[1]) == "--fill-over-pending-import") return CheckFillOverPendingImports();
         if (argc == 2 && std::string_view(argv[1]) == "--driver-queued-fill") return CheckDriverPath(true);
         std::unique_ptr<Device> device;
         try { device = std::make_unique<Device>(false, argc == 2 && std::string_view(argv[1]) == "--colour-over-owner"); }
