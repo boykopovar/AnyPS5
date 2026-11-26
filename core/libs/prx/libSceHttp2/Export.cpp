@@ -381,7 +381,8 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
         ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
     {
         std::lock_guard lock(state->mutex);
-        if (!state->deleted && !state->retired) ++state->inFlight[1];
+        if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ++state->inFlight[1];
     }
     std::thread([request, state, async, data, size, req_id] {
         int result = 0;
@@ -413,7 +414,8 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
         {
             std::lock_guard lock(state->mutex);
-            if (!state->deleted && !state->retired) ++state->inFlight[0];
+            if (state->deleted || state->retired) return ERROR_INVALID_ID;
+            ++state->inFlight[0];
         }
         int result = 0;
         std::exception_ptr failure;
@@ -429,7 +431,8 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
     {
         std::lock_guard lock(state->mutex);
-        if (!state->deleted && !state->retired) ++state->inFlight[0];
+        if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ++state->inFlight[0];
     }
     std::thread([request, state, async, body = std::move(body), req_id]() mutable {
         int result = 0;
@@ -571,7 +574,7 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WaitResolved);
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
-    if (!available() && state->InFlight() == 0) return ERROR_NOT_CONNECTED;
+    if (!available() && !state->deleted && state->InFlight() == 0) return ERROR_NOT_CONNECTED;
     std::uint32_t wait = 0;
     if (timeout && !Http2Guest::CopyIn(&wait, timeout, sizeof(wait))) return ERROR_NULL_POINTER;
     if (timeout && wait == 0) {
