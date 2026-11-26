@@ -636,6 +636,26 @@ struct LibreSslAsn1Encoding {
     int modified;
 };
 
+struct LibreSslX509Algor {
+    void* algorithm;
+    void* parameter;
+};
+
+struct LibreSslAsn1TypeValue {
+    int type;
+    int padding;
+    union {
+        void* pointer;
+        std::int32_t boolean;
+    } value;
+};
+
+struct LibreSslX509Pubkey {
+    LibreSslX509Algor* algor;
+    Asn1String* publicKey;
+    void* pkey;
+};
+
 struct LibreSslX509CertInfo {
     void* version;
     void* serialNumber;
@@ -1039,7 +1059,7 @@ void* APS5_VABI d2i_PKCS12_fp_nid_postfix(FileStream* stream, void** output);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, std::int64_t length);
 int APS5_VABI d2i_X509_nid_postfix(void);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object);
-int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void);
+int APS5_VABI i2d_X509_PUBKEY_nid_postfix(const LibreSslX509Pubkey* key, unsigned char** output);
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object);
 int APS5_VABI sceLibreSslGetMemoryPoolStats(void);
 int APS5_VABI sceLibreSslInit(void);
