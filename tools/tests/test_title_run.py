@@ -676,7 +676,6 @@ class AssetCopyTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
     def test_cloned_metadata_failure_propagates_without_copy_fallback(self):
-        import fcntl
         self.require_reflink()
         target = self.root / "metadata-error"
         with unittest.mock.patch.object(title_run.shutil, "copystat", side_effect=PermissionError("metadata refused")), \
