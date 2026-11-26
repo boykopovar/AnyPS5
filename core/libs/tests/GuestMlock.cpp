@@ -161,18 +161,29 @@ int main() {
 #endif
 
     for (const int flags : {0, 1, 2, 3, 4, 1 | 4, -1}) RequireLockAllDenied(flags);
-    for (const std::size_t size : {std::size_t{0}, page, length, std::numeric_limits<std::size_t>::max()}) {
+    void* posixMapped = nullptr;
+    Require(sceKernelMapFlexibleMemory(&posixMapped, page, 3, 0) == 0);
+    Require(mlock_nid_postfix(posixMapped, page) == 0);
+    Require(munlock_nid_postfix(posixMapped, page) == 0);
+    Require(mlock_nid_postfix(posixMapped, 0) == 0);
+    Require(munlock_nid_postfix(posixMapped, 0) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(posixMapped), page) == 0);
+    for (const std::size_t size : {page, length}) {
         *__error_nid_postfix() = 0;
-        Require(mlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 1);
+        Require(mlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 12);
         *__error_nid_postfix() = 0;
-        Require(munlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 1);
+        Require(munlock_nid_postfix(mapped, size) == -1 && *__error_nid_postfix() == 12);
     }
-    for (const void* address : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(0x10), static_cast<const void*>(reserved), reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1)}) {
+    for (const void* address : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(0x10), static_cast<const void*>(reserved)}) {
         *__error_nid_postfix() = 0;
-        Require(mlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 1);
+        Require(mlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 12);
         *__error_nid_postfix() = 0;
-        Require(munlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 1);
+        Require(munlock_nid_postfix(address, page * 2) == -1 && *__error_nid_postfix() == 12);
     }
+    *__error_nid_postfix() = 0;
+    Require(mlock_nid_postfix(mapped, std::numeric_limits<std::size_t>::max()) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(mlock_nid_postfix(reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1 && *__error_nid_postfix() == 22);
 
     *__error_nid_postfix() = untouched;
     Require(sceKernelMunlockall_nid_postfix() == 0);

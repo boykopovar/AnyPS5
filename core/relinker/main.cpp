@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <string>
 #include <utility>
@@ -142,9 +143,7 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
-                           std::filesystem::path& firstPath, std::filesystem::path& secondPath, const bool probeAliases) {
-    if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
-    if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
+                           const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
     if (!probeAliases) return false;
@@ -178,6 +177,22 @@ bool SameOutputDestination(const std::filesystem::path& first, const std::filesy
     }
 #endif
     return false;
+}
+
+bool OutputPathsCollide(const std::filesystem::path& first, const std::filesystem::path& second,
+                        const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
+    if (SameOutputDestination(first, second, firstPath, secondPath, probeAliases))
+        return true;
+
+    const auto firstDepth = std::distance(firstPath.begin(), firstPath.end());
+    const auto secondDepth = std::distance(secondPath.begin(), secondPath.end());
+    if (firstDepth == secondDepth)
+        return false;
+    const auto& possibleDirectory = firstDepth < secondDepth ? firstPath : secondPath;
+    auto ancestor = firstDepth < secondDepth ? secondPath : firstPath;
+    for (auto depth = std::max(firstDepth, secondDepth); depth > std::min(firstDepth, secondDepth); --depth)
+        ancestor = ancestor.parent_path();
+    return SameOutputDestination(possibleDirectory, ancestor, possibleDirectory, ancestor, probeAliases);
 }
 
 std::string ReadText(const std::string& path) {
@@ -450,10 +465,11 @@ int Run(const int argc, char* argv[]) {
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             if (!args.dryRun && std::filesystem::is_fifo(outputPaths[index]))
                 throw Domain::RelinkerException("Output is a FIFO: " + Io::Utf8Path(outputPaths[index]));
+            canonicalOutputPaths[index] = std::filesystem::weakly_canonical(outputPaths[index]);
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
+                if (OutputPathsCollide(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }

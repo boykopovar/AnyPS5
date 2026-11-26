@@ -27,7 +27,7 @@ void reject(TAction action) {
     throw std::runtime_error("Invalid conversion was accepted");
 }
 
-std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::string& soname = {}) {
+std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::string& soname = {}, const std::string& moduleName = {}) {
     std::vector<std::uint8_t> bytes(0x3000);
     const std::array<std::uint8_t, 7> magic{0x7f, 'E', 'L', 'F', 2, 1, 1};
     std::copy(magic.begin(), magic.end(), bytes.begin());
@@ -56,7 +56,8 @@ std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::str
     for (std::size_t index = 3; index < 8; ++index) header(index, 0x6fffff01, 0, 0, 0);
     bytes[0x1000] = 0xc3;
     const std::size_t sonameOffset = needed.empty() ? 1 : needed.size() + 2;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, soname.empty() ? sonameOffset : sonameOffset + soname.size() + 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
+    const std::size_t moduleNameOffset = soname.empty() ? sonameOffset : sonameOffset + soname.size() + 1;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, moduleName.empty() ? moduleNameOffset : moduleNameOffset + moduleName.size() + 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
     if (!needed.empty()) {
         std::copy(needed.begin(), needed.end(), bytes.begin() + 0x2601);
         tags.push_back({1, 1});
@@ -64,6 +65,10 @@ std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::str
     if (!soname.empty()) {
         std::copy(soname.begin(), soname.end(), bytes.begin() + 0x2600 + static_cast<std::ptrdiff_t>(sonameOffset));
         tags.push_back({14, sonameOffset});
+    }
+    if (!moduleName.empty()) {
+        std::copy(moduleName.begin(), moduleName.end(), bytes.begin() + 0x2600 + static_cast<std::ptrdiff_t>(moduleNameOffset));
+        tags.push_back({0x6100000d, (std::uint64_t{1} << 48) | moduleNameOffset});
     }
     tags.push_back({0, 0});
     header(2, 2, 6, 0x2000, tags.size() * 16);
@@ -153,6 +158,25 @@ void backupCopies() {
     source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx.esbak", fixture({}, "libSceFaceOld.prx")});
     const auto output = Relinker::Conversion(progress).Convert(std::move(source), {});
     require(output.Modules.size() == 2 && progress.Messages.find("Skipping backup copy") == std::string::npos, "A module with another SONAME was skipped as a backup copy");
+    for (const auto target : {Relinker::TargetSystem::Windows, Relinker::TargetSystem::Linux}) {
+        TestProgress unnamed;
+        Relinker::ConversionOptions options;
+        options.Target = target;
+        auto modules = input();
+        modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx", fixture({}, {}, "libSceJobManager")});
+        modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx.esbak", fixture({}, {}, "libSceJobManager")});
+        const auto converted = Relinker::Conversion(unnamed).Convert(std::move(modules), options);
+        require(converted.Modules.size() == 1 && converted.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/libSceJobManager.prx.guest.prx", "A backup copy without a SONAME was converted");
+        require(unnamed.Messages.find("Skipping backup copy: sce_module/libSceJobManager.prx.esbak (same module names as sce_module/libSceJobManager.prx)\n") != std::string::npos, "A skipped backup copy without a SONAME was not reported");
+    }
+    TestProgress other;
+    auto modules = input();
+    modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx", fixture({}, {}, "libSceJobManager")});
+    modules.Modules.push_back({"virtual/title/sce_module/libSceJobManager.prx.esbak", fixture({}, {}, "libSceJobManagerOld")});
+    modules.Modules.push_back({"virtual/title/sce_module/plugin.prx", fixture()});
+    modules.Modules.push_back({"virtual/title/sce_module/plugin.prx.esbak", fixture()});
+    const auto kept = Relinker::Conversion(other).Convert(std::move(modules), {});
+    require(kept.Modules.size() == 4 && other.Messages.find("Skipping backup copy") == std::string::npos, "A module without a SONAME was skipped as a backup copy of a module with other or no module names");
 }
 
 void runtimeLifecyclePolicy() {
@@ -314,6 +338,34 @@ void branchAcrossSignedBoundary() {
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
     require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
     require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
+}
+
+void fsAccessAfterLongZeroPadding() {
+    constexpr std::uint64_t base = 0x1000;
+    const std::array<std::uint8_t, 9> fsRead{0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const auto collect = [&](std::size_t padding) {
+        std::vector<std::uint8_t> image(64 + 0x80, 0xcc);
+        const std::size_t entry = 64 + 0x10;
+        image[entry] = 0xc3;
+        std::fill_n(image.begin() + static_cast<std::ptrdiff_t>(entry + 1), padding, std::uint8_t{0});
+        const auto function = entry + 1 + padding;
+        std::copy(fsRead.begin(), fsRead.end(), image.begin() + static_cast<std::ptrdiff_t>(function));
+        image[function + fsRead.size()] = 0xc3;
+        Io::WriteU64(image, 24, base + 0x10);
+        Domain::ProgramHeader header{};
+        header.Type = 1;
+        header.Flags = 1;
+        header.Offset = 64;
+        header.MappedAddress = base;
+        header.FileSize = image.size() - 64;
+        header.MemorySize = header.FileSize;
+        const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
+        return std::binary_search(instructions.begin(), instructions.end(), base + (function - 64));
+    };
+    require(collect(15), "Lost an FS access after zero padding up to the next 16-byte boundary");
+    require(collect(31), "Lost an FS access after zero padding that crosses a 16-byte boundary");
+    require(collect(47), "Lost an FS access after zero padding that crosses two 16-byte boundaries");
+    require(!collect(79), "Took a zero run longer than function padding for padding");
 }
 
 class FailingProgress final : public Domain::IProgress {
@@ -610,6 +662,7 @@ int main() {
         fixedBase();
         scanning();
         branchAcrossSignedBoundary();
+        fsAccessAfterLongZeroPadding();
         diagnosticContext();
         cancellation();
         baseRelocations();
