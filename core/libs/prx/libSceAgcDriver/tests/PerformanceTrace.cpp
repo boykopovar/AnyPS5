@@ -384,6 +384,9 @@ void SummaryFields() {
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
     Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"encoder\":{\"posts\":0,\"commands\":0,\"waits\":0,\"wait_ms_per_frame\":0.000},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto drained = threads;
+    drained[0].totals.push_back({"Driver.FinisherDrain", nullptr, milliseconds(4), 2});
+    Check(TraceFormat::Summary(summary, drained, presents).find("\"worker_busy_pct\":{\"queue worker 0x0\":45.000}") != std::string::npos, "the queue worker's waits for the draw finisher were not counted as busy");
     auto encoded = threads;
     encoded[0].totals.push_back({"Encoder.post", nullptr, {}, 3});
     encoded[1].totals.push_back({"Encoder.post", nullptr, {}, 2});
