@@ -380,7 +380,6 @@ int APS5_VABI _ZN6icu_6813UnicodeFilter7matchesERKNS_11ReplaceableERiia_nid_post
 int APS5_VABI _ZN6icu_6810UnicodeSet3addEii_nid_postfix();
 int APS5_VABI _ZN6icu_6813BreakIteratorD1Ev_nid_postfix();
 int APS5_VABI _ZN6icu_687unisets10chooseFromENS_13UnicodeStringENS0_3KeyES2__nid_postfix();
-int APS5_VABI _ZN6icu_68eqERKNS_11StringPieceES2__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_90djDyTuFX0_nid_no_patch();
 int APS5_VABI _ZN6icu_685Edits9copyArrayERKS0__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_91hioCaDqk8_nid_no_patch();
