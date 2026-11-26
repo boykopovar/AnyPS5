@@ -224,6 +224,10 @@ python3 tools/validate_patch_catalog.py --catalog <directory>
 
 The validator checks the index format, duplicate JSON keys, required and optional fields, relative patch and target paths, patch-file presence, TOML structure, target-hash coverage, and duplicate `id` entries that could match the same title build. Entries with the same `id` and content version may coexist when a shared target has different hashes, making their matches mutually exclusive. To publish a new `revision` for the same build, remove the old entry. An empty `entries` array is valid and reports `0 entries valid`.
 
+Use `--json` to get the per-entry results on stdout with `entries`, `total` and `invalid`. Each entry includes its
+one-based index, patch path when available, validation status and error. If the index cannot be read or validated,
+the JSON instead contains a top-level `error`.
+
 The validator reports each invalid entry and exits `2` if any entry is invalid; a valid catalog exits `0`. This is a structural check: the relinker accepts a stricter subset of TOML, and only `relinker --verify-patches` with the title files can establish whether the patch parses and matches those files. The validator does not read target files, download anything, or apply patches.
 
 The advisor reads `titleId` and `contentVersion` from the specified `param.json`, checks the SHA-256 of every file targeted by a candidate patch, then calls the relinker specified by `--relinker` to run `--verify-patches`. A relative path such as `--relinker ./relinker` resolves to that local file. The explicit metadata path also works when `param.json` and the unwrapped ELF files are stored separately. The catalog directory must contain an `index.json` with `format: 1` and an `entries` array. Each entry has `titleId`, `contentVersion`, a relative `patch` path, and `targets` mapping every patch target to its SHA-256. Hexadecimal digests are case-insensitive. For example:
