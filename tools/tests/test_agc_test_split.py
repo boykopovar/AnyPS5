@@ -152,6 +152,15 @@ class ArgumentTests(unittest.TestCase):
         with self.assertRaisesRegex(agc_test_split.SplitError, "line 1: unterminated bracket comment"):
             agc_test_split.commands("#[=[\nset(A hidden)\n")
 
+    def test_bracket_comment_can_start_on_the_previous_comments_closing_line(self):
+        text = "#[[first\n]] #[=[second]=] #[==[\nadd_test(NAME hidden COMMAND test)\n#]==] # ordinary #[[\nset(A visible)\n"
+        command, = agc_test_split.commands(text)
+        self.assertEqual((command.name, command.arguments, command.first), ("set", ["A", "visible"], 4))
+
+    def test_unterminated_second_bracket_comment_reports_its_opening_line(self):
+        with self.assertRaisesRegex(agc_test_split.SplitError, "line 2: unterminated bracket comment"):
+            agc_test_split.commands("#[[first\n]] #[=[\nset(A hidden)\n")
+
     def test_long_bracket_delimiters(self):
         equals = "=" * 40
         for prefix, expected in (("", ["A", "x y", "tail"]), ("#", ["A", "tail"])):
