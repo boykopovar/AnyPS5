@@ -1,6 +1,6 @@
 # Run report
 
-`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](https://github.com/boykopovar/AnyPS5/blob/main/docs/run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](https://github.com/boykopovar/AnyPS5/tree/main/docs/run-report-fixtures) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
 
 Print a readable summary of a report with:
 
