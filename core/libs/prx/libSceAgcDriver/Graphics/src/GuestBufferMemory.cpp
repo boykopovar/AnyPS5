@@ -3268,6 +3268,12 @@ std::shared_ptr<Buffer> snapshotCopy(const Context& context, std::uint64_t addre
 }
 
 struct UploadCopies {
+    struct SparseSpan {
+        std::uint64_t first;
+        std::uint64_t last;
+        std::uint64_t generation;
+    };
+    using Spans = std::vector<SparseSpan>;
     using Key = std::tuple<std::uint64_t, std::size_t, VkBufferUsageFlags>;
     using Pieces = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
     AgcDriver::Mutex mutex;
@@ -3276,6 +3282,7 @@ struct UploadCopies {
         std::shared_ptr<Buffer> buffer;
         std::uint64_t generation = 0;
         Pieces pieces;
+        std::shared_ptr<const Spans> sparseSpans;
         std::list<Key>::iterator recent;
     };
     std::map<Key, Entry> entries;
@@ -3349,9 +3356,94 @@ std::shared_ptr<Buffer> findUploaded(const Context& context, std::uint64_t begin
     return found->second.buffer;
 }
 
-void insertUploaded(const Context& context, std::uint64_t begin, const UploadCopies::Pieces& backed, std::size_t bytes, VkBufferUsageFlags usage, const std::shared_ptr<Buffer>& buffer, std::uint64_t generation) {
+void observeSparseSpans(const UploadCopies::Pieces& pieces, UploadCopies::Spans& spans) {
+    constexpr std::uint64_t blockBytes = 64 * 1024;
+    spans.clear();
+    for (const auto& [first, last] : pieces) {
+        const auto generation = GuestMemory::CollectWritesUncached(first, last - first);
+        if (generation || last - first <= blockBytes || !GuestMemory::WriteWatched()) {
+            spans.push_back({first, last, generation});
+            continue;
+        }
+        for (auto address = first; address < last;) {
+            const auto bytes = std::min(blockBytes - address % blockBytes, last - address);
+            const auto stamp = GuestMemory::CollectWritesUncached(address, bytes);
+            if (address != first && (spans.back().generation == 0) == (stamp == 0)) {
+                spans.back().last = address + bytes;
+                spans.back().generation = std::min(spans.back().generation, stamp);
+            } else {
+                spans.push_back({address, address + bytes, stamp});
+            }
+            address += bytes;
+        }
+    }
+}
+
+std::shared_ptr<Buffer> refreshSparseUpload(const Context& context, const UploadCopies::Key& key, const UploadCopies::Pieces& pieces, UploadCopies::Spans& spans) {
+    auto& copies = UploadCopyCache();
+    std::shared_ptr<Buffer> buffer;
+    bool exclusive = false;
+    {
+        std::lock_guard lock(copies.mutex);
+        if (copies.device != context.device) return nullptr;
+        const auto found = copies.entries.find(key);
+        if (found == copies.entries.end() || !found->second.sparseSpans || found->second.pieces != pieces) return nullptr;
+        spans = *found->second.sparseSpans;
+        exclusive = found->second.buffer.use_count() == 1;
+        buffer = found->second.buffer;
+        if (exclusive) {
+            copies.bytes -= std::get<1>(key);
+            copies.recency.erase(found->second.recent);
+            copies.entries.erase(found);
+        }
+    }
+
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
+    const auto target = buffer->Bytes();
+    const auto begin = std::get<0>(key);
+    const bool copyUntracked = exclusive && std::none_of(spans.begin(), spans.end(), [](const auto& span) { return span.generation != 0; });
+    if (!copyUntracked) {
+        for (const auto& [first, last] : pieces) {
+            GuestMemory::GuardRead(first, last - first);
+            GuestMemory::FlushGpuWrites(first, last - first);
+        }
+    }
+    std::size_t compared = 0, copied = 0, tracked = 0;
+    for (auto& [first, last, generation] : spans) {
+        const auto size = static_cast<std::size_t>(last - first);
+        const auto previous = generation;
+        if (copyUntracked) {
+            generation = GuestMemory::CollectWritesUncached(first, size);
+            GuestMemory::Read(first, target.subspan(first - begin, size));
+            copied += size;
+            continue;
+        }
+        generation = GuestMemory::CollectWritesUncached(first, size);
+        if (previous && generation && GuestMemory::UnchangedSince(first, size, previous)) {
+            tracked += size;
+            continue;
+        }
+        constexpr std::size_t refreshBytes = 256 * 1024;
+        for (auto address = first; address < last;) {
+            const auto count = exclusive ? std::min<std::uint64_t>(refreshBytes, last - address) : last - address;
+            const auto chunk = target.subspan(address - begin, count);
+            compared += count;
+            if (GuestMemory::CompareMapped(address, chunk) != GuestMemory::Compare::Equal) {
+                if (!exclusive) return nullptr;
+                GuestMemory::Read(address, chunk);
+                copied += count;
+            }
+            address += count;
+        }
+    }
+    static const bool trace = std::getenv("APS5_TRACE_BIGBUF") != nullptr;
+    if (trace) std::fprintf(stderr, "[sparse-refresh] begin=%llx bytes=%zu exclusive=%d tracked=%zu compared=%zu copied=%zu\n", static_cast<unsigned long long>(std::get<0>(key)), std::get<1>(key), exclusive, tracked, compared, copied);
+    return buffer;
+}
+
+void insertUploaded(const Context& context, std::uint64_t begin, const UploadCopies::Pieces& backed, std::size_t bytes, VkBufferUsageFlags usage, const std::shared_ptr<Buffer>& buffer, std::uint64_t generation, std::shared_ptr<const UploadCopies::Spans> sparseSpans = {}) {
     const auto budget = uploadCacheBudget();
-    if (budget == 0 || generation == 0 || bytes > budget) return;
+    if (budget == 0 || (!generation && !sparseSpans) || bytes > budget) return;
     auto& copies = UploadCopyCache();
     const UploadCopies::Key key{begin, bytes, usage};
     std::lock_guard lock(copies.mutex);
@@ -3368,7 +3460,7 @@ void insertUploaded(const Context& context, std::uint64_t begin, const UploadCop
         copies.recency.pop_front();
     }
     copies.recency.push_back(key);
-    copies.entries.emplace(key, UploadCopies::Entry{buffer, generation, backed, std::prev(copies.recency.end())});
+    copies.entries.emplace(key, UploadCopies::Entry{buffer, generation, backed, std::move(sparseSpans), std::prev(copies.recency.end())});
     copies.bytes += bytes;
 }
 
@@ -7520,6 +7612,18 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     } else if (written) {
         forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
     }
+    static const bool compareSparse = std::getenv("APS5_COMPARE_SPARSE_UPLOADS") != nullptr;
+    std::shared_ptr<UploadCopies::Spans> sparseSpans;
+    if (compareSparse && cacheable && !addressable && region.sparse && !region.backed.empty() && !uploadGeneration && allocated <= uploadCacheBudget()) {
+        sparseSpans = std::make_shared<UploadCopies::Spans>();
+        if (auto cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans)) {
+            region.buffer = std::move(cached);
+            region.snapshot.clear();
+            insertUploaded(context, region.begin, region.backed, allocated, usage, region.buffer, 0, std::move(sparseSpans));
+            return;
+        }
+        observeSparseSpans(region.backed, *sparseSpans);
+    }
     // A buffer made by UploadPrepare for a GPU copy that fell back here (its import went) is kept.
     const bool shared = region.buffer == nullptr && !region.hostBacked && !region.writable && !region.sparse && region.bufferEnd == 0 && region.snapshot.size() == bytes;
     if (shared) region.buffer = snapshotCopy(context, region.begin, region.snapshot, usage);
@@ -7555,6 +7659,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         if (!shared) std::memcpy(region.buffer->Bytes().data(), region.snapshot.data(), region.snapshot.size());
         readBytes += region.snapshot.size();
     }
+    if (sparseSpans) insertUploaded(context, region.begin, region.backed, allocated, usage, region.buffer, 0, std::move(sparseSpans));
     region.snapshot.clear();
     if (uploadGeneration != 0 && uploadUnchanged(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), uploadGeneration)) insertUploaded(context, region.begin, region.backed, static_cast<std::size_t>(allocated), usage, region.buffer, uploadGeneration);
     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
