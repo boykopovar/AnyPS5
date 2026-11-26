@@ -292,11 +292,6 @@ LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, Li
     return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, "TRUSTED CERTIFICATE", __func__);
 }
 
-int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI PKCS12_PBE_add_nid_postfix(void) {}
 
 void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12) {
