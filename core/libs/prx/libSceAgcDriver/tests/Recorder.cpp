@@ -2007,9 +2007,21 @@ void completionWaitTests(const Device& device, Recorder& recorder) {
     Require(memory[1] == 9u && Recorder::PendingCompletionLabels() == 0, "completion wait: a reader of a label stored behind a completion did not wait for that store");
 }
 
+class ReplayEncoding {
+public:
+    ReplayEncoding() : configured(RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder)) { RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false); }
+    ReplayEncoding(const ReplayEncoding&) = delete;
+    ReplayEncoding& operator=(const ReplayEncoding&) = delete;
+    ~ReplayEncoding() { RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, configured); }
+
+private:
+    bool configured;
+};
+
 template<typename Lock>
 void encoderFailureFollowsTheBatchTests(const Device& device, Recorder& recorder, Lock& gpu) {
     if (!recorder.Encodes()) return;
+    const ReplayEncoding replay;
     struct AlwaysHandOff {
         bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
         AlwaysHandOff() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, true); }
@@ -14219,6 +14231,7 @@ void encoderPoolConstructionFailureTests(const Device& device) {
 
 void encoderPassEndSiteTests(const Device& device) {
     if (!CommandEncoder::Enabled() || !device.Graphics()) return;
+    const ReplayEncoding replay;
     auto context = device.GetContext();
     DeviceFunctions table;
     FillDeviceFunctions(context, table);
@@ -14265,6 +14278,7 @@ std::uint64_t encoderWaits(const Recorder& recorder) {
 }
 
 SegmentRun encodedSegmentRun(const Device& device, bool quiesced) {
+    const ReplayEncoding replay;
     auto context = device.GetContext();
     DeviceFunctions table;
     FillDeviceFunctions(context, table);
@@ -14986,6 +15000,7 @@ void graphicsStateTests(const Device& device) {
 }
 
 void encodedSegmentCountTest(const Device& device, bool queriesHooked) {
+    const ReplayEncoding replay;
     const auto& context = device.GetContext();
     DeviceFunctions table{};
     FillDeviceFunctions(context, table);
@@ -15025,6 +15040,7 @@ VKAPI_ATTR void VKAPI_CALL CountEndQuery(VkCommandBuffer commands, VkQueryPool p
 }
 
 void encodedSegmentFailureTest(const Device& device) {
+    const ReplayEncoding replay;
     const auto& context = device.GetContext();
     DeviceFunctions table{};
     FillDeviceFunctions(context, table);
@@ -19663,6 +19679,7 @@ void smallElementDetileTests(Device& device) {
 }
 
 int main(int argc, char** argv) {
+    const bool recordedInline = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder);
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
         std::cout.flush();
@@ -19877,7 +19894,6 @@ int main(int argc, char** argv) {
             }
             device.UsePushDescriptors();
         }
-        RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, false);
         Recorder recorder(device.GetContext(), false, argc == 1 ? device.UseFunctionTable() : nullptr, device.GetContext().queueFamily);
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
@@ -20508,9 +20524,10 @@ int main(int argc, char** argv) {
         encoderRuntimeSwitchTests(device, recorder);
         encoderSlotFallbackTests(device);
         recorder.Activate();
+        const auto commandsBefore = recorder.EncoderCounts().commands;
         const bool drew = vertexTargetRangeTests(device, recorder, false);
         Require(recorder.Encodes() == CommandEncoder::Enabled(), "the recorder suite's recorder did not follow APS5_RECORD_INLINE");
-        Require(!recorder.Encodes() || !drew || recorder.EncoderCounts().commands != 0, "the recorder suite drew but recorded no command through the encoder");
+        Require(!recorder.Encodes() || !drew || (recorder.EncoderCounts().commands != commandsBefore) != recordedInline, recordedInline ? "the recorder suite drew with APS5_NO_RECORD_ENCODER set but recorded commands through the encoder" : "the recorder suite drew but recorded no command through the encoder");
         std::cout << "encoder recorded " << recorder.EncoderCounts().commands << " commands\n";
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
