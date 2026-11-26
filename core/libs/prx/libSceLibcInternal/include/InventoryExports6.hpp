@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
+#include <cstdint>
 
 extern "C" {
 
@@ -22,7 +23,7 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7seekoffElNSt5_IosbIiE8_S
 void APS5_VABI _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix();
 int APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix();
-int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix();
+void APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE5imbueERKSt6locale_nid_postfix();
 int APS5_VABI sceLibcPafMspaceGetFooterValue_nid_postfix();
 int APS5_VABI sceLibcInternalMemoryGetWakeAddr_nid_postfix();
@@ -32,11 +33,11 @@ void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC1EPKcm_nid_postfix();
 int APS5_VABI malloc_check_memory_bounds_nid_postfix();
-int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE4_PutES3_St22_String_const_iteratorISt11_String_valISt13_Simple_typesIwEEEm_nid_postfix();
+GuestLocale::OutputIterator APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE4_PutES3_St22_String_const_iteratorISt11_String_valISt13_Simple_typesIwEEEm_nid_postfix(GuestLocale::OutputIterator out, const std::uint16_t* source, std::size_t count);
 void APS5_VABI _ZNSt8messagesIcED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt10moneypunctIwLb1EEC2ERKSt8_Locinfomb_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE5uflowEv_nid_postfix();
-int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
+std::size_t APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 int APS5_VABI sceLibcInternalMemoryMutexEnable_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE4syncEv_nid_postfix(void* self);
 void APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7_UnlockEv_nid_postfix(void* self);
@@ -53,7 +54,7 @@ void APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch(void* self);
 void APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt6_WinitD1Ev_nid_postfix(void* self);
 int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collvec);
-int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix();
+void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
 int APS5_VABI _ZNSt8numpunctIcEC2ERKSt8_Locinfomb_nid_postfix();
 
 }

@@ -8,6 +8,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <vector>
 #include <type_traits>
 #ifdef _WIN32
 #include <windows.h>
@@ -199,6 +202,146 @@ void CheckPutString(const char* export_name, const TVtable& base, const TVtable&
     }
 }
 
+struct WideTestStreambuf {
+    GuestLocale::Streambuf buffer;
+    std::vector<std::uint16_t> overflowed;
+    int capacity;
+    int overflowCalls;
+};
+
+int APS5_VABI WideTestOverflow(GuestLocale::Streambuf* self, int character) {
+    auto* stream = reinterpret_cast<WideTestStreambuf*>(self);
+    ++stream->overflowCalls;
+    if (static_cast<int>(stream->overflowed.size()) >= stream->capacity) return -1;
+    stream->overflowed.push_back(static_cast<std::uint16_t>(character));
+    return character;
+}
+
+const GuestLocale::StreambufVtable g_wideStreambufVtable{{}, WideTestOverflow};
+
+using WidePutHelper = GuestLocale::OutputIterator (APS5_VABI*)(GuestLocale::OutputIterator, const std::uint16_t*, std::size_t);
+constexpr const char* kWidePutHelper = "_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE4_PutES3_St22_String_const_iteratorISt11_String_valISt13_Simple_typesIwEEEm_nid_postfix";
+
+void CheckWidePutHelperBuffered() {
+    const auto put = Export<WidePutHelper>(kWidePutHelper);
+    std::uint16_t storage[4]{};
+    char* next = reinterpret_cast<char*>(storage);
+    char* end = reinterpret_cast<char*>(storage + 3);
+    WideTestStreambuf stream{{&g_wideStreambufVtable, {}, &next, {}, &end}, {}, 8, 0};
+    const std::uint16_t source[] = {0x20ac, 0x0031, 0xffe5, 0x0032, 0x00a4};
+    const GuestLocale::OutputIterator result = put(GuestLocale::OutputIterator{false, &stream.buffer}, source, 5);
+    Require(!result.failed && result.buffer == &stream.buffer, "_Put returns the advanced iterator without failure");
+    Require(storage[0] == 0x20ac && storage[1] == 0x0031 && storage[2] == 0xffe5 && storage[3] == 0, "_Put fills the put area element by element");
+    Require(next == end, "_Put advances the put pointer to the end of the put area");
+    Require(stream.overflowed.size() == 2 && stream.overflowed[0] == 0x0032 && stream.overflowed[1] == 0x00a4, "_Put hands the remaining elements to overflow in order");
+}
+
+void CheckWidePutHelperEdges() {
+    const auto put = Export<WidePutHelper>(kWidePutHelper);
+    char* none = nullptr;
+    WideTestStreambuf stream{{&g_wideStreambufVtable, {}, &none, {}, &none}, {}, 1, 0};
+    const std::uint16_t source[] = {0x0041, 0x0042, 0x0043};
+    GuestLocale::OutputIterator result = put(GuestLocale::OutputIterator{false, &stream.buffer}, source, 0);
+    Require(!result.failed && stream.overflowed.empty(), "_Put with a zero count writes nothing");
+    result = put(GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, 0);
+    Require(!result.failed, "_Put accepts a null source for a zero count");
+    result = put(GuestLocale::OutputIterator{false, &stream.buffer}, source, 3);
+    Require(result.failed, "_Put marks the iterator failed when overflow rejects an element");
+    Require(stream.overflowed.size() == 1 && stream.overflowed[0] == 0x0041, "_Put keeps the accepted prefix");
+    Require(stream.overflowCalls == 2, "_Put stops calling overflow once writing fails");
+    std::uint16_t untouched[2]{};
+    char* failedNext = reinterpret_cast<char*>(untouched);
+    char* failedEnd = reinterpret_cast<char*>(untouched + 2);
+    WideTestStreambuf failedStream{{&g_wideStreambufVtable, {}, &failedNext, {}, &failedEnd}, {}, 8, 0};
+    result = put(GuestLocale::OutputIterator{true, &failedStream.buffer}, source, 3);
+    Require(result.failed && untouched[0] == 0 && untouched[1] == 0 && failedNext == reinterpret_cast<char*>(untouched) && failedStream.overflowCalls == 0, "_Put does not write through an already failed iterator");
+    result = put(GuestLocale::OutputIterator{false, nullptr}, source, 2);
+    Require(result.failed && result.buffer == nullptr, "_Put marks an iterator without a stream buffer failed");
+    std::uint16_t singleSlotStorage[2]{};
+    char* validSlot = reinterpret_cast<char*>(singleSlotStorage);
+    char* nullSlot = nullptr;
+    WideTestStreambuf nullEndValue{{&g_wideStreambufVtable, {}, &validSlot, {}, &nullSlot}, {}, 2, 0};
+    result = put(GuestLocale::OutputIterator{false, &nullEndValue.buffer}, source, 1);
+    Require(!result.failed && nullEndValue.overflowCalls == 1 && nullEndValue.overflowed.size() == 1 && nullEndValue.overflowed[0] == 0x0041,
+            "_Put falls back to overflow when only putEnd holds null");
+    WideTestStreambuf nullNextValue{{&g_wideStreambufVtable, {}, &nullSlot, {}, &validSlot}, {}, 2, 0};
+    result = put(GuestLocale::OutputIterator{false, &nullNextValue.buffer}, source, 1);
+    Require(!result.failed && nullNextValue.overflowCalls == 1 && nullNextValue.overflowed.size() == 1 && nullNextValue.overflowed[0] == 0x0041,
+            "_Put falls back to overflow when only putNext holds null");
+    bool threw = false;
+    try {
+        put(GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, 1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "_Put rejects a null source with a nonzero count");
+}
+
+void CheckWideFacetLifecycle(GuestLocale::Facet& facet, std::uint32_t references) {
+    Require(facet.vtable != nullptr && facet.references == references && facet.reserved == 0, "constructor installs the vtable and reference count");
+    facet.vtable->retain(&facet);
+    Require(facet.references == references + 1, "retain increments the reference count");
+    Require(facet.vtable->release(&facet) == nullptr && facet.references == references, "release decrements without handing the facet back");
+    facet.vtable->destroy(&facet);
+}
+
+void CheckWideMoneyGetConstruction() {
+    using Constructor = void (APS5_VABI*)(GuestLocale::Facet*, std::size_t);
+    using Getcat = std::size_t (APS5_VABI*)(GuestLocale::Facet**, const GuestLocale::Implementation* const*);
+    const auto construct = Export<Constructor>("_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix");
+    const auto getcat = Export<Getcat>("_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix");
+    GuestLocale::Facet facet{&g_testFacet, 9, 7};
+    construct(&facet, 3);
+    CheckWideFacetLifecycle(facet, 3);
+    const auto* vtable = reinterpret_cast<const GuestLocale::WideMoneyGetVtable*>(facet.vtable);
+    Require(vtable->getLongDouble != nullptr && vtable->getString != nullptr, "money_get<wchar_t> vtable has both do_get slots");
+    Require(getcat(nullptr, nullptr) == 3, "_Getcat reports the monetary category without a facet slot");
+    GuestLocale::Facet existing{&g_testFacet, 1, 0};
+    GuestLocale::Facet* slot = &existing;
+    Require(getcat(&slot, nullptr) == 3 && slot == &existing, "_Getcat keeps an already constructed facet");
+    slot = nullptr;
+    Require(getcat(&slot, nullptr) == 3 && slot != nullptr, "_Getcat constructs a facet into an empty slot");
+    Require(slot->vtable == facet.vtable && slot->references == 0, "_Getcat constructs the facet with a zero reference count");
+    slot->vtable->deleteObject(slot);
+    bool threw = false;
+    try {
+        construct(nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "money_get<wchar_t> constructor rejects a null object");
+}
+
+void CheckWideMoneyPutConstruction() {
+    using Constructor = void (APS5_VABI*)(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*, std::size_t);
+    const auto construct = Export<Constructor>("_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix");
+    GuestLocale::LocinfoStorage info{};
+    GuestLocale::Facet facet{&g_testFacet, 9, 7};
+    construct(&facet, &info, 5);
+    CheckWideFacetLifecycle(facet, 5);
+    const auto* vtable = reinterpret_cast<const GuestLocale::WideMoneyPutVtable*>(facet.vtable);
+    Require(vtable->putLongDouble != nullptr && vtable->putString != nullptr, "money_put<wchar_t> vtable has both do_put slots");
+    auto* allocated = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+    construct(allocated, &info, 0);
+    Require(allocated->vtable->release(allocated) == nullptr, "release of an unreferenced facet does not hand it back");
+    allocated->references = 1;
+    Require(allocated->vtable->release(allocated) == allocated, "release of the last reference hands the facet back");
+    allocated->vtable->deleteObject(allocated);
+    bool threwObject = false;
+    try {
+        construct(nullptr, &info, 0);
+    } catch (const std::invalid_argument&) {
+        threwObject = true;
+    }
+    bool threwInfo = false;
+    try {
+        construct(&facet, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threwInfo = true;
+    }
+    Require(threwObject && threwInfo, "money_put<wchar_t> constructor rejects a null object or _Locinfo");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -227,6 +370,11 @@ int main(int argc, char** argv) {
     CheckPutString<char, GuestLocale::String>("_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix", g_charPut, g_charPutDerived, static_cast<char>(0xa4));
     CheckPutLongDouble<std::uint16_t>("_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix", g_widePut, g_widePutDerived, 0x20ac);
     CheckPutString<std::uint16_t, void>("_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewRKSbIwS2_SaIwEE_nid_postfix", g_widePut, g_widePutDerived, 0xffe5);
+
+    CheckWidePutHelperBuffered();
+    CheckWidePutHelperEdges();
+    CheckWideMoneyGetConstruction();
+    CheckWideMoneyPutConstruction();
 
     std::puts("libc internal money_get and money_put checks passed");
     return 0;

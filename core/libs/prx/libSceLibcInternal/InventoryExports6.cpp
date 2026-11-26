@@ -239,11 +239,6 @@ void APS5_VABI sceLibcInternalUnknown6_071_CiD6mBPDZrA_nid_no_patch(void* self) 
 }
 APS5_EXPORT("CiD6-BPDZrA", sceLibcInternalUnknown6_071_CiD6mBPDZrA_nid_no_patch);
 
-int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE5imbueERKSt6locale_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -348,11 +343,6 @@ int APS5_VABI malloc_check_memory_bounds_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE4_PutES3_St22_String_const_iteratorISt11_String_valISt13_Simple_typesIwEEEm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI _ZNSt8messagesIcED0Ev_nid_postfix(void* self) {
     _ZdlPv_nid_postfix(self);
 }
@@ -388,11 +378,6 @@ int APS5_VABI sceLibcInternalUnknown6_113_SlG1FNmy0N0_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("SlG1FN-y0N0", sceLibcInternalUnknown6_113_SlG1FNmy0N0_nid_no_patch);
-
-int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceLibcInternalMemoryMutexEnable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -460,11 +445,6 @@ void APS5_VABI sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch(void* self) 
     (void)self;
 }
 APS5_EXPORT("zkCx9c2QKBc", sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch);
-
-int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZNSt8numpunctIcEC2ERKSt8_Locinfomb_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
