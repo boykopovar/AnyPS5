@@ -5,27 +5,8 @@
 #include <cstring>
 #include <limits>
 
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
-
-extern "C" {
-int APS5_VABI sceNpTrophy2SystemCreateHandle(int* handle);
-int APS5_VABI sceNpTrophy2SystemDestroyHandle(int handle);
-int APS5_VABI sceNpTrophy2SystemAbortHandle(int handle);
-int APS5_VABI sceNpTrophy2SystemCreateContext(int* context, int userId, const void* npCommId, std::uint64_t options);
-int APS5_VABI sceNpTrophy2SystemDestroyContext(int context);
-int APS5_VABI sceNpTrophy2SystemCheckCallback(void);
-int APS5_VABI sceNpTrophy2SystemRegisterTitleUpdateCallback(void* callback, void* userdata);
-int APS5_VABI sceNpTrophy2SystemUnregisterTitleUpdateCallback(void);
-int APS5_VABI sceNpTrophy2SystemRegisterTitleSyncedCallback(void* callback, void* userdata);
-int APS5_VABI sceNpTrophy2SystemUnregisterTitleSyncedCallback(void);
-int APS5_VABI sceNpTrophy2SystemIsServerAvailable(bool* available);
-int APS5_VABI sceNpTrophy2SystemBuildTitleIconUri(const void* npCommId, char* uriBuf, std::size_t bufSize);
-int APS5_VABI sceNpTrophy2SystemBuildGroupIconUri(const void* npCommId, int groupId, char* uriBuf, std::size_t bufSize);
-int APS5_VABI sceNpTrophy2SystemBuildTrophyIconUri(const void* npCommId, int trophyId, char* uriBuf, std::size_t bufSize);
-int APS5_VABI sceNpTrophy2SystemBuildRewardIconUri(const void* npCommId, int rewardId, char* uriBuf, std::size_t bufSize);
-int APS5_VABI sceNpTrophy2SystemBuildBgImageIconUri(const void* npCommId, int bgImageId, char* uriBuf, std::size_t bufSize);
-}
 
 namespace {
 

@@ -5,29 +5,34 @@
 
 extern "C" {
 
-int APS5_VABI sceNpTrophy2SystemAbortHandle(void);
-int APS5_VABI sceNpTrophy2SystemBuildGroupIconUri(void);
-int APS5_VABI sceNpTrophy2SystemBuildRewardIconUri(void);
-int APS5_VABI sceNpTrophy2SystemBuildTrophyIconUri(void);
+int APS5_VABI sceNpTrophy2SystemAbortHandle(int handle);
+int APS5_VABI sceNpTrophy2SystemBuildBgImageIconUri(const void* npCommId, int bgImageId, char* uriBuf, size_t bufSize);
+int APS5_VABI sceNpTrophy2SystemBuildGroupIconUri(const void* npCommId, int groupId, char* uriBuf, size_t bufSize);
+int APS5_VABI sceNpTrophy2SystemBuildRewardIconUri(const void* npCommId, int rewardId, char* uriBuf, size_t bufSize);
+int APS5_VABI sceNpTrophy2SystemBuildTitleIconUri(const void* npCommId, char* uriBuf, size_t bufSize);
+int APS5_VABI sceNpTrophy2SystemBuildTrophyIconUri(const void* npCommId, int trophyId, char* uriBuf, size_t bufSize);
 int APS5_VABI sceNpTrophy2SystemCheckCallback(void);
 int APS5_VABI sceNpTrophy2SystemCheckNetSyncTitles(void);
-int APS5_VABI sceNpTrophy2SystemCreateContext(void);
-int APS5_VABI sceNpTrophy2SystemCreateHandle(void);
+int APS5_VABI sceNpTrophy2SystemCreateContext(int* context, int userId, const void* npCommId, uint64_t options);
+int APS5_VABI sceNpTrophy2SystemCreateHandle(int* handle);
 int APS5_VABI sceNpTrophy2SystemDebugLockTrophy(void);
 int APS5_VABI sceNpTrophy2SystemDebugUnlockTrophy(void);
-int APS5_VABI sceNpTrophy2SystemDestroyContext(void);
+int APS5_VABI sceNpTrophy2SystemDestroyContext(int context);
+int APS5_VABI sceNpTrophy2SystemDestroyHandle(int handle);
 int APS5_VABI sceNpTrophy2SystemGetTrophyDetails(void);
 int APS5_VABI sceNpTrophy2SystemGetTrophyGroupConf(void);
 int APS5_VABI sceNpTrophy2SystemGetTrophySetArray(void);
 int APS5_VABI sceNpTrophy2SystemGetTrophyTitleConf(void);
 int APS5_VABI sceNpTrophy2SystemGetTrophyTitleDetails(void);
 int APS5_VABI sceNpTrophy2SystemGetTrpIconByUri(void);
-int APS5_VABI sceNpTrophy2SystemIsServerAvailable(void);
-int APS5_VABI sceNpTrophy2SystemRegisterTitleSyncedCallback(void);
-int APS5_VABI sceNpTrophy2SystemRegisterTitleUpdateCallback(void);
+int APS5_VABI sceNpTrophy2SystemIsServerAvailable(bool* available);
+int APS5_VABI sceNpTrophy2SystemRegisterTitleSyncedCallback(void* callback, void* userdata);
+int APS5_VABI sceNpTrophy2SystemRegisterTitleUpdateCallback(void* callback, void* userdata);
 int APS5_VABI sceNpTrophy2SystemRemoveAll(void);
 int APS5_VABI sceNpTrophy2SystemRemoveTitleData(void);
 int APS5_VABI sceNpTrophy2SystemRemoveUserData(void);
+int APS5_VABI sceNpTrophy2SystemUnregisterTitleSyncedCallback(void);
+int APS5_VABI sceNpTrophy2SystemUnregisterTitleUpdateCallback(void);
 int APS5_VABI sceNpTrophy2CreateContext(int* context, int userId, uint32_t serviceLabel, uint64_t options);
 int APS5_VABI sceNpTrophy2DestroyContext(int context);
 int APS5_VABI sceNpTrophy2RegisterContext(int context, int handle, uint64_t options);

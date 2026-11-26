@@ -1,5 +1,7 @@
 #include "prx/libSceNpTrophy2/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpTrophy2/include/InventoryExports.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include <cstdint>
 #include <cstddef>
