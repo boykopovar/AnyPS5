@@ -5099,7 +5099,12 @@ std::uint64_t Recorder::Seal() {
     auto batch = sealOpen();
     if (batch == nullptr) return 0;
     const auto serial = batch->sealedSerial;
-    sealedBatches.push_back(std::move(batch));
+    try {
+        sealedBatches.push_back(std::move(batch));
+    } catch (...) {
+        unqueued(std::move(batch), std::current_exception());
+        throw;
+    }
     return serial;
 }
 
