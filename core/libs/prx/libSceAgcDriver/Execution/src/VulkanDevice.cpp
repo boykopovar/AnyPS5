@@ -6470,10 +6470,14 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.MarkCovered(dispatchedAccess);
     }
     recordStep(PhaseRecordBind);
-    if (record.htileClear.has_value()) Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
+    const auto htileDispatch = record.htileClear.has_value() ? std::make_shared<Graphics::HtileClearDispatch>() : nullptr;
+    if (record.htileClear.has_value()) {
+        const auto htileClear = *record.htileClear;
+        recorder.ChangeUndoneOnDiscard([htileClear] { Graphics::ArmHtileDepthClear(htileClear.first, htileClear.second); }, [htileClear, htileDispatch] { Graphics::DiscardHtileDepthClear(*htileDispatch, htileClear.first, htileClear.second); });
+    }
     resources.MarkGpuWrites(recorder);
     if (record.htileClear.has_value()) {
-        Graphics::QueueHtileDepthClear(record.htileClear->first, record.htileClear->second);
+        Graphics::QueueHtileDepthClear(*htileDispatch, record.htileClear->first, record.htileClear->second);
         recorder.NotePendingWrite(record.htileClear->first, record.htileClear->second);
     }
     recordStep(PhaseRecordMarks);
@@ -6482,20 +6486,21 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const bool completionNeeded = resources.NeedsCompletion() || record.htileClear.has_value();
     if (completionNeeded && resources.Reusable()) {
         auto kept = record.resources;
-        recorder.OnComplete([kept, htileClear = record.htileClear] {
+        recorder.OnComplete([kept, htileClear = record.htileClear, htileDispatch] {
             kept->CheckFaults();
-            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
+            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(*htileDispatch, htileClear->first, htileClear->second);
         });
     } else if (completionNeeded) {
         // Listed for DispatchIndirect until the write-back ran (a non-reusable object, so once).
         auto writers = state->copiedWriters;
         auto kept = record.resources;
-        recorder.OnComplete([kept, writers, htileClear = record.htileClear] {
+        recorder.OnComplete([kept, writers, htileClear = record.htileClear, htileDispatch] {
             // Delisted before the write-back: one that fails must not keep indirect dispatches on the CPU.
             writers->erase(std::remove(writers->begin(), writers->end(), kept), writers->end());
             kept->WriteBackBuffers();
-            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
+            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(*htileDispatch, htileClear->first, htileClear->second);
         });
+        recorder.OnDiscard([kept, writers] { writers->erase(std::remove(writers->begin(), writers->end(), kept), writers->end()); });
         // Listed after the registration: a throw there leaves nothing that would pin the CPU path forever.
         if (resources.HasCopiedWrites()) writers->push_back(kept);
     }

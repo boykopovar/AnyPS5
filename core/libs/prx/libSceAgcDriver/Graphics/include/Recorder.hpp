@@ -24,6 +24,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <string>
@@ -290,6 +291,8 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    void OnDiscard(std::function<void()> action);
+    void ChangeUndoneOnDiscard(const std::function<void()>& change, std::function<void()> undo);
     void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
@@ -423,6 +426,7 @@ public:
         std::uint64_t recordedAtOnce;
         std::uint64_t segments;
         std::uint64_t folds;
+        std::uint64_t capacityFolds;
     };
     static SampleDumpStatistics SampleDumpCounts();
     struct QueuedWrite {
@@ -566,6 +570,7 @@ public:
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
     static void FailNextSubmitsForTest(unsigned count);
+    static void FailNextDiscardRegistrationsForTest(unsigned count);
     // Whether the lock-free pending-write snapshot (open, in-flight and finishing batches) overlaps
     // the range: false means no recorded work writes it, so a wait on it has nothing to submit.
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
@@ -827,6 +832,7 @@ private:
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
+        std::vector<std::function<void()>> discards;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::uint64_t> stampedNotes;

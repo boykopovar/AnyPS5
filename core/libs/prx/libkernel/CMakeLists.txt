@@ -3443,6 +3443,16 @@ if(BUILD_TESTING)
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_kernel_sysctl_kern_debug_nodes_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSysctlKernDebugNodes.cpp)
+    target_include_directories(guest_kernel_sysctl_kern_debug_nodes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_sysctl_kern_debug_nodes_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sysctl_kern_debug_nodes_tests)
+    add_test(NAME guest_kernel_sysctl_kern_debug_nodes COMMAND guest_kernel_sysctl_kern_debug_nodes_tests)
+    set_tests_properties(guest_kernel_sysctl_kern_debug_nodes PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sysctl_kern_debug_nodes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(host_performance_session_tests
         ${LIBS_INCLUDE_DIR}/tests/HostPerformanceSession.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp)

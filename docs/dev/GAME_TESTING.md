@@ -154,6 +154,11 @@ Each `runN/capture.json` records the capture state, original native summary, rep
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
 
+When reporting a capture, distinguish the [summary's measurements](BUILD.md#performance-trace):
+
+- Check `trace_dropped_threads` when `trace_dropped` is true. `events_lost` makes retained slice and wait inventories incomplete; `totals_full` makes that thread's phase totals incomplete. Event loss alone does not invalidate the separately accumulated phase totals. Report both states rather than treating a readable trace as complete.
+- Phase totals include nested scopes and aggregate threads that can run at the same time. Do not add them to derive exclusive frame cost. `worker_busy_pct` includes waits inside its measured scopes, so it does not establish OS thread CPU utilization. Preserve these limits when naming a suspected bottleneck.
+
 If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
 `tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.
 Each selector must match exactly one row.
