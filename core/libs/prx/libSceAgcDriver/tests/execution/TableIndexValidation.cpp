@@ -641,6 +641,10 @@ int main(int argc, char** argv) {
         const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 13> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"depth", &DepthPlane}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"rebound", &ReboundWithoutSnapshot}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
+            if (args.empty() && std::string_view(name) == "depth" && !AgcDriver::Graphics::ShaderResources::EpochProofs()) {
+                std::puts("table index validation: depth skipped, epoch proofs are off");
+                continue;
+            }
             run(*device);
             std::printf("table index validation: %s passed\n", name);
         }
