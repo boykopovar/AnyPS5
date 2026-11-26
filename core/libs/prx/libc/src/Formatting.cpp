@@ -118,7 +118,7 @@ bool HasGuestWideScan(const char* format) {
 }
 
 
-bool HasNarrowCharacterScan(const char* format) {
+bool HasNarrowScan(const char* format, const char* conversions) {
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -131,7 +131,8 @@ bool HasNarrowCharacterScan(const char* format) {
         while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
         const char* length = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
-        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format != '\0' && std::strchr(conversions, *format) != nullptr &&
+                (*format != 'c' || !(format - length == 1 && *length == 'l'))) return true;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
@@ -143,9 +144,13 @@ bool HasNarrowCharacterScan(const char* format) {
     return false;
 }
 
-#ifdef _WIN32
+#ifndef _WIN32
+bool HasNarrowCharacterScan(const char* format) {
+    return HasNarrowScan(format, "c");
+}
+#else
 bool ScansInProcess(const char* format) {
-    return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
+    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXip");
 }
 #endif
 
