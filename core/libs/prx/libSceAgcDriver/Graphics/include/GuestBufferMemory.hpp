@@ -685,6 +685,7 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
     std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> heapReadbacks;
+    std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> copyReadbacks;
     std::vector<std::uint64_t> evictedRanges;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;

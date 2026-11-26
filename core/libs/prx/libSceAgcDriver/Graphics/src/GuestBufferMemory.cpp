@@ -6638,6 +6638,14 @@ std::uint64_t gpuCopyLimit() {
     return limit;
 }
 
+std::uint64_t copyReadbackMinBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* value = std::getenv("APS5_COPY_READBACK_MIN_KIB");
+        return (value != nullptr ? std::strtoull(value, nullptr, 10) : 64ull) << 10u;
+    }();
+    return bytes;
+}
+
 bool changedCopyBacks(const Context& context) {
     static const bool disabled = std::getenv("APS5_NO_CHANGED_COPY_BACK") != nullptr;
     return !disabled && (context.pushDescriptors || context.bufferDeviceAddress);
@@ -8153,7 +8161,26 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
 }
 
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
-    if (!uploaded || committed) return;
+    static const bool traceBacks = std::getenv("APS5_TRACE_COPY_BACKS") != nullptr;
+    static std::mutex traceMutex;
+    static std::set<std::tuple<std::uint64_t, std::uint64_t, int>> traced;
+    const auto trace = [&](std::uint64_t begin, std::uint64_t end, int code, const Region* region, std::uint64_t aux) {
+        if (!traceBacks || end - begin < (1u << 20u)) return;
+        std::lock_guard lock(traceMutex);
+        if (!traced.emplace(begin, end, code).second) return;
+        if (region == nullptr) {
+            std::fprintf(stderr, "[copybacks] 0x%llx+0x%llx code=%d aux=0x%llx no owner\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), code, static_cast<unsigned long long>(aux));
+            return;
+        }
+        std::fprintf(stderr, "[copybacks] 0x%llx+0x%llx code=%d aux=0x%llx region 0x%llx+0x%llx direct=%d mirror=%d gpuCopy=%d buffer=%d writable=%d\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), code, static_cast<unsigned long long>(aux), static_cast<unsigned long long>(region->begin), static_cast<unsigned long long>(region->end - region->begin), region->direct != nullptr ? 1 : 0, region->mirror != nullptr ? 1 : 0, region->gpuCopy ? 1 : 0, region->buffer != nullptr ? 1 : 0, region->writable ? 1 : 0);
+    };
+    if (!uploaded || committed) {
+        if (traceBacks) {
+            std::lock_guard lock(traceMutex);
+            if (traced.emplace(0, 0, committed ? 101 : 100).second) std::fprintf(stderr, "[copybacks] early return uploaded=%d committed=%d\n", uploaded ? 1 : 0, committed ? 1 : 0);
+        }
+        return;
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     // The written ranges, merged: a V# bound twice would otherwise copy the same bytes twice.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
@@ -8171,23 +8198,45 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     }
     for (const auto& [begin, end] : merged) {
         const auto* found = owner(begin, end);
-        if (found == nullptr || found->mirror == nullptr || !found->mirror->heap || !found->mirror->writable || found->mirror->resident == nullptr) continue;
-        const auto& region = *found;
-        {
-            const auto from = begin;
-            const auto to = std::min(end, servedEnd(region));
-            if (from >= to || std::any_of(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == from; })) continue;
-            if (!recording) {
-                commands = recorder.Commands();
-                timing = recorder.BeginGpuTiming(StagingCopyBackKey);
-                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-                Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
-                recording = true;
-            }
-            heapReadbacks.emplace_back(from, region.mirror->resident->RecordReadback(commands, from, to - from));
-            recorder.Keep(heapReadbacks.back().second);
-            copiedBytes += to - from;
+        if (found == nullptr) {
+            trace(begin, end, 0, nullptr, 0);
+            continue;
         }
+        const auto& region = *found;
+        const bool heapMirror = region.mirror != nullptr && region.mirror->heap && region.mirror->writable && region.mirror->resident != nullptr;
+        const bool writableCopy = region.direct == nullptr && region.mirror == nullptr && !region.gpuCopy && region.buffer != nullptr && region.writable;
+        if (!heapMirror && !writableCopy) {
+            trace(begin, end, 1, &region, 0);
+            continue;
+        }
+        const auto from = begin;
+        const auto to = heapMirror ? std::min(end, servedEnd(region)) : std::min(end, region.bufferEnd != 0 ? region.bufferEnd : region.end);
+        if (from >= to || (writableCopy && to - from < copyReadbackMinBytes())) {
+            trace(begin, end, from >= to ? 2 : 3, &region, to);
+            continue;
+        }
+        auto& readbacks = heapMirror ? heapReadbacks : copyReadbacks;
+        if (std::any_of(readbacks.begin(), readbacks.end(), [&](const auto& entry) { return entry.first == from; })) {
+            trace(begin, end, 4, &region, 0);
+            continue;
+        }
+        if (!recording) {
+            commands = recorder.Commands();
+            timing = recorder.BeginGpuTiming(StagingCopyBackKey);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+            recording = true;
+        }
+        if (heapMirror) {
+            readbacks.emplace_back(from, region.mirror->resident->RecordReadback(commands, from, to - from));
+        } else {
+            auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(to - from), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            CopyBuffer(context, commands, region.buffer->Handle(), from - region.begin, staging->Handle(), 0, to - from);
+            readbacks.emplace_back(from, std::move(staging));
+        }
+        trace(begin, end, heapMirror ? 5 : 6, &region, to - from);
+        recorder.Keep(readbacks.back().second);
+        copiedBytes += to - from;
     }
     for (auto& region : regions) {
         if (!region.gpuCopy || region.copiedBack) continue;
@@ -8578,6 +8627,7 @@ void GuestBufferMemory::releaseHeapReferences() noexcept {
     for (auto& reference : heapReferences) ReferenceStorage::Shared().Return(std::move(reference.second));
     heapReferences.clear();
     heapReadbacks.clear();
+    copyReadbacks.clear();
 }
 
 namespace {
@@ -8772,11 +8822,14 @@ void GuestBufferMemory::WriteBack() {
         }
         Require(region.buffer != nullptr && region.writable && end <= region.end, "write-back range exceeds its GPU owner");
         static const bool traceBig = std::getenv("APS5_TRACE_BIGBUF") != nullptr;
-        if (traceBig && end - begin >= (1u << 20u)) std::fprintf(stderr, "[bigbuf] writeback 0x%llx+0x%llx sparse=%d\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), region.sparse ? 1 : 0);
+        const auto readback = std::find_if(copyReadbacks.begin(), copyReadbacks.end(), [&](const auto& entry) { return entry.first == begin; });
+        if (traceBig && end - begin >= (1u << 20u)) std::fprintf(stderr, "[bigbuf] writeback 0x%llx+0x%llx sparse=%d readback=%d\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), region.sparse ? 1 : 0, readback != copyReadbacks.end() ? 1 : 0);
         if (!region.sparse) {
             const auto first = static_cast<std::size_t>(begin - region.begin);
             const auto length = static_cast<std::size_t>(end - begin);
-            storeChanged(begin, region.buffer->Bytes().subspan(first, length), std::span<const std::byte>(region.uploaded).subspan(first, length), GuestMemory::WriteChangedKeepingGuest);
+            const auto current = readback != copyReadbacks.end() ? readback->second->Bytes() : region.buffer->Bytes().subspan(first, length);
+            Require(current.size() == length, "copy readback does not match its write-back");
+            storeChanged(begin, current, std::span<const std::byte>(region.uploaded).subspan(first, length), GuestMemory::WriteChangedKeepingGuest);
             continue;
         }
         std::size_t packed = 0;
@@ -8785,7 +8838,8 @@ void GuestBufferMemory::WriteBack() {
             const auto to = std::min(last, end);
             if (from < to) {
                 const auto length = static_cast<std::size_t>(to - from);
-                storeChanged(from, region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length), std::span<const std::byte>(region.uploaded).subspan(packed + static_cast<std::size_t>(from - first), length), GuestMemory::WriteChangedKeepingGuest);
+                const auto current = readback != copyReadbacks.end() ? readback->second->Bytes().subspan(static_cast<std::size_t>(from - begin), length) : region.buffer->Bytes().subspan(static_cast<std::size_t>(from - region.begin), length);
+                storeChanged(from, current, std::span<const std::byte>(region.uploaded).subspan(packed + static_cast<std::size_t>(from - first), length), GuestMemory::WriteChangedKeepingGuest);
             }
             packed += static_cast<std::size_t>(last - first);
         }
