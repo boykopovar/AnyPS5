@@ -20,9 +20,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <exception>
 #include <random>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -66,6 +69,8 @@ struct VariationExports {
     SetCoordinates varBlend;
     SetCoordinates varDesign;
 } variations;
+
+void AttachMetrics(void* library, void* dependency, bool patched);
 
 struct StrokerExports {
     decltype(&FT_Init_FreeType_nid_postfix) init;
@@ -527,6 +532,23 @@ void MultiMaster(decltype(&FT_Get_Multi_Master_nid_postfix) query) {
     Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release multi-master libraries");
 }
 
+void VariantSelectors(decltype(&FT_Face_GetCharsOfVariant_nid_postfix) getChars,
+                      decltype(&FT_Face_GetVariantSelectors_nid_postfix) getSelectors,
+                      decltype(&FT_Face_GetVariantsOfChar_nid_postfix) getVariants) {
+    Require(getChars(nullptr, 0xFE0F) == nullptr, "null face chars of variant");
+    Require(getSelectors(nullptr) == nullptr, "null face variant selectors");
+    Require(getVariants(nullptr, 'A') == nullptr, "null face variants of char");
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.init(&library) == 0, "init variant selectors library");
+    const auto font = SquareGlyphFont('A', 800);
+    Require(forwarded.newMemoryFace(library, font.data(), font.size(), 0, &face) == 0, "open font for variant selectors");
+    Require(getChars(face, 0xFE0F) == nullptr, "font chars of variant");
+    Require(getSelectors(face) == nullptr, "font variant selectors");
+    Require(getVariants(face, 'A') == nullptr, "font variants of char");
+    Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release variant selectors face and library");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -563,6 +585,44 @@ void Outlines() {
     copy.n_points = 8;
     Require(ot.copy(&outline, &copy) == FT_Err_Invalid_Argument, "copy size mismatch");
     Require(ot.copy(nullptr, &copy) == FT_Err_Invalid_Outline, "copy null source");
+}
+
+void CharVariantIsDefault(decltype(&FT_Face_GetCharVariantIsDefault_nid_postfix) query) {
+    auto cmap = FontFixture::Words({0, 2, 3, 1, 0, 20, 0, 5, 0, 52,
+        4, 32, 0, 4, 4, 1, 0, 'A', 0xFFFF, 0, 'A', 0xFFFF, 1 - 'A', 1, 0, 0});
+    constexpr std::array<unsigned char, 49> format14{
+        0, 14, 0, 0, 0, 49, 0, 0, 0, 2,
+        0, 0xFE, 0x0F, 0, 0, 0, 32, 0, 0, 0, 0,
+        0x0E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 40,
+        0, 0, 0, 1, 0, 0, 'A', 0,
+        0, 0, 0, 1, 0, 0, 'A', 0, 2
+    };
+    cmap.insert(cmap.end(), format14.begin(), format14.end());
+    const auto bytes = FontFixture::BuildFont(3, {{"cmap", cmap}});
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FreeType::GuestFaceRec* guest = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face native = nullptr;
+    Require(forwarded.init(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init selector libraries");
+    Require(forwarded.newMemoryFace(guestLibrary, bytes.data(), bytes.size(), 0, &guest) == 0, "open guest format 14 face");
+    Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), bytes.size(), 0, &native) == 0, "open native format 14 face");
+    Require(query(nullptr, 'A', 0xFE0F) == -1, "missing selector face");
+    const auto* selected = guest->charmap;
+    struct Case {
+        std::uint64_t character;
+        std::uint64_t selector;
+        int status;
+    };
+    constexpr Case cases[]{{'A', 0xFE0F, 1}, {'A', 0xE0100, 0}, {'B', 0xFE0F, -1}, {'A', 0xE0101, -1},
+                           {0x100000041ull, 0x1000E0100ull, 0}};
+    for (const auto& test : cases) {
+        const auto expected = FT_Face_GetCharVariantIsDefault(native, static_cast<std::uint32_t>(test.character),
+                                                             static_cast<std::uint32_t>(test.selector));
+        Require(expected == test.status && query(guest, test.character, test.selector) == expected, "format 14 default selector status");
+    }
+    Require(guest->charmap == selected, "preserve selected Unicode charmap");
+    Require(forwarded.doneFace(guest) == 0 && FT_Done_Face(native) == 0, "release selector faces");
+    Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release selector libraries");
 }
 
 void Strokers() {
@@ -697,6 +757,7 @@ int main(int argc, char** argv) {
         Glyphs();
         Synthesis();
     }
+    AttachMetrics(library, dependency, patched);
     Resolve(variations.mmBlend, library, patched, "zetC8Tp1S8w", "sceFreeTypeOtSetMMBlendCoordinates_nid_no_patch");
     Resolve(variations.mmDesign, library, patched, "DAmwG6U7YIc", "sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch");
     Resolve(variations.varBlend, library, patched, "ihIHD8BTNxI", "sceFreeTypeOtSetVarBlendCoordinates_nid_no_patch");
@@ -716,7 +777,27 @@ int main(int argc, char** argv) {
     Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_Master_nid_postfix");
 #endif
     MultiMaster(multiMaster);
+    decltype(&FT_Face_GetCharsOfVariant_nid_postfix) getCharsOfVariant = nullptr;
+    decltype(&FT_Face_GetVariantSelectors_nid_postfix) getVariantSelectors = nullptr;
+    decltype(&FT_Face_GetVariantsOfChar_nid_postfix) getVariantsOfChar = nullptr;
+#ifdef _WIN32
+    Resolve(getCharsOfVariant, library, patched, "tl72PmqhXww", "FT_Face_GetCharsOfVariantForward_nid_no_patch");
+    Resolve(getVariantSelectors, library, patched, "9Lm2mfsSmws", "FT_Face_GetVariantSelectorsForward_nid_no_patch");
+    Resolve(getVariantsOfChar, library, patched, "mGMeRKWGTL4", "FT_Face_GetVariantsOfCharForward_nid_no_patch");
+#else
+    Resolve(getCharsOfVariant, library, patched, "tl72PmqhXww", "FT_Face_GetCharsOfVariant_nid_postfix");
+    Resolve(getVariantSelectors, library, patched, "9Lm2mfsSmws", "FT_Face_GetVariantSelectors_nid_postfix");
+    Resolve(getVariantsOfChar, library, patched, "mGMeRKWGTL4", "FT_Face_GetVariantsOfChar_nid_postfix");
+#endif
+    VariantSelectors(getCharsOfVariant, getVariantSelectors, getVariantsOfChar);
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
+    decltype(&FT_Face_GetCharVariantIsDefault_nid_postfix) charVariantIsDefault = nullptr;
+#ifdef _WIN32
+    Resolve(charVariantIsDefault, library, patched, "Vrab2WK1mgk", "FT_Face_GetCharVariantIsDefaultForward_nid_no_patch");
+#else
+    Resolve(charVariantIsDefault, library, patched, "Vrab2WK1mgk", "FT_Face_GetCharVariantIsDefault_nid_postfix");
+#endif
+    CharVariantIsDefault(charVariantIsDefault);
     if (forwards) {
         Resolve(strokers.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
         Resolve(strokers.finish, library, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
@@ -732,4 +813,66 @@ int main(int argc, char** argv) {
     if (forwards) Strokers();
     std::puts("libSceFreeTypeOt: trigonometry, outline helpers and forwarded exports match FreeType");
     return 0;
+}
+
+namespace {
+
+void AttachMetrics(void* library, void* dependency, bool patched) {
+    decltype(&FT_Attach_File_nid_postfix) attach = nullptr;
+#ifdef _WIN32
+    Resolve(attach, library, patched, "21vkVuOP2lk", "FT_Attach_FileForward_nid_no_patch");
+#else
+    Resolve(attach, library, patched, "21vkVuOP2lk", "FT_Attach_File_nid_postfix");
+#endif
+    decltype(&FT_Init_FreeType_nid_postfix) initialize = nullptr;
+    decltype(&FT_Done_FreeType_nid_postfix) finish = nullptr;
+    decltype(&FT_New_Memory_Face_nid_postfix) open = nullptr;
+    decltype(&FT_Done_Face_nid_postfix) release = nullptr;
+    decltype(&FT_Get_Kerning_nid_postfix) kerning = nullptr;
+    Resolve(initialize, dependency, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
+    Resolve(finish, dependency, patched, "dH02CpEEcYk", "FT_Done_FreeType_nid_postfix");
+    Resolve(open, dependency, patched, "40Wa2neSLM0", "FT_New_Memory_Face_nid_postfix");
+    Resolve(release, dependency, patched, "OgFczHko0w8", "FT_Done_Face_nid_postfix");
+    Resolve(kerning, dependency, patched, "LPtlB241JSg", "FT_Get_Kerning_nid_postfix");
+
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5-freetype-ot-attach-" + std::to_string(std::random_device{}()));
+    Require(std::filesystem::create_directory(root), "create attach fixture directory");
+    const auto app0 = root / "app0";
+    Require(std::filesystem::create_directory(app0), "create app0 for attach fixture");
+    const auto path = app0 / "fixture.afm";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << Type1Fixture::Afm();
+        Require(static_cast<bool>(file), "write AFM fixture");
+    }
+
+    const auto bytes = Type1Fixture::Font();
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FreeType::GuestFaceRec* guestFace = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(initialize(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init attach libraries");
+    Require(open(guestLibrary, bytes.data(), bytes.size(), 0, &guestFace) == 0, "open guest Type 1 face");
+    Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), bytes.size(), 0, &nativeFace) == 0, "open native Type 1 face");
+    Require(!(guestFace->face_flags & FT_FACE_FLAG_KERNING) && !FT_HAS_KERNING(nativeFace), "Type 1 face starts without kerning");
+    const auto previous = std::filesystem::current_path();
+    std::filesystem::current_path(root);
+    const int error = attach(guestFace, "/app0/fixture.afm");
+    std::filesystem::current_path(previous);
+    Require(error == 0 && FT_Attach_File(nativeFace, path.string().c_str()) == 0, "attach AFM to guest and native faces");
+    Require(guestFace->face_flags == nativeFace->face_flags && FT_HAS_KERNING(nativeFace), "publish attached kerning flag");
+    Require(std::filesystem::remove(path), "remove attached metrics file");
+
+    const auto glyph = FT_Get_Char_Index(nativeFace, 'A');
+    GuestVector actual{};
+    FT_Vector expected{};
+    Require(glyph != 0 && FT_Get_Kerning(nativeFace, glyph, glyph, FT_KERNING_UNSCALED, &expected) == 0, "read native attached kerning");
+    Require(kerning(guestFace, glyph, glyph, FT_KERNING_UNSCALED, &actual) == 0 && actual.x == expected.x && actual.y == expected.y &&
+                expected.x == -50, "read guest attached kerning after file removal");
+    Require(release(guestFace) == 0 && FT_Done_Face(nativeFace) == 0, "release attach faces");
+    Require(finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release attach libraries");
+    std::filesystem::remove(app0);
+    std::filesystem::remove(root);
+}
+
 }

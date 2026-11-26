@@ -2069,9 +2069,15 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             highest = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
             inputs.indexInputBehindGpuWrite = true;
         } else if (import != nullptr) {
-            const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
-            highest = range.highest;
-            lowest = range.lowest;
+            const std::uint32_t largestIndex = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+            if (shaders.front().program->vertexAttributes.empty() && !skipRestart && !state.stages.mesh && draw.indexCount != 0 && largestIndex <= context.limits.maxDrawIndexedIndexValue && draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - largestIndex) {
+                highest = largestIndex;
+                lowest = 0u;
+            } else {
+                const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
+                highest = range.highest;
+                lowest = range.lowest;
+            }
         } else if (!copy.reused) {
             if (const auto bounds = DrawIndexRange(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart)) {
                 highest = bounds->highest;
@@ -3997,7 +4003,7 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
     auto& depth = ThreadTargetMemo().depth;
     const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
     colors.valid = enabled && !targets.empty() && std::ranges::all_of(targets, [&](const TargetBinding& binding) {
-        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
+        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !binding.resident->OtherPendingOverlaps() && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
     });
     if (colors.valid) {
         colors.proof = proof;
@@ -4013,6 +4019,15 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
     }
 }
 
+bool sameColorTargetSurface(const ColorTarget& a, const ColorTarget& b) {
+    if (a == b) return true;
+    if (a.arrayLastSlice != 0 || b.arrayLastSlice != 0 || !(a.volume || a.depth > 1) || !(b.volume || b.depth > 1)) return false;
+    auto adjusted = b;
+    adjusted.depthSlice = a.depthSlice;
+    adjusted.layers = a.layers;
+    return a == adjusted;
+}
+
 bool repeatColors(const Context& context, const State& state, const TargetProof& proof, std::vector<TargetBinding>& targets, std::vector<VkImageView>& views) {
     auto& memo = ThreadTargetMemo().colors;
     thread_local std::uint32_t lookups = 0;
@@ -4024,9 +4039,15 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
         return false;
     }
     if (!colorProofMatches(memo.proof, proof)) return false;
-    if (memo.descriptors != state.colors) {
+    if (memo.descriptors.size() != state.colors.size()) {
         noteTargetMemo(TargetMemoEvent::Descriptor);
         return false;
+    }
+    for (std::size_t index = 0; index < state.colors.size(); ++index) {
+        if (!sameColorTargetSurface(memo.descriptors[index], state.colors[index]) || (memo.descriptors[index] != state.colors[index] && memo.attachments[index].proxied)) {
+            noteTargetMemo(TargetMemoEvent::Descriptor);
+            return false;
+        }
     }
     const auto footprint = depthFootprint(state.depth);
     const bool overlapKnown = footprint == memo.clearOfDepth && !RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemoOverlapCache);
@@ -4045,7 +4066,8 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
         }
         binding.gpuTiling = binding.color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
         binding.proxied = memo.attachments[index].proxied;
-        views.push_back(memo.attachments[index].view);
+        const bool exact = memo.descriptors[index] == binding.color;
+        views.push_back(exact ? memo.attachments[index].view : binding.resident->AttachmentView(binding.color.format, binding.color.mip, binding.color.depthSlice, binding.color.layers, binding.color.arraySlice));
     }
     noteTargetMemo(TargetMemoEvent::Hit);
     noteTargetMemo(overlapKnown ? TargetMemoEvent::OverlapCached : TargetMemoEvent::OverlapComputed);
@@ -5100,7 +5122,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
         if (recipeOut != nullptr) recipeOut->reset();
-        for (std::uint32_t base = 0; base < state.renderLayers;) {
+        const auto makeWindow = [&](std::uint32_t base) {
             auto window = state;
             window.renderLayers = std::min(limit, state.renderLayers - base);
             window.meshLayerBase = base;
@@ -5112,8 +5134,76 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 color.layers = window.renderLayers;
             }
             if (!window.colors.empty()) window.color = window.colors.front();
-            Draw(context, window, draw, shaders, snapshots, nullptr, trace);
-            base += window.renderLayers;
+            return window;
+        };
+        auto firstWindow = makeWindow(0u);
+        static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        PreparedDraw prepared(profile);
+        prepared.trace = trace;
+        prepared.contentKey = contentKey;
+        prepared.passAttachments = PassAttachmentMemoEnabled();
+        const struct HeldSpace {
+            PreparedDraw& prepared;
+            ~HeldSpace() {
+                const auto& resources = prepared.resolved.resources;
+                if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
+                if (prepared.spaceKeep != nullptr) *prepared.spaceKeep = resources->ReleaseSpace();
+                else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->Id(), prepared.recorder->OpenSerial());
+                else static_cast<void>(resources->ReleaseSpace());
+            }
+        } heldSpace{prepared};
+        bool sharePrepared = false;
+        try {
+            if (!prepareDraw(context, firstWindow, draw, shaders, snapshots, prepared)) {
+                keepHeldSpace(prepared);
+                return;
+            }
+            sharePrepared = !draw.indirect && prepared.lean && !prepared.multisampled && prepared.stencilReplay.empty() && prepared.resolved.resources != nullptr && !prepared.resolved.resources->SpaceReuse() && !prepared.targets.empty() && std::none_of(prepared.targets.begin(), prepared.targets.end(), [](const TargetBinding& binding) { return binding.resident == nullptr || binding.proxied || binding.stagedTemporary != nullptr || binding.dump != nullptr; });
+            const bool finalCompletion = prepared.completion;
+            const bool finalWaited = prepared.outcome.waited;
+            if (sharePrepared) {
+                prepared.completion = false;
+                prepared.outcome.waited = false;
+            }
+            recordPreparedDraw(context, firstWindow, draw, shaders, prepared);
+            if (sharePrepared) {
+                for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                    auto window = makeWindow(base);
+                    if (base + window.renderLayers >= state.renderLayers) {
+                        prepared.completion = finalCompletion;
+                        prepared.outcome.waited = finalWaited;
+                    }
+                    for (std::size_t index = 0; index < window.colors.size(); ++index) {
+                        const auto& color = window.colors[index];
+                        prepared.targets[index].color = color;
+                        prepared.targetViews[index] = prepared.targets[index].resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice);
+                    }
+                    if (prepared.masked.has_value()) {
+                        prepared.masked->renderLayers = window.renderLayers;
+                        prepared.masked->meshLayerBase = window.meshLayerBase;
+                        prepared.masked->meshLayerCount = window.meshLayerCount;
+                        prepared.masked->colors = window.colors;
+                        prepared.masked->color = window.color;
+                    }
+                    const auto& pipelineState = prepared.masked.has_value() ? *prepared.masked : window;
+                    prepared.pipeline = CachedPipeline(context, pipelineState, prepared.inputs.VertexLayout(), prepared.resolved.resources->SetLayouts(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+                    prepared.framebuffer = prepared.pipeline->AcquireFramebuffer(prepared.targetViews, prepared.framebufferOwners, window.renderExtent, window.renderLayers);
+                    recordPreparedDraw(context, window, draw, shaders, prepared);
+                    base += window.renderLayers;
+                }
+            }
+        } catch (...) {
+            ThreadTargetMemo().Invalidate();
+            keepHeldSpace(prepared);
+            throw;
+        }
+        keepHeldSpace(prepared);
+        if (!sharePrepared) {
+            for (std::uint32_t base = firstWindow.renderLayers; base < state.renderLayers;) {
+                auto window = makeWindow(base);
+                Draw(context, window, draw, shaders, snapshots, nullptr, trace);
+                base += window.renderLayers;
+            }
         }
         return;
     }
