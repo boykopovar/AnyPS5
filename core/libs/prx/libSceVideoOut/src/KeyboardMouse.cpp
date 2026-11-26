@@ -231,6 +231,14 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
 
 void Pad::KeyboardMouse::SetMouseMode(bool enabled) {
     if (enabled) mouseTouch.reset();
+    if (mouseMode && !enabled && titleReadsMouse) {
+        for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
+            const auto& binding = configuration.bindings[index];
+            if (binding.mouseButton == MouseButton::None && binding.wheelDirection == 0 && binding.wheelTilt == 0) continue;
+            pressed[index] = false;
+            wheelReleaseTimes[index] = {};
+        }
+    }
     mouseMode = enabled;
     mouse.Reset();
 }
