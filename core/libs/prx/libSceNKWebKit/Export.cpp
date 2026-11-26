@@ -7258,10 +7258,6 @@ int APS5_VABI _ZN7WebCore16MIMETypeRegistry22systemPreviewMIMETypesEv() {
 }
 
 
-int APS5_VABI _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8263,19 +8259,7 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleNodeHandleGetRenderRect() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8692,10 +8676,6 @@ int APS5_VABI WKContextStopMemorySampler() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI WKFormSubmissionListenerContinue() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKFrameGetMainResourceData() {
     NotImplemented_nid_no_patch(__func__);
@@ -9179,9 +9159,6 @@ int APS5_VABI WKRegistrableDomainCreate() {
 
 
 
-int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKViewAccessibilityFocusedObject() {
     NotImplemented_nid_no_patch(__func__);
@@ -23986,10 +23963,6 @@ int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv() {
 }
 
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF9MediaTime8toStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

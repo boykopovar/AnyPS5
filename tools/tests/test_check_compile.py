@@ -97,6 +97,81 @@ class CheckCompileDatabaseNulTests(unittest.TestCase):
                     check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
 
 
+class CheckCompileHeaderTests(CheckCompileFixture):
+    def test_checks_only_configurations_that_include_the_header(self):
+        cmake = shutil.which("cmake")
+        ninja = shutil.which("ninja")
+        compiler = shutil.which("gcc") or shutil.which("clang")
+        if not all((cmake, ninja, compiler)):
+            self.skipTest("requires CMake, Ninja and GCC or Clang")
+        self.source(".gitignore", "build/\n")
+        self.source("CMakeLists.txt", """cmake_minimum_required(VERSION 3.15)
+project(HeaderSyntax C)
+add_library(with_header STATIC source.c)
+target_compile_definitions(with_header PRIVATE USE_SHARED)
+add_library(without_header STATIC source.c)
+add_library(unbuilt STATIC EXCLUDE_FROM_ALL source.c)
+""")
+        self.source("source.c", '#ifdef USE_SHARED\n#include "Shared Dir/shared header.h"\n#endif\nint x;\n')
+        header = "Shared Dir/shared header.h"
+        self.source(header, "#define SHARED 1\n")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=self.root, check=True)
+        subprocess.run([cmake, "-S", str(self.root), "-B", str(self.build), "-G", "Ninja",
+                        f"-DCMAKE_C_COMPILER={compiler}", f"-DCMAKE_MAKE_PROGRAM={ninja}",
+                        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], check=True, capture_output=True)
+        subprocess.run([cmake, "--build", str(self.build)], check=True, capture_output=True)
+
+        manifest = json.loads((self.build / "compile_commands.json").read_text(encoding="utf-8-sig"))
+        owner = next(entry for entry in manifest if "-DUSE_SHARED" in entry["command"])
+        output = self.build / check_compile.compilation_output(owner)
+
+        self.source(header, "#error header syntax fixture\n")
+        ordinary = self.tool("--base", "HEAD", "--dry-run")
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertEqual(json.loads(ordinary.stdout), {"translation_units": []})
+        for paths in ((header,), ("--base", "HEAD")):
+            with self.subTest(paths=paths):
+                planned = self.tool("--headers", "--dry-run", *paths)
+                self.assertEqual(planned.returncode, 0, planned.stderr)
+                units = json.loads(planned.stdout)["translation_units"]
+                self.assertEqual([Path(unit["source"]) for unit in units], [self.root / "source.c"])
+                self.assertEqual(len(units[0]["commands"]), 1)
+                self.assertIn("-DUSE_SHARED", units[0]["commands"][0]["arguments"])
+                self.assertIn("0 stale, 1 missing", planned.stderr)
+
+        owner.pop("output", None)
+        self.manifest(manifest)
+        explicit = self.tool("--headers", "--dry-run", "source.c", header)
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        units = json.loads(explicit.stdout)["translation_units"]
+        self.assertEqual(len(units), 1)
+        self.assertEqual(len(units[0]["commands"]), 3)
+
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 1, checked.stderr)
+        self.assertIn("header syntax fixture", checked.stderr)
+        self.assertIn("1 of 1 translation units did not compile", checked.stderr)
+        self.source(header, "#define SHARED 1\n")
+        checked = self.tool("--headers", header)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIn("1 translation units compile", checked.stdout)
+
+        output.unlink()
+        stale = self.tool("--headers", "--dry-run", header)
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertEqual(json.loads(stale.stdout), {"translation_units": []})
+        self.assertIn("1 stale, 1 missing", stale.stderr)
+        self.assertIn("has no compile configuration with a valid recorded Ninja dependency", stale.stderr)
+
+    def test_source_only_request_does_not_require_ninja(self):
+        self.source("source.c")
+        self.manifest([self.entry("source.c", "cc -c source.c")])
+        with patch.object(check_compile, "ninja_for_build", side_effect=AssertionError("unexpected Ninja lookup")):
+            tasks = check_compile.compile_tasks(self.root, self.build, [self.root / "source.c"], headers=True)
+        self.assertEqual(len(tasks[0][-1]), 1)
+
+
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
@@ -529,6 +604,7 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
         if ninja is None or cmake is None or compiler is None:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         source = self.source("unit.cpp", "int main() { return 0; }\n")
         self.source("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\nproject(Unit CXX)\n"
                     "add_executable(unit unit.cpp)\n")

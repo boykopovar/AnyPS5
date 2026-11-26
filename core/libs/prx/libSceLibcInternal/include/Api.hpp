@@ -21,6 +21,7 @@ struct GuestOption {
 };
 
 struct GuestDirectoryEntry;
+struct GuestLocaleFacade;
 
 struct LibcUtimbuf {
     std::int64_t actime;
@@ -370,6 +371,9 @@ LibcUnexpectedHandler APS5_VABI _ZSt14get_unexpectedv_nid_postfix();
 void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
+GuestLocaleFacade* APS5_VABI _ZNSt6locale6globalERKS__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix(GuestLocale::Implementation* self, bool transparent);
+void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* self, int category, const char* localeName);
 
 
 }
