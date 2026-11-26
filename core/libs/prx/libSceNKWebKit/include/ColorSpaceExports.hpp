@@ -19,6 +19,8 @@ WebCore::SRGBA<float> APS5_VABI _ZN7WebCore7toSRGBAERKNS_4HSLAIfEE(const WebCore
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19serializationForCSSENS_5SRGBAIhEE(WebCore::SRGBA<std::uint8_t> color);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLENS_5SRGBAIhEE(WebCore::SRGBA<std::uint8_t> color);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore32serializationForRenderTreeAsTextENS_5SRGBAIhEE(WebCore::SRGBA<std::uint8_t> color);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19serializationForCSSERKNS_5ColorE(const WebCore::Color& color);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(const WebCore::Color& color);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19serializationForCSSERKNS_5SRGBAIfEE(const WebCore::SRGBA<float>& color);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5SRGBAIfEE(const WebCore::SRGBA<float>& color);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore32serializationForRenderTreeAsTextERKNS_5SRGBAIfEE(const WebCore::SRGBA<float>& color);
