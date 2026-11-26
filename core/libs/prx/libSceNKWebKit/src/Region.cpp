@@ -23,7 +23,9 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -632,6 +634,23 @@ WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const Web
         }
     }
     return rectList;
+}
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region) {
+    _ZN3WTF10TextStreamlsEPKc(&stream, "\n");
+    struct IndentScope {
+        NKWebKit::WtfAbi::TextStream& stream;
+        explicit IndentScope(NKWebKit::WtfAbi::TextStream& target) : stream(target) { ++stream.indent; }
+        ~IndentScope() { --stream.indent; }
+    } indentScope(stream);
+    const WTF::Vector<WebCore::IntRect, 1> rects = _ZNK7WebCore6Region5rectsEv(&region);
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        _ZN3WTF10TextStream11writeIndentEv(&stream);
+        _ZN3WTF10TextStreamlsEPKc(&stream, "(rect ");
+        _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(stream, rects.data()[i]);
+        _ZN3WTF10TextStreamlsEPKc(&stream, ")\n");
+    }
+    return stream;
 }
 
 bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Region* self, const WebCore::IntPoint& point) {

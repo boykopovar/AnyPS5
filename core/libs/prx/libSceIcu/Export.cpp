@@ -78,14 +78,6 @@ int APS5_VABI u_enumCharNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_getDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI ubrk_close() {
     NotImplemented_nid_no_patch(__func__);
@@ -207,31 +199,7 @@ int APS5_VABI ucurr_openISOCurrencies() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_setCommonData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_setFileAccess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_addLikelySubtags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_countAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_getCharacterOrientation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_minimizeSubtags() {
     NotImplemented_nid_no_patch(__func__);
 }
 

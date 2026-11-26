@@ -1,8 +1,10 @@
+#include "prx/libSceGnmDriver/include/CommandWriters.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <initializer_list>
@@ -32,6 +34,16 @@ bool ReadShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, Words>&
     return regs && GuestCopyIn_nid_no_patch(out.data(), regs, sizeof(out)) && out[1] == 0;
 }
 
+template <std::size_t Words, typename Fn>
+int WriteSharedCommandBuffer(std::uint32_t* cmdbuf, Fn&& write) {
+    if (!cmdbuf) return CommandFailed;
+    std::array<std::uint32_t, Words> local{};
+    if (!GuestCopyIn_nid_no_patch(local.data(), cmdbuf, sizeof(local))) return CommandFailed;
+    const int result = write(local.data());
+    if (result != 0) return result;
+    return GuestCopyOut_nid_no_patch(cmdbuf, local.data(), sizeof(local)) ? 0 : CommandFailed;
+}
+
 template <std::size_t Words>
 int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::array<std::uint32_t, Words>& state) {
     if (!cmdbuf) return CommandFailed;
@@ -55,13 +67,6 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
 }
 
 constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
-
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 0x10, sizeof(version));
-    return version;
-}
 
 constexpr std::uint32_t OpSetContextReg = 0x69;
 constexpr std::uint32_t OpSetShReg = 0x76;
@@ -87,6 +92,29 @@ constexpr int ValidationNotEnabled = static_cast<int>(0x80D13FFFu);
 constexpr std::uint32_t OpNop = 0x10;
 constexpr std::uint32_t NeoDrawFlags = 0xe0000000u;
 constexpr std::uint32_t AutoIndex = 2;
+constexpr std::uint32_t DmaIndex = 0x80;
+constexpr std::uint32_t UseOpaque = 0x40;
+constexpr int TcaUnits = 2;
+constexpr std::uint32_t TcaUnitMap = 0x10;
+std::atomic<bool> NextFlipOption = false;
+
+constexpr int SubmitInvalid = static_cast<int>(0x80D11000u);
+constexpr int FlipCommandTooSmall = static_cast<int>(0x80D11001u);
+constexpr int GpuUnavailable = static_cast<int>(0x80D110FFu);
+constexpr int ComputeQueueInvalid = static_cast<int>(0x80D17000u);
+constexpr int ComputeQueueUnavailable = static_cast<int>(0x80D170FFu);
+constexpr std::uint32_t FlipCommandWords = 0x100;
+constexpr std::uint32_t MaxCommandBufferBytes = 0x3ffffd;
+
+bool ValidSubmit(std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    if (count == 0) return true;
+    if (!dcbAddresses || !dcbSizes || (ccbSizes && !ccbAddresses)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (dcbSizes[i] == 0 || dcbSizes[i] >= MaxCommandBufferBytes) return false;
+        if (ccbSizes && ccbSizes[i] >= MaxCommandBufferBytes) return false;
+    }
+    return true;
+}
 
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords, bool compute = false, bool predicated = false) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8) | (compute ? 2u : 0u) | (predicated ? 1u : 0u);
@@ -189,48 +217,27 @@ int APS5_VABI sceGnmDebugReset(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmDestroyWorkloadStream(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDestroyWorkloadStream(std::uint32_t stream) {
+    return stream - 1 >= 0xf ? 1 : 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t workloadId) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t, std::uint32_t, std::uint64_t) {
     return 0;
 }
 
 int APS5_VABI sceGnmDispatchDirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
     if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return CommandFailed;
-    return WriteCommandBuffer<9>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x15, 4, true, flags & 1);
-        buf[1] = threadsX;
-        buf[2] = threadsY;
-        buf[3] = threadsZ;
-        buf[4] = (flags & 0x18) + 1;
-        Nop(buf + 5, 3);
-    });
+    return WriteSharedCommandBuffer<9>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchDirect(buf, size, threadsX, threadsY, threadsZ, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags) {
     if (!cmdbuf || size != 7) return CommandFailed;
-    return WriteCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x16, 2, true, flags & 1);
-        buf[1] = dataOffset;
-        buf[2] = (flags & 0x18) + 1;
-        Nop(buf + 3, 3);
-    });
+    return WriteSharedCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchIndirect(buf, size, dataOffset, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirectOnMec(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier) {
     if (!cmdbuf || size != 8 || args == 0 || (args & 3) != 0) return CommandFailed;
-    return WriteCommandBuffer<8>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x16, 3, true, modifier & 1);
-        buf[1] = static_cast<std::uint32_t>(args);
-        buf[2] = static_cast<std::uint32_t>(args >> 32);
-        buf[3] = (modifier & 0x18) | 1;
-        buf[4] = Header(OpNop, 3);
-        buf[5] = 0;
-    });
+    return WriteSharedCommandBuffer<8>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchIndirectOnMec(buf, size, args, modifier); });
 }
 
 int APS5_VABI sceGnmDrawIndex(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint64_t indexAddress, std::uint32_t flags, std::uint32_t) {
@@ -300,9 +307,20 @@ int APS5_VABI sceGnmDrawIndexIndirectMulti(std::uint32_t* cmdbuf, std::uint32_t 
     });
 }
 
-int APS5_VABI sceGnmDrawIndexMultiInstanced(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDrawIndexMultiInstanced(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint32_t instanceCount, std::uint64_t indexAddress, std::uint64_t objectIdAddress, std::uint32_t flags) {
+    if (!cmdbuf || size != 13 || indexAddress == 0 || (indexAddress & 1) != 0 || objectIdAddress == 0 || (objectIdAddress & 0xff) != 0) return CommandFailed;
+    return WriteCommandBuffer<13>(cmdbuf, [&](std::uint32_t* buf) {
+        buf[0] = Header(0x3a, 8, false, flags & 1);
+        buf[1] = instanceCount;
+        buf[2] = static_cast<std::uint32_t>(objectIdAddress);
+        buf[3] = static_cast<std::uint32_t>(objectIdAddress >> 32);
+        buf[4] = indexCount;
+        buf[5] = static_cast<std::uint32_t>(indexAddress);
+        buf[6] = static_cast<std::uint32_t>(indexAddress >> 32);
+        buf[7] = indexCount;
+        buf[8] = (flags & NeoDrawFlags) | DmaIndex;
+        Nop(buf + 9, 3);
+    });
 }
 
 int APS5_VABI sceGnmDrawIndexOffset(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexOffset, std::uint32_t indexCount, std::uint32_t flags) {
@@ -382,18 +400,23 @@ int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std:
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
     return sceGnmDrawInitToDefaultContextState400(cmdbuf, size);
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
     return 0x100;
 }
 
-int APS5_VABI sceGnmDrawOpaqueAuto(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmDrawOpaqueAuto(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t flags) {
+    if (!cmdbuf || size != 7 || (flags & 0x1ffffffeu) != 0) return CommandFailed;
+    return WriteCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) {
+        buf[0] = Header(0x2d, 2, false, flags & 1);
+        buf[1] = 0x10;
+        buf[2] = (flags & NeoDrawFlags) | AutoIndex | UseOpaque;
+        Nop(buf + 3, 3);
+    });
 }
 
 int APS5_VABI sceGnmDriverInternalRetrieveGnmInterface(void) {
@@ -441,13 +464,13 @@ int APS5_VABI sceGnmGetCoredumpAddress(void) {
     return 0;
 }
 
-int APS5_VABI sceGnmGetCoredumpMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmGetCoredumpMode(std::uint32_t* mode) {
+    if (!mode) return 1;
+    const std::uint32_t value = 0;
+    return GuestCopyOut_nid_no_patch(mode, &value, sizeof(value)) ? 0 : 1;
 }
 
 int APS5_VABI sceGnmGetCoredumpProtectionFaultTimestamp(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -456,7 +479,6 @@ int APS5_VABI sceGnmGetDbgGcHandle(void) {
 }
 
 int APS5_VABI sceGnmGetGpuBlockStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -465,18 +487,15 @@ int APS5_VABI sceGnmGetGpuCoreClockFrequency(void) {
 }
 
 int APS5_VABI sceGnmGetGpuInfoStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetLastWaitedAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetNumTcaUnits(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TcaUnits;
 }
 
 int APS5_VABI sceGnmGetOffChipTessellationBufferSize(void) {
@@ -492,7 +511,6 @@ int APS5_VABI sceGnmGetPhysicalCounterFromVirtualized(void) {
 }
 
 int APS5_VABI sceGnmGetProtectionFaultTimeStamp(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -521,24 +539,16 @@ int APS5_VABI sceGnmGetResourceUserData(void) {
 }
 
 int APS5_VABI sceGnmGetShaderProgramBaseAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmGetShaderStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceGnmGpuPaDebugEnter(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmGpuPaDebugEnter(void) {}
 
-int APS5_VABI sceGnmGpuPaDebugLeave(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmGpuPaDebugLeave(void) {}
 
 int APS5_VABI sceGnmInsertDingDongMarker(std::uint32_t* cmdbuf, std::uint32_t size) {
     if (!cmdbuf || size != 4) return CommandFailed;
@@ -551,23 +561,24 @@ int APS5_VABI sceGnmInsertDingDongMarker(std::uint32_t* cmdbuf, std::uint32_t si
 }
 
 int APS5_VABI sceGnmInsertThreadTraceMarker(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmIsCoredumpValid(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceGnmLogicalTcaUnitToPhysical(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmLogicalTcaUnitToPhysical(std::uint32_t unit) {
+    return static_cast<int>((TcaUnitMap >> ((unit * 4) & 31)) & 0xf);
 }
 
-int APS5_VABI sceGnmMapComputeQueueWithPriority(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueueWithPriority(std::uint32_t pipeId, std::uint32_t queueId, std::uint64_t ringBase, std::uint32_t ringSizeDw, std::uint64_t readPointer, std::uint32_t priority) {
+    if (pipeId > 6) return ComputeQueueInvalid;
+    if (queueId > 7) return ComputeQueueInvalid + 1;
+    if ((ringSizeDw & (ringSizeDw - 1)) != 0) return ComputeQueueInvalid + 2;
+    if ((ringBase & 0xff) != 0) return ComputeQueueInvalid + 3;
+    if ((readPointer & 3) != 0 || priority > 1) return ComputeQueueInvalid + 4;
+    return ComputeQueueUnavailable;
 }
 
 int APS5_VABI sceGnmPaDisableFlipCallbacks(void) {
@@ -594,10 +605,7 @@ int APS5_VABI sceGnmRegisterGdsResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmRegisterGnmLiveCallbackConfig(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI sceGnmRegisterGnmLiveCallbackConfig(void) {}
 
 int APS5_VABI sceGnmRegisterOwner(void* handle, const char* name) {
     return Failure;
@@ -611,9 +619,8 @@ int APS5_VABI sceGnmRegisterResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(std::uint64_t, std::uint32_t*, std::uint32_t size, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return size < FlipCommandWords ? FlipCommandTooSmall : GpuUnavailable;
 }
 
 int APS5_VABI sceGnmResetVgtControl(std::uint32_t* cmdbuf, std::uint32_t size) {
@@ -661,13 +668,7 @@ int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t
     if (!cmdbuf || size <= 0x18 || !regs || (modifier & 0xfffffc3fu) != 0) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? localRegs[2] : (localRegs[2] & 0xfffffc3fu) | modifier;
-    return WriteCommandBuffer<0x19>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x20c, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x212, rsrc1, localRegs[3]});
-        at = EmitPacket(at, OpSetShReg, {0x207, localRegs[4], localRegs[5], localRegs[6]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x19>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::SetCsShaderWithModifier(buf, size, localRegs.data(), modifier); });
 }
 
 int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
@@ -706,27 +707,9 @@ int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, st
 
 int APS5_VABI sceGnmSetPsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x203, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-            Nop(at, 0x1d);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {8, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {10, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpSetContextReg, {0x1c4, localRegs[4], localRegs[5]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b3, localRegs[6], localRegs[7]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b6, localRegs[8]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b8, localRegs[9]});
-        at = EmitPacket(at, OpSetContextReg, {0x203, localRegs[10]});
-        at = EmitPacket(at, OpSetContextReg, {0x8f, localRegs[11]});
-        Nop(at, 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::SetPsShader350(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmSetResourceRegistrationUserMemory(void) {
@@ -759,24 +742,20 @@ int APS5_VABI sceGnmSetVgtControl(std::uint32_t* cmdbuf, std::uint32_t size, std
     });
 }
 
-int APS5_VABI sceGnmSetWaveLimitMultiplier(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSetWaveLimitMultiplier(std::uint32_t, std::uint32_t) {
+    return 1;
 }
 
-int APS5_VABI sceGnmSetWaveLimitMultipliers(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSetWaveLimitMultipliers(std::uint32_t, const std::uint8_t*) {
+    return 1;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
 int APS5_VABI sceGnmUnregisterAllResourcesForOwner(void) {
@@ -795,76 +774,35 @@ int APS5_VABI sceGnmUpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, co
     if (!cmdbuf || size < 0x1d || !regs) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x88, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x8a, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e02e5u, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e029bu, localRegs[5]});
-        at = EmitPacket(at, OpNop, {0xc01e02e4u, localRegs[6]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateGsShader(buf, size, localRegs.data()); });
 }
 
 int APS5_VABI sceGnmUpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
     if (!cmdbuf || size <= 0x1c || !regs) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x108, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x10a, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e0286u, localRegs[5], localRegs[6]});
-        at = EmitPacket(at, OpNop, {0xc01e02dbu, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e02d6u, lsHsConfig});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateHsShader(buf, size, localRegs.data(), lsHsConfig); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-            Nop(at, 0x20);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        Nop(UpdatePsRegisters(buf, localRegs.data()), 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdatePsShader(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-            Nop(at, 0x1d);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        Nop(UpdatePsRegisters(buf, localRegs.data()), 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdatePsShader350(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdateVsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
     if (!cmdbuf || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) != 0) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? localRegs[2] : (localRegs[2] & 0xfcfffc3fu) | modifier;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x48, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x4a, rsrc1, localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e0207u, localRegs[6]});
-        at = EmitPacket(at, OpNop, {0xc01e01b1u, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e01c3u, localRegs[5]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateVsShader(buf, size, localRegs.data(), modifier); });
 }
 
 int APS5_VABI sceGnmValidateDisableDiagnostics(void) {
@@ -973,7 +911,8 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch() {
 APS5_EXPORT("QWuQed5Mus4", libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    NextFlipOption.store(true);
+    return 0;
 }
 APS5_EXPORT("R3TYO7Tdv5o", libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch);
 
@@ -993,12 +932,13 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch() {
 APS5_EXPORT("gQNwGezNDgE", libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return NextFlipOption.load() ? 1 : 0;
 }
 APS5_EXPORT("sKhoi2ectC0", libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    NextFlipOption.store(false);
+    return 0;
 }
 APS5_EXPORT("ut57TBmRQN0", libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch);
 

@@ -2,6 +2,8 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
+#include <deque>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -36,6 +38,7 @@
 #include "Optimization/include/Optimization/DenormalFlushEliminator.hpp"
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/include/Optimization/HostInterpolationChecker.hpp"
+#include "Optimization/include/Optimization/ImageOverwriteProof.hpp"
 #include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/include/Optimization/NanPayloadEliminator.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
@@ -273,7 +276,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.sharedVectorCount = sharedVectors.count;
     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
     const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
-    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst;
+    const bool emulatedBarycentrics = stageKind == ShaderStageKind::Pixel && request.graphics.has_value() && request.graphics->emulateBarycentrics;
+    translateOptions.fragmentShaderBarycentricEnabled = emulatedBarycentrics || (request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst);
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
@@ -295,7 +299,17 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         embeddedFetch = EmbeddedVertexFetchAnalyzer{}.Analyze(decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize);
         translateOptions.embeddedFetch = &embeddedFetch;
     }
+    SplitStateAbi::DecodedPlan splitState;
+    if (!request.context.splitState.empty()) {
+        if (stageKind != ShaderStageKind::Compute) throw std::runtime_error("only a compute program can split its state");
+        splitState = SplitStateAbi::Decode(request.context.splitState);
+        splitState.plan.points = splitState.points;
+        splitState.plan.registers = splitState.registers;
+        splitState.plan.assumed = splitState.assumed;
+        translateOptions.splitState = &splitState.plan;
+    }
     auto program = translator.Translate(decoded, cfg, translateOptions);
+    if (emulatedBarycentrics) program.Metadata().barycentricEmulation = true;
     // Debug aid: APS5_DUMP_IR=<hex code address> (or "all") prints the program after each front-end pass.
     const auto dumpIr = [&](const char* pass) {
         static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_IR"); return text ? std::string(text) : std::string(); }();
@@ -398,6 +412,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     resourceTracker.Track(program);
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
+    if (inputInfo.compute != nullptr) ProveImageOverwrites(program, {inputInfo.compute->threadsNum[0], inputInfo.compute->threadsNum[1], inputInfo.compute->threadsNum[2]});
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
     program.Resources().maxImageArrayLayers = request.target.maxImageArrayLayers;
     if (request.context.convertedSamples) {
@@ -439,7 +454,7 @@ struct EmissionFailure {
 };
 
 constexpr std::size_t ResultMemoSets = 64;
-constexpr std::size_t ResultMemoWays = 4;
+constexpr std::size_t ResultMemoWays = 16;
 using ResultMemoTable = std::array<ResultMemoEntry, ResultMemoSets * ResultMemoWays>;
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
@@ -449,6 +464,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     // points into a registration the driver may replace while the entry lives on.
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedCallFallbacks;
+    std::vector<std::uint32_t> splitState;
     std::shared_ptr<const IrResourcePlan> plan;
     std::vector<std::byte> planKey;
     std::uint64_t planShaderHash = 0;
@@ -686,6 +702,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
             source = std::make_shared<SourceEntry>();
             source->code.assign(request.shader.code.begin(), request.shader.code.end());
             source->linkedCallFallbacks.assign(request.context.linkedCallFallbacks.begin(), request.context.linkedCallFallbacks.end());
+            source->splitState.assign(request.context.splitState.begin(), request.context.splitState.end());
             auto& bucket = sources[key];
             if (!bucket.empty()) {
                 // A second entry under one key is a code hash collision (or the unhashed key with
@@ -884,6 +901,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
     targetOptions.meshInlineFunctions = request.target.meshInlineFunctions;
+    targetOptions.spannedShuffleThroughMemory = request.target.spannedShuffleThroughMemory;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -925,6 +943,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
+    result.dispatchThreadLimit = bindings.layout.dispatchThreadLimit;
+    result.splitStateLanes = emitted.splitStateLanes;
     result.scratchPoolSlotDwords = emitted.scratchPoolSlotDwords;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
@@ -1105,8 +1125,92 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
     return materialized;
 }
 
+std::vector<std::byte> specializedCacheKey(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    constexpr std::string_view tag = "specialized-spirv";
+    std::vector<std::byte> key(tag.size());
+    std::memcpy(key.data(), tag.data(), tag.size());
+    const auto put = [&key](std::uint64_t value) {
+        const auto offset = key.size();
+        key.resize(offset + sizeof(value));
+        std::memcpy(key.data() + offset, &value, sizeof(value));
+    };
+    const auto content = artifact.spirv.ContentHash();
+    put(content.low);
+    put(content.high);
+    put(artifact.vertexInputPatches.size());
+    for (const auto& patch : artifact.vertexInputPatches) {
+        put((static_cast<std::uint64_t>(patch.location) << 32u) | patch.word);
+        for (const auto value : patch.values) put(value);
+    }
+    put(artifact.stencilReferences.size());
+    for (const auto value : artifact.stencilReferences) put(value);
+    put(artifact.vertexInputs.size());
+    put(artifact.hostSubgroupSize);
+    put(artifact.bdaAbiVersion);
+    put(artifact.runtimeAbiVersion);
+    put(classes.size());
+    for (const auto value : classes) put(value);
+    put(constants.size());
+    for (const auto& constant : constants) put((static_cast<std::uint64_t>(constant.id) << 32u) | constant.value);
+    put(target.vulkanVersion);
+    put(target.spirvVersion);
+    put(target.subgroupSize);
+    put(target.bdaAbiVersion);
+    put(target.fragmentShaderBarycentricEnabled);
+    for (const auto value : target.maxWorkgroupSize) put(value);
+    put(target.maxWorkgroupInvocations);
+    put(target.maxWorkgroupSharedMemoryBytes);
+    put(target.nonConstantImageOffsets);
+    const auto features = RecompileCacheKey::FeatureDigest(target);
+    put(features[0]);
+    put(features[1]);
+    put(target.mesh.has_value());
+    if (const auto& mesh = target.mesh) {
+        for (const auto value : mesh->maxWorkgroupSize) put(value);
+        for (const auto value : {mesh->maxWorkgroupInvocations, mesh->maxSharedMemoryBytes, mesh->maxOutputVertices, mesh->maxOutputPrimitives, mesh->maxOutputComponents, mesh->maxOutputMemoryBytes, mesh->outputPerVertexGranularity, mesh->outputPerPrimitiveGranularity}) put(value);
+    }
+    put(target.tessellation.has_value());
+    if (const auto& tessellation = target.tessellation) {
+        for (const auto value : {tessellation->maxPatchSize, tessellation->maxControlPerVertexInputComponents, tessellation->maxControlPerVertexOutputComponents, tessellation->maxControlPerPatchOutputComponents, tessellation->maxControlTotalOutputComponents, tessellation->maxEvaluationInputComponents, tessellation->maxEvaluationOutputComponents}) put(value);
+    }
+    return key;
+}
+
+std::vector<std::uint32_t> cachedSpecializeWords(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    static const bool enabled = std::getenv("APS5_NO_SPECIALIZED_CACHE") == nullptr && ShaderDiskCache::Enabled();
+    if (!enabled) return specializeWords(artifact, classes, constants, target);
+    auto key = specializedCacheKey(artifact, classes, constants, target);
+    std::vector<std::uint32_t> words;
+    if (ShaderDiskCache::LoadSpecialized(key, words)) return words;
+    words = specializeWords(artifact, classes, constants, target);
+    ShaderDiskCache::StoreSpecialized(std::move(key), words);
+    return words;
+}
+
+void keepSpecializedWords(const SharedSpirv& spirv) {
+    static const std::uint64_t budget = [] {
+        const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
+        if (text == nullptr) return std::uint64_t{0};
+        char* end = nullptr;
+        const auto mib = std::strtoull(text, &end, 0);
+        if (end == text || *end != '\0') throw std::runtime_error("ShaderRecompiler: APS5_KEEP_SPECIALIZED_MIB must be a whole number of MiB");
+        return std::min<std::uint64_t>(mib, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
+    }();
+    if (budget == 0u || spirv.empty()) return;
+    static std::mutex mutex;
+    static std::deque<SharedSpirv> kept;
+    static std::uint64_t bytes = 0;
+    std::lock_guard lock(mutex);
+    kept.push_back(spirv);
+    bytes += spirv.size() * sizeof(std::uint32_t);
+    while (bytes > budget && !kept.empty()) {
+        bytes -= kept.front().size() * sizeof(std::uint32_t);
+        kept.pop_front();
+    }
+}
+
 SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
-    auto materialized = specializeWords(artifact, classes, constants, target);
+    auto materialized = cachedSpecializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) supplied.emplace(constant.id, constant.value);
@@ -1133,6 +1237,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
     module->hash = spirv.ContentHash();
     module->spirv = spirv.Weaken();
     module->specializationId = constants.empty() ? 0u : nextVariantId();
+    keepSpecializedWords(spirv);
     return {std::move(module), std::move(spirv)};
 }
 
@@ -1142,6 +1247,7 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     auto spirv = InternSpirv(specializeWords(artifact, classes, constants, target));
     if (spirv.ContentHash() != module.hash) throw std::runtime_error("ShaderRecompiler: a specialized module built again from its key differs from its first build");
     module.spirv = spirv.Weaken();
+    keepSpecializedWords(spirv);
     return spirv;
 }
 
@@ -1353,6 +1459,25 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
 }
 
+void dumpFinalSpirv(const RecompileRequest& request, const RecompileResult& result) {
+    static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
+    const auto words = result.spirv.Words();
+    if (list.empty() || words.empty()) return;
+    char address[32];
+    std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+    if (list != "all" && list.find(address) == std::string::npos) return;
+    char path[128];
+    std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    auto* file = std::fopen(path, "wb");
+    if (file == nullptr) throw std::runtime_error("cannot open SPIR-V dump " + std::string(path));
+    const auto written = std::fwrite(words.data(), sizeof(std::uint32_t), words.size(), file);
+    const auto closed = std::fclose(file);
+    if (written != words.size() || closed != 0) throw std::runtime_error("cannot write SPIR-V dump " + std::string(path));
+    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
+}
+
 bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
@@ -1393,6 +1518,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .fullSubgroups = artifact.fullSubgroups,
         .functionLdsBuffer = artifact.functionLdsBuffer,
         .meshWindowBuffer = artifact.meshWindowBuffer,
+        .dispatchThreadLimit = artifact.dispatchThreadLimit,
+        .splitStateLanes = artifact.splitStateLanes,
         .scratchPoolSlotDwords = artifact.scratchPoolSlotDwords,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
@@ -1588,6 +1715,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.imageTableShader = snapshot.tables.shader;
         result.imageTableFaults = tables.faults;
     }
+    dumpFinalSpirv(request, result);
     return result;
 }
 
@@ -1906,7 +2034,7 @@ std::uint64_t vectorBytes(const ElementFlags& values) {
 }
 
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
-    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead) + vectorBytes(binding.imageOverwrites);
 }
 
 std::uint64_t resultBytes(const RecompileResult& result) {
@@ -2126,6 +2254,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
         mix(table.nested ? 1u : 0u);
+        mix(table.pointerKeyed ? 1u : 0u);
         mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
@@ -2333,7 +2462,7 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     } catch (const std::exception& e) {
         NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
-        const auto inputInfo = "\nRecompileRequest:\n" + requestSerializer.Serialize(request);
+        const auto inputInfo = request.context.splitState.empty() ? "\nRecompileRequest:\n" + requestSerializer.Serialize(request) : std::string();
         throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");
@@ -2445,7 +2574,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     const auto words = prepared.ShaderDataDwords();
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     const auto dataSize = !handle.artifact->artifact.stencilReferences.empty() && pushSize != 0u ? pushSize - 1u : pushSize;
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= dataSize;
+    const bool usesPush = words != 0u && words <= dataSize;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;
@@ -2459,6 +2588,7 @@ std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle) {
 
 PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) : request(request), handle(handle) {
     this->request.context.linkedCallFallbacks = handle->source->linkedCallFallbacks;
+    this->request.context.splitState = handle->source->splitState;
 }
 
 std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) {
@@ -2521,7 +2651,7 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     if (handle.artifact == nullptr || !MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     if (!request.target.registrationModules || !handle.artifact->artifact.registrationModule) return nullptr;
     const auto& info = handle.artifact->info.info;
-    if (std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.descriptorFormatted; }) || std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return FoldsTexelOffsets(sampler); })) return nullptr;
+    if (std::ranges::any_of(info.buffers, [](const BufferResource& buffer) { return buffer.descriptorFormatted; }) || std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return FoldsTexelOffsets(sampler) || (sampler.uses & SamplerUseGatherLod) != 0u; })) return nullptr;
     ResourceSnapshot snapshot;
     snapshot.buffers.assign(info.buffers.size(), {{}, 4u});
     snapshot.images.assign(info.images.size(), {{}, 8u});
