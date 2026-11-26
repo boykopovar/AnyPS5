@@ -27,6 +27,11 @@ _YAML_INDENT = re.compile(r"[1-9]")
 _HASH_COMMENT = re.compile(r"\s#")
 _TEST_SCRIPT_NAME = re.compile(r"^test_\w+\.py$")
 
+
+class PropertyListError(ValueError):
+    pass
+
+
 KNOWN_UNRUN = set()
 SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
 SET_VARIABLE = re.compile(r'^[ \t]*set\(\s*(\w+)\s+"?([^"\s()]+)"?\s*\)', re.M | re.I)
@@ -303,7 +308,17 @@ def _mask_cmake(content):
     return "".join(content_parts), "".join(code_parts)
 
 
-def commands(content):
+def paired_properties(command, arguments, where):
+    properties = arguments.index("PROPERTIES")
+    values = arguments[properties + 1:]
+    if len(values) % 2:
+        location = f"{where}: " if where else ""
+        raise PropertyListError(f"{location}cannot pair the arguments after PROPERTIES in {command}({' '.join(arguments)}); "
+                                "a property list expanded from a variable is not supported")
+    return list(zip(values[::2], values[1::2]))
+
+
+def command_records(content):
     content = content.removeprefix("\ufeff")
     if _COMMAND_HINT.search(content) is None:
         return
@@ -313,6 +328,7 @@ def commands(content):
         if command.start() < parsed_until:
             continue
         name = command.group(1).lower()
+        line = content.count("\n", 0, command.start(1)) + 1
         if name in SCOPE_START or name.removeprefix("end") in SCOPE_START or name in {"else", "elseif"}:
             depth = 1
             for paren in _PAREN.finditer(code, command.end()):
@@ -322,7 +338,7 @@ def commands(content):
                     break
             else:
                 raise ValueError(f"unterminated {name} command at position {command.start()}")
-            yield name, []
+            yield name, [], line
             continue
         position, arguments = command.end(), []
         length = len(content)
@@ -333,7 +349,7 @@ def commands(content):
                 continue
             if ch == ")":
                 parsed_until = position + 1
-                yield name, arguments
+                yield name, arguments, line
                 break
             if ch == "#":
                 position = content.find("\n", position)
@@ -359,7 +375,12 @@ def commands(content):
             raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
-def testfile_commands(build):
+def commands(content):
+    for name, arguments, _ in command_records(content):
+        yield name, arguments
+
+
+def testfile_command_records(build):
     pending = [Path(build)]
     visited = set()
     while pending:
@@ -371,26 +392,30 @@ def testfile_commands(build):
         if directory in visited or not file.is_file():
             continue
         visited.add(directory)
-        entries = list(commands(file.read_text(encoding="utf-8", errors="replace")))
-        for command, arguments in entries:
+        entries = list(command_records(file.read_text(encoding="utf-8", errors="replace")))
+        for command, arguments, _ in entries:
             if command == "subdirs":
                 pending.extend(directory / argument for argument in arguments)
-        yield entries
+        yield file, entries
+
+
+def testfile_commands(build):
+    for _, entries in testfile_command_records(build):
+        yield [(command, arguments) for command, arguments, _ in entries]
 
 
 def registered(build):
     names = set()
-    for entries in testfile_commands(build):
+    for file, entries in testfile_command_records(build):
         tests, latest = [], {}
-        for command, arguments in entries:
+        for command, arguments, line in entries:
             if command == "add_test" and arguments:
                 test = [arguments[1:], False]
                 tests.append(test)
                 latest[arguments[0]] = test
             elif command == "set_tests_properties" and "PROPERTIES" in arguments:
                 properties = arguments.index("PROPERTIES")
-                values = arguments[properties + 1:]
-                for key, value in zip(values[::2], values[1::2], strict=True):
+                for key, value in paired_properties(command, arguments, f"{file}:{line}"):
                     if key == "DISABLED":
                         for name in arguments[:properties]:
                             if name in latest:
@@ -490,11 +515,10 @@ def workflow_run_lines(content):
         yield from folded_run_lines(folded, content_indent)
 
 
-def disabled_properties(command, arguments):
+def disabled_properties(command, arguments, where=""):
     if command == "set_tests_properties" and "PROPERTIES" in arguments:
         properties = arguments.index("PROPERTIES")
-        values = arguments[properties + 1:]
-        for key, value in zip(values[::2], values[1::2], strict=True):
+        for key, value in paired_properties(command, arguments, where):
             if key == "DISABLED":
                 yield arguments[:properties], "replace", value
     elif command == "set_property" and arguments[:1] == ["TEST"] and "PROPERTY" in arguments:
@@ -535,7 +559,7 @@ def run_scripts(root, files, invocations=None):
             content = (root_path / name).read_text(encoding="utf-8", errors="replace")
             tests = []
             scopes = []
-            for index, (command, arguments) in enumerate(commands(content)):
+            for index, (command, arguments, line) in enumerate(command_records(content)):
                 if command in SCOPE_START:
                     scopes.append((index, index, command))
                 elif command.removeprefix("end") in SCOPE_START:
@@ -558,7 +582,7 @@ def run_scripts(root, files, invocations=None):
                         arguments = arguments[1:]
                     tests.append([test_name, arguments, ("", False), scopes[:]])
                 elif command in {"set_tests_properties", "set_property"}:
-                    for names, mode, value in disabled_properties(command, arguments):
+                    for names, mode, value in disabled_properties(command, arguments, f"{name}:{line}"):
                         for test in tests:
                             if test[0] in names:
                                 exclusive = False
@@ -707,6 +731,8 @@ def main(argv=None):
             else:
                 scripts, unrun = unrun_scripts(root)
                 unselected = unselected_classes(root)
+        except PropertyListError as error:
+            parser.error(str(error))
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
         if args.json:
