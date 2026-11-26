@@ -468,9 +468,48 @@ static void CheckExportImport() {
     Require(sceHttp2CookieImport(zeroDomainTarget, sameBlob.data(), sameBlob.size()) == OutOfSize);
     Require(Get(zeroDomainTarget, "http://one.test/") == "b=2");
 
+    const int domainCaseBox = sceHttp2CreateCookieBox(0x10000);
+    Require(domainCaseBox > 0);
+    const auto upperDomainBlob = CraftBlob("upper", "1", "EXAMPLE.TEST", "/", 1, 0, 0, 0);
+    Require(sceHttp2CookieImport(domainCaseBox, upperDomainBlob.data(), upperDomainBlob.size()) == 0);
+    Require(Get(domainCaseBox, "http://example.test/") == "upper=1");
+
+    std::vector<std::uint8_t> dupDomainCaseBlob{'A', 'P', 'S', '5', 'H', '2', 'C', 1};
+    AppendU32(dupDomainCaseBlob, 2);
+    for (const char* domain : {"a.test", "A.TEST"}) {
+        AppendString(dupDomainCaseBlob, "dup");
+        AppendString(dupDomainCaseBlob, "1");
+        AppendString(dupDomainCaseBlob, domain);
+        AppendString(dupDomainCaseBlob, "/");
+        dupDomainCaseBlob.push_back(1);
+        dupDomainCaseBlob.push_back(0);
+        dupDomainCaseBlob.push_back(0);
+        AppendU64(dupDomainCaseBlob, 0);
+    }
+    Require(sceHttp2CookieImport(domainCaseBox, dupDomainCaseBlob.data(), dupDomainCaseBlob.size()) == InvalidValue);
+    Require(Get(domainCaseBox, "http://example.test/") == "upper=1");
+
+    std::vector<std::uint8_t> mixedDomainLimitBlob{'A', 'P', 'S', '5', 'H', '2', 'C', 1};
+    AppendU32(mixedDomainLimitBlob, 2);
+    const char* mixedNames[2] = {"k1", "k2"};
+    const char* mixedDomains[2] = {"a.test", "A.TEST"};
+    for (int i = 0; i < 2; ++i) {
+        AppendString(mixedDomainLimitBlob, mixedNames[i]);
+        AppendString(mixedDomainLimitBlob, "1");
+        AppendString(mixedDomainLimitBlob, mixedDomains[i]);
+        AppendString(mixedDomainLimitBlob, "/");
+        mixedDomainLimitBlob.push_back(1);
+        mixedDomainLimitBlob.push_back(0);
+        mixedDomainLimitBlob.push_back(0);
+        AppendU64(mixedDomainLimitBlob, 0);
+    }
+    Require(sceHttp2SetCookieMaxNumPerDomain(domainCaseBox, 1) == 0);
+    Require(sceHttp2CookieImport(domainCaseBox, mixedDomainLimitBlob.data(), mixedDomainLimitBlob.size()) == OutOfSize);
+    Require(Get(domainCaseBox, "http://example.test/") == "upper=1");
+
     for (const int id : {source, target, expiryBox, empty, limitedSize, same, limitedDomain, limitedCount,
                          longPathSource, longPathTarget, dupBox, zeroTotalSource, zeroTotalTarget,
-                         zeroDomainSource, zeroDomainTarget}) {
+                         zeroDomainSource, zeroDomainTarget, domainCaseBox}) {
         Require(sceHttp2DeleteCookieBox(id) == 0);
     }
     Require(sceHttp2CookieExport(source, nullptr, 0, &required) == InvalidId);

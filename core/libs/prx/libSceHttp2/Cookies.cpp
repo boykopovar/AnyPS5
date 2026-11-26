@@ -634,6 +634,7 @@ bool ImportBlob(const std::vector<std::uint8_t>& input, std::vector<Cookie>& coo
         if (cookie.name.empty() && cookie.value.empty()) return false;
         if (cookie.domain.empty() || cookie.domain.size() > MAX_URL_LENGTH) return false;
         if (cookie.path.empty() || cookie.path.front() != '/') return false;
+        cookie.domain = LowerCopy(cookie.domain);
         if (!seen.emplace(cookie.name, cookie.domain, cookie.path).second) return false;
         cookie.hasValue = hasValue != 0;
         cookie.secure = secure != 0;
