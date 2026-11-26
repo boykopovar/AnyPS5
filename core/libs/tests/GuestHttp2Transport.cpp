@@ -686,7 +686,7 @@ struct AsyncPhases {
     std::mutex mutex;
     std::condition_variable changed;
     std::array<bool, 5> blocked{};
-    std::array<bool, 5> seen{};
+    std::array<unsigned, 5> seen{};
     bool finished = false;
 
     explicit AsyncPhases(int id) : request(id) {
@@ -698,7 +698,7 @@ struct AsyncPhases {
         if (request != self.request) return;
         const auto index = static_cast<std::size_t>(phase);
         std::unique_lock lock(self.mutex);
-        self.seen[index] = true;
+        ++self.seen[index];
         self.changed.notify_all();
         Require(self.changed.wait_for(lock, std::chrono::seconds(5), [&] { return !self.blocked[index]; }), "async phase release deadline");
     }
@@ -711,9 +711,9 @@ struct AsyncPhases {
         blocked[static_cast<std::size_t>(phase)] = false;
         changed.notify_all();
     }
-    void Wait(AsyncPhase phase) {
+    void Wait(AsyncPhase phase, unsigned count = 1) {
         std::unique_lock lock(mutex);
-        Require(changed.wait_for(lock, std::chrono::seconds(5), [&] { return seen[static_cast<std::size_t>(phase)]; }), "async phase entry deadline");
+        Require(changed.wait_for(lock, std::chrono::seconds(5), [&] { return seen[static_cast<std::size_t>(phase)] >= count; }), "async phase entry deadline");
     }
     void Finish() {
         std::lock_guard lock(mutex);
@@ -2152,22 +2152,20 @@ void AsyncBlockingWait(int ssl) {
     Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1079), "zero wait reports the pending timeout");
     Require(zeroTimeout == 0, "zero wait leaves the timeout at zero");
     Require(polled.req_id == -1, "zero wait leaves the result untouched");
-    std::thread release([&] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        server.Release();
-    });
     uint32_t shortTimeout = 1;
     Http2AsyncResult early{};
     const auto expired = std::chrono::steady_clock::now();
     Require(sceHttp2WaitAsync(client.request, &early, &shortTimeout, nullptr) == static_cast<int>(0x817B1079), "expired wait reports the timeout");
     Require(std::chrono::steady_clock::now() - expired < std::chrono::milliseconds(200), "expired wait returned late");
     Require(shortTimeout == 0, "expired wait clears the timeout");
-    const auto started = std::chrono::steady_clock::now();
+    AsyncPhases phases(client.request);
+    std::thread release([&] {
+        phases.Wait(AsyncPhase::WaitPending);
+        server.Release();
+    });
     Http2AsyncResult result{};
     Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "null timeout waits for the completion");
-    const auto elapsed = std::chrono::steady_clock::now() - started;
     release.join();
-    Require(elapsed >= std::chrono::milliseconds(200), "null timeout returned before the completion");
     Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async blocking result");
     zeroTimeout = 0;
     polled = {};
@@ -2214,17 +2212,15 @@ void AsyncDelete(int ssl, bool waiter) {
     server.WaitStage(2);
     int waitResult = -1;
     Http2AsyncResult completed{};
-    std::atomic<bool> entered{false};
+    AsyncPhases phases(client.request);
     std::thread waiting;
     if (waiter) {
         waiting = std::thread([&] {
-            entered.store(true);
             uint32_t timeout = 4000000;
             waitResult = sceHttp2WaitAsync(client.request, &completed, &timeout, nullptr);
             Require(timeout != 0, "delete completion keeps the remaining timeout");
         });
-        while (!entered.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        phases.Wait(AsyncPhase::WaitPending);
     }
     Require(sceHttp2DeleteRequest(client.request) == 0, "delete in-flight async request");
     if (waiter) {
@@ -2252,15 +2248,13 @@ void AsyncDeleteRead(int ssl) {
     server.WaitStage(2);
     std::array<char, 64> buffer{};
     Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &queue.option, nullptr) == 0, "async read delete read submission");
-    std::atomic<bool> entered{false};
+    AsyncPhases phases(client.request);
     int waitResult = -1;
     Http2AsyncResult completed{};
     std::thread waiting([&] {
-        entered.store(true);
         waitResult = sceHttp2WaitAsync(client.request, &completed, nullptr, nullptr);
     });
-    while (!entered.load()) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    phases.Wait(AsyncPhase::WaitPending);
     Require(sceHttp2DeleteRequest(client.request) == 0, "delete in-flight async read");
     waiting.join();
     Require(waitResult == 0, "deleted async read wait returns a completion");
@@ -2305,20 +2299,24 @@ void AsyncTwoWaiters(int ssl) {
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "two-waiter submission");
     server.WaitStage(2);
     std::atomic<int> successes{0};
-    std::atomic<int> entered{0};
+    AsyncPhases phases(client.request);
+    std::promise<void> consumed;
+    auto completion = consumed.get_future();
     int codes[2] = {-1, -1};
     const auto consume = [&](int index) {
         Http2AsyncResult result{};
-        entered.fetch_add(1);
         codes[index] = sceHttp2WaitAsync(client.request, &result, nullptr, nullptr);
-        if (codes[index] == 0) successes.fetch_add(1);
+        if (codes[index] == 0) {
+            successes.fetch_add(1);
+            consumed.set_value();
+        }
     };
     std::thread first(consume, 0);
     std::thread second(consume, 1);
-    while (entered.load() != 2) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    phases.Wait(AsyncPhase::WaitPending, 2);
     server.Release();
-    while (successes.load() == 0) std::this_thread::yield();
+    Require(completion.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "two-waiter completion deadline");
+    completion.get();
     Require(sceHttp2DeleteRequest(client.request) == 0, "delete after last completion");
     first.join();
     second.join();
