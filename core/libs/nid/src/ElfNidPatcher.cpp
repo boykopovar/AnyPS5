@@ -248,37 +248,44 @@ void RebuildGnuHash(
 std::vector<std::size_t> DynamicEntryOffsets(const std::vector<std::uint8_t>& elf, const Elf64_Ehdr& ehdr) {
     using namespace Internal;
 
+    const auto readEntries = [&](std::uint64_t offset, std::uint64_t size, const char* table) {
+        if (size % sizeof(Elf64_Dyn) != 0u)
+            throw std::runtime_error(std::string("invalid ELF ") + table + " size");
+        RequireElfRange(elf, offset, size, table);
+
+        std::vector<std::size_t> entries;
+        const auto count = static_cast<std::size_t>(size / sizeof(Elf64_Dyn));
+        for (std::size_t index = 0u; index < count; ++index) {
+            const auto entryOffset = static_cast<std::size_t>(offset) + index * sizeof(Elf64_Dyn);
+            if (Read<Elf64_Dyn>(elf, entryOffset).d_tag == kDtNull) break;
+            entries.push_back(entryOffset);
+        }
+        return entries;
+    };
+
+    if (ehdr.e_phnum != 0u) {
+        if (ehdr.e_phoff == 0u || ehdr.e_phentsize != sizeof(Elf64_Phdr))
+            throw std::runtime_error("invalid ELF program header table for PT_DYNAMIC lookup");
+        RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+
+        bool foundDynamicSegment = false;
+        std::vector<std::size_t> offsets;
+        for (std::uint16_t i = 0u; i < ehdr.e_phnum; ++i) {
+            const auto phdr = Read<Elf64_Phdr>(elf, static_cast<std::size_t>(ehdr.e_phoff) + i * sizeof(Elf64_Phdr));
+            if (phdr.p_type != 2u) continue;
+            if (foundDynamicSegment) throw std::runtime_error("multiple PT_DYNAMIC segments");
+            foundDynamicSegment = true;
+            offsets = readEntries(phdr.p_offset, phdr.p_filesz, "dynamic segment");
+        }
+        if (foundDynamicSegment) return offsets;
+    }
+
     std::vector<std::size_t> offsets;
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const auto shdr = Read<Elf64_Shdr>(elf, static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr));
         if (shdr.sh_type != kShtDynamic) continue;
-        RequireElfRange(elf, shdr.sh_offset, shdr.sh_size, "dynamic");
-        const auto count = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Dyn);
-        for (std::size_t index = 0u; index < count; ++index) {
-            const auto offset = static_cast<std::size_t>(shdr.sh_offset) + index * sizeof(Elf64_Dyn);
-            if (Read<Elf64_Dyn>(elf, offset).d_tag == kDtNull) break;
-            offsets.push_back(offset);
-        }
-    }
-    if (!offsets.empty() || ehdr.e_phnum == 0u) return offsets;
-
-    if (ehdr.e_phoff == 0u || ehdr.e_phentsize != sizeof(Elf64_Phdr))
-        throw std::runtime_error("invalid ELF program header table for PT_DYNAMIC fallback");
-    RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
-
-    bool foundDynamicSegment = false;
-    for (std::uint16_t i = 0u; i < ehdr.e_phnum; ++i) {
-        const auto phdr = Read<Elf64_Phdr>(elf, static_cast<std::size_t>(ehdr.e_phoff) + i * sizeof(Elf64_Phdr));
-        if (phdr.p_type != 2u) continue;
-        if (foundDynamicSegment) throw std::runtime_error("multiple PT_DYNAMIC segments without SHT_DYNAMIC");
-        foundDynamicSegment = true;
-        RequireElfRange(elf, phdr.p_offset, phdr.p_filesz, "dynamic segment");
-        const auto count = static_cast<std::size_t>(phdr.p_filesz) / sizeof(Elf64_Dyn);
-        for (std::size_t index = 0u; index < count; ++index) {
-            const auto offset = static_cast<std::size_t>(phdr.p_offset) + index * sizeof(Elf64_Dyn);
-            if (Read<Elf64_Dyn>(elf, offset).d_tag == kDtNull) break;
-            offsets.push_back(offset);
-        }
+        auto entries = readEntries(shdr.sh_offset, shdr.sh_size, "dynamic section");
+        offsets.insert(offsets.end(), entries.begin(), entries.end());
     }
     return offsets;
 }

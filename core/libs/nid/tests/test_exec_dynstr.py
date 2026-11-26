@@ -216,6 +216,33 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertIn(nid("sceA").encode() + b"\0", strings)
         self.assertIn(nid("sceB").encode() + b"\0", strings)
 
+    def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_stale(self):
+        original = bytearray(executable("sce"))
+        stale_offset = 0x780
+        struct.pack_into("<qQqQ", original, stale_offset, 0x6fffffff, 0x1234, 0, 0)
+        struct.pack_into("<QQ", original, SHOFF + 4 * 64 + 24, stale_offset, 2 * 16)
+
+        result, after = patch(bytes(original))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tags = dict(dynamic_tags(after))
+        dynstr = symbols.sections(after)[2]
+        dynlib = next(header for header in program_headers(after) if header[0] == PT_SCE_DYNLIBDATA)
+        self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
+        self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
+        self.assertEqual(after[stale_offset:stale_offset + 2 * 16], original[stale_offset:stale_offset + 2 * 16])
+
+    def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_out_of_bounds(self):
+        original = bytearray(executable("sce"))
+        struct.pack_into("<Q", original, SHOFF + 4 * 64 + 24, len(original) + 1)
+
+        result, after = patch(bytes(original))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tags = dict(dynamic_tags(after))
+        dynstr = symbols.sections(after)[2]
+        dynlib = next(header for header in program_headers(after) if header[0] == PT_SCE_DYNLIBDATA)
+        self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
+        self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
+
     def test_sce_dynamic_tags_work_without_sht_dynamic(self):
         result, after = patch(executable_without_dynamic_section())
         self.assertEqual(result.returncode, 0, result.stderr)
