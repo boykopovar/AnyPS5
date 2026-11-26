@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -17,6 +18,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -373,6 +375,14 @@ alignas(256) constexpr std::array<std::uint32_t, 66> PointerCopiesCode{
     0xbeac0390u, 0xbf800000u, 0xbf800000u, 0xf40c0916u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u,
     0x8afe3032u, 0xbf89ffdeu, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
     0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 44> NestedSiblingRecordCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148514u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf4080c16u, 0xfa0000b0u, 0xf42c090cu, 0x28000000u, 0xf42c0d18u, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0xf09c0f08u, 0x010d0a01u, 0x7e0a030au, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
@@ -1449,7 +1459,7 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     RequireRed(changed, 1, Lanes, texels[0], "float texels after the T# behind record 1's pointer changed");
 }
 
-enum class NestedCase { Basic, Large, Budget };
+enum class NestedCase { Basic, Large, Budget, SharedScan };
 constexpr std::uint32_t NestedParentLimit = 524288u;
 constexpr std::uint32_t NestedKeyLimit = 1048576u;
 
@@ -1552,6 +1562,32 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
             Require(!Faulted(merged) && merged.words == direct.words, "nested image table: pointer Phi changed the large-domain readback");
             Require(merged.tableMap.size() < Children + 1024u, "nested image table: a Cartesian product was allocated");
             std::puts("nested image table: 348156 parents, 131072 inner keys and pointer Phi checked");
+            return;
+        }
+        if (selected == NestedCase::SharedScan) {
+            constexpr std::uint32_t Parents = NestedParentLimit / 2u + 1u;
+            wideRoots.resize(Parents * 4u, 0u);
+            putRoot(0u, records[0].data());
+            putRoot(Parents - 1u, records[1].data());
+            auto second = Buffer(palettes[0].data(), 1u);
+            second[1] |= 64u << 16u;
+            std::copy(second.begin(), second.end(), records[1].begin() + 44u);
+            Keys = {};
+            for (std::uint32_t group = 0; group < 4u; ++group) {
+                Keys[group * 2u] = Parents - 1u;
+                Keys[group * 2u + 1u] = group % 2u;
+            }
+            const auto siblings = run(NestedSiblingRecordCode);
+            Require(!Faulted(siblings), "nested image table: a second V# behind the same parent records was charged for them again:\n" + siblings.log);
+            for (std::uint32_t group = 0; group < 4u; ++group) {
+                RequireRed(siblings, group, Lanes, texels[1u + group % 2u], "nested image table: first V# behind the last shared parent record");
+                for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                    const auto actual = siblings.words[(group * Lanes + lane) * 4u + 1u];
+                    const auto expected = texels[group % 2u](lane % Width);
+                    Require(actual == expected, "nested image table: second V# behind the last shared parent record: group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected));
+                }
+            }
+            std::puts("nested image table: two V#s behind the same parent records share one scan budget");
             return;
         }
         wideRoots.resize((NestedParentLimit + 1u) * 4u, 0u);
@@ -2276,6 +2312,79 @@ void RunSharedSamplerTests(AgcDriver::VulkanDevice& device, const std::string& m
     std::printf("shared sampler %s %s: integer=%u float_bits=%u passed\n", draw ? "draw" : "dispatch", mode.c_str(), integer, filtered);
 }
 
+void RunIndirectThreadDimensionTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t ArgumentBytes = 1u << 20u;
+#ifdef _WIN32
+    auto* arguments = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, ArgumentBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    auto* arguments = static_cast<std::uint32_t*>(std::aligned_alloc(ArgumentBytes, ArgumentBytes));
+#endif
+    Require(arguments != nullptr, "image table thread dimensions: cannot allocate the argument block");
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() {
+            GuestAllocations::Mutation().Remove(data);
+#ifdef _WIN32
+            VirtualFree(data, 0, MEM_RELEASE);
+#else
+            std::free(data);
+#endif
+        }
+    } registered(arguments, ArgumentBytes);
+    SetClassRecords();
+    Keys = {};
+    Keys[1] = 1u;
+    constexpr std::uint32_t Threads = Lanes + 10u;
+    const auto control = Run(device, ReadTableCode, 2, Lanes, 64);
+    Require(!Faulted(control), "image table thread dimensions: the direct dispatch faulted:\n" + control.log);
+    const std::span<const std::uint32_t> span(ReadTableCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+        {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
+        {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+        {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+        {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+    }};
+    const auto rootAddress = reinterpret_cast<std::uintptr_t>(Srt.data());
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1, {~0u, ~0u, ~0u}};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
+        {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 0}
+    };
+    const auto result = ShaderRecompiler::Recompile(request);
+    const auto position = [&](auto matches) { return std::ranges::find_if(result.bindings, matches) - result.bindings.begin(); };
+    const auto table = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable; });
+    const auto data = position([](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    Require(table < data && data < static_cast<std::ptrdiff_t>(result.bindings.size()), "image table thread dimensions: the shader does not bind its image table before its shader data");
+    arguments[0] = Threads;
+    arguments[1] = 1u;
+    arguments[2] = 1u;
+    std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+    StderrCapture capture;
+    AgcDriver::VulkanDevice::IndirectOutcome outcome{};
+    try {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        outcome = device.DispatchIndirect(result, reinterpret_cast<std::uintptr_t>(arguments), {}, reinterpret_cast<std::uintptr_t>(span.data()), nullptr, nullptr, {Lanes, 1u, 1u});
+    } catch (...) {
+        static_cast<void>(capture.Finish());
+        throw;
+    }
+    device.WaitIdle();
+    const auto log = capture.Finish();
+    Require(outcome.cpuReason == 0, "image table thread dimensions: the dispatch left the GPU argument path (reason " + std::to_string(outcome.cpuReason) + ")");
+    Require(log.find("image table:") == std::string::npos, "image table thread dimensions: the dispatch faulted:\n" + log);
+    for (std::uint32_t thread = 0; thread < 2u * Lanes; ++thread) {
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            const auto index = thread * 4u + word;
+            const auto expected = thread < Threads ? control.words[index] : 0xdeadbeefu;
+            Require(Output[index] == expected, "image table thread dimensions: thread " + std::to_string(thread) + " word " + std::to_string(word) + " is " + Hex(Output[index]) + ", expected " + Hex(expected));
+        }
+    }
+}
+
 void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
@@ -2335,10 +2444,15 @@ int main(int argc, char** argv) {
             RunPointerArmTests(*device, true);
             return 0;
         }
+        if (argc == 2 && std::strcmp(argv[1], "--nested-shared-scan") == 0) {
+            RunNestedRecordTests(*device, NestedCase::SharedScan);
+            return 0;
+        }
         RunTests(*device);
         RunBorderSwizzleTests(*device);
         RunAnisoOverrideTests(*device);
         RunReadTests(*device);
+        RunIndirectThreadDimensionTests(*device);
         RunLoopKeyTests(*device);
         RunGuardedTableTests(*device);
         RunSelectedRecordTests(*device);
