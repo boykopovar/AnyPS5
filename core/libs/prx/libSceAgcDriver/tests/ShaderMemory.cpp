@@ -6403,6 +6403,15 @@ void verifyStoreTables() {
     const auto fieldCompiled = CompileTable(request(fieldCode));
     const auto& fieldStores = fieldCompiled.result->storeTables;
     require(fieldStores.fallback == StoreTableFallback::None && fieldStores.tables.size() == 1u && fieldStores.tables[0].base == address && fieldStores.tables[0].keys == 32u, "store table bit field: the dispatch did not read 32 records from the table");
+    {
+        static std::array<std::uint32_t, 160> movedRoot{};
+        movedRoot = root;
+        const auto movedAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(movedRoot.data()));
+        const std::array<std::uint32_t, 2> movedUserData{static_cast<std::uint32_t>(movedAddress), static_cast<std::uint32_t>(movedAddress >> 32u)};
+        const auto memoBefore = ResultMemoBytes();
+        const auto movedCompiled = CompileTable(TableRequest(fieldCode, movedUserData));
+        require(ResultMemoBytes() == memoBefore && movedCompiled.result->storeTables.tables.size() == 1u && movedCompiled.result->storeTables.tables[0].base == movedAddress, "store table bit field: moving the table did not patch the masked donor's store tables");
+    }
 
     const std::vector<std::uint32_t> selectCode{0x7d880090u, 0x7e040283u, 0x02020481u, 0x7e080501u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020000u, 0xbf810000u};
     const auto selectPlan = GetResourcePlan(request(selectCode));

@@ -1977,6 +1977,10 @@ bool offsetMayWrap(const StoreTable& table, std::uint64_t keys) {
 
 void materializeStoreTables(const IrResourcePlan& plan, const SrtRuntime& runtime, const SrtWalker& walker, StoreTablesSnapshot& stores) {
     stores = {};
+    if (!plan.storesBounded && plan.storeMiss == StoreTableMiss::NoStores) {
+        stores.miss = StoreTableMiss::NoStores;
+        return;
+    }
     stores.shader = runtime.shaderBase;
     if (!plan.storesBounded || GcnGuestShaders()) {
         stores.miss = plan.storesBounded ? StoreTableMiss::GcnShader : plan.storeMiss;

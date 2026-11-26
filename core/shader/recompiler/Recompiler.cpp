@@ -2318,28 +2318,30 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(base);
         mix(size);
     }
-    mix(static_cast<std::uint64_t>(snapshot.storeTables.fallback));
-    mix(snapshot.storeTables.shader);
-    mix(snapshot.storeTables.wantedKeys);
-    mix(snapshot.storeTables.missPc);
-    mix(static_cast<std::uint64_t>(snapshot.storeTables.miss));
-    mix(snapshot.storeTables.tables.size());
-    for (const auto& table : snapshot.storeTables.tables) {
-        mix(table.base);
-        mix(table.size);
-        mix(table.keys);
-        mix(table.offset);
-        mix(table.stride);
-        mix(table.maxIndex);
-        mix(table.maxOffset);
-        mix(table.maxSoffset);
-        mix(table.pc);
-        for (const auto word : table.descriptor) mix(word);
-        mix(table.keyList.size());
-        for (const auto key : table.keyList) mix(key);
-        mix(table.address ? 1u : 0u);
-        mix(table.direct ? 1u : 0u);
-        mix(table.scalar ? 1u : 0u);
+    if (!masked && (snapshot.storeTables.fallback != StoreTableFallback::Unmatched || (snapshot.storeTables.miss != StoreTableMiss::None && snapshot.storeTables.miss != StoreTableMiss::NoStores))) {
+        mix(static_cast<std::uint64_t>(snapshot.storeTables.fallback));
+        mix(snapshot.storeTables.shader);
+        mix(snapshot.storeTables.wantedKeys);
+        mix(snapshot.storeTables.missPc);
+        mix(static_cast<std::uint64_t>(snapshot.storeTables.miss));
+        mix(snapshot.storeTables.tables.size());
+        for (const auto& table : snapshot.storeTables.tables) {
+            mix(table.base);
+            mix(table.size);
+            mix(table.keys);
+            mix(table.offset);
+            mix(table.stride);
+            mix(table.maxIndex);
+            mix(table.maxOffset);
+            mix(table.maxSoffset);
+            mix(table.pc);
+            for (const auto word : table.descriptor) mix(word);
+            mix(table.keyList.size());
+            for (const auto key : table.keyList) mix(key);
+            mix(table.address ? 1u : 0u);
+            mix(table.direct ? 1u : 0u);
+            mix(table.scalar ? 1u : 0u);
+        }
     }
     for (const auto threads : partialThreads(request)) mix(threads);
     mix(request.layout.pushConstantOffsetBytes);
