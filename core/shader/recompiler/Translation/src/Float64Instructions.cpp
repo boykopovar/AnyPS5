@@ -129,13 +129,14 @@ bool TranslationContext::minMaxF64(const RdnaInstruction& inst, IrOpcode opcode)
 
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
     const bool ldexp = opcode == IrOpcode::FPLdexp64;
-    const bool flushesInput = ldexp || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
+    const bool transcendental = opcode == IrOpcode::FPRcp64 || opcode == IrOpcode::FPRsq64 || opcode == IrOpcode::FPSqrt64;
+    const bool flushesInput = ldexp || transcendental || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
     const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
     IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
     IrValue* exponent = ldexp ? &readU32(sourceAt(inst, 1u)).Value() : nullptr;
     IrValue& result = ldexp ? ir.Emit(opcode, IrType::U64, {&argument, exponent}) : ir.Emit(opcode, IrType::U64, {&argument});
     std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
-    if (opcode == IrOpcode::FPFract64) words = flushF64Bits(words, 0x80u);
+    if (opcode == IrOpcode::FPFract64 || transcendental) words = flushF64Bits(words, 0x80u);
     if (ldexp && floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
         IrValue& field = ir.ShiftRightLogical(bits[1].Value(), ir.Constant(20u));
         IrValue& biased = ir.BitwiseAnd(field, ir.Constant(0x7ffu));

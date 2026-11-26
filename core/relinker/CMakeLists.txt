@@ -205,6 +205,11 @@ if(BUILD_TESTING)
     target_link_libraries(call_registry_writer_tests PRIVATE relinker_core)
     add_test(NAME call_registry_writer COMMAND call_registry_writer_tests)
     set_tests_properties(call_registry_writer PROPERTIES TIMEOUT 20)
+
+    add_test_executable(code_instruction_collector_address_size_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeInstructionCollectorAddressSizeTests.cpp)
+    target_link_libraries(code_instruction_collector_address_size_tests PRIVATE relinker_core)
+    add_test(NAME code_instruction_collector_address_size COMMAND code_instruction_collector_address_size_tests)
+    set_tests_properties(code_instruction_collector_address_size PROPERTIES TIMEOUT 20)
 endif()
 
 if(ANYPS5_BUILD_FUZZERS)
@@ -874,6 +879,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_replaced_plt_stubs.py $<TARGET_FILE:relinker>)
         add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_syscall_route COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_route.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
@@ -970,6 +977,11 @@ if(BUILD_TESTING)
         set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)
         set_tests_properties(linux_guest_qualified_imports PROPERTIES TIMEOUT 30)
         add_asan_test_options(linux_guest_qualified_imports verify_asan_link_order=0)
+        add_test(NAME linux_guest_relro COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_relro.py $<TARGET_FILE:relinker>)
+        set_property(TEST linux_guest_relro APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_relro PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_relro verify_asan_link_order=0)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
@@ -1317,6 +1329,9 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    add_test(NAME macos_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_qualified_imports.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_guest_qualified_imports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)

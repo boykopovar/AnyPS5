@@ -148,6 +148,16 @@ void Aad(LibreSslEvpCipherCtx* ctx, bool encrypt, const Bytes& aad, std::size_t 
     Require(ok == 1 && written == static_cast<int>(length));
 }
 
+void SealWithContext(LibreSslEvpCipherCtx* ctx, const Bytes& aad, const Bytes& plain, const Sealed& expected) {
+    if (!aad.empty()) Aad(ctx, true, aad, 0, aad.size());
+    Require(Update(ctx, true, plain, 0, plain.size()) == expected.text);
+    int written = -1;
+    unsigned char tail[1];
+    Require(EVP_EncryptFinal_ex_nid_postfix(ctx, tail, &written) == 1 && written == 0);
+    Bytes tag(16, 0xA5);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, GetTag, 16, tag.data()) == 1 && tag == expected.tag);
+}
+
 void CheckObjects() {
     const LibreSslEvpCipher* stream = EVP_chacha20_nid_postfix();
     Require(stream == EVP_chacha20_nid_postfix());
@@ -425,6 +435,41 @@ void CheckAeadNonces() {
     Require(EVP_CIPHER_CTX_ctrl_nid_postfix(fixedContext.get(), GetTag, 16, tag.data()) == 1 && tag == fixedExpected.tag);
 }
 
+void CheckAeadReinitClearsTag() {
+    const Bytes key = Sequence(0x42, 32);
+    const Bytes nonce1 = Sequence(0x10, 12);
+    const Bytes nonce2 = Sequence(0x20, 12);
+    const Bytes aad1 = Sequence(0x30, 8);
+    const Bytes plain1 = Sequence(0x50, 32);
+    const Bytes aad2 = Sequence(0x60, 12);
+    const Bytes plain2 = Sequence(0x70, 48);
+    const Sealed expected1 = Seal(key, nonce1, aad1, plain1);
+    const Sealed expected2 = Seal(key, nonce2, aad2, plain2);
+
+    Context initContext;
+    Require(EVP_EncryptInit_ex_nid_postfix(initContext.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, key.data(), nonce1.data()) == 1);
+    SealWithContext(initContext.get(), aad1, plain1, expected1);
+    Require(EVP_EncryptInit_ex_nid_postfix(initContext.get(), nullptr, nullptr, nullptr, nonce2.data()) == 1);
+    Bytes tag(16, 0xA5);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(initContext.get(), GetTag, 16, tag.data()) == 0);
+    SealWithContext(initContext.get(), aad2, plain2, expected2);
+
+    Context fixedContext;
+    Require(EVP_EncryptInit_ex_nid_postfix(fixedContext.get(), EVP_chacha20_poly1305_nid_postfix(), nullptr, key.data(), nonce1.data()) == 1);
+    SealWithContext(fixedContext.get(), aad1, plain1, expected1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(fixedContext.get(), SetIvFixed, 12, const_cast<unsigned char*>(nonce2.data())) == 1);
+    tag.assign(16, 0xA5);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(fixedContext.get(), GetTag, 16, tag.data()) == 0);
+    SealWithContext(fixedContext.get(), aad2, plain2, expected2);
+
+    Aad(fixedContext.get(), true, aad2, 0, aad2.size());
+    Update(fixedContext.get(), true, plain2, 0, 16);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(fixedContext.get(), SetIvFixed, 12, const_cast<unsigned char*>(nonce1.data())) == 1);
+    tag.assign(16, 0xA5);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(fixedContext.get(), GetTag, 16, tag.data()) == 0);
+    SealWithContext(fixedContext.get(), aad1, plain1, expected1);
+}
+
 void CheckAeadOrder() {
     const Bytes key = Sequence(0x21, 32);
     const Bytes nonce = Sequence(0x31, 12);
@@ -494,6 +539,7 @@ int main() {
     CheckAeadEmptyAndNegativeUpdates();
     CheckAeadControls();
     CheckAeadNonces();
+    CheckAeadReinitClearsTag();
     CheckAeadOrder();
     CheckAeadRandom();
     std::puts("LibreSSL3 ChaCha: ok");
