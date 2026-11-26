@@ -88,11 +88,20 @@ struct ImportProbe {
     std::uint32_t staleAfterFill = 0;
 };
 
+struct SparseDmaBufProbe {
+    const char* failure = nullptr;
+    VkResult result = VK_SUCCESS;
+    std::uint32_t copied = 0;
+    std::uint32_t landed = 0;
+};
+
 ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
+SparseDmaBufProbe ProbeSparseDmaBufImport(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 bool DmaBufImportSelected(const Context& context);
+bool SparseDmaBufImportSelected(const Context& context);
 
 enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget, Label };
 inline constexpr std::size_t ImportRequesterCount = 7;

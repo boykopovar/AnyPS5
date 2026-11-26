@@ -480,7 +480,7 @@ PFN_vkVoidFunction ResolveSparseRefusal(VkDevice device, const char* name) {
 bool DmaBufSparseFailure(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    if (!DmaBufImportSelected(context) || !context.sparseBinding) {
+    if (!DmaBufImportSelected(context) || !context.sparseBinding || !SparseDmaBufImportSelected(context)) {
         std::puts("skipped, the device does not select watched sparse dma-buf imports");
         return false;
     }
