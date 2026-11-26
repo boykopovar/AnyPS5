@@ -1202,6 +1202,8 @@ int APS5_VABI iswascii_nid_postfix(std::uint32_t c);
 int APS5_VABI iswctype_nid_postfix(std::uint32_t c, std::uint64_t mask);
 int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type);
 std::uint64_t APS5_VABI wctype_nid_postfix(const char* property);
+std::uint64_t APS5_VABI _ZNSt3__115__get_classnameEPKcb_nid_postfix(const char* property, bool caseInsensitive);
+void* APS5_VABI _ZNSt3__120__get_collation_nameEPKc_nid_postfix(void* result, const char* name);
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI btowc_nid_postfix(int c);
