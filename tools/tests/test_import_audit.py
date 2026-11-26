@@ -3095,7 +3095,6 @@ class ImportAuditTests(unittest.TestCase):
         phnum = struct.unpack_from("<H", image, 56)[0]
         headers = [struct.unpack_from("<IIQQQQQQ", image, phoff + index * 56)
                    for index in range(phnum)]
-        dynamic = next(header for header in headers if header[0] == 2)
         image.extend(struct.pack("<qQ", 1, 0xFFFFFFFF))
         for index, header in enumerate(headers):
             if header[0] == 2 or header[0] == 1:
