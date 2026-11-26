@@ -115,7 +115,6 @@ int APS5_VABI _ZN9Inspector21InspectorConsoleAgent11startTimingEPN3JSC14JSGlobal
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent13clearMessagesERN3WTF6StringE();
 int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtrINS_8Protocol3CSS19CSSStyleSheetHeaderENS1_13DumbPtrTraitsIS5_EEEE();
 int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv();
-int APS5_VABI WTFLogAlwaysV();
 int APS5_VABI _ZN3JSC2VM22boundFunctionSpaceSlowEv();
 int APS5_VABI _ZN9Inspector15RemoteInspector9singletonEv();
 int APS5_VABI _ZN3JSC19numberOfDFGCompilesEPNS_14JSGlobalObjectEPNS_9CallFrameE();

@@ -412,8 +412,8 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
     for (std::size_t axis = 0; axis < state.sticks.size(); ++axis) {
         if (input.held[axis] || axes[axis] != 0.0) state.sticks[axis] = StickByte(axes[axis]);
     }
-    if (mouseMode) {
-        const auto deflection = mouse.Deflection();
+    const auto deflection = mouse.Deflection();
+    if (mouseMode && (deflection[0] != 0.0 || deflection[1] != 0.0)) {
         const std::size_t offset = configuration.settings.mouseControlsRightStick ? 2 : 0;
         state.sticks[offset] = StickByte(deflection[0]);
         state.sticks[offset + 1] = StickByte(deflection[1]);

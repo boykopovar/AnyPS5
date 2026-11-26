@@ -131,6 +131,8 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 
 }
 
+using LibcRaiseHandler = void (APS5_VABI*)(const LibcException::ExceptionObject&);
+
 namespace GuestCLocale {
 
 struct Ctypevec {
@@ -370,6 +372,10 @@ void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
+void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*));
+void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5_VABI *compare)(const void*, const void*));
+void* APS5_VABI tdelete_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*));
+void APS5_VABI twalk_nid_postfix(const void* root, void (APS5_VABI *action)(const void*, int, int));
 void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
@@ -1196,6 +1202,8 @@ int APS5_VABI iswascii_nid_postfix(std::uint32_t c);
 int APS5_VABI iswctype_nid_postfix(std::uint32_t c, std::uint64_t mask);
 int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type);
 std::uint64_t APS5_VABI wctype_nid_postfix(const char* property);
+std::uint64_t APS5_VABI _ZNSt3__115__get_classnameEPKcb_nid_postfix(const char* property, bool caseInsensitive);
+void* APS5_VABI _ZNSt3__120__get_collation_nameEPKc_nid_postfix(void* result, const char* name);
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI btowc_nid_postfix(int c);
@@ -1203,6 +1211,7 @@ int APS5_VABI wctob_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI _Btowc_nid_postfix(int c);
 int APS5_VABI _Wctob_nid_postfix(std::uint32_t c);
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property);
+void APS5_VABI _ZNKSt3__123__match_any_but_newlineIcE6__execERNS_7__stateIcEE_nid_postfix(const void* matcher, void* state);
 std::uint32_t APS5_VABI towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc);
 std::uint32_t APS5_VABI _Towlower_nid_postfix(std::uint32_t c, const void*);
 std::uint32_t APS5_VABI _Towupper_nid_postfix(std::uint32_t c, const void*);
@@ -1854,6 +1863,7 @@ void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer*
 [[noreturn]] void APS5_VABI __cxa_deleted_virtual_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNKSt9exception8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self);
+LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler);
 [[noreturn]] void APS5_VABI _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI _ZNKSt11logic_error8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix();
@@ -1870,6 +1880,10 @@ void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer*
 [[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI LibcThrowBadException_nid_no_patch();
 std::uint64_t APS5_VABI _ZNSt3__112__next_primeEm_nid_postfix(std::uint64_t minimum);
+void* APS5_VABI _ZNSt3__19to_stringEi_nid_postfix(void* string, std::int32_t value);
+void* APS5_VABI _ZNSt3__19to_stringEj_nid_postfix(void* string, std::uint32_t value);
+void* APS5_VABI _ZNSt3__19to_stringEm_nid_postfix(void* string, std::uint64_t value);
+void* APS5_VABI _ZNSt3__19to_stringEx_nid_postfix(void* string, std::int64_t value);
 std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds);
@@ -2020,6 +2034,13 @@ char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+void APS5_VABI _ZNSt8numpunctIcE5_InitERKSt8_Locinfob_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault);
+void APS5_VABI _ZNSt8numpunctIcE5_TidyEv_nid_postfix(GuestLocale::NumpunctFacet* self);
+void APS5_VABI _ZNSt8numpunctIcEC1Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references);
+void APS5_VABI _ZNSt8numpunctIcEC2Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references);
+void APS5_VABI _ZNSt8numpunctIcEC1ERKSt8_Locinfomb_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault);
+void APS5_VABI _ZNSt8numpunctIcEC2EPKcmb_nid_postfix(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault);
+void APS5_VABI _ZNSt8numpunctIcED1Ev_nid_postfix(GuestLocale::NumpunctFacet* self);
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 

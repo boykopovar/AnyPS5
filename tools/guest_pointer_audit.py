@@ -38,12 +38,12 @@ _OPERAND = rf"(?<![.>:])(?:\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\
 _ACCESS_PATTERNS = (
     ("member", re.compile(rf"{_OPERAND}\s*->")),
     ("index", re.compile(rf"{_OPERAND}\s*\[")),
-    ("dereference", re.compile(rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}")),
+    ("dereference", re.compile(rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{_OPERAND}(?!\s*(?:->|\[))")),
 )
 _SIMPLE_ACCESS_PATTERNS = (
     ("member", "->", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*->")),
     ("index", "[", re.compile(r"(?<![.>:])\b(?P<direct>\w+)\b\s*\[")),
-    ("dereference", "*", re.compile(r"(?:^|[=(,;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b")),
+    ("dereference", "*", re.compile(r"(?:^|[=(),;{}!&|?:+\-]|\breturn)\s*\*\s*(?<![.>:])\b(?P<direct>\w+)\b(?!\s*(?:->|\[))")),
 )
 _DEREF_PATTERN = _ACCESS_PATTERNS[2][1]
 _SIMPLE_DEREF_PATTERN = _SIMPLE_ACCESS_PATTERNS[2][2]
@@ -254,7 +254,7 @@ def parameter_patterns(name):
     operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = tuple((kind, re.compile(pattern)) for kind, pattern in (
         ("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
-        ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")))
+        ("dereference", rf"(?:^|[=(),;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}(?!\s*(?:->|\[))")))
     return re.compile(rf"\(?\s*{word}\b"), found
 
 
