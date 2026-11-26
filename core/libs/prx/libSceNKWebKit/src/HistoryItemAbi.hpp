@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
 namespace NKWebKit::WebCoreAbi {
 
@@ -17,6 +19,38 @@ struct HistoryItemVectorStorage {
 struct CachedPage {
     void* page;
     double expirationTime;
+};
+
+struct BackForwardItemIdentifier {
+    std::uint64_t object{};
+    std::uint64_t processIdentifier{};
+};
+
+struct ContentSecurityPolicyResponseHeaders {
+    HistoryItemVectorStorage headers{};
+    int httpStatusCode{};
+    bool emptyForMarkable{};
+};
+
+struct CrossOriginEmbedderPolicy {
+    bool value{};
+    bool reportOnlyValue{};
+    WtfAbi::String reportingEndpoint;
+    WtfAbi::String reportOnlyReportingEndpoint;
+};
+
+struct CrossOriginOpenerPolicy {
+    std::uint8_t value{};
+    std::uint8_t reportOnlyValue{};
+    WtfAbi::String reportingEndpoint;
+    WtfAbi::String reportOnlyReportingEndpoint;
+};
+
+struct PolicyContainer {
+    ContentSecurityPolicyResponseHeaders contentSecurityPolicyResponseHeaders;
+    CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
+    CrossOriginOpenerPolicy crossOriginOpenerPolicy;
+    std::uint8_t referrerPolicy{};
 };
 
 struct HistoryItem {
@@ -43,10 +77,60 @@ struct HistoryItem {
     void* formData{};
     WtfAbi::String formContentType;
     void* cachedPage{};
-    std::uint8_t pruningReason{};
+    std::int32_t pruningReason{};
+    BackForwardItemIdentifier identifier{};
+    PolicyContainer policyContainer;
+    bool policyContainerEngaged{};
+
+    void ref() { ++refCount; }
+    void deref();
+};
+
+class HistoryItemRef {
+public:
+    explicit HistoryItemRef(HistoryItem& item) : m_item(&item) {}
+    HistoryItemRef(const HistoryItemRef& other) : m_item(other.m_item) {
+        if (m_item) m_item->ref();
+    }
+    HistoryItemRef(HistoryItemRef&& other) noexcept : m_item(std::exchange(other.m_item, nullptr)) {}
+    HistoryItemRef& operator=(HistoryItemRef other) noexcept {
+        std::swap(m_item, other.m_item);
+        return *this;
+    }
+    ~HistoryItemRef() {
+        if (m_item) m_item->deref();
+    }
+    HistoryItem* get() const { return m_item; }
+    HistoryItem* operator->() const { return m_item; }
+    HistoryItem& operator*() const { return *m_item; }
+
+private:
+    HistoryItem* m_item;
 };
 
 static_assert(sizeof(HistoryItemVectorStorage) == 16);
+static_assert(sizeof(BackForwardItemIdentifier) == 16);
+static_assert(offsetof(BackForwardItemIdentifier, object) == 0);
+static_assert(offsetof(BackForwardItemIdentifier, processIdentifier) == 8);
+static_assert(sizeof(ContentSecurityPolicyResponseHeaders) == 24);
+static_assert(offsetof(ContentSecurityPolicyResponseHeaders, headers) == 0);
+static_assert(offsetof(ContentSecurityPolicyResponseHeaders, httpStatusCode) == 16);
+static_assert(offsetof(ContentSecurityPolicyResponseHeaders, emptyForMarkable) == 20);
+static_assert(sizeof(CrossOriginEmbedderPolicy) == 24);
+static_assert(offsetof(CrossOriginEmbedderPolicy, value) == 0);
+static_assert(offsetof(CrossOriginEmbedderPolicy, reportOnlyValue) == 1);
+static_assert(offsetof(CrossOriginEmbedderPolicy, reportingEndpoint) == 8);
+static_assert(offsetof(CrossOriginEmbedderPolicy, reportOnlyReportingEndpoint) == 16);
+static_assert(sizeof(CrossOriginOpenerPolicy) == 24);
+static_assert(offsetof(CrossOriginOpenerPolicy, value) == 0);
+static_assert(offsetof(CrossOriginOpenerPolicy, reportOnlyValue) == 1);
+static_assert(offsetof(CrossOriginOpenerPolicy, reportingEndpoint) == 8);
+static_assert(offsetof(CrossOriginOpenerPolicy, reportOnlyReportingEndpoint) == 16);
+static_assert(sizeof(PolicyContainer) == 80);
+static_assert(offsetof(PolicyContainer, contentSecurityPolicyResponseHeaders) == 0);
+static_assert(offsetof(PolicyContainer, crossOriginEmbedderPolicy) == 24);
+static_assert(offsetof(PolicyContainer, crossOriginOpenerPolicy) == 48);
+static_assert(offsetof(PolicyContainer, referrerPolicy) == 72);
 static_assert(offsetof(CachedPage, page) == 0);
 static_assert(offsetof(CachedPage, expirationTime) == 8);
 static_assert(offsetof(HistoryItem, refCount) == 0);
@@ -73,6 +157,12 @@ static_assert(offsetof(HistoryItem, formData) == 144);
 static_assert(offsetof(HistoryItem, formContentType) == 152);
 static_assert(offsetof(HistoryItem, cachedPage) == 160);
 static_assert(offsetof(HistoryItem, pruningReason) == 168);
+static_assert(offsetof(HistoryItem, identifier) == 176);
+static_assert(offsetof(HistoryItem, policyContainer) == 192);
+static_assert(offsetof(HistoryItem, policyContainerEngaged) == 272);
+static_assert(sizeof(HistoryItem) == 280);
+static_assert(sizeof(HistoryItemRef) == 8);
+static_assert(!std::is_trivially_destructible_v<HistoryItemRef>);
 
 using HistoryItemChangedHook = void (*)(HistoryItem*);
 extern HistoryItemChangedHook historyItemChangedHook;
