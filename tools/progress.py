@@ -1596,17 +1596,28 @@ def library_report(base, head):
     return lines + [""]
 
 
+def gfx1013_comparison_values(snapshot):
+    profile = snapshot.get("shader_source", {}).get("profiles", {}).get("gfx1013")
+    if profile is None:
+        return ("Not measured",) * 3
+    instructions, dpp = profile["instructions"], profile["dpp"]
+    return (
+        f'{instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(profile)}%)',
+        f'{instructions["translated"]}/{instructions["total"]}',
+        f'{dpp["decoded"]}/{dpp["total"]}',
+    )
+
+
 def report(base, head):
     lines = compare("System libraries", "Library", "functions", base["libraries"], head["libraries"])
     lines += library_report(base["libraries"], head["libraries"])
     lines += compare("GPU shader instructions", "Encoding", "instructions", base["shaders"], head["shaders"])
-    before = base.get("shader_source", {}).get("profiles", {}).get("gfx1013")
-    after = head.get("shader_source", {}).get("profiles", {}).get("gfx1013")
-    if after and (not before or before["instructions"] != after["instructions"] or before["dpp"] != after["dpp"]):
-        instructions = after["instructions"]
-        previous = f'{before["instructions"]["decoded"]}/{before["instructions"]["total"]}' if before else "Not measured"
-        lines += ["#### gfx1013 reference shader forms", "", "| Before | After |", "| - | - |",
-                  f'| {previous} | {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(after)}%) |', ""]
+    before, after = gfx1013_comparison_values(base), gfx1013_comparison_values(head)
+    if before != after:
+        measures = ("Instruction forms decoded", "Instruction forms with a translator case", "DPP forms decoded")
+        lines += ["#### gfx1013 reference shader forms", "", "| Measure | Before | After |", "| - | - | - |"]
+        lines += [f"| {measure} | {previous} | {current} |" for measure, previous, current in zip(measures, before, after)]
+        lines.append("")
     return "\n".join(lines)
 
 
