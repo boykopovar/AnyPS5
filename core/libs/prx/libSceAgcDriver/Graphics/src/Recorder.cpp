@@ -3953,10 +3953,17 @@ std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, Draw
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT);
     CountBarriers(CommandClass::InputMirror);
     EndGpuTiming(timing, copied);
-    Keep(host);
-    Keep(mirror);
-    pool.bytes += bytes;
-    drawInputMirrorBytes += bytes;
+    ChangeUndoneOnDiscard(
+        [&] {
+            Keep(host);
+            Keep(mirror);
+            pool.bytes += bytes;
+            drawInputMirrorBytes += bytes;
+        },
+        [this, key = entry->first, published = mirror.get()] {
+            const auto current = drawSnapshots.find(key);
+            if (current != drawSnapshots.end() && current->second.mirror.get() == published) dropDrawInputMirror(current);
+        });
     return mirror;
 }
 

@@ -7933,6 +7933,24 @@ void drawInputMirrorTests(const Device& device) {
     std::memset(reinterpret_cast<void*>(first), 0x5a, 16);
     CollectWrites(first, 16);
     Require(reuse(first) == nullptr && use(0, 0), "a mirrored snapshot outlived a CPU store or kept its mirror's bytes");
+    const auto current = CollectWrites(first, held);
+    const auto currentHost = snapshot(first);
+    cache.KeepDrawSnapshot(first, held, current, registry, currentHost, Use::Vertex);
+    Recorder::FailNextSubmitsForTest(1);
+    const auto lostMirror = reuse(first);
+    Require(lostMirror != nullptr && lostMirror != currentHost && use(2 * held, held), "a mirror was not made for the batch that will be discarded");
+    bool refused = false;
+    try {
+        cache.Submit();
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Recorder::FailNextSubmitsForTest(0);
+    Require(refused, "the batch holding a mirror's upload was not refused");
+    Require(use(held, 0), "a discarded batch left its draw input mirror cached");
+    const auto remade = reuse(first);
+    Require(remade != nullptr && remade != lostMirror && !remade->Mapped() && use(2 * held, held), "a mirror was not made again after its batch was discarded");
+    Require(drawInputHolds(context, cache, remade, first, held), "a draw input mirror made after a discarded batch does not hold the bytes of its snapshot");
     cache.Sync();
     auto tight = context;
     tight.memoryProperties2 = tightMemoryBudget;
