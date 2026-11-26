@@ -32,7 +32,8 @@ inline bool LineWritable(std::uintptr_t line) {
     if (VirtualQuery(reinterpret_cast<const void*>(line), &info, sizeof(info)) == 0) return false;
     if (info.State != MEM_COMMIT) return false;
     if ((info.Protect & PAGE_GUARD) != 0) return false;
-    return (info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
+    const DWORD protection = info.Protect & 0xff;
+    return protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE || protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_WRITECOPY;
 }
 
 // Zeroes the cache line containing the address in the context's rax and advances Rip past the
