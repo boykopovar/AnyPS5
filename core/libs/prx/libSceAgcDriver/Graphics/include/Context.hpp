@@ -233,6 +233,7 @@ struct Context {
     bool integratedGpu = false;
     bool hostPointerImport = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -336,6 +337,7 @@ struct Context {
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;
+    std::uint32_t optionalSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;

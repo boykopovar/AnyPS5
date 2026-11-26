@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -203,6 +204,76 @@ class RecipeTests(ReplayFixture):
                 self.assertEqual(recipe["environment"].get("VK_LOADER_DEBUG"), flags)
 
 
+
+class PreflightTests(ReplayFixture):
+    def setUp(self):
+        super().setUp()
+        capture = self.root / "capture"
+        (capture / "capture.bin").rename(capture / "calls.bin")
+        (capture / "memory.bin").write_bytes(b"memory stream")
+        self.recipe_path = self.root / "recipe.json"
+        self.recipe_path.write_text(json.dumps(self.recipe), encoding="utf-8")
+
+    def preflight(self):
+        before = {path.relative_to(self.root): path.read_bytes() if path.is_file() else None
+                  for path in self.root.rglob("*")}
+        result = subprocess.run([sys.executable, str(Path(runner.__file__).resolve()), "validate", "recipe.json"],
+                                cwd=self.root, capture_output=True, encoding="utf-8", timeout=30)
+        after = {path.relative_to(self.root): path.read_bytes() if path.is_file() else None
+                 for path in self.root.rglob("*")}
+        self.assertEqual(after, before)
+        return result
+
+    def test_reports_both_runtimes_and_capture_without_launching(self):
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("capture", *runner.ARMS):
+            with self.subTest(input=name):
+                self.assertIn(f"{name}: 3 files, ", result.stdout)
+        self.assertIn("Native inspection", result.stdout)
+
+    def test_rejects_missing_capture_stream_or_candidate_tool(self):
+        for relative, message in (("capture/memory.bin", "capture: missing or empty memory.bin"),
+                                  ("candidate/inspect.exe", "tool is not a regular file")):
+            path = self.root / relative
+            contents = path.read_bytes()
+            path.unlink()
+            with self.subTest(input=relative):
+                result = self.preflight()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, "")
+            path.write_bytes(contents)
+
+    def test_rejects_incomplete_capture_metadata(self):
+        metadata = self.root / "capture" / "capture.json"
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        value["warnings"] = ["unverified host memory"]
+        metadata.write_text(json.dumps(value), encoding="utf-8")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("capture warning: unverified host memory", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive path matching")
+    def test_accepts_recipe_tool_paths_with_different_file_case(self):
+        if not (self.root / "candidate" / "REPLAY.EXE").is_file():
+            self.skipTest("temporary runtime directory is case-sensitive")
+        self.recipe["arms"]["candidate"]["replay"] = "REPLAY.EXE"
+        self.recipe_path.write_text(json.dumps(self.recipe), encoding="utf-8")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rejects_a_hardlinked_runtime_entry(self):
+        runtime = self.root / "candidate"
+        os.link(runtime / "library.prx", runtime / "copied-library.prx")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("candidate:", result.stderr)
+        self.assertIn("hardlinked file", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+
 class RunnerTests(ReplayFixture):
     def setUp(self):
         super().setUp()
@@ -383,6 +454,17 @@ class RunnerTests(ReplayFixture):
         with mock.patch.object(runner, "execute_replay_trial", side_effect=AssertionError("offline launched a process")), contextlib.redirect_stdout(output):
             self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 2)
         self.assertEqual(len(json.loads(output.getvalue())["runs"]), 4)
+
+    def test_report_prints_a_path_outside_the_ansi_code_page_as_utf8(self):
+        self.recipe["warmups"] = 0
+        self.recipe["capture"] = "测-capture"
+        (self.root / "capture").rename(self.root / self.recipe["capture"])
+        self.run_comparison()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 0)
+            stdout.flush()
+        self.assertIn("测-capture", stdout.buffer.getvalue().decode("utf-8"))
 
     def test_offline_recomputes_assessments_from_original_logs(self):
         self.recipe["warmups"] = 0
