@@ -21,11 +21,13 @@ constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
 constexpr int NestedAsn1Error = 58;
+constexpr int ExplicitTagNotConstructed = 120;
 constexpr int BadObjectHeader = 102;
 constexpr int BooleanIsWrongLength = 106;
 constexpr int MissingEoc = 137;
 constexpr int NullIsWrongLength = 144;
 constexpr int SequenceLengthMismatch = 148;
+constexpr int SequenceNotConstructed = 149;
 constexpr int StringTooShort = 152;
 constexpr int TooLong = 155;
 constexpr int TypeNotConstructed = 156;
@@ -37,6 +39,7 @@ constexpr int UniversalStringIsWrongLength = 215;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int NestedTooDeep = 219;
 constexpr int InvalidBitStringBitsLeft = 220;
+constexpr int TypeNotPrimitive = 231;
 
 constexpr int BooleanType = 1;
 constexpr int IntegerType = 2;
@@ -44,8 +47,11 @@ constexpr int BitStringType = 3;
 constexpr int OctetStringType = 4;
 constexpr int NullType = 5;
 constexpr int ObjectType = 6;
+constexpr int RealType = 9;
 constexpr int EnumeratedType = 10;
 constexpr int Utf8StringType = 12;
+constexpr int RelativeObjectType = 13;
+constexpr int TimeType = 14;
 constexpr int SequenceType = 16;
 constexpr int SetType = 17;
 constexpr int NumericStringType = 18;
@@ -103,42 +109,65 @@ struct Tlv {
     bool indefinite = false;
 };
 
+struct Header {
+    unsigned char tag;
+    std::size_t offset;
+    std::size_t length;
+    bool indefinite;
+};
+
+thread_local const char* unsupportedEncoding = nullptr;
+
 bool ReadTlv(std::span<const unsigned char>& input, Tlv& value, int depth = 0);
 
-bool ReadTlvDefinite(std::span<const unsigned char>& input, Tlv& value) {
+bool ReadHeader(std::span<const unsigned char> input, Header& header) {
     if (input.size() < 2) {
         PutError(BadObjectHeader);
         return false;
     }
     if ((input[0] & TagNumberMask) == TagNumberMask)
         NotImplemented_nid_no_patch("d2i_PKCS7: high tag number");
-    std::size_t offset = 2;
-    std::size_t length = input[1];
-    if (length & 0x80) {
-        const std::size_t count = length & 0x7f;
+    header = {input[0], 2, input[1], false};
+    if (input[1] == 0x80) {
+        if ((input[0] & ConstructedFlag) == 0) {
+            PutError(BadObjectHeader);
+            return false;
+        }
+        header.length = 0;
+        header.indefinite = true;
+        return true;
+    }
+    if (input[1] & 0x80) {
+        const std::size_t count = input[1] & 0x7f;
         if (count == 0x7f || input.size() < 2 + count) {
             PutError(BadObjectHeader);
             return false;
         }
-        length = 0;
+        header.length = 0;
         for (std::size_t index = 0; index < count; ++index) {
-            if (length > (std::numeric_limits<std::size_t>::max() >> 8)) {
+            if (header.length > (std::numeric_limits<std::size_t>::max() >> 8)) {
                 PutError(BadObjectHeader);
                 return false;
             }
-            length = (length << 8) | input[2 + index];
+            header.length = (header.length << 8) | input[2 + index];
         }
-        offset += count;
+        header.offset += count;
     }
-    if (length > input.size() - offset) {
+    if (header.length > input.size() - header.offset) {
         PutError(TooLong);
         return false;
     }
-    value.tag = input[0];
-    value.content = input.subspan(offset, length);
-    value.encoded = input.first(offset + length);
+    return true;
+}
+
+bool ReadTlvDefinite(std::span<const unsigned char>& input, Tlv& value) {
+    Header header;
+    if (!ReadHeader(input, header)) return false;
+    value.tag = header.tag;
+    value.content = input.subspan(header.offset, header.length);
+    value.encoded = input.first(header.offset + header.length);
     value.indefinite = false;
-    input = input.subspan(offset + length);
+    input = input.subspan(header.offset + header.length);
     return true;
 }
 
@@ -200,14 +229,125 @@ bool ReadTlv(std::span<const unsigned char>& input, Tlv& value, int depth) {
 }
 
 bool Next(std::span<const unsigned char>& input, unsigned char tag, Tlv& value, int depth = 0) {
+    if ((tag == IntegerTag || tag == ObjectTag) && !input.empty() && input[0] == (tag | ConstructedFlag)) {
+        Header header;
+        if (ReadHeader(input, header)) PutError(TypeNotPrimitive);
+        return false;
+    }
     if (!ReadTlv(input, value, depth)) return false;
     if (value.tag == tag) return true;
-    PutError(WrongTag);
+    if (tag == SequenceTag && value.tag == (tag & ~ConstructedFlag)) {
+        PutError(SequenceNotConstructed);
+    } else if (tag == ContextTag0 && value.tag == (tag & ~ConstructedFlag)) {
+        PutError(ExplicitTagNotConstructed);
+    } else {
+        PutError(WrongTag);
+    }
     return false;
 }
 
 bool Peek(std::span<const unsigned char> input, unsigned char tag) {
     return !input.empty() && input[0] == tag;
+}
+
+bool PeekSet(std::span<const unsigned char> input, unsigned char tag) {
+    return Peek(input, tag) || Peek(input, tag & ~ConstructedFlag);
+}
+
+bool NextSet(std::span<const unsigned char>& input, unsigned char tag, Tlv& value, int depth = 0) {
+    if (!ReadTlv(input, value, depth)) return false;
+    if (value.tag == tag || value.tag == (tag & ~ConstructedFlag)) return true;
+    PutError(WrongTag);
+    return false;
+}
+
+enum class Encoding { Der, Ber, NotPrimitive };
+
+bool IsPrimitiveOnly(int type) {
+    return type == BooleanType || type == IntegerType || type == NullType || type == ObjectType || type == RealType ||
+           type == EnumeratedType || type == RelativeObjectType || type == TimeType;
+}
+
+Encoding ScanEncoding(std::span<const unsigned char>& input, int depth) {
+    if (input.size() < 2 || (input[0] & TagNumberMask) == TagNumberMask) {
+        input = {};
+        return Encoding::Der;
+    }
+    const unsigned char tag = input[0];
+    std::size_t offset = 2;
+    std::size_t length = input[1];
+    if (length == 0x80) return Encoding::Ber;
+    if (length & 0x80) {
+        const std::size_t count = length & 0x7f;
+        if (count == 0x7f || input.size() < 2 + count) {
+            input = {};
+            return Encoding::Der;
+        }
+        if (input[2] == 0) return Encoding::Ber;
+        if (count > sizeof(std::size_t)) {
+            input = {};
+            return Encoding::Der;
+        }
+        length = 0;
+        for (std::size_t index = 0; index < count; ++index) length = (length << 8) | input[2 + index];
+        if (length < 0x80) return Encoding::Ber;
+        offset += count;
+    }
+    if (length > input.size() - offset) {
+        input = {};
+        return Encoding::Der;
+    }
+    std::span<const unsigned char> content = input.subspan(offset, length);
+    input = input.subspan(offset + length);
+    if (!(tag & ConstructedFlag)) return Encoding::Der;
+    const int number = tag & TagNumberMask;
+    if ((tag & ClassMask) == 0 && IsPrimitiveOnly(number)) return Encoding::NotPrimitive;
+    if ((tag & ClassMask) == 0 && number != SequenceType && number != SetType) return Encoding::Ber;
+    if (depth >= MaxNesting) return Encoding::Der;
+    while (!content.empty()) {
+        const Encoding encoding = ScanEncoding(content, depth + 1);
+        if (encoding != Encoding::Der) return encoding;
+    }
+    return Encoding::Der;
+}
+
+bool Accepts(Encoding encoding, const char* name) {
+    if (encoding == Encoding::Ber) {
+        unsupportedEncoding = name;
+        return false;
+    }
+    if (encoding == Encoding::NotPrimitive) {
+        PutError(TypeNotPrimitive);
+        return false;
+    }
+    return true;
+}
+
+bool IsDer(std::span<const unsigned char> input, const char* name) {
+    return Accepts(ScanEncoding(input, 0), name);
+}
+
+bool IsDerName(std::span<const unsigned char> input) {
+    if (input.size() < 2 || input[0] != SequenceTag) return true;
+    std::size_t offset = 2;
+    std::size_t length = input[1];
+    const bool indefinite = length == 0x80;
+    if (!indefinite && (length & 0x80)) {
+        const std::size_t count = length & 0x7f;
+        if (count == 0x7f || input.size() < 2 + count) return true;
+        length = 0;
+        for (std::size_t index = 0; index < count; ++index) {
+            if (length > (std::numeric_limits<std::size_t>::max() >> 8)) return true;
+            length = (length << 8) | input[2 + index];
+        }
+        offset += count;
+    }
+    if (!indefinite && length > input.size() - offset) return true;
+    std::span<const unsigned char> content = indefinite ? input.subspan(offset) : input.subspan(offset, length);
+    while (content.size() >= 2 && (content[0] != 0x00 || content[1] != 0x00)) {
+        if (!Accepts(ScanEncoding(content, 1), "d2i_PKCS7: BER encoding in a Name")) return false;
+    }
+    return true;
 }
 
 Asn1String* NewString(int type, std::span<const unsigned char> content) {
@@ -309,29 +449,69 @@ void FreeObject(Asn1Object_nid_no_patch* object) {
     ASN1_OBJECT_free_nid_postfix(object);
 }
 
-bool CollectConstructedString(std::span<const unsigned char> input, std::vector<unsigned char>& out, int depth) {
+bool CollectSegments(std::span<const unsigned char>& input, bool needEoc, std::vector<unsigned char>& out, int depth) {
     if (depth > MaxStringNest) {
         PutError(NestedAsn1String);
-        PutError(NestedAsn1Error);
         return false;
     }
     while (!input.empty()) {
-        Tlv child;
-        if (!ReadTlv(input, child, depth)) {
+        if (input.size() >= 2 && input[0] == 0x00 && input[1] == 0x00) {
+            input = input.subspan(2);
+            if (needEoc) return true;
+            PutError(UnexpectedEoc);
+            return false;
+        }
+        Header header;
+        if (!ReadHeader(input, header)) {
             PutError(NestedAsn1Error);
             return false;
         }
-        if (child.tag & ConstructedFlag) {
-            if (!CollectConstructedString(child.content, out, depth + 1)) return false;
-        } else {
-            if (child.content.size() > MaxStringLength - out.size()) {
-                PutError(TooLong);
-                return false;
-            }
-            out.insert(out.end(), child.content.begin(), child.content.end());
+        input = input.subspan(header.offset);
+        if (header.tag & ConstructedFlag) {
+            if (!CollectSegments(input, header.indefinite, out, depth + 1)) return false;
+            continue;
         }
+        if (header.length > MaxStringLength - out.size()) {
+            PutError(TooLong);
+            return false;
+        }
+        out.insert(out.end(), input.begin(), input.begin() + static_cast<std::ptrdiff_t>(header.length));
+        input = input.subspan(header.length);
+    }
+    if (needEoc) {
+        PutError(MissingEoc);
+        return false;
     }
     return true;
+}
+
+bool ReadString(std::span<const unsigned char>& input, bool enclosedIndefinite, std::vector<unsigned char>& out) {
+    Header header;
+    if (!ReadHeader(input, header)) return false;
+    std::span<const unsigned char> rest = input.subspan(header.offset);
+    if (!(header.tag & ConstructedFlag)) {
+        out.assign(rest.begin(), rest.begin() + static_cast<std::ptrdiff_t>(header.length));
+        input = rest.subspan(header.length);
+        return true;
+    }
+    if (!CollectSegments(rest, header.indefinite, out, 0)) return false;
+    if (!header.indefinite && enclosedIndefinite) {
+        PutError(UnexpectedEoc);
+        return false;
+    }
+    input = rest;
+    return true;
+}
+
+Asn1String* NextOctetString(std::span<const unsigned char>& input, bool enclosedIndefinite, int depth = 0) {
+    if (Peek(input, OctetStringTag | ConstructedFlag)) {
+        std::vector<unsigned char> octets;
+        if (!ReadString(input, enclosedIndefinite, octets)) return nullptr;
+        return NewString(OctetStringType, octets);
+    }
+    Tlv value;
+    if (!Next(input, OctetStringTag, value, depth)) return nullptr;
+    return NewString(OctetStringType, value.content);
 }
 
 void FreeType(void* element) {
@@ -518,85 +698,91 @@ void FreePkcs7(LibreSsl3Pkcs7* pkcs7) {
     free_nid_postfix(pkcs7);
 }
 
-LibreSsl3Asn1Type* DecodeAny(const Tlv& value) {
-    const bool universal = (value.tag & ClassMask) == 0;
-    const bool constructed = (value.tag & ConstructedFlag) != 0;
-    const int number = value.tag & TagNumberMask;
-    const int type = universal ? number : OtherType;
-    if ((type == SequenceType || type == SetType) && !constructed) {
-        PutError(TypeNotConstructed);
-        return nullptr;
-    }
-    void* decoded = nullptr;
-    if (type == BooleanType) {
-        if (value.content.size() != 1) {
-            PutError(BooleanIsWrongLength);
-            return nullptr;
-        }
-    } else if (type == NullType) {
-        if (!value.content.empty()) {
-            PutError(NullIsWrongLength);
-            return nullptr;
-        }
-    } else if (type == ObjectType) {
-        decoded = NewObject(value.content);
-    } else if (type == IntegerType) {
-        decoded = NewInteger(value.encoded);
-    } else if (type == EnumeratedType) {
-        decoded = NewEnumerated(value.encoded);
-    } else if (type == BitStringType && !constructed) {
-        decoded = NewBitString(value.content);
-    } else if (type == SequenceType || type == SetType || type == OtherType) {
-        decoded = NewString(type, value.encoded);
-    } else if (universal && constructed &&
-               (type == OctetStringType || type == BitStringType || type == Utf8StringType ||
-                type == NumericStringType || type == PrintableStringType || type == T61StringType ||
-                type == VideotexStringType || type == Ia5StringType || type == UtcTimeType ||
-                type == GeneralizedTimeType || type == GraphicStringType || type == VisibleStringType ||
-                type == GeneralStringType || type == UniversalStringType || type == BmpStringType)) {
-        std::vector<unsigned char> collected;
-        if (!CollectConstructedString(value.content, collected, 0)) return nullptr;
-        if (type == BitStringType) {
-            decoded = NewBitString(collected);
-        } else {
-            if (type == BmpStringType && (collected.size() & 1)) {
-                PutError(BmpStringIsWrongLength);
-                return nullptr;
-            }
-            if (type == UniversalStringType && (collected.size() & 3)) {
-                PutError(UniversalStringIsWrongLength);
-                return nullptr;
-            }
-            decoded = NewString(type, collected);
-        }
-    } else if (type == BmpStringType && (value.content.size() & 1)) {
+void* NewStringValue(int type, std::span<const unsigned char> content) {
+    if (type == BitStringType) return NewBitString(content);
+    if (type == BmpStringType && (content.size() & 1)) {
         PutError(BmpStringIsWrongLength);
         return nullptr;
-    } else if (type == UniversalStringType && (value.content.size() & 3)) {
+    }
+    if (type == UniversalStringType && (content.size() & 3)) {
         PutError(UniversalStringIsWrongLength);
         return nullptr;
-    } else {
-        decoded = NewString(type, value.content);
     }
+    return NewString(type, content);
+}
+
+LibreSsl3Asn1Type* NewType(int type, void* decoded, unsigned char boolean) {
     if (type != BooleanType && type != NullType && !decoded) return nullptr;
     auto* result = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
     if (!result) {
-        LibreSsl3Asn1Type temporary{type, decoded};
         if (type == ObjectType) {
-            FreeObject(static_cast<Asn1Object_nid_no_patch*>(temporary.value));
+            FreeObject(static_cast<Asn1Object_nid_no_patch*>(decoded));
         } else if (type != BooleanType && type != NullType) {
-            FreeString(static_cast<Asn1String*>(temporary.value));
+            FreeString(static_cast<Asn1String*>(decoded));
         }
         PutError(MallocFailure);
         return nullptr;
     }
     result->type = type;
     if (type == BooleanType) {
-        *reinterpret_cast<int*>(&result->value) = value.content[0];
+        *reinterpret_cast<int*>(&result->value) = boolean;
     } else {
         result->value = decoded;
     }
     return result;
+}
+
+LibreSsl3Asn1Type* DecodeAny(std::span<const unsigned char>& input, bool enclosedIndefinite) {
+    if (input.size() >= 2 && (input[0] & (ClassMask | ConstructedFlag)) == ConstructedFlag &&
+        (input[0] & TagNumberMask) != SequenceType && (input[0] & TagNumberMask) != SetType) {
+        const int type = input[0] & TagNumberMask;
+        if (IsPrimitiveOnly(type)) {
+            Header header;
+            if (ReadHeader(input, header)) PutError(TypeNotPrimitive);
+            return nullptr;
+        }
+        std::vector<unsigned char> collected;
+        if (!ReadString(input, enclosedIndefinite, collected)) return nullptr;
+        return NewType(type, NewStringValue(type, collected), 0);
+    }
+    Tlv value;
+    if (!ReadTlv(input, value, 0)) return nullptr;
+    const bool universal = (value.tag & ClassMask) == 0;
+    const bool constructed = (value.tag & ConstructedFlag) != 0;
+    const int type = universal ? value.tag & TagNumberMask : OtherType;
+    if ((type == SequenceType || type == SetType) && !constructed) {
+        PutError(TypeNotConstructed);
+        return nullptr;
+    }
+    if (type == BooleanType) {
+        if (value.content.size() != 1) {
+            PutError(BooleanIsWrongLength);
+            return nullptr;
+        }
+        return NewType(type, nullptr, value.content[0]);
+    }
+    if (type == NullType) {
+        if (!value.content.empty()) {
+            PutError(NullIsWrongLength);
+            return nullptr;
+        }
+        return NewType(type, nullptr, 0);
+    }
+    if (type == ObjectType) return NewType(type, NewObject(value.content), 0);
+    if (type == IntegerType) return NewType(type, NewInteger(value.encoded), 0);
+    if (type == EnumeratedType) return NewType(type, NewEnumerated(value.encoded), 0);
+    if (type == SequenceType || type == SetType || type == OtherType) return NewType(type, NewString(type, value.encoded), 0);
+    return NewType(type, NewStringValue(type, value.content), 0);
+}
+
+LibreSsl3X509Algor* DecodeAlgor(std::span<const unsigned char>& input) {
+    if (!IsDer(input, "d2i_PKCS7: BER encoding in an AlgorithmIdentifier")) return nullptr;
+    return DecodeAlgor_nid_no_patch(input);
+}
+
+LibreSsl3Certificate* DecodeCertificate(std::span<const unsigned char>& input) {
+    if (!IsDer(input, "d2i_PKCS7: BER encoding in a certificate")) return nullptr;
+    return DecodeCertificate_nid_no_patch(input);
 }
 
 template <typename Element, typename Decode>
@@ -625,11 +811,10 @@ LibreSsl3X509Attribute* DecodeAttribute(std::span<const unsigned char>& input, i
     Tlv object;
     Tlv values;
     bool ok = Next(body, ObjectTag, object, depth) && (attribute->object = NewObject(object.content)) != nullptr &&
-              Next(body, SetTag, values, depth);
+              NextSet(body, SetTag, values, depth);
     if (ok) {
-        attribute->set = DecodeList<LibreSsl3Asn1Type>(values.content, [](std::span<const unsigned char>& rest) {
-            Tlv value;
-            return ReadTlv(rest, value, 0) ? DecodeAny(value) : nullptr;
+        attribute->set = DecodeList<LibreSsl3Asn1Type>(values.content, [&values](std::span<const unsigned char>& rest) {
+            return DecodeAny(rest, values.indefinite);
         }, FreeType);
         ok = attribute->set != nullptr;
     }
@@ -652,6 +837,7 @@ LibreSsl3Pkcs7IssuerAndSerial* DecodeIssuerAndSerial(std::span<const unsigned ch
     Tlv sequence;
     if (!Next(input, SequenceTag, sequence, depth)) return nullptr;
     std::span<const unsigned char> body = sequence.content;
+    if (!IsDerName(body)) return nullptr;
     auto* value = static_cast<LibreSsl3Pkcs7IssuerAndSerial*>(calloc_nid_postfix(1, sizeof(LibreSsl3Pkcs7IssuerAndSerial)));
     if (!value) {
         PutError(MallocFailure);
@@ -682,11 +868,10 @@ LibreSsl3Pkcs7RecipInfo* DecodeRecipInfo(std::span<const unsigned char>& input) 
         return nullptr;
     }
     Tlv version;
-    Tlv key;
     bool ok = Next(body, IntegerTag, version) && (info->version = NewInteger(version.encoded)) != nullptr &&
               (info->issuerAndSerial = DecodeIssuerAndSerial(body, 0)) != nullptr &&
-              (info->keyEncAlgor = DecodeAlgor_nid_no_patch(body)) != nullptr && Next(body, OctetStringTag, key) &&
-              (info->encKey = NewString(OctetStringType, key.content)) != nullptr;
+              (info->keyEncAlgor = DecodeAlgor(body)) != nullptr &&
+              (info->encKey = NextOctetString(body, sequence.indefinite)) != nullptr;
     if (ok && !body.empty()) {
         PutError(SequenceLengthMismatch);
         ok = false;
@@ -707,13 +892,13 @@ LibreSsl3Pkcs7EncContent* DecodeEncContent(std::span<const unsigned char>& input
     }
     try {
         Tlv object;
-        Tlv encrypted;
         bool ok = Next(body, ObjectTag, object) && (data->contentType = NewObject(object.content)) != nullptr &&
-                  (data->algorithm = DecodeAlgor_nid_no_patch(body)) != nullptr;
-        if (ok && Peek(body, ContextTag0))
-            NotImplemented_nid_no_patch("d2i_PKCS7: constructed OCTET STRING");
-        if (ok && Peek(body, EncDataTag))
-            ok = ReadTlv(body, encrypted) && (data->encData = NewString(OctetStringType, encrypted.content)) != nullptr;
+                  (data->algorithm = DecodeAlgor(body)) != nullptr;
+        if (ok && (Peek(body, EncDataTag) || Peek(body, ContextTag0))) {
+            std::vector<unsigned char> encrypted;
+            ok = ReadString(body, sequence.indefinite, encrypted) &&
+                 (data->encData = NewString(OctetStringType, encrypted)) != nullptr;
+        }
         if (ok && !body.empty()) {
             PutError(SequenceLengthMismatch);
             ok = false;
@@ -738,15 +923,14 @@ LibreSsl3Pkcs7SignerInfo* DecodeSignerInfo(std::span<const unsigned char>& input
     }
     Tlv version;
     Tlv attributes;
-    Tlv digest;
     bool ok = Next(body, IntegerTag, version, depth) && (info->version = NewInteger(version.encoded)) != nullptr &&
               (info->issuerAndSerial = DecodeIssuerAndSerial(body, depth)) != nullptr &&
-              (info->digestAlg = DecodeAlgor_nid_no_patch(body)) != nullptr;
-    if (ok && Peek(body, ContextTag0))
+              (info->digestAlg = DecodeAlgor(body)) != nullptr;
+    if (ok && PeekSet(body, ContextTag0))
         ok = ReadTlv(body, attributes, depth) && (info->authAttr = DecodeAttributes(attributes.content, depth)) != nullptr;
-    ok = ok && (info->digestEncAlg = DecodeAlgor_nid_no_patch(body)) != nullptr && Next(body, OctetStringTag, digest, depth) &&
-         (info->encDigest = NewString(OctetStringType, digest.content)) != nullptr;
-    if (ok && Peek(body, ContextTag1))
+    ok = ok && (info->digestEncAlg = DecodeAlgor(body)) != nullptr &&
+         (info->encDigest = NextOctetString(body, sequence.indefinite, depth)) != nullptr;
+    if (ok && PeekSet(body, ContextTag1))
         ok = ReadTlv(body, attributes, depth) && (info->unauthAttr = DecodeAttributes(attributes.content, depth)) != nullptr;
     if (ok && !body.empty()) {
         PutError(SequenceLengthMismatch);
@@ -758,6 +942,7 @@ LibreSsl3Pkcs7SignerInfo* DecodeSignerInfo(std::span<const unsigned char>& input
 }
 
 LibreSsl3X509Crl* DecodeCrl(std::span<const unsigned char>& input) {
+    if (!IsDer(input, "d2i_PKCS7: BER encoding in a CRL")) return nullptr;
     const unsigned char* cursor = input.data();
     LibreSsl3X509Crl* crl = d2i_X509_CRL_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(input.size()));
     if (crl) input = input.subspan(static_cast<std::size_t>(cursor - input.data()));
@@ -777,7 +962,7 @@ LibreSsl3Pkcs7Envelope* DecodeEnvelope(std::span<const unsigned char>& input) {
         Tlv version;
         Tlv list;
         bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
-                  Next(body, SetTag, list) &&
+                  NextSet(body, SetTag, list) &&
                   (data->recipientInfo = DecodeList<LibreSsl3Pkcs7RecipInfo>(list.content, DecodeRecipInfo, FreeRecipInfo)) != nullptr &&
                   (data->encData = DecodeEncContent(body)) != nullptr;
         if (ok && !body.empty()) {
@@ -806,17 +991,17 @@ LibreSsl3Pkcs7SignEnvelope* DecodeSignEnvelope(std::span<const unsigned char>& i
         Tlv version;
         Tlv list;
         bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
-                  Next(body, SetTag, list) &&
+                  NextSet(body, SetTag, list) &&
                   (data->recipientInfo = DecodeList<LibreSsl3Pkcs7RecipInfo>(list.content, DecodeRecipInfo, FreeRecipInfo)) != nullptr &&
-                  Next(body, SetTag, list) &&
-                  (data->mdAlgs = DecodeList<LibreSsl3X509Algor>(list.content, DecodeAlgor_nid_no_patch, FreeAlgorElement)) != nullptr &&
+                  NextSet(body, SetTag, list) &&
+                  (data->mdAlgs = DecodeList<LibreSsl3X509Algor>(list.content, DecodeAlgor, FreeAlgorElement)) != nullptr &&
                   (data->encData = DecodeEncContent(body)) != nullptr;
-        if (ok && Peek(body, ContextTag0))
+        if (ok && PeekSet(body, ContextTag0))
             ok = ReadTlv(body, list) &&
-                 (data->cert = DecodeList<LibreSsl3Certificate>(list.content, DecodeCertificate_nid_no_patch, FreeCertificateElement)) != nullptr;
-        if (ok && Peek(body, ContextTag1))
+                 (data->cert = DecodeList<LibreSsl3Certificate>(list.content, DecodeCertificate, FreeCertificateElement)) != nullptr;
+        if (ok && PeekSet(body, ContextTag1))
             ok = ReadTlv(body, list) && (data->crl = DecodeList<LibreSsl3X509Crl>(list.content, DecodeCrl, FreeCrlElement)) != nullptr;
-        ok = ok && Next(body, SetTag, list) &&
+        ok = ok && NextSet(body, SetTag, list) &&
              (data->signerInfo = DecodeList<LibreSsl3Pkcs7SignerInfo>(list.content, [](std::span<const unsigned char>& rest) {
                  return DecodeSignerInfo(rest, 0);
              }, FreeSignerInfo)) != nullptr;
@@ -851,15 +1036,15 @@ LibreSsl3Pkcs7Signed* DecodeSigned(std::span<const unsigned char>& input, int de
     Tlv version;
     Tlv list;
     bool ok = Next(body, IntegerTag, version, depth) && (data->version = NewInteger(version.encoded)) != nullptr &&
-              Next(body, SetTag, list, depth) &&
-              (data->mdAlgs = DecodeList<LibreSsl3X509Algor>(list.content, DecodeAlgor_nid_no_patch, FreeAlgorElement)) != nullptr &&
+              NextSet(body, SetTag, list, depth) &&
+              (data->mdAlgs = DecodeList<LibreSsl3X509Algor>(list.content, DecodeAlgor, FreeAlgorElement)) != nullptr &&
               (data->contents = DecodePkcs7(body, depth + 1)) != nullptr;
-    if (ok && Peek(body, ContextTag0))
+    if (ok && PeekSet(body, ContextTag0))
         ok = ReadTlv(body, list, depth) &&
-             (data->cert = DecodeList<LibreSsl3Certificate>(list.content, DecodeCertificate_nid_no_patch, FreeCertificateElement)) != nullptr;
-    if (ok && Peek(body, ContextTag1))
+             (data->cert = DecodeList<LibreSsl3Certificate>(list.content, DecodeCertificate, FreeCertificateElement)) != nullptr;
+    if (ok && PeekSet(body, ContextTag1))
         ok = ReadTlv(body, list, depth) && (data->crl = DecodeList<LibreSsl3X509Crl>(list.content, DecodeCrl, FreeCrlElement)) != nullptr;
-    ok = ok && Next(body, SetTag, list, depth) &&
+    ok = ok && NextSet(body, SetTag, list, depth) &&
          (data->signerInfo = DecodeList<LibreSsl3Pkcs7SignerInfo>(list.content, [depth](std::span<const unsigned char>& rest) {
              return DecodeSignerInfo(rest, depth);
          }, FreeSignerInfo)) != nullptr;
@@ -916,12 +1101,10 @@ LibreSsl3Pkcs7Digest* DecodeDigest(std::span<const unsigned char>& input, int de
         return nullptr;
     }
     Tlv version;
-    Tlv digest;
     bool ok = Next(body, IntegerTag, version) && (data->version = NewInteger(version.encoded)) != nullptr &&
-              (data->md = DecodeAlgor_nid_no_patch(body)) != nullptr &&
+              (data->md = DecodeAlgor(body)) != nullptr &&
               (data->contents = DecodePkcs7(body, depth + 1)) != nullptr &&
-              Next(body, OctetStringTag, digest) &&
-              (data->digest = NewString(OctetStringType, digest.content)) != nullptr;
+              (data->digest = NextOctetString(body, sequence.indefinite)) != nullptr;
     if (ok && !body.empty()) {
         PutError(SequenceLengthMismatch);
         ok = false;
@@ -931,7 +1114,7 @@ LibreSsl3Pkcs7Digest* DecodeDigest(std::span<const unsigned char>& input, int de
     return nullptr;
 }
 
-void* DecodeContent(int type, std::span<const unsigned char> content, int depth) {
+void* DecodeContent(int type, std::span<const unsigned char> content, bool indefinite, int depth) {
     if (type == SignedType) {
         LibreSsl3Pkcs7Signed* data = DecodeSigned(content, depth + 1);
         if (data && !content.empty()) {
@@ -977,23 +1160,34 @@ void* DecodeContent(int type, std::span<const unsigned char> content, int depth)
         }
         return data;
     }
+    if (type == 0) {
+        LibreSsl3Asn1Type* any = DecodeAny(content, indefinite);
+        if (any && !content.empty()) {
+            PutError(SequenceLengthMismatch);
+            FreeType(any);
+            return nullptr;
+        }
+        return any;
+    }
+    if (type == DataType && (Peek(content, OctetStringTag) || Peek(content, OctetStringTag | ConstructedFlag))) {
+        std::vector<unsigned char> octets;
+        if (!ReadString(content, indefinite, octets)) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (!content.empty()) {
+            PutError(SequenceLengthMismatch);
+            return nullptr;
+        }
+        return NewString(OctetStringType, octets);
+    }
     Tlv value;
     if (!ReadTlv(content, value, depth)) return nullptr;
     if (!content.empty()) {
         PutError(SequenceLengthMismatch);
         return nullptr;
     }
-    if (type == 0) return DecodeAny(value);
     if (type != DataType) NotImplemented_nid_no_patch("d2i_PKCS7: unsupported content");
-    if (value.tag == OctetStringTag) return NewString(OctetStringType, value.content);
-    if (value.tag == (OctetStringTag | ConstructedFlag)) {
-        std::vector<unsigned char> collected;
-        if (!CollectConstructedString(value.content, collected, 0)) {
-            PutError(NestedAsn1Error);
-            return nullptr;
-        }
-        return NewString(OctetStringType, collected);
-    }
     PutError(WrongTag);
     return nullptr;
 }
@@ -1016,7 +1210,7 @@ LibreSsl3Pkcs7* DecodePkcs7(std::span<const unsigned char>& input, int depth) {
         bool ok = Next(body, ObjectTag, object, depth) && (pkcs7->type = NewObject(object.content)) != nullptr;
         if (ok && !body.empty()) {
             Tlv content;
-            ok = Next(body, ContextTag0, content, depth) && (pkcs7->d = DecodeContent(ContentType(pkcs7->type), content.content, depth)) != nullptr;
+            ok = Next(body, ContextTag0, content, depth) && (pkcs7->d = DecodeContent(ContentType(pkcs7->type), content.content, content.indefinite, depth)) != nullptr;
         }
         if (ok && !body.empty()) {
             PutError(SequenceLengthMismatch);
@@ -1040,7 +1234,14 @@ LibreSsl3Pkcs7* APS5_VABI d2i_PKCS7_nid_postfix(LibreSsl3Pkcs7** output, const u
     if (length < 0) return nullptr;
     if (!*input && length > 0) throw std::invalid_argument(std::string(__func__) + ": null input data");
     std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    unsupportedEncoding = nullptr;
     LibreSsl3Pkcs7* pkcs7 = DecodePkcs7(remaining, 1);
+    if (unsupportedEncoding) {
+        FreePkcs7(pkcs7);
+        const char* name = unsupportedEncoding;
+        unsupportedEncoding = nullptr;
+        NotImplemented_nid_no_patch(name);
+    }
     if (!pkcs7) {
         if (output) {
             FreePkcs7(*output);

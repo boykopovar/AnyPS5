@@ -660,8 +660,7 @@ void TestEncryptedErrors() {
 
     std::vector<unsigned char> constructed(std::begin(EncryptedWithData), std::end(EncryptedWithData));
     constructed[64] = 0xa0;
-    RequireThrows([&constructed] { Decode(constructed); });
-    Require(allocations.empty());
+    RequireRefused(constructed, 102);
 }
 
 void TestAllocationFailures() {
@@ -752,8 +751,7 @@ void TestSignedAndEnveloped() {
 void TestEnvelopedErrors() {
     std::vector<unsigned char> constructed(std::begin(Enveloped), std::end(Enveloped));
     constructed[constructed.size() - 6] = 0xa0;
-    RequireThrows([&] { Decode(constructed); });
-    Require(allocations.empty());
+    RequireRefused(constructed, 102);
 
     const std::vector<unsigned char> signedMessage(std::begin(SignedAndEnveloped), std::end(SignedAndEnveloped));
     const auto fields = EnvelopeFields(signedMessage);
@@ -762,8 +760,7 @@ void TestEnvelopedErrors() {
     constructedData[0] = 0xa0;
     const auto signedConstructed = BuildEnvelope(4, fields[0].encoded, fields[1].encoded, fields[2].encoded,
         Wrap(0x30, Concat({encFields[0].encoded, encFields[1].encoded, constructedData})), {}, {}, fields[4].encoded);
-    RequireThrows([&] { Decode(signedConstructed); });
-    Require(allocations.empty());
+    RequireRefused(signedConstructed, 102);
 
     const std::vector<unsigned char> der(std::begin(Enveloped), std::end(Enveloped));
     std::vector<unsigned char> truncated(der.begin(), der.end() - 1);
@@ -1255,6 +1252,269 @@ void TestBerIndefinite() {
     Require(allocations.empty());
 }
 
+std::vector<unsigned char> Bytes(const char* text) {
+    return std::vector<unsigned char>(text, text + std::strlen(text));
+}
+
+std::vector<unsigned char> Slice(const std::vector<unsigned char>& bytes, std::size_t begin, std::size_t end) {
+    return std::vector<unsigned char>(bytes.begin() + static_cast<std::ptrdiff_t>(begin),
+        bytes.begin() + static_cast<std::ptrdiff_t>(end));
+}
+
+std::vector<unsigned char> OtherContent(const std::vector<unsigned char>& value) {
+    return Wrap(0x30, Joined(Wrap(0x06, {0x2a, 0x03}), Wrap(0xa0, value)));
+}
+
+void RequireOtherString(const std::vector<unsigned char>& der, int type, const std::vector<unsigned char>& expected,
+    std::source_location location = std::source_location::current()) {
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(der, location);
+    const auto* any = static_cast<const LibreSsl3Asn1Type*>(pkcs7->d);
+    Require(any->type == type, location);
+    const auto* value = static_cast<const Asn1String*>(any->value);
+    Require(value->type == type && value->length == static_cast<int>(expected.size()), location);
+    Require(std::memcmp(value->data, expected.data(), expected.size()) == 0, location);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty(), location);
+}
+
+void RequireDataString(const std::vector<unsigned char>& der, const std::vector<unsigned char>& expected,
+    std::source_location location = std::source_location::current()) {
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(der, location);
+    const auto* octets = static_cast<const Asn1String*>(pkcs7->d);
+    Require(octets->type == 4 && octets->length == static_cast<int>(expected.size()), location);
+    Require(std::memcmp(octets->data, expected.data(), expected.size()) == 0, location);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty(), location);
+}
+
+void RequireUnsupported(const std::vector<unsigned char>& der, std::source_location location = std::source_location::current()) {
+    RequireThrows([&der] { Decode(der); }, location);
+    ERR_clear_error_nid_postfix();
+    Require(allocations.empty(), location);
+}
+
+void RequireBytes(const Asn1String* value, const std::vector<unsigned char>& expected,
+    std::source_location location = std::source_location::current()) {
+    Require(value != nullptr && value->length == static_cast<int>(expected.size()), location);
+    Require(std::memcmp(value->data, expected.data(), expected.size()) == 0, location);
+}
+
+void TestConstructedForms() {
+    const std::vector<std::vector<unsigned char>> primitiveOnly = {
+        {0x30, 0x0b, 0x06, 0x02, 0x2a, 0x03, 0xa0, 0x05, 0x2a, 0x03, 0x02, 0x01, 0x05},
+        {0x30, 0x0d, 0x06, 0x02, 0x2a, 0x03, 0xa0, 0x07, 0x26, 0x05, 0x04, 0x03, 0x2a, 0x03, 0x04},
+        {0x30, 0x08, 0x06, 0x02, 0x2a, 0x03, 0xa0, 0x02, 0x25, 0x00},
+        OtherContent(Wrap(0x21, Wrap(0x01, {0xff}))),
+        OtherContent(Wrap(0x22, Wrap(0x02, {0x05}))),
+        OtherContent(Wrap(0x29, {})),
+        OtherContent(Wrap(0x2d, Wrap(0x0d, {0x01}))),
+        OtherContent(Wrap(0x2e, {})),
+    };
+    for (const auto& der : primitiveOnly) RequireRefused(der, 231);
+
+    RequireOtherString({0x30, 0x0d, 0x06, 0x02, 0x2a, 0x03, 0xa0, 0x07, 0x27, 0x80, 0x04, 0x01, 0x41, 0x00, 0x00}, 7, {0x41});
+    RequireOtherString(OtherContent(Wrap(0x28, Wrap(0x04, {'A'}))), 8, {'A'});
+    RequireOtherString(OtherContent(Wrap(0x2b, Wrap(0x04, {'B'}))), 11, {'B'});
+    RequireOtherString(OtherContent(Wrap(0x2f, Wrap(0x04, {'C'}))), 15, {'C'});
+    RequireOtherString(OtherContent(Wrap(0x3d, Wrap(0x04, {'D'}))), 29, {'D'});
+    RequireOtherString(OtherContent(Wrap(0x20, Wrap(0x04, {'E'}))), 0, {'E'});
+    RequireOtherString(OtherContent(Wrap(0x37, Joined(Wrap(0x04, Bytes("991231")), Wrap(0x04, Bytes("235959Z"))))), 23,
+        Bytes("991231235959Z"));
+    RequireOtherString(OtherContent(WrapIndef(0x24, Wrap(0x04, {'x', 'y'}))), 4, {'x', 'y'});
+    RequireOtherString(OtherContent(Joined(Wrap(0x2c, Wrap(0x0c, {'h', 'i'})), Wrap(0x0c, {'!'}))), 12, {'h', 'i', '!'});
+    TestDigestedOutOfMemory(OtherContent(Joined(Wrap(0x2c, Wrap(0x0c, {'h', 'i'})), Wrap(0x0c, {'!'}))));
+    RequireRefused(OtherContent(Wrap(0x3e, Joined(Wrap(0x04, {'a'}), Wrap(0x04, {'b', 'c'})))), 214);
+    RequireRefused(OtherContent(Wrap(0x10, {})), 156);
+    RequireRefused(Wrap(0x30, Joined(Wrap(0x06, {0x2a, 0x03}), WrapIndef(0xa0, Wrap(0x2c, Wrap(0x0c, {'h', 'i'}))))), 159);
+
+    const auto data = [](const std::vector<unsigned char>& content) { return ContentInfo(Pkcs7Oid(1), content); };
+    RequireDataString(data(Joined(Wrap(0x24, Wrap(0x04, {'h', 'i'})), Wrap(0x04, {'!'}))), {'h', 'i', '!'});
+    RequireDataString(data(Joined(Wrap(0x24, Wrap(0x04, {'h', 'i'})), Wrap(0x81, {'!'}))), {'h', 'i', '!'});
+    RequireDataString(data(Wrap(0x24, Joined(Wrap(0x24, Wrap(0x04, {'h', 'i'})), Wrap(0x04, {'!'})))), {'h', 'i', '!'});
+    RequireRefused(data(Joined(WrapIndef(0x24, Wrap(0x04, {'h', 'i'})), Wrap(0x04, {'!'}))), 148);
+    RequireRefused(data(WrapIndef(0x24, Joined(Wrap(0x24, Wrap(0x04, {'h', 'i'})), Wrap(0x04, {'!'})))), 159);
+    RequireRefused(Wrap(0x30, Joined(Wrap(0x06, Pkcs7Oid(1)), WrapIndef(0xa0, Wrap(0x24, Wrap(0x04, {'h', 'i'}))))), 159);
+    RequireRefused(Wrap(0x30, Joined(Wrap(0x06, Pkcs7Oid(2)), Wrap(0x80, {}))), 120);
+}
+
+void TestConstructedOctetFields() {
+    const std::vector<unsigned char> envelope(std::begin(Enveloped), std::end(Enveloped));
+    const auto fields = EnvelopeFields(envelope);
+    const auto recipient = Elements(Elements(fields[1].content)[0].content);
+    const std::vector<unsigned char> key = recipient[3].content;
+    const auto withKey = [&](const std::vector<unsigned char>& encKey) {
+        const auto info = Wrap(0x30, Concat({recipient[0].encoded, recipient[1].encoded, recipient[2].encoded, encKey}));
+        return ContentInfo(Pkcs7Oid(3), Wrap(0x30, Concat({fields[0].encoded, Wrap(0x31, info), fields[2].encoded})));
+    };
+    for (const auto& encKey : {WrapIndef(0x24, Joined(Wrap(0x04, Slice(key, 0, 2)), Wrap(0x04, Slice(key, 2, key.size())))),
+                               Wrap(0x24, Joined(Wrap(0x04, Slice(key, 0, 2)), Wrap(0x80, Slice(key, 2, key.size()))))}) {
+        LibreSsl3Pkcs7* pkcs7 = DecodeClean(withKey(encKey));
+        const auto* data = static_cast<const LibreSsl3Pkcs7Envelope*>(pkcs7->d);
+        RequireBytes(At<LibreSsl3Pkcs7RecipInfo>(data->recipientInfo, 0)->encKey, {0x55, 0x66, 0x77, 0x88, 0x99});
+        RequireBytes(data->encData->encData, {0xaa, 0xbb, 0xcc, 0xdd});
+        PKCS7_free_nid_postfix(pkcs7);
+        Require(allocations.empty());
+        TestDigestedOutOfMemory(withKey(encKey));
+    }
+
+    const auto enc = Elements(fields[2].content);
+    const std::vector<unsigned char> encrypted = enc[2].content;
+    const auto withData = [&](const std::vector<unsigned char>& encData) {
+        return ContentInfo(Pkcs7Oid(3), Wrap(0x30, Concat({fields[0].encoded, fields[1].encoded,
+            Wrap(0x30, Concat({enc[0].encoded, enc[1].encoded, encData}))})));
+    };
+    for (const auto& encData : {Wrap(0xa0, Joined(Wrap(0x04, Slice(encrypted, 0, 1)), Wrap(0x04, Slice(encrypted, 1, encrypted.size())))),
+                                Wrap(0xa0, Wrap(0x80, encrypted))}) {
+        LibreSsl3Pkcs7* pkcs7 = DecodeClean(withData(encData));
+        const auto* data = static_cast<const LibreSsl3Pkcs7Envelope*>(pkcs7->d);
+        Require(data->recipientInfo->num == 2);
+        RequireBytes(data->encData->encData, {0xaa, 0xbb, 0xcc, 0xdd});
+        PKCS7_free_nid_postfix(pkcs7);
+        Require(allocations.empty());
+        TestDigestedOutOfMemory(withData(encData));
+    }
+    RequireRefused(withData(WrapIndef(0xa0, Joined(Wrap(0x04, Slice(encrypted, 0, 1)),
+        Wrap(0x24, Wrap(0x04, Slice(encrypted, 1, encrypted.size())))))), 159);
+    RequireRefused(withData(Wrap(0xa0, encrypted)), 102);
+
+    const std::vector<unsigned char> digested(std::begin(DigestedData), std::end(DigestedData));
+    const auto digestFields = EnvelopeFields(digested);
+    const std::vector<unsigned char> digest = digestFields[3].content;
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(ContentInfo(Pkcs7Oid(5), Wrap(0x30, Concat({digestFields[0].encoded,
+        digestFields[1].encoded, digestFields[2].encoded,
+        Wrap(0x24, Joined(Wrap(0x04, Slice(digest, 0, 3)), Wrap(0x04, Slice(digest, 3, digest.size()))))}))));
+    RequireBytes(static_cast<const LibreSsl3Pkcs7Digest*>(pkcs7->d)->digest, digest);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+    TestDigestedOutOfMemory(ContentInfo(Pkcs7Oid(5), Wrap(0x30, Concat({digestFields[0].encoded, digestFields[1].encoded,
+        digestFields[2].encoded, WrapIndef(0x24, Wrap(0x04, digest))}))));
+    RequireRefused(ContentInfo(Pkcs7Oid(5), Wrap(0x30, Concat({Wrap(0x22, digestFields[0].encoded), digestFields[1].encoded,
+        digestFields[2].encoded, digestFields[3].encoded}))), 231);
+    const auto algorithm = Elements(digestFields[1].content);
+    RequireRefused(ContentInfo(Pkcs7Oid(5), Wrap(0x30, Concat({digestFields[0].encoded,
+        Wrap(0x30, Joined(Wrap(0x26, algorithm[0].encoded), algorithm[1].encoded)), digestFields[2].encoded,
+        digestFields[3].encoded}))), 231);
+    RequireRefused(ContentInfo(Pkcs7Oid(5), Wrap(0x10, {})), 149);
+    RequireUnsupported(ContentInfo(Pkcs7Oid(5), Wrap(0x30, Concat({digestFields[0].encoded,
+        WrapIndef(0x30, digestFields[1].content), digestFields[2].encoded, digestFields[3].encoded}))));
+}
+
+void TestConstructedSignerFields() {
+    const std::vector<unsigned char> message(std::begin(SignedMessage), std::end(SignedMessage));
+    const auto fields = EnvelopeFields(message);
+    const auto signer = Elements(Elements(fields[4].content)[0].content);
+    const auto build = [&](const std::vector<std::vector<unsigned char>>& signerFields, const std::vector<unsigned char>& mdAlgs,
+                           const std::vector<unsigned char>& certs) {
+        return ContentInfo(Pkcs7Oid(2), Wrap(0x30, Concat({fields[0].encoded, mdAlgs, fields[2].encoded, certs,
+            Wrap(0x31, Wrap(0x30, Concat(signerFields)))})));
+    };
+    const auto withSigner = [&](const std::vector<std::vector<unsigned char>>& signerFields) {
+        return build(signerFields, fields[1].encoded, fields[3].encoded);
+    };
+    const std::vector<unsigned char> digest = signer[5].content;
+    const std::vector<unsigned char> attributeOid = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x06};
+    const auto unauth = Wrap(0xa1, Wrap(0x30, Joined(Wrap(0x06, attributeOid), Wrap(0x31, Wrap(0x04, {'Z'})))));
+    std::vector<std::vector<unsigned char>> prefix;
+    for (int index = 0; index < 5; ++index) prefix.push_back(signer[index].encoded);
+
+    auto signerFields = prefix;
+    signerFields.push_back(Wrap(0x24, Wrap(0x04, Slice(digest, 0, 4))));
+    signerFields.push_back(unauth);
+    LibreSsl3Pkcs7* pkcs7 = DecodeClean(withSigner(signerFields));
+    const auto* info = At<LibreSsl3Pkcs7SignerInfo>(static_cast<const LibreSsl3Pkcs7Signed*>(pkcs7->d)->signerInfo, 0);
+    RequireBytes(info->encDigest, Concat({Slice(digest, 0, 4), attributeOid, {'Z'}}));
+    Require(info->unauthAttr == nullptr);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+    TestDigestedOutOfMemory(withSigner(signerFields));
+
+    signerFields = prefix;
+    signerFields.push_back(WrapIndef(0x24, Wrap(0x04, Slice(digest, 0, 4))));
+    signerFields.push_back(unauth);
+    pkcs7 = DecodeClean(withSigner(signerFields));
+    info = At<LibreSsl3Pkcs7SignerInfo>(static_cast<const LibreSsl3Pkcs7Signed*>(pkcs7->d)->signerInfo, 0);
+    RequireBytes(info->encDigest, Slice(digest, 0, 4));
+    Require(info->unauthAttr != nullptr && info->unauthAttr->num == 1);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+
+    const auto attributes = Elements(signer[3].content);
+    const auto first = Elements(attributes[0].content);
+    const auto withValues = [&](const std::vector<unsigned char>& values) {
+        std::vector<std::vector<unsigned char>> list = {Wrap(0x30, Joined(first[0].encoded, values))};
+        for (std::size_t index = 1; index < attributes.size(); ++index) list.push_back(attributes[index].encoded);
+        return withSigner({signer[0].encoded, signer[1].encoded, signer[2].encoded, Wrap(0xa0, Concat(list)),
+                           signer[4].encoded, signer[5].encoded});
+    };
+    const std::vector<unsigned char> object = Wrap(0x06, std::vector<unsigned char>(std::begin(DataOid), std::end(DataOid)));
+    const std::vector<unsigned char> text = Wrap(0x2c, Wrap(0x0c, {'a', 'b'}));
+    const auto valueAt = [](const LibreSsl3Pkcs7* decoded, int index) {
+        const auto* signerInfo = At<LibreSsl3Pkcs7SignerInfo>(static_cast<const LibreSsl3Pkcs7Signed*>(decoded->d)->signerInfo, 0);
+        return At<LibreSsl3Asn1Type>(At<LibreSsl3X509Attribute>(signerInfo->authAttr, 0)->set, index);
+    };
+    const auto setSize = [](const LibreSsl3Pkcs7* decoded) {
+        const auto* signerInfo = At<LibreSsl3Pkcs7SignerInfo>(static_cast<const LibreSsl3Pkcs7Signed*>(decoded->d)->signerInfo, 0);
+        return At<LibreSsl3X509Attribute>(signerInfo->authAttr, 0)->set->num;
+    };
+    pkcs7 = DecodeClean(withValues(Wrap(0x31, Joined(text, object))));
+    Require(setSize(pkcs7) == 1 && valueAt(pkcs7, 0)->type == 12);
+    RequireBytes(static_cast<const Asn1String*>(valueAt(pkcs7, 0)->value),
+        Concat({{'a', 'b'}, std::vector<unsigned char>(std::begin(DataOid), std::end(DataOid))}));
+    PKCS7_free_nid_postfix(pkcs7);
+    TestDigestedOutOfMemory(withValues(Wrap(0x31, Joined(text, object))));
+    pkcs7 = DecodeClean(withValues(Wrap(0x31, Joined(object, text))));
+    Require(setSize(pkcs7) == 2 && valueAt(pkcs7, 0)->type == 6 && valueAt(pkcs7, 1)->type == 12);
+    RequireBytes(static_cast<const Asn1String*>(valueAt(pkcs7, 1)->value), {'a', 'b'});
+    PKCS7_free_nid_postfix(pkcs7);
+    pkcs7 = DecodeClean(withValues(WrapIndef(0x31, Joined(WrapIndef(0x2c, Wrap(0x0c, {'a', 'b'})), object))));
+    Require(setSize(pkcs7) == 2 && valueAt(pkcs7, 0)->type == 12 && valueAt(pkcs7, 1)->type == 6);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+    RequireRefused(withValues(WrapIndef(0x31, Joined(text, object))), 159);
+    RequireRefused(withValues(Wrap(0x31, Wrap(0x22, Wrap(0x02, {0x01})))), 231);
+
+    pkcs7 = DecodeClean(build({signer[0].encoded, signer[1].encoded, signer[2].encoded, signer[3].encoded, signer[4].encoded,
+        signer[5].encoded}, Wrap(0x11, {}), fields[3].encoded));
+    Require(static_cast<const LibreSsl3Pkcs7Signed*>(pkcs7->d)->mdAlgs->num == 0);
+    PKCS7_free_nid_postfix(pkcs7);
+    pkcs7 = DecodeClean(build({signer[0].encoded, signer[1].encoded, signer[2].encoded, signer[3].encoded, signer[4].encoded,
+        signer[5].encoded}, Wrap(0x11, fields[1].content), fields[3].encoded));
+    Require(static_cast<const LibreSsl3Pkcs7Signed*>(pkcs7->d)->mdAlgs->num == 1);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+
+    const auto issuer = Elements(signer[1].content);
+    const auto withIssuer = [&](const std::vector<unsigned char>& name) {
+        auto list = prefix;
+        list[1] = Wrap(0x30, Joined(name, issuer[1].encoded));
+        list.push_back(signer[5].encoded);
+        return withSigner(list);
+    };
+    pkcs7 = DecodeClean(withIssuer(WrapIndef(0x30, issuer[0].content)));
+    info = At<LibreSsl3Pkcs7SignerInfo>(static_cast<const LibreSsl3Pkcs7Signed*>(pkcs7->d)->signerInfo, 0);
+    Require(info->issuerAndSerial->issuer->canonEnc != nullptr && info->issuerAndSerial->serial->length == 20);
+    PKCS7_free_nid_postfix(pkcs7);
+    Require(allocations.empty());
+    RequireUnsupported(withIssuer(Wrap(0x30, WrapIndef(0x31, Elements(issuer[0].content)[0].content))));
+
+    const auto certificate = Elements(Elements(fields[3].content)[0].content);
+    const auto toBeSigned = Elements(certificate[0].content);
+    std::vector<std::vector<unsigned char>> tbs;
+    for (std::size_t index = 0; index < toBeSigned.size(); ++index)
+        tbs.push_back(index == 4 ? WrapIndef(0x30, toBeSigned[index].content) : toBeSigned[index].encoded);
+    auto allFields = prefix;
+    allFields.push_back(signer[5].encoded);
+    RequireUnsupported(build(allFields, fields[1].encoded,
+        Wrap(0xa0, Wrap(0x30, Concat({Wrap(0x30, Concat(tbs)), certificate[1].encoded, certificate[2].encoded})))));
+    RequireUnsupported(build(allFields, fields[1].encoded,
+        Wrap(0xa0, WrapIndef(0x30, Concat({certificate[0].encoded, certificate[1].encoded, certificate[2].encoded})))));
+    const std::vector<unsigned char> sha256 = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};
+    RequireUnsupported(build(allFields, Wrap(0x31, Wrap(0x30, Joined(Wrap(0x06, sha256), Wrap(0x24, Wrap(0x04, {'p'}))))),
+        fields[3].encoded));
+    RequireUnsupported(build(allFields, Wrap(0x31, Joined({0x30, 0x81, 0x0d}, Elements(fields[1].content)[0].content)),
+        fields[3].encoded));
+}
+
 void TestUnsupported() {
     Require(Decode(ContentInfo(Pkcs7Oid(3), Wrap(0x30, {}))) == nullptr);
     LibreSsl3Pkcs7* pkcs7 = DecodeClean({0x30, 0x80, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0x00, 0x00});
@@ -1304,6 +1564,9 @@ int main() {
     TestOutputAndErrors();
     TestLongFormLengths();
     TestBerIndefinite();
+    TestConstructedForms();
+    TestConstructedOctetFields();
+    TestConstructedSignerFields();
     TestUnsupported();
     std::puts("LibreSSL3 d2i_PKCS7 tests passed");
 }
