@@ -1476,20 +1476,19 @@ class CheckCompileLauncherPrefixTests(unittest.TestCase):
                     check_compile.launcher_prefix(arguments)
 
     def test_compiler_wrapper_prefixes_end_at_the_compiler(self):
-        self.assertEqual(check_compile.launcher_prefix(["ccache", "-s", "clang", "-c", "a.c"]),
-                         ["ccache", "-s"])
-        self.assertEqual(check_compile.launcher_prefix(["sccache", "--show-stats", "clang"]),
-                         ["sccache", "--show-stats"])
+        self.assertEqual(check_compile.launcher_prefix(["ccache", "clang", "-c", "a.c"]), ["ccache"])
+        self.assertEqual(check_compile.launcher_prefix(["sccache", "clang"]), ["sccache"])
         self.assertEqual(check_compile.launcher_prefix(["distcc", "-j", "8", "clang"]),
                          ["distcc", "-j", "8"])
-        self.assertEqual(check_compile.launcher_prefix(["ccache", "--max-size=1G", "clang"]),
-                         ["ccache", "--max-size=1G"])
+        self.assertEqual(check_compile.launcher_prefix(["distcc", "--verbose", "clang"]),
+                         ["distcc", "--verbose"])
         self.assertEqual(check_compile.launcher_prefix(["ccache", "--", "clang"]),
                          ["ccache", "--"])
 
     def test_malformed_compiler_wrappers_are_refused(self):
-        for arguments in (["ccache", "--unknown", "clang"], ["ccache", "-s"], ["sccache"],
-                          ["distcc", "-j"]):
+        for arguments in (["ccache", "--unknown", "clang"], ["ccache", "--show-stats", "clang"],
+                          ["ccache", "-s"], ["sccache", "--show-stats"], ["sccache"],
+                          ["distcc", "--show-hosts", "clang"], ["distcc", "-j"], ["ccache"]):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(ValueError):
                     check_compile.launcher_prefix(arguments)

@@ -41,28 +41,33 @@ WITHOUT_VALUE = (*DROP, *PREPROCESSING, "-S", "-fsyntax-only", "-Werror", "-Wall
 JOINED_OPTIONS = ("-I", "-L", "-F", "-B", "-D", "-U", "-O", "-g", "-W")
 FORWARDED_SAFE = ("-fno-spell-checking", "-fno-caret-diagnostics", "-fno-color-diagnostics",
                   "-fno-diagnostics-show-option")
-FORWARDED_SAFE_PREFIXES = ("-D", "-U", "-I", "-F", "-include", "--include", "-imacros", "--imacros",
-                           "-isystem", "-iquote", "-idirafter", "-isysroot", "-W")
+FORWARDED_SAFE_JOINED = ("-D", "-U", "-I", "-F", "-W", "-include", "--include", "-imacros", "--imacros",
+                         "-isystem", "-iquote", "-idirafter", "-isysroot")
 COMPILER_WRAPPERS = {
     "ccache": {
-        "flags": frozenset(("-s", "--show-stats", "-C", "--clear", "-c", "--cleanup", "-z", "--zero-stats",
-                            "-p", "--show-config", "--disable", "--enable", "--checksum", "--remote-only",
-                            "--skip-second-preprocessor", "--run-second-preprocessor")),
-        "values": frozenset(("-k", "--get-config", "-o", "--set-config", "-F", "--max-files", "-M", "--max-size",
-                             "-B", "--batch-size", "--compiler", "--compiler-check", "--compiler-type",
-                             "--config-path", "--namespace", "--remote-storage", "--file-stat-cache")),
-        "joined": ("--get-config=", "--set-config=", "--max-files=", "--max-size=", "--batch-size=",
-                   "--compiler=", "--compiler-check=", "--compiler-type=", "--config-path=", "--namespace=",
-                   "--remote-storage=", "--file-stat-cache="),
+        "management": frozenset(("-s", "--show-stats", "-C", "--clear", "-c", "--cleanup", "-z", "--zero-stats",
+                                 "-p", "--show-config", "-k", "--get-config", "-o", "--set-config",
+                                 "--disable", "--enable", "--checksum", "--remote-only",
+                                 "--skip-second-preprocessor", "--run-second-preprocessor")),
+        "management_joined": ("--get-config=", "--set-config=", "--max-files=", "--max-size=", "--batch-size=",
+                              "--compiler=", "--compiler-check=", "--compiler-type=", "--config-path=",
+                              "--namespace=", "--remote-storage=", "--file-stat-cache="),
+        "flags": frozenset(),
+        "values": frozenset(),
+        "joined": (),
     },
     "sccache": {
-        "flags": frozenset(("--show-stats", "--show-adv-stats", "--start-server", "--stop-server", "--zero-stats",
-                            "--dist-auth", "--dist-status")),
-        "values": frozenset(("--server-startup-timeout",)),
-        "joined": ("--server-startup-timeout=",),
+        "management": frozenset(("--show-stats", "--show-adv-stats", "--start-server", "--stop-server",
+                                 "--zero-stats", "--dist-auth", "--dist-status", "--server-startup-timeout")),
+        "management_joined": ("--server-startup-timeout=",),
+        "flags": frozenset(),
+        "values": frozenset(),
+        "joined": (),
     },
     "distcc": {
-        "flags": frozenset(("--help", "--version", "--show-hosts", "--scan-includes", "--verbose", "--no-fork")),
+        "management": frozenset(("--help", "--version", "--show-hosts", "--scan-includes")),
+        "management_joined": (),
+        "flags": frozenset(("--verbose", "--no-fork")),
         "values": frozenset(("-j", "--jobs", "--log-level", "--log-file", "--pid-file", "--listen", "--allow")),
         "joined": ("--log-level=", "--log-file=", "--pid-file=", "--listen=", "--allow="),
     },
@@ -435,6 +440,8 @@ def launcher_prefix(arguments):
         if argument == "--":
             index += 1
             break
+        if argument in wrapper["management"] or argument.startswith(wrapper["management_joined"]):
+            raise ValueError(f"{executable} management option {argument} has no compiler")
         if argument in wrapper["flags"]:
             index += 1
             continue
@@ -490,7 +497,9 @@ def syntax_arguments(arguments, directory, source):
                 step = 2
             else:
                 step = 1
-            if not (forwarded in FORWARDED_SAFE or forwarded.startswith(FORWARDED_SAFE_PREFIXES)):
+            joined = any(forwarded.startswith(prefix) and len(forwarded) > len(prefix)
+                         for prefix in FORWARDED_SAFE_JOINED)
+            if not (forwarded in FORWARDED_SAFE or joined):
                 raise ValueError(f"unsupported forwarded compiler option {forwarded}")
             trimmed.extend([argument, forwarded] if not separator else [argument])
             index += step

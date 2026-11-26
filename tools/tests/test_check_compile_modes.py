@@ -424,6 +424,8 @@ class CheckCompileModeTests(unittest.TestCase):
              ["clang", "-fsyntax-only", "-Xclang=-fno-spell-checking", str(source)]),
             (["clang", "-Xpreprocessor", "-DFROM_FORWARD=1", "-c", str(source)],
              ["clang", "-fsyntax-only", "-Xpreprocessor", "-DFROM_FORWARD=1", str(source)]),
+            (["clang", "-Xpreprocessor", "-Iinclude", "-c", str(source)],
+             ["clang", "-fsyntax-only", "-Xpreprocessor", "-Iinclude", str(source)]),
         )
         for arguments, expected in cases:
             with self.subTest(arguments=arguments):
@@ -432,7 +434,10 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_unsafe_forwarded_options_are_rejected(self):
         source = Path("unit.c").resolve()
         for arguments in (["clang", "-Xclang", "-E"], ["clang", "-Xclang=-emit-obj"],
-                          ["clang", "-Xpreprocessor", "-M"], ["clang", "-Xclang"]):
+                          ["clang", "-Xpreprocessor", "-M"], ["clang", "-Xclang"],
+                          ["clang", "-Xclang", "-I"], ["clang", "-Xclang", "-include"],
+                          ["clang", "-Xclang", "-D"], ["clang", "-Xclang", "-W"],
+                          ["clang", "-Xpreprocessor", "-isystem"]):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
