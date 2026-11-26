@@ -162,6 +162,7 @@ void CheckRepeatedPurge() {
 
 void CheckRepeatedPurgeWithMultipleBytes() {
     BufferedStream file;
+    Require(std::setvbuf(file.native, nullptr, _IOFBF, 4096) == 0, "use a CRT-owned buffer for multi-byte pushback");
     Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare multi-byte repeated-purge input");
     Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind multi-byte repeated-purge input");
     for (const char expected : {'a', 'b', 'c'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read before multi-byte pushback");
