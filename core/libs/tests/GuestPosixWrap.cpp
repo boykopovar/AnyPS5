@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
@@ -23,6 +24,7 @@ namespace {
 
 constexpr int Enoent = 2;
 constexpr int Ebadf = 9;
+constexpr int Enomem = 12;
 constexpr int Efault = 14;
 constexpr int Eexist = 17;
 constexpr int Einval = 22;
@@ -35,6 +37,16 @@ void Require(bool condition, std::source_location location = std::source_locatio
         std::abort();
     }
 }
+
+#ifndef _WIN32
+std::string CapturedLog;
+
+int CaptureLogLine(std::FILE*, const char* text, std::size_t length) {
+    CapturedLog.append(text, length);
+    *__error_nid_postfix() = 73;
+    return 0;
+}
+#endif
 
 bool Fails(std::int64_t result, int error) {
     return result == -1 && *__error_nid_postfix() == error;
@@ -150,6 +162,29 @@ void TestMsetnameSchedAndMmapNp() {
     Require(mmap_np(nullptr, 16384, 3, 1, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
 }
 
+void TestMmapNpEnomem(const std::string& path) {
+    std::ofstream(path, std::ios::binary) << std::string(16384, 'p');
+    const int descriptor = open_nid_postfix(path.c_str(), 0, 0);
+    Require(descriptor >= 0);
+    void* mapped = mmap_np(nullptr, 16384, 1, 1, descriptor, 0, nullptr);
+    Require(mapped != reinterpret_cast<void*>(-1));
+#ifndef _WIN32
+    CapturedLog.clear();
+    LogSink().store(&CaptureLogLine, std::memory_order_release);
+#endif
+    *__error_nid_postfix() = 0;
+    void* conflicting = mmap_np(mapped, 16384, 1, 0x91, descriptor, 0, nullptr);
+    const int error = *__error_nid_postfix();
+#ifndef _WIN32
+    LogSink().store(nullptr, std::memory_order_release);
+    Require(CapturedLog.find("sceKernelDebugRaiseException c1=0xa0020405 c2=0x00000000") != std::string::npos);
+#endif
+    Require(conflicting == reinterpret_cast<void*>(-1) && error == Enomem);
+    Require(static_cast<const char*>(mapped)[16383] == 'p');
+    Require(munmap_nid_postfix(mapped, 16384) == 0);
+    Require(close_nid_postfix(descriptor) == 0);
+}
+
 }
 
 int main() {
@@ -163,6 +198,7 @@ int main() {
     const auto file = (root / "data.bin").string();
     std::ofstream(file, std::ios::binary) << "abcdefgh";
     const auto missing = (root / "missing").string();
+    TestMmapNpEnomem((root / "page.bin").string());
 
     const int descriptor = open_nid_postfix(file.c_str(), 0, 0);
     Require(descriptor >= 0);
