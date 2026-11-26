@@ -123,7 +123,8 @@ def main(argv=None):
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
+            git(args.repo, "fetch", "--quiet", "--no-recurse-submodules", "--refmap=", "--", remote,
+                f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:

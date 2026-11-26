@@ -31,6 +31,9 @@ set_target_properties(atrac9_vibration PROPERTIES POSITION_INDEPENDENT_CODE ON C
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/AjmLibrary.cmake)
 add_sce_ajm_library(libSceAjm.native ${CMAKE_CURRENT_SOURCE_DIR}/src/DriverQueries.cpp)
+if(MINGW)
+    target_link_options(libSceAjm.native PRIVATE LINKER:--exclude-libs,ALL)
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(atrac9_gradient_tests tests/Atrac9Gradient.c ${LIBATRAC9_DIR}/bit_reader.c)
@@ -87,6 +90,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_ajm_initialize_context_pointer_tests PRIVATE libSceAjm.native libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_ajm_initialize_context_pointer_tests)
     add_test(NAME guest_ajm_initialize_context_pointer COMMAND guest_ajm_initialize_context_pointer_tests)
+    add_test_executable(guest_ajm_wvorbis_header_pointer_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmWVorbisHeaderPacketPointers.cpp)
+    target_include_directories(guest_ajm_wvorbis_header_pointer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_wvorbis_header_pointer_tests PRIVATE libSceAjm.native libc)
+    configure_windows_unwind(guest_ajm_wvorbis_header_pointer_tests)
+    add_test(NAME guest_ajm_wvorbis_header_pointer COMMAND guest_ajm_wvorbis_header_pointer_tests)
     if(UNIX)
         add_test_executable(guest_ajm_teardown_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmTeardown.cpp)
         target_include_directories(guest_ajm_teardown_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -95,7 +103,7 @@ if(BUILD_TESTING)
         add_test(NAME guest_ajm_teardown COMMAND guest_ajm_teardown_tests $<TARGET_FILE:libSceAjm.native>)
     endif()
     if(WIN32)
-        set_tests_properties(guest_ajm guest_ajm_aac_multichannel guest_ajm_vibration guest_ajm_wvorbis guest_ajm_driver_queries guest_ajm_initialize_context_pointer PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_ajm guest_ajm_aac_multichannel guest_ajm_vibration guest_ajm_wvorbis guest_ajm_driver_queries guest_ajm_initialize_context_pointer guest_ajm_wvorbis_header_pointer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
 

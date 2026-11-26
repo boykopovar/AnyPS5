@@ -1287,13 +1287,13 @@ static void CheckErfSaturationRounding() {
     constexpr int modes[] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
     for (const int mode : modes) {
         Require(std::fesetround(mode) == 0);
-        for (const double x : {6.0, 40.0}) {
+        for (const double x : {6.0, 0x1.bffffffffffffp+4, 28.0, 40.0}) {
             std::feclearexcept(FE_ALL_EXCEPT);
             Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(x)) == 0x3ff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
             std::feclearexcept(FE_ALL_EXCEPT);
             Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(-x)) == 0xbff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
             std::feclearexcept(FE_ALL_EXCEPT);
-            Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(-x)) == 0x4000000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == FE_INEXACT);
+            Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(-x)) == 0x4000000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == (x < 28.0 ? FE_INEXACT : 0));
         }
     }
 }

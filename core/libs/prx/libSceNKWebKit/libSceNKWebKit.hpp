@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/AsyncFileStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossThreadTaskHandlerExports.hpp"
 #include "prx/libSceNKWebKit/include/DeviceMotionDataExports.hpp"
@@ -86,6 +87,7 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfThreadFlagsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfMediaTimeRangeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfThreadingExports.hpp"
@@ -108,6 +110,7 @@
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/ContentSearchUtilitiesExports.hpp"
+#include "prx/libSceNKWebKit/include/InspectorContentSearchRegexExports.hpp"
 #include "prx/libSceNKWebKit/include/SpeculatedTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceNKWebKit/include/ColorTextStreamExports.hpp"

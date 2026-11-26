@@ -1014,8 +1014,15 @@ void ReleaseLegacyHandlers() {
     state.legacyHandlers = nullptr;
 }
 
-void Construct(Object& object, bool releaseMissingHeader = false) {
+void Construct(Object& object, bool releaseMissingHeader = false, Object* guestTarget = nullptr, const char* function = nullptr) {
     object.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, object, function); }
+        catch (...) {
+            if (object.items) { Release(object.items); object.items = nullptr; }
+            throw;
+        }
+    }
     if (!object.items) { if (releaseMissingHeader) Release(nullptr); return; }
     object.items->count = 0;
     object.items->head = NewObjectHead();
@@ -1025,6 +1032,7 @@ void Construct(Object& object, bool releaseMissingHeader = false) {
         object.items->count = std::numeric_limits<std::size_t>::max();
         Release(object.items);
         object.items = nullptr;
+        if (guestTarget) StoreGuest(guestTarget, object, function);
     }
 }
 
@@ -1083,16 +1091,18 @@ void Destroy(Array& a) {
     a.items = nullptr;
     SetDefaultHeaderRetired(TypeArray, &a, false);
 }
-void Destroy(Object& object) {
+void Destroy(Object& object, Object* guestTarget = nullptr, const char* function = nullptr) {
     if (!object.items) return;
+    const void* owner = guestTarget ? static_cast<const void*>(guestTarget) : static_cast<const void*>(&object);
     object.items->clear();
     if (object.items->head) Release(object.items->head);
-    SetDefaultHeaderRetired(TypeObject, &object, true);
+    SetDefaultHeaderRetired(TypeObject, owner, true);
     object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
     object.items->count = std::numeric_limits<std::size_t>::max();
     Release(object.items);
     object.items = nullptr;
-    SetDefaultHeaderRetired(TypeObject, &object, false);
+    if (guestTarget) StoreGuest(guestTarget, object, function);
+    SetDefaultHeaderRetired(TypeObject, owner, false);
 }
 
 const Node& RootOf(const Node& n) {
@@ -1295,13 +1305,25 @@ void CopyArray(Array& destination, const Array& source) {
     CopyArrayStorage(*destination.items, *source.items);
 }
 
-void CopyObject(Object& destination, const Object& source) {
-    if (!source.items) { destination = {}; return; }
+void CopyObject(Object& destination, const Object& source, Object* guestTarget = nullptr, const char* function = nullptr) {
+    if (!source.items) {
+        destination = {};
+        if (guestTarget) StoreGuest(guestTarget, destination, function);
+        return;
+    }
     destination.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
-    if (!destination.items) { destination = {}; return; }
+    if (!destination.items) {
+        destination = {};
+        if (guestTarget) StoreGuest(guestTarget, destination, function);
+        return;
+    }
     destination.items->count = 0;
     destination.items->head = NewObjectHead();
     destination.items->SetOwner(nullptr);
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, destination, function); }
+        catch (...) { Destroy(destination); throw; }
+    }
     CopyObjectStorage(*destination.items, *source.items);
 }
 
@@ -1993,7 +2015,7 @@ struct ScopedPair {
     ~ScopedPair() { Destroy(pair.value); Destroy(pair.key); }
 };
 
-void AssignObject(Object& destination, const Object& source) {
+void AssignObjectWithTarget(Object& destination, const Object& source, Object* guestTarget, const char* function) {
     if (!destination.items || !source.items) return;
     if (!ModernValues()) {
         CopyObjectStorage(*destination.items, *source.items);
@@ -2031,8 +2053,63 @@ void AssignObject(Object& destination, const Object& source) {
     } catch (...) { Destroy(pending); throw; }
     auto previous = destination;
     destination = pending;
+    if (guestTarget) {
+        try { StoreGuest(guestTarget, destination, function); }
+        catch (...) { destination = previous; Destroy(pending); throw; }
+    }
     Destroy(previous);
 }
+
+void AssignObject(Object& destination, const Object& source) {
+    AssignObjectWithTarget(destination, source, nullptr, nullptr);
+}
+
+template <typename TValue>
+void RequireGuestObjectWritable(void* destination, const char* function) {
+    if (!destination || !GuestWritable_nid_no_patch(destination, sizeof(TValue))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestObjectRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
+void ValidateGuestKeyText(const Text* textPointer, const char* function) {
+    if (!textPointer) return;
+    const auto text = LoadGuest<Text>(textPointer, function);
+    if (!text.characters || text.length == std::numeric_limits<std::size_t>::max())
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    char chunk[4096];
+    const std::size_t total = text.length + 1;
+    for (std::size_t offset = 0; offset < total;) {
+        const std::size_t step = std::min(sizeof(chunk), total - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk, text.characters + offset, step))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        offset += step;
+    }
+}
+
+String LoadGuestKeyString(const String* source, const char* function) {
+    const auto value = LoadGuest<String>(source, function);
+    ValidateGuestKeyText(value.text, function);
+    return value;
+}
+
+struct ScopedObjectIteratorState {
+    ObjectIteratorState* state = nullptr;
+    explicit ScopedObjectIteratorState(ObjectIteratorState* value) : state(value) {}
+    ~ScopedObjectIteratorState() { Release(state); }
+    ScopedObjectIteratorState(const ScopedObjectIteratorState&) = delete;
+    ScopedObjectIteratorState& operator=(const ScopedObjectIteratorState&) = delete;
+    void Reset() {
+        Release(state);
+        state = nullptr;
+    }
+    void ReleaseOwnership() { state = nullptr; }
+};
 
 Value* ObjectAccess(Object& object, const String& input) {
     if (!object.items || !input.text) return const_cast<Value*>(&Defaults(TypeNull));
@@ -2973,34 +3050,84 @@ void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::s
     self->state->position = node;
 }
 
-void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) { CopyObject(*self, *other); }
-void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) { Destroy(*self); }
+void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) {
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Object object{};
+    Construct(object, false, self, __func__);
+}
+void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) {
+    const auto source = LoadGuest<Object>(other, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Object copy{};
+    CopyObject(copy, source, self, __func__);
+}
+void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) {
+    auto object = LoadGuest<Object>(self, __func__);
+    if (!object.items) return;
+    RequireGuestObjectWritable<Object>(self, __func__);
+    Destroy(object, self, __func__);
+}
 Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object* self, const Object* other) {
-    AssignObject(*self, *other);
+    auto destination = LoadGuest<Object>(self, __func__);
+    const auto source = LoadGuest<Object>(other, __func__);
+    if (self != other && GuestObjectRangesOverlap(self, sizeof(Object), other, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Object>(self, __func__);
+    AssignObjectWithTarget(destination, source, self, __func__);
     return self;
 }
-void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) { if (self->items) self->items->clear(); }
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return ObjectAccess(*self, *key); }
+void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (object.items) object.items->clear();
+}
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) {
+    auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    return ObjectAccess(object, loadedKey);
+}
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items && self->items->head ? self->items->head->left : nullptr;
-    if (self->items && (!self->items->head || !self->items->head->left)) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items && object.items->head ? object.items->head->left : nullptr;
+    if (object.items && (!object.items->head || !object.items->head->left)) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items ? self->items->head : nullptr;
-    if (self->items && !self->items->head) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items ? object.items->head : nullptr;
+    if (object.items && !object.items->head) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { Release(self->state); self->state = nullptr; }
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) {
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    Release(iterator.state);
+    StoreGuest(self, ObjectIterator{}, __func__);
+}
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) {
-    if (self->state) self->state->position = NextObjectLink(self->state->position);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        state.position = NextObjectLink(state.position);
+        StoreGuest(iterator.state, state, __func__);
+    }
     return self;
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
-    if (self->state) return reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(self->state->position) + 48);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        const auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        return reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(state.position) + 48);
+    }
     const auto* object = Defaults(TypeObject).object;
     if (!object || !object->items) NotImplemented_nid_no_patch(__func__);
     ObjectIterator fallback{};
@@ -3012,29 +3139,67 @@ Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return _ZNK3sce4Json6Object8iteratordeEv(self); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterator* result, const Object* self, const String* key) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = self->items && key->text ? self->items->Find(Characters(*key)) : nullptr;
-    if (self->items && key->text && !self->items->head) { Release(result->state); result->state = nullptr; }
+    const auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
+        GuestObjectRangesOverlap(result, sizeof(ObjectIterator), key, sizeof(String)) ||
+        (loadedKey.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedKey.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = object.items && loadedKey.text ? object.items->Find(Characters(loadedKey)) : nullptr;
+    if (object.items && loadedKey.text && !object.items->head) state.Reset();
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position == other->state->position;
+    const auto left = LoadGuest<ObjectIterator>(self, __func__);
+    const auto right = LoadGuest<ObjectIterator>(other, __func__);
+    if (!left.state || !right.state) return false;
+    return LoadGuest<ObjectIteratorState>(left.state, __func__).position == LoadGuest<ObjectIteratorState>(right.state, __func__).position;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position != other->state->position;
+    const auto left = LoadGuest<ObjectIterator>(self, __func__);
+    const auto right = LoadGuest<ObjectIterator>(other, __func__);
+    if (!left.state || !right.state) return false;
+    return LoadGuest<ObjectIteratorState>(left.state, __func__).position != LoadGuest<ObjectIteratorState>(right.state, __func__).position;
 }
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    self->state = other->state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr;
-    if (self->state) *self->state = *other->state;
+    const auto source = LoadGuest<ObjectIterator>(other, __func__);
+    ObjectIteratorState sourceState{};
+    if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator)) ||
+        (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    ScopedObjectIteratorState state(source.state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr);
+    if (state.state) *state.state = sourceState;
+    StoreGuest(self, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
 }
 void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
-    if (self->state) while (count--) self->state->position = NextObjectLink(self->state->position);
+    const auto iterator = LoadGuest<ObjectIterator>(self, __func__);
+    if (iterator.state) {
+        auto state = LoadGuest<ObjectIteratorState>(iterator.state, __func__);
+        if (!count) return;
+        while (count--) state.position = NextObjectLink(state.position);
+        StoreGuest(iterator.state, state, __func__);
+    }
 }
-bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return !self->items || self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items ? self->items->size() : 0; }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    return !object.items || object.items->empty();
+}
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) {
+    const auto object = LoadGuest<Object>(self, __func__);
+    return object.items ? object.items->size() : 0;
+}
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
-    if (!self->items || !key->text) return;
-    self->items->Erase(self->items->Find(Characters(*key)));
+    const auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    if (!object.items || !loadedKey.text) return;
+    object.items->Erase(object.items->Find(Characters(loadedKey)));
 }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
@@ -3425,52 +3590,85 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
-    Construct(self->key, *key);
-    CopyInto(self->value, *value);
+    const auto loadedKey = LoadGuestKeyString(key, __func__);
+    const auto loadedValue = LoadGuest<Value>(value, __func__);
+    if (GuestObjectRangesOverlap(self, sizeof(Pair), key, sizeof(String)) ||
+        GuestObjectRangesOverlap(self, sizeof(Pair), value, sizeof(Value)) ||
+        (loadedKey.text && GuestObjectRangesOverlap(self, sizeof(Pair), loadedKey.text, sizeof(Text))) ||
+        (loadedValue.type >= TypeString && loadedValue.type <= TypeObject && loadedValue.payload != 0 &&
+            GuestObjectRangesOverlap(self, sizeof(Pair), reinterpret_cast<const void*>(loadedValue.payload), sizeof(void*))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<Pair>(self, __func__);
+    String builtKey{};
+    Construct(builtKey, loadedKey);
+    try { StoreGuest(&self->key, builtKey, __func__); }
+    catch (...) { Destroy(builtKey); throw; }
+    try { CopyInto(self->value, loadedValue); }
+    catch (...) { Destroy(self->key); throw; }
+    if (!ModernValues()) CopyLegacyHandler(self->value, *value);
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
+    static_cast<void>(LoadGuest<Pair>(self, __func__));
+    RequireGuestObjectWritable<Pair>(self, __func__);
     Destroy(self->value);
     Destroy(self->key);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
-    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (result->state) result->state->position = nullptr;
-    if (!self->items) return result;
+    auto object = LoadGuest<Object>(self, __func__);
+    const auto loadedPair = LoadGuest<Pair>(pair, __func__);
+    ValidateGuestKeyText(loadedPair.key.text, __func__);
+    if (GuestObjectRangesOverlap(result, sizeof(ObjectIterator), self, sizeof(Object)) ||
+        GuestObjectRangesOverlap(result, sizeof(ObjectIterator), pair, sizeof(Pair)) ||
+        (loadedPair.key.text && GuestObjectRangesOverlap(result, sizeof(ObjectIterator), loadedPair.key.text, sizeof(Text))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    RequireGuestObjectWritable<ObjectIterator>(result, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = nullptr;
+    if (!object.items) {
+        StoreGuest(result, ObjectIterator{state.state}, __func__);
+        state.ReleaseOwnership();
+        return result;
+    }
     if (!ModernValues()) {
         ObjectLink* node;
+        bool inserted = false;
         {
-            InlineText key; key.Assign(Characters(pair->key));
-            TemporaryTreeEntry entry(key.text, *pair);
-            bool inserted;
-            node = self->items->Insert(entry.key.text, entry.pair, inserted);
+            InlineText key; key.Assign(Characters(loadedPair.key));
+            TemporaryTreeEntry entry(key.text, loadedPair);
+            CopyLegacyHandler(entry.pair.value, pair->value);
+            node = object.items->Insert(entry.key.text, entry.pair, inserted);
         }
-        if (!node) { Release(result->state); result->state = nullptr; }
-        else if (result->state) result->state->position = node;
+        if (!node) state.Reset();
+        else if (state.state) state.state->position = node;
+        StoreGuest(result, ObjectIterator{state.state}, __func__);
+        state.ReleaseOwnership();
         return result;
     }
     ScopedValue value;
-    value.value.parent = self->items->Owner();
-    AssignNode(value.value, pair->value);
+    value.value.parent = object.items->Owner();
+    AssignNode(value.value, loadedPair.value);
     AllocationOperation operation;
     ObjectLink* node;
     bool inserted;
     {
-        InlineText key; key.Assign(Characters(pair->key));
-        ScopedString copiedKey(pair->key);
+        InlineText key; key.Assign(Characters(loadedPair.key));
+        ScopedString copiedKey(loadedPair.key);
         Pair source{}; source.key = copiedKey.string;
         TemporaryTreeEntry entry(key.text, source);
-        node = self->items->Insert(entry.key.text, entry.pair, inserted);
+        node = object.items->Insert(entry.key.text, entry.pair, inserted);
     }
     const bool failed = operation.Finish();
     if (inserted && !failed) {
         TransferPayload(node->pair.value, value.value);
-        node->pair.value.parent = self->items->Owner();
+        node->pair.value.parent = object.items->Owner();
         BindChildren(node->pair.value);
     }
-    if (!node) { Release(result->state); result->state = nullptr; }
-    else if (result->state) result->state->position = node;
+    if (!node) state.Reset();
+    else if (state.state) state.state->position = node;
+    StoreGuest(result, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
     return result;
 }
 
@@ -3496,26 +3694,42 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self,
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    if (self->state) {
-        if (other->state && other->state->position) *self->state = *other->state;
-        else { Release(self->state); self->state = nullptr; }
+    const auto destination = LoadGuest<ObjectIterator>(self, __func__);
+    const auto source = LoadGuest<ObjectIterator>(other, __func__);
+    ObjectIteratorState sourceState{};
+    if (source.state) sourceState = LoadGuest<ObjectIteratorState>(source.state, __func__);
+    if ((self != other && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), other, sizeof(ObjectIterator))) ||
+        (source.state && GuestObjectRangesOverlap(self, sizeof(ObjectIterator), source.state, sizeof(ObjectIteratorState))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (destination.state) {
+        if (source.state && sourceState.position) {
+            RequireGuestObjectWritable<ObjectIteratorState>(destination.state, __func__);
+            StoreGuest(destination.state, sourceState, __func__);
+        } else {
+            RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+            Release(destination.state);
+            StoreGuest(self, ObjectIterator{}, __func__);
+        }
     }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
-    self->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
-    if (self->state) self->state->position = nullptr;
+    RequireGuestObjectWritable<ObjectIterator>(self, __func__);
+    ScopedObjectIteratorState state(static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))));
+    if (state.state) state.state->position = nullptr;
+    StoreGuest(self, ObjectIterator{state.state}, __func__);
+    state.ReleaseOwnership();
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
-    Construct(self->key, std::string_view{});
-    try {
-        Construct(self->value);
-    } catch (...) {
-        Destroy(self->key);
-        throw;
-    }
+    RequireGuestObjectWritable<Pair>(self, __func__);
+    String builtKey{};
+    Construct(builtKey, std::string_view{});
+    try { StoreGuest(&self->key, builtKey, __func__); }
+    catch (...) { Destroy(builtKey); throw; }
+    try { Construct(self->value); }
+    catch (...) { Destroy(self->key); throw; }
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
