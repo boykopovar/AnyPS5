@@ -17,7 +17,6 @@
 #include <fstream>
 #include <limits>
 #include <source_location>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #ifdef _WIN32
@@ -272,26 +271,79 @@ void Identifiers() {
     std::filesystem::remove(path);
 }
 
-bool Throws(void (*call)(int), int argument) {
-    try {
-        call(argument);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 void Duplicates() {
     std::intptr_t id = -1;
     std::intptr_t target = -1;
-    Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_init_nid_postfix(&target, 1) == 0);
-    Require(Throws([](int descriptor) { dup_nid_postfix(descriptor); }, static_cast<int>(id)));
-    static int destination = -1;
-    destination = static_cast<int>(target);
-    Require(Throws([](int descriptor) { dup2_nid_postfix(descriptor, destination); }, static_cast<int>(id)));
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_init_nid_postfix(&target, 5) == 0);
+    const int copy = dup_nid_postfix(static_cast<int>(id));
+    Require(copy >= 0 && copy != id);
+    Require(ksem_post_nid_postfix(copy) == 0 && Value(id) == 2);
+    Require(ksem_trywait_nid_postfix(id) == 0 && Value(copy) == 1);
+    const int moved = fcntl_nid_postfix(static_cast<int>(id), 0, 0);
+    Require(moved >= 0 && moved != id && moved != copy);
+    Require(ksem_post_nid_postfix(moved) == 0 && Value(copy) == 2);
+    Require(dup2_nid_postfix(static_cast<int>(id), static_cast<int>(target)) == static_cast<int>(target));
+    Require(Value(target) == 2);
+    Require(ksem_trywait_nid_postfix(target) == 0 && Value(id) == 1);
     Require(dup2_nid_postfix(static_cast<int>(id), static_cast<int>(id)) == static_cast<int>(id));
-    Require(Value(id) == 1 && Value(target) == 1);
-    Require(ksem_destroy_nid_postfix(id) == 0 && ksem_destroy_nid_postfix(target) == 0);
+    Require(Value(id) == 1);
+    Require(fchmod_nid_postfix(copy, 0600) == 0 && Status(static_cast<int>(id)).st_mode == 0100600);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    Require(fchmod_nid_postfix(moved, 0640) == 0);
+    for (const int descriptor : {copy, moved, static_cast<int>(target)}) {
+        Require(Status(descriptor).st_mode == 0100640);
+        Require(ksem_post_nid_postfix(descriptor) == -1 && Error() == Einval);
+        Require(ksem_trywait_nid_postfix(descriptor) == -1 && Error() == Einval);
+        int value = -1;
+        Require(ksem_getvalue_nid_postfix(descriptor, &value) == -1 && Error() == Einval && value == -1);
+        Require(ksem_destroy_nid_postfix(descriptor) == -1 && Error() == Einval);
+        Require(close_nid_postfix(descriptor) == 0);
+    }
+}
+
+std::intptr_t g_destroyAfterFind = -1;
+
+void DestroyAfterFind(std::intptr_t) {
+    Require(ksem_destroy_nid_postfix(g_destroyAfterFind) == 0);
+}
+
+void DestroyedAfterLookup() {
+    for (int operation = 0; operation < 5; ++operation) {
+        std::intptr_t id = -1;
+        Require(ksem_init_nid_postfix(&id, 0) == 0);
+        const int copy = dup_nid_postfix(static_cast<int>(id));
+        Require(copy >= 0);
+        g_destroyAfterFind = id;
+        KsemAfterFindForTests_nid_no_patch(DestroyAfterFind);
+        int value = -1;
+        KernelTimespec deadline = FromNow(std::chrono::milliseconds(50));
+        int result = 0;
+        switch (operation) {
+        case 0: result = ksem_post_nid_postfix(copy); break;
+        case 1: result = ksem_trywait_nid_postfix(copy); break;
+        case 2: result = ksem_timedwait_nid_postfix(copy, &deadline); break;
+        case 3: result = ksem_getvalue_nid_postfix(copy, &value); break;
+        default: result = ksem_destroy_nid_postfix(copy); break;
+        }
+        Require(result == -1 && Error() == Einval && value == -1);
+        Require(close_nid_postfix(copy) == 0);
+    }
+}
+
+void DuplicatesCountOnce() {
+    std::intptr_t ids[30] = {};
+    for (auto& id : ids) Require(ksem_init_nid_postfix(&id, 0) == 0);
+    Require(ksem_destroy_nid_postfix(ids[29]) == 0);
+    const int copy = dup_nid_postfix(static_cast<int>(ids[0]));
+    Require(copy >= 0);
+    Require(ksem_init_nid_postfix(&ids[29], 0) == 0);
+    std::intptr_t extra = -1;
+    Require(ksem_init_nid_postfix(&extra, 0) == -1 && Error() == Enospc);
+    Require(ksem_destroy_nid_postfix(ids[0]) == 0);
+    Require(ksem_init_nid_postfix(&extra, 0) == -1 && Error() == Enospc);
+    Require(close_nid_postfix(copy) == 0);
+    Require(ksem_init_nid_postfix(&ids[0], 0) == 0);
+    for (const auto id : ids) Require(ksem_destroy_nid_postfix(id) == 0);
 }
 
 void Limit() {
@@ -421,6 +473,8 @@ int main() {
     Identifiers();
     Metadata();
     Duplicates();
+    DestroyedAfterLookup();
+    DuplicatesCountOnce();
     Transfers();
     Limit();
     std::puts("ksem unnamed semaphores passed");
