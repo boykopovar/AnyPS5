@@ -86,8 +86,8 @@ bool IsFilled(const SdecMemory& memory) {
     return std::memcmp(&memory, &filled, sizeof(memory)) == 0;
 }
 
-bool IsAllZero(const std::byte* data, std::size_t size) {
-    return std::all_of(data, data + size, [](std::byte b) { return b == std::byte{0}; });
+bool IsAllByte(const std::byte* data, std::size_t size, std::byte value) {
+    return std::all_of(data, data + size, [value](std::byte b) { return b == value; });
 }
 
 void CheckQuerySizes(std::array<std::byte, 64>& process) {
@@ -430,9 +430,9 @@ void CheckCreateRollback(std::array<std::byte, 64>& process) {
     Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &badBlock1, &handle) == Invalid, "unwritable blocks[1] must return Invalid");
     Require(errno == 71, "unwritable blocks[1] must preserve errno");
     Require(handle == sentinel, "unwritable blocks[1] must leave output handle untouched");
-    Require(IsAllZero(block0.data(), 0x18), "unwritable blocks[1] must clear handle header");
-    Require(IsAllZero(block0.data() + 0x18, 0x20), "unwritable blocks[1] must clear workspace header");
-    Require(IsAllZero(block0.data() + codecOffset, 0x180), "unwritable blocks[1] must clear codec object");
+    Require(IsAllByte(block0.data(), 0x18, std::byte{0xCC}), "unwritable blocks[1] must leave handle header untouched");
+    Require(IsAllByte(block0.data() + 0x18, 0x20, std::byte{0xCC}), "unwritable blocks[1] must leave workspace header untouched");
+    Require(IsAllByte(block0.data() + codecOffset, 0x180, std::byte{0xCC}), "unwritable blocks[1] must leave codec object untouched");
 
     std::fill(block0.begin(), block0.end(), std::byte{0xCC});
     SdecMemory goodMem = memory;
@@ -442,9 +442,10 @@ void CheckCreateRollback(std::array<std::byte, 64>& process) {
     errno = 73;
     Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &goodMem, reinterpret_cast<void**>(0x10)) == Invalid, "unwritable handle must return Invalid");
     Require(errno == 73, "unwritable handle must preserve errno");
-    Require(IsAllZero(block0.data(), 0x18), "unwritable handle must clear handle header");
-    Require(IsAllZero(block0.data() + 0x18, 0x20), "unwritable handle must clear workspace header");
-    Require(IsAllZero(block0.data() + codecOffset, 0x180), "unwritable handle must clear codec object");
+    Require(IsAllByte(block0.data(), 0x18, std::byte{0xCC}), "unwritable handle must leave handle header untouched");
+    Require(IsAllByte(block0.data() + 0x18, 0x20, std::byte{0xCC}), "unwritable handle must leave workspace header untouched");
+    Require(IsAllByte(block0.data() + codecOffset, 0x180, std::byte{0xCC}), "unwritable handle must leave codec object untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable handle must leave blocks[1] untouched");
 
 #ifdef _WIN32
     SYSTEM_INFO sysInfo{};
@@ -476,8 +477,8 @@ void CheckCreateRollback(std::array<std::byte, 64>& process) {
     };
 #endif
 
-    std::byte* const splitCodecBase = pages + pageSize - 0x38;
-    std::memset(splitCodecBase, 0xCC, 0x200);
+    std::byte* const splitCodecBase = pages + pageSize - 0x100;
+    std::memset(splitCodecBase, 0xA5, 0x200);
     protectReadOnly(pages + pageSize, allocBytes - pageSize);
     SdecMemory splitCodecMem = memory;
     splitCodecMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitCodecBase));
@@ -488,11 +489,30 @@ void CheckCreateRollback(std::array<std::byte, 64>& process) {
     Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitCodecMem, &handle) == Invalid, "unwritable codec object must return Invalid");
     Require(errno == 75, "unwritable codec object must preserve errno");
     Require(handle == sentinel, "unwritable codec object must leave output handle untouched");
-    Require(IsAllZero(splitCodecBase + 0x18, 0x20), "unwritable codec object must clear workspace header");
+    Require(IsAllByte(splitCodecBase, 0x18, std::byte{0xA5}), "unwritable codec object must leave handle header untouched");
+    Require(IsAllByte(splitCodecBase + 0x18, 0x20, std::byte{0xA5}), "unwritable codec object must leave workspace header untouched");
+    Require(IsAllByte(splitCodecBase + 0x40, 0xc0, std::byte{0xA5}), "unwritable codec object must leave writable codec prefix untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable codec object must leave blocks[1] untouched");
 
     protectReadWrite(pages + pageSize, allocBytes - pageSize);
-    std::byte* const splitHeaderBase = pages + pageSize - 0x18;
-    std::memset(splitHeaderBase, 0xCC, 0x200);
+    std::byte* const splitHeaderPrefixBase = pages + pageSize - 0x10;
+    std::memset(splitHeaderPrefixBase, 0xA5, 0x200);
+    protectReadOnly(pages + pageSize, allocBytes - pageSize);
+    SdecMemory splitHeaderPrefixMem = memory;
+    splitHeaderPrefixMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitHeaderPrefixBase));
+    splitHeaderPrefixMem.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    splitHeaderPrefixMem.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+    handle = sentinel;
+    errno = 76;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitHeaderPrefixMem, &handle) == Invalid, "cross-page handle header prefix must return Invalid");
+    Require(errno == 76, "cross-page handle header prefix must preserve errno");
+    Require(handle == sentinel, "cross-page handle header prefix must leave output handle untouched");
+    Require(IsAllByte(splitHeaderPrefixBase, 0x10, std::byte{0xA5}), "cross-page handle header must leave writable prefix untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "cross-page handle header prefix must leave blocks[1] untouched");
+
+    protectReadWrite(pages + pageSize, allocBytes - pageSize);
+    std::byte* const splitHeaderBase = pages + pageSize - 0x10;
+    std::memset(splitHeaderBase, 0xA5, 0x200);
     protectReadOnly(pages, pageSize);
     SdecMemory splitHeaderMem = memory;
     splitHeaderMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitHeaderBase));
@@ -506,8 +526,10 @@ void CheckCreateRollback(std::array<std::byte, 64>& process) {
     Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitHeaderMem, &handle) == Invalid, "unwritable handle header must return Invalid");
     Require(errno == 77, "unwritable handle header must preserve errno");
     Require(handle == sentinel, "unwritable handle header must leave output handle untouched");
-    Require(IsAllZero(splitHeaderBase + 0x18, 0x20), "unwritable handle header must clear workspace header");
-    Require(IsAllZero(splitHeaderBase + splitCodecOff, 0x180), "unwritable handle header must clear codec object");
+    Require(IsAllByte(pages + pageSize, 0x08, std::byte{0xA5}), "unwritable handle header must leave writable suffix untouched");
+    Require(IsAllByte(splitHeaderBase + 0x18, 0x20, std::byte{0xA5}), "unwritable handle header must leave workspace header untouched");
+    Require(IsAllByte(splitHeaderBase + splitCodecOff, 0x180, std::byte{0xA5}), "unwritable handle header must leave codec object untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable handle header must leave blocks[1] untouched");
 
 #ifdef _WIN32
     VirtualFree(pages, 0, MEM_RELEASE);

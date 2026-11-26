@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -192,6 +193,32 @@ bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& re
     const std::uint64_t codecAddr = ((ws + WorkspaceHeaderSize) & ~std::uint64_t{0x1f}) + WorkspaceHeaderSize;
     if (codecAddr + CodecObjectSize > wsEnd) return false;
 
+    const auto isWritable = [&](std::uint64_t addr, std::uint64_t size) {
+        if (size == 0) return true;
+        if (addr == 0 || size > ~std::uint64_t{0} - addr) return false;
+        if (addr > std::numeric_limits<std::uintptr_t>::max()) return false;
+        if (size > std::numeric_limits<std::size_t>::max()) return false;
+        const bool ok = GuestWritable_nid_no_patch(
+            reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr)),
+            static_cast<std::size_t>(size));
+        errno = savedErrno;
+        return ok;
+    };
+
+    const bool handleWritable = GuestWritable_nid_no_patch(handle, sizeof(void*));
+    errno = savedErrno;
+    if (!isWritable(base, HandleHeaderSize) ||
+        !isWritable(ws, WorkspaceHeaderSize) ||
+        !isWritable(codecAddr, CodecObjectSize) ||
+        !handleWritable) {
+        return false;
+    }
+    if (memory.blocks[1].size != 0 && memory.blocks[1].base != 0) {
+        if (!isWritable(memory.blocks[1].base, memory.blocks[1].size)) {
+            return false;
+        }
+    }
+
     const auto rollback = [&](bool clearHandle, bool clearCodec, bool clearWs) {
         if (clearHandle) ZeroGuestRegion(base, HandleHeaderSize, savedErrno);
         if (clearCodec) ZeroGuestRegion(codecAddr, CodecObjectSize, savedErrno);
@@ -201,7 +228,10 @@ bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& re
     const std::array<std::uint64_t, 4> wsHeader{ws + WorkspaceHeaderSize, codecAddr + CodecObjectSize, wsEnd, 0};
     const bool wsWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(ws)), wsHeader.data(), sizeof(wsHeader));
     errno = savedErrno;
-    if (!wsWritten) return false;
+    if (!wsWritten) {
+        rollback(false, false, true);
+        return false;
+    }
 
     std::array<std::byte, CodecObjectSize> codecBytes{};
     const auto write32 = [&](std::size_t offset, std::uint32_t val) {
@@ -228,7 +258,7 @@ bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& re
     const bool codecWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(codecAddr)), codecBytes.data(), codecBytes.size());
     errno = savedErrno;
     if (!codecWritten) {
-        rollback(false, false, true);
+        rollback(false, true, true);
         return false;
     }
 
@@ -236,7 +266,7 @@ bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& re
     const bool headerWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(base)), handleHeader.data(), sizeof(handleHeader));
     errno = savedErrno;
     if (!headerWritten) {
-        rollback(false, true, true);
+        rollback(true, true, true);
         return false;
     }
 
