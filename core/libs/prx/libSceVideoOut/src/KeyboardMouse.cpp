@@ -330,6 +330,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (!matches) continue;
         if (down && !pressed[index] && isToggleBinding(binding)) toggles.Toggle(static_cast<std::uint32_t>(binding.button));
         if (binding.control == InputControl::ToggleFullscreen && keyboard && down && !pressed[index]) requests.toggleFullscreen = true;
+        if (binding.control == InputControl::ToggleBorderless && keyboard && down && !pressed[index]) requests.toggleBorderless = true;
         if (binding.control == InputControl::TogglePerformanceOverlay && keyboard && down && !pressed[index]) requests.togglePerformanceOverlay = true;
         if (binding.control == InputControl::Screenshot && keyboard && down && !pressed[index]) requests.screenshot = true;
         if (binding.control == InputControl::ShowPadStatus && keyboard && down && !pressed[index]) requests.showPadStatus = true;
@@ -396,6 +397,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             }
             case InputControl::ToggleMouse: break;
             case InputControl::ToggleFullscreen: break;
+            case InputControl::ToggleBorderless: break;
             case InputControl::TogglePerformanceOverlay: break;
             case InputControl::Screenshot: break;
             case InputControl::ShowPadStatus: break;
@@ -410,8 +412,8 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
     for (std::size_t axis = 0; axis < state.sticks.size(); ++axis) {
         if (input.held[axis] || axes[axis] != 0.0) state.sticks[axis] = StickByte(axes[axis]);
     }
-    if (mouseMode) {
-        const auto deflection = mouse.Deflection();
+    const auto deflection = mouse.Deflection();
+    if (mouseMode && (deflection[0] != 0.0 || deflection[1] != 0.0)) {
         const std::size_t offset = configuration.settings.mouseControlsRightStick ? 2 : 0;
         state.sticks[offset] = StickByte(deflection[0]);
         state.sticks[offset + 1] = StickByte(deflection[1]);

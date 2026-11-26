@@ -123,6 +123,11 @@ export const locales = [
 
 export const messages = {
     "en": {
+        "inputSettings": "Input settings",
+        "inputSettingsHelp": "Leave a setting blank to inherit its value. Separate ToggleActions button names with commas.",
+        "inheritSetting": "Inherit",
+        "controllerButtons": "Controller buttons",
+        "noOverride": "No override",
         "controls": "Controls",
         "configuration": "Configuration",
         "help": "Help",
@@ -206,6 +211,11 @@ export const messages = {
         "noOptions": "No matching options."
     },
     "sv": {
+        "inputSettings": "Inmatningsinställningar",
+        "inputSettingsHelp": "Lämna en inställning tom för att ärva dess värde. Separera knappnamnen i ToggleActions med kommatecken.",
+        "inheritSetting": "Ärv",
+        "controllerButtons": "Handkontrollens knappar",
+        "noOverride": "Ärv knappmappning",
         "controls": "Kontroller",
         "configuration": "Konfiguration",
         "help": "Hjälp",
@@ -286,6 +296,11 @@ export const messages = {
         "noOptions": "Inga matchande alternativ."
     },
     "ar-EG": {
+        "inputSettings": "إعدادات الإدخال",
+        "inputSettingsHelp": "سيب الإعداد فاضي عشان تستخدم القيمة الموروثة. افصل أسماء الأزرار في ToggleActions بفواصل.",
+        "inheritSetting": "استخدم القيمة الموروثة",
+        "controllerButtons": "أزرار دراع التحكم",
+        "noOverride": "استخدم التعيين الموروث",
         "controls": "التحكم",
         "configuration": "ملف الإعدادات",
         "help": "المساعدة",
@@ -366,6 +381,11 @@ export const messages = {
         "noOptions": "مفيش اختيار مطابق للبحث."
     },
     "es": {
+        "inputSettings": "Ajustes de entrada",
+        "inputSettingsHelp": "Deja un ajuste vacío para heredar su valor. Separa con comas los nombres de botones de ToggleActions.",
+        "inheritSetting": "Heredar",
+        "controllerButtons": "Botones del mando",
+        "noOverride": "Usar asignación heredada",
         "controls": "Controles",
         "configuration": "Configuración",
         "help": "Ayuda",
@@ -406,11 +426,11 @@ export const messages = {
         "keepEditing": "Seguir editando",
         "discard": "Descartar cambios",
         "faq0Question": "¿Cómo asigno una tecla?",
-        "faq0Answer": "Elige un grupo y Añadir entrada. Usa Capturar o la lista. Puedes asignar varias entradas a una acción.",
+        "faq0Answer": "Elige un grupo, selecciona Añadir entrada y luego Capturar, o elige una tecla de la lista. Las entradas de una misma acción son alternativas.",
         "faq1Question": "¿Dónde guardo el archivo INI?",
         "faq1Answer": "Pon anyps5-input.ini junto al ejecutable generado del juego. Para otra ruta, usa ANYPS5_INPUT_CONFIG.",
         "faq2Question": "¿Por qué no se captura una tecla?",
-        "faq2Answer": "El navegador o sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
+        "faq2Answer": "El navegador o el sistema puede interceptarla. Elígela en la lista. Escape cancela la captura; asígnala desde la lista.",
         "faq3Question": "¿Se guardan mis cambios solos?",
         "faq3Answer": "Los cambios están en memoria: cópialos o descárgalos antes de recargar. Solo se guarda el idioma. Las acciones no configuradas conservan sus valores predeterminados.",
         "skip": "Saltar al contenido",
@@ -449,6 +469,11 @@ export const messages = {
         "noOptions": "No hay opciones coincidentes."
     },
     "fr": {
+        "inputSettings": "Réglages d’entrée",
+        "inputSettingsHelp": "Laissez un réglage vide pour conserver la valeur héritée. Séparez les noms de boutons de ToggleActions par des virgules.",
+        "inheritSetting": "Valeur héritée",
+        "controllerButtons": "Boutons de la manette",
+        "noOverride": "Affectation héritée",
         "controls": "Commandes",
         "configuration": "Configuration",
         "help": "Aide",
@@ -532,6 +557,11 @@ export const messages = {
         "noOptions": "Aucune option trouvée."
     },
     "de": {
+        "inputSettings": "Eingabeeinstellungen",
+        "inputSettingsHelp": "Lassen Sie ein Feld leer, um den Wert zu übernehmen. Trennen Sie die Tastennamen in ToggleActions durch Kommas.",
+        "inheritSetting": "Übernehmen",
+        "controllerButtons": "Controller-Tasten",
+        "noOverride": "Keine eigene Belegung",
         "controls": "Steuerung",
         "configuration": "Konfiguration",
         "help": "Hilfe",
@@ -580,6 +610,11 @@ export const messages = {
         "noOptions": "Keine passenden Optionen."
     },
     "it": {
+        "inputSettings": "Impostazioni di input",
+        "inputSettingsHelp": "Lascia vuota un’impostazione per ereditarne il valore. Separa con virgole i nomi dei pulsanti in ToggleActions.",
+        "inheritSetting": "Eredita",
+        "controllerButtons": "Pulsanti del controller",
+        "noOverride": "Eredita assegnazione",
         "controls": "Controlli",
         "configuration": "Configurazione",
         "help": "Aiuto",
@@ -631,6 +666,11 @@ export const messages = {
         "noOptions": "Nessuna opzione trovata."
     },
     "pt-BR": {
+        "inputSettings": "Configurações de entrada",
+        "inputSettingsHelp": "Deixe uma configuração em branco para herdar seu valor. Separe os nomes dos botões em ToggleActions por vírgulas.",
+        "inheritSetting": "Herdar",
+        "controllerButtons": "Botões do controle",
+        "noOverride": "Herdar mapeamento",
         "controls": "Controles",
         "configuration": "Configuração",
         "help": "Ajuda",
@@ -714,6 +754,11 @@ export const messages = {
         "noOptions": "Nenhuma opção encontrada."
     },
     "ru": {
+        "inputSettings": "Настройки ввода",
+        "inputSettingsHelp": "Оставьте поле пустым, чтобы использовать унаследованное значение. Разделяйте названия кнопок в ToggleActions запятыми.",
+        "inheritSetting": "Использовать унаследованное значение",
+        "controllerButtons": "Кнопки контроллера",
+        "noOverride": "Унаследовать назначение",
         "controls": "Управление",
         "configuration": "Конфигурация",
         "help": "Помощь",
@@ -762,6 +807,11 @@ export const messages = {
         "noOptions": "Совпадений нет."
     },
     "tr": {
+        "inputSettings": "Giriş ayarları",
+        "inputSettingsHelp": "Devralınan değeri kullanmak için ayarı boş bırakın. ToggleActions içindeki düğme adlarını virgülle ayırın.",
+        "inheritSetting": "Devral",
+        "controllerButtons": "Kontrolcü düğmeleri",
+        "noOverride": "Üst eşlemeyi kullan",
         "controls": "Kontroller",
         "configuration": "Yapılandırma",
         "help": "Yardım",
@@ -810,6 +860,11 @@ export const messages = {
         "noOptions": "Eşleşen seçenek yok."
     },
     "zh-Hans": {
+        "inputSettings": "输入设置",
+        "inputSettingsHelp": "留空可继承设置值。ToggleActions 中的按键名称用逗号分隔。",
+        "inheritSetting": "继承",
+        "controllerButtons": "手柄按键",
+        "noOverride": "继承映射",
         "controls": "控制",
         "configuration": "配置",
         "help": "帮助",
@@ -858,6 +913,11 @@ export const messages = {
         "noOptions": "没有匹配选项。"
     },
     "ja": {
+        "inputSettings": "入力設定",
+        "inputSettingsHelp": "項目を空欄にすると値が継承されます。ToggleActions のボタン名はカンマで区切ってください。",
+        "inheritSetting": "継承",
+        "controllerButtons": "コントローラーのボタン",
+        "noOverride": "割り当てを継承",
         "controls": "操作",
         "configuration": "構成",
         "help": "ヘルプ",
@@ -906,6 +966,11 @@ export const messages = {
         "noOptions": "一致する選択肢がありません。"
     },
     "ko": {
+        "inputSettings": "입력 설정",
+        "inputSettingsHelp": "설정을 비워 두면 값을 상속합니다. ToggleActions의 버튼 이름은 쉼표로 구분하세요.",
+        "inheritSetting": "상속",
+        "controllerButtons": "컨트롤러 버튼",
+        "noOverride": "매핑 상속",
         "controls": "컨트롤",
         "configuration": "구성",
         "help": "도움말",
@@ -954,6 +1019,11 @@ export const messages = {
         "noOptions": "일치하는 옵션이 없습니다."
     },
     "hi": {
+        "inputSettings": "इनपुट सेटिंग्स",
+        "inputSettingsHelp": "पहले से लागू मान रखने के लिए सेटिंग खाली छोड़ें। ToggleActions में बटन के नाम कॉमा से अलग करें।",
+        "inheritSetting": "पहले से लागू मान",
+        "controllerButtons": "कंट्रोलर के बटन",
+        "noOverride": "इनहेरिट की गई मैपिंग",
         "controls": "नियंत्रण",
         "configuration": "कॉन्फ़िगरेशन",
         "help": "मदद",
@@ -1002,6 +1072,11 @@ export const messages = {
         "noOptions": "कोई विकल्प नहीं मिला।"
     },
     "bn": {
+        "inputSettings": "ইনপুট সেটিংস",
+        "inputSettingsHelp": "আগের মান রাখতে সেটিংসটি খালি রাখুন। ToggleActions-এ বোতামের নাম কমা দিয়ে আলাদা করুন।",
+        "inheritSetting": "আগের মান রাখুন",
+        "controllerButtons": "কন্ট্রোলারের বোতাম",
+        "noOverride": "উত্তরাধিকারসূত্রে পাওয়া ম্যাপিং",
         "controls": "নিয়ন্ত্রণ",
         "configuration": "কনফিগারেশন",
         "help": "সাহায্য",
@@ -1050,6 +1125,11 @@ export const messages = {
         "noOptions": "কোনো বিকল্প মেলেনি।"
     },
     "ur": {
+        "inputSettings": "ان پٹ کی ترتیبات",
+        "inputSettingsHelp": "پہلے سے لاگو قدر برقرار رکھنے کے لیے خانہ خالی چھوڑیں۔ ToggleActions میں بٹنوں کے نام کاما سے الگ کریں۔",
+        "inheritSetting": "پہلے سے لاگو قدر",
+        "controllerButtons": "کنٹرولر کے بٹن",
+        "noOverride": "وراثتی میپنگ استعمال کریں",
         "controls": "کنٹرول",
         "configuration": "ترتیب",
         "help": "مدد",
@@ -1098,6 +1178,11 @@ export const messages = {
         "noOptions": "کوئی اختیار نہیں ملا۔"
     },
     "fa": {
+        "inputSettings": "تنظیمات ورودی",
+        "inputSettingsHelp": "برای استفاده از مقدار به‌ارث‌رسیده، تنظیم را خالی بگذارید. نام دکمه‌ها را در ToggleActions با ویرگول جدا کنید.",
+        "inheritSetting": "استفاده از مقدار به‌ارث‌رسیده",
+        "controllerButtons": "دکمه‌های دستهٔ بازی",
+        "noOverride": "استفاده از نگاشت به‌ارث‌رسیده",
         "controls": "کنترل‌ها",
         "configuration": "پیکربندی",
         "help": "راهنما",
@@ -1146,6 +1231,11 @@ export const messages = {
         "noOptions": "گزینه‌ای پیدا نشد."
     },
     "id": {
+        "inputSettings": "Pengaturan input",
+        "inputSettingsHelp": "Kosongkan pengaturan untuk mewarisi nilainya. Pisahkan nama tombol di ToggleActions dengan koma.",
+        "inheritSetting": "Warisi",
+        "controllerButtons": "Tombol pengontrol",
+        "noOverride": "Gunakan pemetaan turunan",
         "controls": "Kontrol",
         "configuration": "Konfigurasi",
         "help": "Bantuan",
@@ -1194,6 +1284,11 @@ export const messages = {
         "noOptions": "Tidak ada opsi yang cocok."
     },
     "vi": {
+        "inputSettings": "Cài đặt đầu vào",
+        "inputSettingsHelp": "Để trống một cài đặt để kế thừa giá trị. Ngăn cách tên các nút trong ToggleActions bằng dấu phẩy.",
+        "inheritSetting": "Kế thừa",
+        "controllerButtons": "Nút tay cầm",
+        "noOverride": "Kế thừa ánh xạ",
         "controls": "Điều khiển",
         "configuration": "Cấu hình",
         "help": "Trợ giúp",
@@ -1242,6 +1337,11 @@ export const messages = {
         "noOptions": "Không có tùy chọn phù hợp."
     },
     "th": {
+        "inputSettings": "การตั้งค่าอินพุต",
+        "inputSettingsHelp": "เว้นการตั้งค่าให้ว่างเพื่อใช้ค่าที่สืบทอดมา คั่นชื่อปุ่มใน ToggleActions ด้วยเครื่องหมายจุลภาค",
+        "inheritSetting": "ใช้ค่าที่สืบทอดมา",
+        "controllerButtons": "ปุ่มคอนโทรลเลอร์",
+        "noOverride": "สืบทอดการแมป",
         "controls": "การควบคุม",
         "configuration": "การกำหนดค่า",
         "help": "ช่วยเหลือ",
@@ -1290,6 +1390,11 @@ export const messages = {
         "noOptions": "ไม่พบตัวเลือกที่ตรงกัน"
     },
     "sw": {
+        "inputSettings": "Mipangilio ya ingizo",
+        "inputSettingsHelp": "Acha mpangilio wazi ili kurithi thamani yake. Tenganisha majina ya vitufe katika ToggleActions kwa koma.",
+        "inheritSetting": "Rithi",
+        "controllerButtons": "Vitufe vya kidhibiti",
+        "noOverride": "Rithi mpangilio",
         "controls": "Vidhibiti",
         "configuration": "Usanidi",
         "help": "Msaada",
@@ -1338,6 +1443,11 @@ export const messages = {
         "noOptions": "Hakuna chaguo linalolingana."
     },
     "nl": {
+        "inputSettings": "Invoerinstellingen",
+        "inputSettingsHelp": "Laat een instelling leeg om de waarde over te nemen. Scheid knopnamen in ToggleActions met komma’s.",
+        "inheritSetting": "Overnemen",
+        "controllerButtons": "Controllerknoppen",
+        "noOverride": "Toewijzing overnemen",
         "controls": "Bediening",
         "configuration": "Configuratie",
         "help": "Hulp",
@@ -1386,6 +1496,11 @@ export const messages = {
         "noOptions": "Geen passende opties."
     },
     "pl": {
+        "inputSettings": "Ustawienia wejścia",
+        "inputSettingsHelp": "Pozostaw puste pole, aby odziedziczyć wartość ustawienia. Nazwy przycisków w ToggleActions oddziel przecinkami.",
+        "inheritSetting": "Odziedzicz",
+        "controllerButtons": "Przyciski kontrolera",
+        "noOverride": "Dziedzicz przypisanie",
         "controls": "Sterowanie",
         "configuration": "Konfiguracja",
         "help": "Pomoc",
@@ -1434,6 +1549,11 @@ export const messages = {
         "noOptions": "Brak pasujących opcji."
     },
     "el": {
+        "inputSettings": "Ρυθμίσεις εισόδου",
+        "inputSettingsHelp": "Αφήστε μια ρύθμιση κενή για να κληρονομήσετε την τιμή της. Διαχωρίστε τα ονόματα κουμπιών στο ToggleActions με κόμματα.",
+        "inheritSetting": "Κληρονόμηση",
+        "controllerButtons": "Κουμπιά χειριστηρίου",
+        "noOverride": "Κληρονόμηση αντιστοίχισης",
         "controls": "Χειρισμοί",
         "configuration": "Διαμόρφωση",
         "help": "Βοήθεια",

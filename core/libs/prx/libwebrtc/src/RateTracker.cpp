@@ -41,14 +41,65 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/libc.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <new>
 #include <stdexcept>
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void RequireWritable(void* address, std::size_t bytes, const char* message) {
+    if (!address)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(address, bytes))
+        throw std::invalid_argument(message);
+}
+
+void CopyInTracker(const WebRtcRateTracker* source, WebRtcRateTracker& out, const char* message) {
+    if (!source)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestPtr<const WebRtcRateTracker>(source).CopyIn(out))
+        throw std::invalid_argument(message);
+}
+
+void CopyOutTracker(WebRtcRateTracker* destination, const WebRtcRateTracker& value, const char* message) {
+    if (!destination)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcRateTracker>(destination).CopyOut(value))
+        throw std::invalid_argument(message);
+}
+
+std::int64_t ReadBucket(const std::int64_t* buckets, std::size_t index, const char* message) {
+    if (!buckets)
+        throw std::invalid_argument(message);
+    std::int64_t value = 0;
+    ErrnoGuard guard;
+    if (!GuestPtr<const std::int64_t>(buckets + index).CopyIn(value))
+        throw std::invalid_argument(message);
+    return value;
+}
+
+void WriteBucket(std::int64_t* buckets, std::size_t index, std::int64_t value, const char* message) {
+    if (!buckets)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestPtr<std::int64_t>(buckets + index).CopyOut(value))
+        throw std::invalid_argument(message);
+}
 
 std::int64_t APS5_VABI RateTrackerTime_nid_no_patch(const WebRtcRateTracker*) {
     return _ZN3rtc10TimeMillisEv_nid_postfix();
@@ -65,21 +116,48 @@ void* const Vtable[] = {
     reinterpret_cast<void*>(&DeleteRateTracker_nid_no_patch), reinterpret_cast<void*>(&RateTrackerTime_nid_no_patch),
 };
 
-std::int64_t ReadTime(const WebRtcRateTracker* tracker) {
+std::int64_t ReadTime(const WebRtcRateTracker* tracker, const WebRtcRateTracker& host, const char* message) {
+    if (!host.vtable)
+        throw std::invalid_argument(message);
+    void* fnPtr = nullptr;
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<void* const>(host.vtable + 2).CopyIn(fnPtr))
+            throw std::invalid_argument(message);
+    }
+    if (!fnPtr)
+        throw std::invalid_argument(message);
     using Clock = std::int64_t(APS5_VABI*)(const WebRtcRateTracker*);
-    return reinterpret_cast<Clock>(tracker->vtable[2])(tracker);
+    return reinterpret_cast<Clock>(fnPtr)(tracker);
 }
 
-std::size_t NextBucketIndex(const WebRtcRateTracker* tracker, std::size_t bucketIndex) {
-    return (bucketIndex + 1u) % (tracker->bucketCount + 1u);
+void ValidateBuckets(const WebRtcRateTracker& host, bool writable, const char* message) {
+    if (host.bucketMilliseconds <= 0 || host.bucketCount == 0 || !host.sampleBuckets)
+        throw std::invalid_argument(message);
+    if (host.bucketCount >= std::numeric_limits<std::size_t>::max() / sizeof(std::int64_t))
+        throw std::invalid_argument(message);
+    if (host.bucketCount > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() / host.bucketMilliseconds))
+        throw std::invalid_argument(message);
+    if (host.bucketStartTimeMilliseconds != -1 && host.currentBucket > host.bucketCount)
+        throw std::invalid_argument(message);
+    const std::size_t bucketBytes = (host.bucketCount + 1u) * sizeof(std::int64_t);
+    if (writable)
+        RequireWritable(host.sampleBuckets, bucketBytes, message);
+    else
+        ReadBucket(host.sampleBuckets, 0, message);
 }
 
-void EnsureInitialized(WebRtcRateTracker* tracker) {
-    if (tracker->bucketStartTimeMilliseconds == -1) {
-        tracker->initializationTimeMilliseconds = ReadTime(tracker);
-        tracker->bucketStartTimeMilliseconds = tracker->initializationTimeMilliseconds;
-        tracker->currentBucket = 0;
-        tracker->sampleBuckets[tracker->currentBucket] = 0;
+std::size_t NextBucketIndex(const WebRtcRateTracker& host, std::size_t bucketIndex) {
+    return (bucketIndex + 1u) % (host.bucketCount + 1u);
+}
+
+void EnsureInitialized(const WebRtcRateTracker* tracker, WebRtcRateTracker& host, const char* message) {
+    if (host.bucketStartTimeMilliseconds == -1) {
+        const auto now = ReadTime(tracker, host, message);
+        WriteBucket(host.sampleBuckets, 0, 0, message);
+        host.initializationTimeMilliseconds = now;
+        host.bucketStartTimeMilliseconds = now;
+        host.currentBucket = 0;
     }
 }
 
@@ -88,65 +166,96 @@ void EnsureInitialized(WebRtcRateTracker* tracker) {
 extern "C" {
 
 void APS5_VABI _ZN3rtc11RateTrackerC1Elm_nid_postfix(WebRtcRateTracker* tracker, std::int64_t bucketMilliseconds, std::size_t bucketCount) {
+    constexpr const char* message = "RateTracker requires valid tracker and positive bucket parameters";
     if (bucketMilliseconds <= 0 || bucketCount == 0)
         throw std::invalid_argument("RateTracker requires positive bucket parameters");
+    RequireWritable(tracker, sizeof(*tracker), message);
     if (bucketCount >= std::numeric_limits<std::size_t>::max() / sizeof(std::int64_t))
         throw std::bad_array_new_length();
+    WebRtcRateTracker host{};
+    CopyInTracker(tracker, host, message);
     auto* buckets = static_cast<std::int64_t*>(_Znam_nid_postfix((bucketCount + 1) * sizeof(std::int64_t)));
-    tracker->vtable = Vtable + 2;
-    tracker->bucketMilliseconds = bucketMilliseconds;
-    tracker->bucketCount = bucketCount;
-    tracker->sampleBuckets = buckets;
-    tracker->totalSampleCount = 0;
-    tracker->bucketStartTimeMilliseconds = -1;
+    host.vtable = Vtable + 2;
+    host.bucketMilliseconds = bucketMilliseconds;
+    host.bucketCount = bucketCount;
+    host.sampleBuckets = buckets;
+    host.totalSampleCount = 0;
+    host.bucketStartTimeMilliseconds = -1;
+    try {
+        CopyOutTracker(tracker, host, message);
+    } catch (...) {
+        _ZdaPv_nid_postfix(buckets);
+        throw;
+    }
 }
 
 void APS5_VABI _ZN3rtc11RateTrackerD1Ev_nid_postfix(WebRtcRateTracker* tracker) {
-    tracker->vtable = Vtable + 2;
-    _ZdaPv_nid_postfix(tracker->sampleBuckets);
+    constexpr const char* message = "RateTracker destructor requires a valid tracker";
+    RequireWritable(tracker, sizeof(*tracker), message);
+    WebRtcRateTracker host{};
+    CopyInTracker(tracker, host, message);
+    if (host.sampleBuckets)
+        ReadBucket(host.sampleBuckets, 0, message);
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<void* const*>(reinterpret_cast<void* const**>(tracker)).CopyOut(Vtable + 2))
+            throw std::invalid_argument(message);
+    }
+    _ZdaPv_nid_postfix(host.sampleBuckets);
 }
 
 void APS5_VABI _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(WebRtcRateTracker* tracker, std::int64_t sampleCount) {
-    const auto currentTime = ReadTime(tracker);
-    EnsureInitialized(tracker);
-    for (std::size_t i = 0; i <= tracker->bucketCount &&
-         currentTime >= tracker->bucketStartTimeMilliseconds + tracker->bucketMilliseconds; ++i) {
-        tracker->bucketStartTimeMilliseconds += tracker->bucketMilliseconds;
-        tracker->currentBucket = NextBucketIndex(tracker, tracker->currentBucket);
-        tracker->sampleBuckets[tracker->currentBucket] = 0;
+    constexpr const char* message = "RateTracker::AddSamples requires a valid tracker";
+    RequireWritable(tracker, sizeof(*tracker), message);
+    WebRtcRateTracker host{};
+    CopyInTracker(tracker, host, message);
+    ValidateBuckets(host, true, message);
+    const auto currentTime = ReadTime(tracker, host, message);
+    EnsureInitialized(tracker, host, message);
+    for (std::size_t i = 0; i <= host.bucketCount &&
+         currentTime >= host.bucketStartTimeMilliseconds + host.bucketMilliseconds; ++i) {
+        host.bucketStartTimeMilliseconds += host.bucketMilliseconds;
+        host.currentBucket = NextBucketIndex(host, host.currentBucket);
+        WriteBucket(host.sampleBuckets, host.currentBucket, 0, message);
     }
-    tracker->bucketStartTimeMilliseconds += tracker->bucketMilliseconds *
-        ((currentTime - tracker->bucketStartTimeMilliseconds) / tracker->bucketMilliseconds);
-    tracker->sampleBuckets[tracker->currentBucket] += sampleCount;
-    tracker->totalSampleCount += sampleCount;
+    host.bucketStartTimeMilliseconds += host.bucketMilliseconds *
+        ((currentTime - host.bucketStartTimeMilliseconds) / host.bucketMilliseconds);
+    const auto updated = ReadBucket(host.sampleBuckets, host.currentBucket, message) + sampleCount;
+    WriteBucket(host.sampleBuckets, host.currentBucket, updated, message);
+    host.totalSampleCount += sampleCount;
+    CopyOutTracker(tracker, host, message);
 }
 
 double APS5_VABI _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(const WebRtcRateTracker* tracker, std::int64_t intervalMilliseconds) {
-    if (tracker->bucketStartTimeMilliseconds == -1) return 0.0;
-    const auto currentTime = ReadTime(tracker);
+    constexpr const char* message = "RateTracker::ComputeRateForInterval requires a valid tracker";
+    WebRtcRateTracker host{};
+    CopyInTracker(tracker, host, message);
+    ValidateBuckets(host, false, message);
+    if (host.bucketStartTimeMilliseconds == -1) return 0.0;
+    const auto currentTime = ReadTime(tracker, host, message);
     auto availableInterval = std::min(intervalMilliseconds,
-        tracker->bucketMilliseconds * static_cast<std::int64_t>(tracker->bucketCount));
+        host.bucketMilliseconds * static_cast<std::int64_t>(host.bucketCount));
     std::size_t bucketsToSkip;
     std::int64_t millisecondsToSkip;
-    if (currentTime > tracker->initializationTimeMilliseconds + availableInterval) {
-        const auto timeToSkip = currentTime - tracker->bucketStartTimeMilliseconds +
-            static_cast<std::int64_t>(tracker->bucketCount) * tracker->bucketMilliseconds - availableInterval;
-        bucketsToSkip = timeToSkip / tracker->bucketMilliseconds;
-        millisecondsToSkip = timeToSkip % tracker->bucketMilliseconds;
+    if (currentTime > host.initializationTimeMilliseconds + availableInterval) {
+        const auto timeToSkip = currentTime - host.bucketStartTimeMilliseconds +
+            static_cast<std::int64_t>(host.bucketCount) * host.bucketMilliseconds - availableInterval;
+        bucketsToSkip = timeToSkip / host.bucketMilliseconds;
+        millisecondsToSkip = timeToSkip % host.bucketMilliseconds;
     } else {
-        bucketsToSkip = tracker->bucketCount - tracker->currentBucket;
+        bucketsToSkip = host.bucketCount - host.currentBucket;
         millisecondsToSkip = 0;
-        availableInterval = currentTime - tracker->initializationTimeMilliseconds;
-        if (availableInterval < tracker->bucketMilliseconds) return 0.0;
+        availableInterval = currentTime - host.initializationTimeMilliseconds;
+        if (availableInterval < host.bucketMilliseconds) return 0.0;
     }
-    if (bucketsToSkip > tracker->bucketCount || availableInterval == 0) return 0.0;
-    const auto startBucket = NextBucketIndex(tracker, tracker->currentBucket + bucketsToSkip);
-    std::int64_t totalSamples = ((tracker->sampleBuckets[startBucket] *
-        (tracker->bucketMilliseconds - millisecondsToSkip)) + (tracker->bucketMilliseconds >> 1)) /
-        tracker->bucketMilliseconds;
-    for (auto i = NextBucketIndex(tracker, startBucket); i != NextBucketIndex(tracker, tracker->currentBucket);
-         i = NextBucketIndex(tracker, i)) {
-        totalSamples += tracker->sampleBuckets[i];
+    if (bucketsToSkip > host.bucketCount || availableInterval == 0) return 0.0;
+    const auto startBucket = NextBucketIndex(host, host.currentBucket + bucketsToSkip);
+    std::int64_t totalSamples = ((ReadBucket(host.sampleBuckets, startBucket, message) *
+        (host.bucketMilliseconds - millisecondsToSkip)) + (host.bucketMilliseconds >> 1)) /
+        host.bucketMilliseconds;
+    for (auto i = NextBucketIndex(host, startBucket); i != NextBucketIndex(host, host.currentBucket);
+         i = NextBucketIndex(host, i)) {
+        totalSamples += ReadBucket(host.sampleBuckets, i, message);
     }
     return static_cast<double>(totalSamples * 1000) / static_cast<double>(availableInterval);
 }

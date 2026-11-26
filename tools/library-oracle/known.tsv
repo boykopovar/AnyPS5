@@ -16,9 +16,6 @@ agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments t
 agcbuild_AcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
-agcbuild_AcbPopMarker_a	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_AcbPopMarker_b	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_AcbPopMarker_c	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_AcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_AcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_AcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
@@ -29,17 +26,15 @@ agcbuild_AcbSetFlip_c	diff	the console returns null and writes nothing for these
 agcbuild_AcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_CbBranch_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbBranch_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbBranch_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_CbBranch_a	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_b	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_CbBranch_c	throw	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbCondWrite_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbReleaseMem_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
@@ -66,24 +61,13 @@ agcbuild_DcbGetLodStats_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_DcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_DcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
-agcbuild_DcbPopMarker_a	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_DcbPopMarker_b	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
-agcbuild_DcbPopMarker_c	diff	the console writes a SET_UCONFIG_REG 0x342 tag where AnyPS5 writes a NOP marker
 agcbuild_DcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
-agcbuild_DcbSetCfRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCfRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetCxRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_DcbSetShRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetShRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetUcRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbWaitRegMem_b	skip	the ninth argument, pollCycles, comes from the caller's stack, which neither the replay nor the measurement sets
 agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
