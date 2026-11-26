@@ -47,6 +47,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -685,8 +686,8 @@ struct AsyncPhases {
     int request;
     std::mutex mutex;
     std::condition_variable changed;
-    std::array<bool, 6> blocked{};
-    std::array<unsigned, 6> seen{};
+    std::array<bool, 7> blocked{};
+    std::array<unsigned, 7> seen{};
     bool finished = false;
 
     explicit AsyncPhases(int id) : request(id) {
@@ -801,6 +802,49 @@ void AsyncSubmissionDeletionRace(int ssl, std::string_view mode) {
         Require((hadPrevious ? ::setenv("APS5_NET_DISCONNECTED", saved.c_str(), 1) : ::unsetenv("APS5_NET_DISCONNECTED")) == 0, "restore offline state");
 #endif
     }
+}
+
+void AsyncWorkerStartFailure(int ssl, bool read) {
+    std::fprintf(stderr, "HTTP2 async worker start failure read %d\n", read ? 1 : 0);
+    Server server(Mode::Normal);
+    Client client(ssl);
+    client.Create(server.Url());
+    if (read) {
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before read worker failure");
+        server.Join();
+    }
+    std::array<char, 64> buffer{};
+    std::pair<int, unsigned> starts{client.request, 0};
+    GuestSceHttp2Test::SetAsyncPhaseHookForTests_nid_no_patch([](int request, AsyncPhase phase, void* data) {
+        auto& starts = *static_cast<std::pair<int, unsigned>*>(data);
+        if (request == starts.first && phase == AsyncPhase::WorkerStarting) {
+            ++starts.second;
+            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+        }
+    }, &starts);
+    bool failed = false;
+    try {
+        if (read) sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr);
+        else sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr);
+    } catch (const std::system_error& error) {
+        failed = error.code() == std::make_error_code(std::errc::resource_unavailable_try_again);
+    }
+    GuestSceHttp2Test::SetAsyncPhaseHookForTests_nid_no_patch(nullptr, nullptr);
+    Require(failed && starts.second == 1, "worker start failure reaches the submitting caller");
+    Require(buffer == std::array<char, 64>{}, "failed worker leaves its read buffer untouched");
+    Http2AsyncResult completion{};
+    completion.req_id = -1;
+    std::uint32_t timeout = 0;
+    Require(sceHttp2WaitAsync(client.request, &completion, &timeout, nullptr) == static_cast<int>(0x817b1065), "failed worker leaves no in-flight operation");
+    Require(timeout == 0 && completion.req_id == -1, "failed worker poll leaves its outputs untouched");
+    Require(sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr) == static_cast<int>(0x817b1065), "failed worker leaves no blocking wait");
+    const int submitted = read ? sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr)
+        : sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr);
+    Require(submitted == 0, "submission succeeds after worker failure");
+    Require(sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr) == 0, "completion after worker failure");
+    Require(completion.req_id == client.request && completion.event_type == (read ? 1 : 0) && completion.result == (read ? 13 : 0), "successful retry result after worker failure");
+    if (read) Require(std::string(buffer.data(), 13) == "response body", "successful read after worker failure");
+    else server.Join();
 }
 
 void CookieBox(int ssl) {
@@ -3006,6 +3050,9 @@ int main(int argc, char** argv) {
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
     if (argc == 2 && std::string_view(argv[1]) == "--async-deletion-publication-race") {
         AsyncDeletionPublicationRace(ssl);
+    } else if (argc == 3 && std::string_view(argv[1]) == "--async-worker-start-failure") {
+        Require(std::string_view(argv[2]) == "read" || std::string_view(argv[2]) == "send", "worker start failure mode");
+        AsyncWorkerStartFailure(ssl, std::string_view(argv[2]) == "read");
     } else if (argc == 2 && std::string_view(argv[1]) == "--async-handle-removal-race") {
         AsyncDeletionPublicationRace(ssl, AsyncPhase::HandleRemoved);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-submission-deletion-race") {

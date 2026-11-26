@@ -380,21 +380,24 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::SubmissionResolved);
     const std::optional<Http2AsyncOption> async = kqueue_option
         ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
+    std::thread worker;
     {
         std::lock_guard lock(state->mutex);
         if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerStarting);
+        worker = std::thread([request, state, async, data, size, req_id] {
+            int result = 0;
+            std::exception_ptr failure;
+            try {
+                result = request->Read(data, size);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            CompleteAsync(state, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, 1, result, std::move(failure));
+        });
         ++state->inFlight[1];
     }
-    std::thread([request, state, async, data, size, req_id] {
-        int result = 0;
-        std::exception_ptr failure;
-        try {
-            result = request->Read(data, size);
-        } catch (...) {
-            failure = std::current_exception();
-        }
-        CompleteAsync(state, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, 1, result, std::move(failure));
-    }).detach();
+    worker.detach();
     return 0;
 }
 
@@ -430,21 +433,24 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     }
     std::vector<std::uint8_t> body;
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
+    std::thread worker;
     {
         std::lock_guard lock(state->mutex);
         if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerStarting);
+        worker = std::thread([request, state, async, body = std::move(body), req_id]() mutable {
+            int result = 0;
+            std::exception_ptr failure;
+            try {
+                result = request->Send(body.empty() ? nullptr : body.data(), body.size());
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            CompleteAsync(state, "sceHttp2SendRequestAsync", req_id, async ? &*async : nullptr, 0, result, std::move(failure));
+        });
         ++state->inFlight[0];
     }
-    std::thread([request, state, async, body = std::move(body), req_id]() mutable {
-        int result = 0;
-        std::exception_ptr failure;
-        try {
-            result = request->Send(body.empty() ? nullptr : body.data(), body.size());
-        } catch (...) {
-            failure = std::current_exception();
-        }
-        CompleteAsync(state, "sceHttp2SendRequestAsync", req_id, async ? &*async : nullptr, 0, result, std::move(failure));
-    }).detach();
+    worker.detach();
     return 0;
 }
 
