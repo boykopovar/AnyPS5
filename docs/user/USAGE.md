@@ -44,7 +44,7 @@ Use a clean ELF executable. Put its bundled ELF modules in `sce_module/`, `sce_m
 - `--sce-module-path` accepts absolute paths and paths relative to the current working directory. Give the parent directory, not the `sce_module` directory itself.
 - Only files directly inside the module directories are processed.
 - SELF/fSELF containers are skipped with a warning. Unwrap them before relinking if they need to be included.
-  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It refuses a container whose load segments all look encrypted.
+  - `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container. It places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`. It also refuses a container when every load segment looks encrypted or large, high-entropy segments account for most load bytes.
 - Backup copies are skipped with a message, both on the command line and in the online converter. An ELF module counts as a backup when its file name extends the name of another ELF module in the same directory and both have the same SONAME, or, when neither has a SONAME, both export the same module names. Example: a dumper's `libX.prx.esbak` or `libX.prxbak` beside an ELF `libX.prx`. A single backup beside a SELF container is still relinked.
 - `prx/` can exist together with either `sce_module/` or `sce_modules/`.
 - Having both `sce_module/` and `sce_modules/` is an error.
