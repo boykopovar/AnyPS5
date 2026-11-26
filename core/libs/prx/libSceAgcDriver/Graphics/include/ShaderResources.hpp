@@ -835,8 +835,10 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> flushRanges;
     bool flushUnscoped = true;
     std::uint64_t planesClean = 0;
+    std::uint64_t mappingsClean = 0;
     void recordFlushRanges();
     bool stalePlanesRead();
+    bool imagesRemapped(std::uint64_t generation);
     std::string rangeOwner(std::uint64_t address, std::uint64_t bytes) const;
     void reportVerifiedWork(const ProofWorkTrace& work) const;
     void reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const;
