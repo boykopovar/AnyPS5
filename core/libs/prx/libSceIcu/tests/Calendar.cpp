@@ -666,7 +666,11 @@ void Run() {
     status = 0;
     const std::int32_t canonLen = ucal_getCanonicalTimeZoneID_nid_postfix(
         utc.data(), 3, canonical.data(), static_cast<std::int32_t>(canonical.size()), &isSystem, &status);
-    Require((status <= 0 && canonLen > 0) || status > 0);
+    if (status <= 0) {
+        Require(canonLen == 3 && canonical[0] == u'U' && canonical[1] == u'T' && canonical[2] == u'C');
+    } else {
+        Require(status == 1 || status == 2);
+    }
 
     std::array<char16_t, 64> displayName{};
     status = 0;

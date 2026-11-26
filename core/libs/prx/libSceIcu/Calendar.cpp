@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/CalendarBackend.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -236,7 +237,7 @@ std::int32_t APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix(const void* calen
         return -1;
     }
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     std::vector<char16_t> buffer(resultLength > 0 ? static_cast<std::size_t>(resultLength) : 0u);
     auto local = incoming;
     const std::int32_t length = Icu::CalendarBackend::GetTimeZoneDisplayName(
@@ -259,7 +260,7 @@ UCalendar* APS5_VABI ucal_open_nid_postfix(const char16_t* zoneId, std::int32_t 
         zoneLen = static_cast<std::int32_t>(hostZone.size());
     }
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     auto local = incoming;
     void* calendar = Icu::CalendarBackend::Open(zonePtr, zoneLen, localePtr, calendarType, &local);
     WriteStatus(status, incoming, local, __func__);
