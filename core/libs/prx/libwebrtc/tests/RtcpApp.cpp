@@ -2,6 +2,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -254,6 +261,117 @@ void TestNullConstructorThrows() {
     RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(nullptr); });
 }
 
+struct GuardedPage {
+    void* base = nullptr;
+    std::size_t size = 0;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        base = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (base == MAP_FAILED)
+            base = nullptr;
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPage() {
+        if (!base)
+            return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(base);
+    }
+
+    void SetReadOnly() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+    void SetInaccessible() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_NONE) == 0);
+#endif
+    }
+};
+
+void TestGuardedPointers() {
+    {
+        GuardedPage page;
+        page.SetReadOnly();
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(page.As<WebRtcRtcpApp>()); });
+    }
+    {
+        GuardedPage page;
+        *page.As<WebRtcRtcpApp>() = Constructed();
+        page.SetReadOnly();
+        const auto packet = Packet(1, 0x54455354u, 4);
+        RequireInvalidArgument([&] { ParsePacket(*page.As<WebRtcRtcpApp>(), packet); });
+    }
+    {
+        GuardedPage payloadPage;
+        payloadPage.SetInaccessible();
+        WebRtcRtcpApp app = Constructed();
+        WebRtcRtcpCommonHeader header {204, 1, 0, 12, payloadPage.As<const std::uint8_t>()};
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, &header); });
+    }
+    {
+        GuardedPage headerPage;
+        headerPage.SetInaccessible();
+        WebRtcRtcpApp app = Constructed();
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, headerPage.As<const WebRtcRtcpCommonHeader>()); });
+    }
+    {
+        GuardedPage indexPage;
+        *indexPage.As<std::size_t>() = 0;
+        indexPage.SetReadOnly();
+        WebRtcRtcpApp app = Default();
+        std::vector<std::uint8_t> buffer(32, 0);
+        RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, buffer.data(), indexPage.As<std::size_t>(), buffer.size(), nullptr, nullptr); });
+        _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
+    }
+    {
+        GuardedPage bufferPage;
+        bufferPage.SetReadOnly();
+        WebRtcRtcpApp app = Default();
+        std::size_t index = 0;
+        RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, bufferPage.As<std::uint8_t>(), &index, 32, nullptr, nullptr); });
+        Require(index == 0);
+        _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
+    }
+    {
+        WebRtcRtcpApp app = Default();
+        std::uint8_t byte = 0;
+        WebRtcRtcpCommonHeader oversized {204, 1, 0, 262144, &byte};
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, &oversized); });
+        app.data.size = std::size_t{1} << 40;
+        app.data.data = &byte;
+        app.data.capacity = 1;
+        std::size_t index = 0;
+        std::uint8_t out[64]{};
+        RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, out, &index, sizeof(out), nullptr, nullptr); });
+    }
+}
+
 }
 
 int main() {
@@ -275,6 +393,7 @@ int main() {
     TestCreateSendsAFullBuffer();
     TestDeletingDestructor();
     TestNullConstructorThrows();
+    TestGuardedPointers();
     TestBuild();
     return 0;
 }

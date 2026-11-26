@@ -99,7 +99,6 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent8evaluateERN3WTF6StringE
 int APS5_VABI _ZN7WebCore9FrameView24forceLayoutForPaginationERKNS_9FloatSizeES3_fNS_19AdjustViewSizeOrNotE();
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 int APS5_VABI _ZNK7WebCore6Widget25convertFromContainingViewERKNS_8IntPointE();
-int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationD0Ev();
 int APS5_VABI _ZN7WebCore4Page15setFooterHeightEi();
 int APS5_VABI _ZN7WebCore8JSDOMURL9toWrappedERN3JSC2VMENS1_7JSValueE();

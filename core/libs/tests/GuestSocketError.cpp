@@ -15,9 +15,12 @@ struct ErrorCase {
 static constexpr ErrorCase Cases[] = {
     HostError(WSA, EINTR, 4),
     HostError(WSA, EBADF, 9),
+    HostError(WSA_, INVALID_HANDLE, 9),
+    HostError(WSA_, NOT_ENOUGH_MEMORY, 12),
     HostError(WSA, EACCES, 13),
     HostError(WSA, EFAULT, 14),
     HostError(WSA, EINVAL, 22),
+    HostError(WSA_, INVALID_PARAMETER, 22),
     HostError(WSA, EMFILE, 24),
     HostError(WSA, EWOULDBLOCK, 35),
     HostError(WSA, EINPROGRESS, 36),
@@ -45,8 +48,11 @@ static constexpr ErrorCase Cases[] = {
     HostError(WSA, ETOOMANYREFS, 59),
     HostError(WSA, ETIMEDOUT, 60),
     HostError(WSA, ECONNREFUSED, 61),
+    HostError(WSA, ELOOP, 62),
+    HostError(WSA, ENAMETOOLONG, 63),
     HostError(WSA, EHOSTDOWN, 64),
     HostError(WSA, EHOSTUNREACH, 65),
+    HostError(WSA, ECANCELLED, 85),
 };
 static constexpr int UnmappedHost = WSAEDISCON;
 static constexpr int ShutdownHost = WSAESHUTDOWN;
@@ -62,6 +68,7 @@ static constexpr ErrorCase Cases[] = {
     HostError(, ENFILE, 23),
     HostError(, EMFILE, 24),
     HostError(, EPIPE, 32),
+    HostError(, EDOM, 33),
     HostError(, EAGAIN, 35),
     HostError(, EWOULDBLOCK, 35),
     HostError(, EINPROGRESS, 36),
@@ -74,6 +81,7 @@ static constexpr ErrorCase Cases[] = {
     HostError(, EPROTONOSUPPORT, 43),
     HostError(, ESOCKTNOSUPPORT, 44),
     HostError(, EOPNOTSUPP, 45),
+    HostError(, ENOTSUP, 45),
     HostError(, EPFNOSUPPORT, 46),
     HostError(, EAFNOSUPPORT, 47),
     HostError(, EADDRINUSE, 48),
@@ -90,8 +98,11 @@ static constexpr ErrorCase Cases[] = {
     HostError(, ETOOMANYREFS, 59),
     HostError(, ETIMEDOUT, 60),
     HostError(, ECONNREFUSED, 61),
+    HostError(, ELOOP, 62),
+    HostError(, ENAMETOOLONG, 63),
     HostError(, EHOSTDOWN, 64),
     HostError(, EHOSTUNREACH, 65),
+    HostError(, ECANCELED, 85),
     HostError(, EPROTO, 92),
 };
 static constexpr int UnmappedHost = ENOENT;
