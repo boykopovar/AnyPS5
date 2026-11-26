@@ -1019,6 +1019,10 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
 #endif
 }
 
+extern "C" void NetCtlHostTraffic_nid_no_patch(std::uint64_t* sent, std::uint64_t* received) {
+    HostTraffic(*sent, *received);
+}
+
 static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS], bool includeV6 = false) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     const bool primary = HasCallback(callbacks);

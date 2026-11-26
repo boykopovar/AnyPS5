@@ -371,6 +371,13 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
+struct HsearchEntry {
+    char* key;
+    void* data;
+};
+int APS5_VABI hcreate_nid_postfix(size_t nel);
+HsearchEntry* APS5_VABI hsearch_nid_postfix(HsearchEntry item, int action);
+void APS5_VABI hdestroy_nid_postfix(void);
 void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*));
 void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5_VABI *compare)(const void*, const void*));
