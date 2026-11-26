@@ -273,4 +273,19 @@ int APS5_VABI libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch(const void* 
 }
 APS5_EXPORT("-0oLMyS3AcA", libSceJpegParserUnknown_minus_0oLMyS3AcA_nid_no_patch);
 
+int APS5_VABI libSceJpegParserUnknown_947b0wgy_plus_oo_nid_no_patch(const void* path, const void* metadata) {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("947b0wgy+oo", libSceJpegParserUnknown_947b0wgy_plus_oo_nid_no_patch);
+
+int APS5_VABI libSceJpegParserUnknown_EU_minus_X_plus_AriMlg_nid_no_patch() {
+    return static_cast<int>(0x809D4054u);
+}
+APS5_EXPORT("EU-X+AriMlg", libSceJpegParserUnknown_EU_minus_X_plus_AriMlg_nid_no_patch);
+
+int APS5_VABI libSceJpegParserUnknown_mQgXX9lB5f8_nid_no_patch(const void* source, const void* destination, const void* info, std::int32_t* result) {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mQgXX9lB5f8", libSceJpegParserUnknown_mQgXX9lB5f8_nid_no_patch);
+
 }

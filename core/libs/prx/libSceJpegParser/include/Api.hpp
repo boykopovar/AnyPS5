@@ -26,4 +26,8 @@ int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser22jpegParserReadMetadataER
 int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser23jpegParserWriteMetadataERKSsRKNS_8MetadataE(void);
 int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser26jpegParserExtractThumbnailERKSsRNS_9ThumbnailE(void);
 
+int APS5_VABI libSceJpegParserUnknown_947b0wgy_plus_oo_nid_no_patch(const void* path, const void* metadata);
+int APS5_VABI libSceJpegParserUnknown_EU_minus_X_plus_AriMlg_nid_no_patch(void);
+int APS5_VABI libSceJpegParserUnknown_mQgXX9lB5f8_nid_no_patch(const void* source, const void* destination, const void* info, std::int32_t* result);
+
 }

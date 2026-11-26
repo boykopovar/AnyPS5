@@ -98,4 +98,9 @@ int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser25gifParserExtractThumbnailE
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI libSceGifParserUnknown_DTWP8QPsnTM_nid_no_patch(const void* source, const void* destination, const void* info, std::int32_t* result) {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DTWP8QPsnTM", libSceGifParserUnknown_DTWP8QPsnTM_nid_no_patch);
+
 }
