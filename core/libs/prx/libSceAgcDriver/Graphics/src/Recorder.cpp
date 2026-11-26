@@ -4783,6 +4783,9 @@ std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::ui
 
 bool Recorder::HasCompletions() const {
     if (open != nullptr && !open->completions.empty()) return true;
+    for (const auto& batch : sealedBatches) {
+        if (!batch->completions.empty()) return true;
+    }
     for (const auto& batch : inFlight) {
         if (!batch->completions.empty()) return true;
     }
@@ -4927,8 +4930,8 @@ bool Recorder::unsignaled(std::uint64_t serial) const {
 }
 
 void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu) {
-    Require(open != nullptr || !inFlight.empty(), "no batch to append a completion label to");
-    Batch& batch = open != nullptr ? *open : *inFlight.back();
+    Require(open != nullptr || !sealedBatches.empty() || !inFlight.empty(), "no batch to append a completion label to");
+    Batch& batch = open != nullptr ? *open : !sealedBatches.empty() ? *sealedBatches.back() : *inFlight.back();
     std::vector<std::byte> copy(bytes.begin(), bytes.end());
     // The store bypasses the flush hook: it runs inside finish() under the mutex, and the hook would
     // find this very range noted (or a later label to it) and sync re-entrantly. Stamped like every

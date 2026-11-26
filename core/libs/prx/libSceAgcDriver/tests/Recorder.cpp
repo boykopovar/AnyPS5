@@ -2327,6 +2327,20 @@ void sealedBatchTests(const Device& device) {
         Require(recorder.Idle(), "the recorder was not idle after both sealed batches completed");
     }
     {
+        alignas(64) static std::uint32_t memory[16];
+        const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+        Recorder recorder(failing, true, true, context.queueFamily);
+        recorder.Activate();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.OnComplete([] {});
+        const auto sealed = recorder.Seal();
+        Require(recorder.SealedBatches() == 1 && recorder.HasCompletions(), "the completions of a sealed batch were not pending");
+        recorder.AfterCompletions(reinterpret_cast<std::uint64_t>(memory), value, 9, 0, false);
+        Require(recorder.QueueSealed() == sealed && recorder.SealedBatches() == 0, "the sealed batch with a completion label was not queued");
+        recorder.Sync();
+        Require(recorder.Idle() && !recorder.HasCompletions() && memory[0] == 1, "the completion label appended behind a sealed batch did not land");
+    }
+    {
         Recorder recorder(failing, true, true, context.queueFamily);
         const auto before = recorder.Submissions();
         recordBarrierThrough(failing, recorder.Commands());
