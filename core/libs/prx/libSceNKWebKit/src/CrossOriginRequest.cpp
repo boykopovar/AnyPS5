@@ -120,6 +120,9 @@
  */
 
 #include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 
 #include <cstdint>
@@ -251,6 +254,16 @@ bool IsSafeHeader(HTTPHeaderName name, const String& value) {
     }
 }
 
+void EnsureRequestUpdated(const NKWebKit::WebCoreAbi::ResourceRequestBase& request) {
+    if (!request.resourceRequestUpdated) throw std::logic_error("WebCore::ResourceRequest::doUpdateResourceRequest is not implemented");
+}
+
+void RemoveRequestHeader(NKWebKit::WebCoreAbi::ResourceRequestBase& request, HTTPHeaderName name) {
+    EnsureRequestUpdated(request);
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields), name);
+    request.platformRequestUpdated = false;
+}
+
 }  // namespace
 
 extern "C" bool APS5_VABI _ZN7WebCore32isSimpleCrossOriginAccessRequestERKN3WTF6StringERKNS_13HTTPHeaderMapE(
@@ -270,4 +283,40 @@ extern "C" bool APS5_VABI _ZN7WebCore32isSimpleCrossOriginAccessRequestERKN3WTF6
         throw std::invalid_argument("null HTTPHeaderMap uncommon storage");
     if (headers.uncommon.size) return false;
     return true;
+}
+
+extern "C" void APS5_VABI _ZN7WebCore39cleanHTTPRequestHeadersForAccessControlERNS_15ResourceRequestEN3WTF9OptionSetINS_29HTTPHeadersToKeepFromCleaningEEE(
+    NKWebKit::WebCoreAbi::ResourceRequestBase* request, std::uint8_t headersToKeep) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    EnsureRequestUpdated(*request);
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepContentType)) {
+        const String contentType = _ZNK7WebCore19ResourceRequestBase15httpContentTypeEv(request);
+        if (contentType.impl && !IsSafeHeader(HTTPHeaderName::ContentType, contentType))
+            RemoveRequestHeader(*request, HTTPHeaderName::ContentType);
+    }
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepReferer)) _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(request);
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepOrigin)) _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(request);
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepUserAgent)) RemoveRequestHeader(*request, HTTPHeaderName::UserAgent);
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepAcceptEncoding)) RemoveRequestHeader(*request, HTTPHeaderName::AcceptEncoding);
+    if (!(headersToKeep & NKWebKit::CorsAbi::KeepCacheControl)) RemoveRequestHeader(*request, HTTPHeaderName::CacheControl);
+    RemoveRequestHeader(*request, HTTPHeaderName::SecFetchDest);
+    RemoveRequestHeader(*request, HTTPHeaderName::SecFetchMode);
+    RemoveRequestHeader(*request, HTTPHeaderName::SecFetchSite);
+}
+
+extern "C" void APS5_VABI _ZN7WebCore29updateRequestForAccessControlERNS_15ResourceRequestERNS_14SecurityOriginENS_23StoredCredentialsPolicyE(
+    NKWebKit::WebCoreAbi::ResourceRequestBase* request, NKWebKit::WebCoreAbi::SecurityOrigin* securityOrigin, std::uint8_t storedCredentialsPolicy) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
+    EnsureRequestUpdated(*request);
+    _ZN7WebCore19ResourceRequestBase17removeCredentialsEv(request);
+    if (request->allowCookies) {
+        const bool allowCookies = storedCredentialsPolicy == NKWebKit::CorsAbi::StoredCredentialsUse;
+        if (request->allowCookies != allowCookies) {
+            request->allowCookies = allowCookies;
+            request->platformRequestUpdated = false;
+        }
+    }
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
+    _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldENS_14HTTPHeaderNameERKN3WTF6StringE(request, HTTPHeaderName::Origin, &origin);
 }

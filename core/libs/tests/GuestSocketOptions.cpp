@@ -30,6 +30,7 @@ struct LocalCredentials {
 static_assert(sizeof(LocalCredentials) == 88);
 constexpr int SolSocket = 0xffff;
 constexpr int SoAcceptConnection = 0x2;
+constexpr int SoReuseAddr = 0x4;
 constexpr int SoDebug = 0x1;
 constexpr int SoKeepAlive = 0x8;
 constexpr int SoBroadcast = 0x20;
@@ -173,7 +174,7 @@ void BooleanOptionsReportTheirBit() {
     Require(GetInt(datagram, SoBroadcast) == SoBroadcast, "SO_BROADCAST reads back as its bit");
     SetInt(stream, SoNoSigpipe, 1);
     Require(GetInt(stream, SoNoSigpipe) == SoNoSigpipe, "SO_NOSIGPIPE reads back as its bit");
-    for (const int option : {SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
+    for (const int option : {SoReuseAddr, SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
         Require(GetInt(stream, option) == 0, "a kept flag starts off");
         SetInt(stream, option, 5);
         Require(GetInt(stream, option) == option, "a kept flag reads back as its bit");
@@ -195,6 +196,7 @@ void BooleanOptionsReportTheirBit() {
         }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
+    Require(SetFails(stream, SolSocket, SoReuseAddr, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
 }
 
@@ -478,6 +480,23 @@ void MulticastMembership() {
     const std::array<std::uint8_t, 12> negativeIndex{0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
     Require(SetFails(datagram, 0, IpMulticastInterface, negativeIndex.data(), negativeIndex.size(), ErrorInvalid), "a negative ip_mreqn index must fail with EINVAL (22)");
     Require(SetFails(datagram, 0, IpMulticastInterface, loopback.data(), 2, ErrorInvalid), "a short IP_MULTICAST_IF must fail with EINVAL (22)");
+    for (const std::array<std::uint8_t, 4> indexAddress : {
+             std::array<std::uint8_t, 4>{0, 0, 0, 1},
+             std::array<std::uint8_t, 4>{0, 0, 0, 2},
+             std::array<std::uint8_t, 4>{0, 1, 0, 0},
+             std::array<std::uint8_t, 4>{0, 255, 255, 255},
+         }) {
+        Require(SetFails(datagram, 0, IpMulticastInterface, indexAddress.data(), indexAddress.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 address other than INADDR_ANY must fail IP_MULTICAST_IF with EADDRNOTAVAIL (49)");
+        const std::array<std::uint8_t, 8> membership{224, 0, 0, 251, indexAddress[0], indexAddress[1], indexAddress[2], indexAddress[3]};
+        Require(SetFails(datagram, 0, IpAddMembership, membership.data(), membership.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 interface address other than INADDR_ANY must fail IP_ADD_MEMBERSHIP with EADDRNOTAVAIL (49)");
+        Require(SetFails(datagram, 0, IpDropMembership, membership.data(), membership.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 interface address other than INADDR_ANY must fail IP_DROP_MEMBERSHIP with EADDRNOTAVAIL (49)");
+    }
+    size = address.size();
+    Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && size == 4 && address == std::array<std::uint8_t, 4>{},
+        "rejected IP_MULTICAST_IF addresses leave the selected interface unchanged");
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
 

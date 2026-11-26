@@ -925,7 +925,7 @@ int APS5_VABI sceUserServiceSetGlsLfpsSortOrder(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceLogin(void) {
+int APS5_VABI sceUserServiceLogin(int userId, std::uint64_t request) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1392,7 +1392,7 @@ int APS5_VABI sceUserServiceGetKratosPrimaryUser(int* userId) {
  return USER_SERVICE_ERROR_NOT_SUPPORTED;
 }
 
-int APS5_VABI sceUserServiceLogout(void) {
+int APS5_VABI sceUserServiceLogout(int userId, int request) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2554,7 +2554,7 @@ int APS5_VABI sceUserServiceSetGlsCameraBrightness(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceDestroyUser(void) {
+int APS5_VABI sceUserServiceDestroyUser(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -21,6 +21,7 @@ inline constexpr std::uintptr_t GuestAddressOffset = 0;
 #ifndef _WIN32
 using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
 using SharedBackingWriter = bool (*)(std::uintptr_t address, const void* source, std::size_t bytes);
+using SharedBackingHostFallback = bool (*)(std::uintptr_t address, std::size_t bytes);
 struct SharedBackingRun {
     std::uint64_t offset;
     std::size_t bytes;
@@ -91,6 +92,8 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
 void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolver);
 bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count);
+void GuestArenaSetSharedBackingHostFallback_nid_no_patch(SharedBackingHostFallback fallback);
+bool GuestArenaSharedBackingHostFallback_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes);
 #endif

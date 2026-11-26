@@ -1,9 +1,12 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -16,6 +19,7 @@
 #include <type_traits>
 #ifdef _WIN32
 #include <io.h>
+#include <sys/stat.h>
 #include "prx/libc/include/FileLock.hpp"
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
@@ -33,6 +37,7 @@ extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wcha
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
 extern "C" void DuplicateDirectoryStream_nid_no_patch(int from, int to);
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #if defined(__GLIBC__)
@@ -106,8 +111,81 @@ class FileStream {
     std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
+    std::string bytesPushedBack;
+    bool pushbackLive = false;
+    signed char seekableCache = -1;
+#ifdef _WIN32
+    char* pushbackBuffer = nullptr;
+
+    void ReleasePushbackBuffer(std::FILE* native) {
+        if (!pushbackBuffer) return;
+        if (native) {
+            auto* state = reinterpret_cast<UcrtStreamState*>(native);
+            if (state->base == pushbackBuffer) {
+                state->base = reinterpret_cast<char*>(&state->characterBuffer);
+                state->pointer = state->base;
+                state->count = 0;
+            }
+        }
+        std::free(std::exchange(pushbackBuffer, nullptr));
+    }
+
+    void MakePushbackRoomUnlocked() {
+        constexpr long UcrtCrtBuffer = 0x0040;
+        constexpr long UcrtNoBuffer = 0x0400;
+        auto* state = reinterpret_cast<UcrtStreamState*>(GetHandle());
+        if (state->base == nullptr || state->pointer != state->base || state->count <= 0) return;
+        const long flags = std::atomic_ref<long>(state->flags).load();
+        const bool ownedHere = state->base == pushbackBuffer;
+        if (!ownedHere && (flags & (UcrtCrtBuffer | UcrtNoBuffer)) == 0) return;
+        const std::size_t count = static_cast<std::size_t>(state->count);
+        const std::size_t size = std::max({count * 2, count + 16, static_cast<std::size_t>(state->bufferSize > 0 ? state->bufferSize : 0)});
+        auto* const grown = static_cast<char*>(std::malloc(size));
+        if (!grown) return;
+        std::memcpy(grown + size - count, state->pointer, count);
+        if (ownedHere || (flags & UcrtCrtBuffer) == 0) std::free(std::exchange(pushbackBuffer, grown));
+        else std::free(state->base);
+        state->base = grown;
+        state->pointer = grown + size - count;
+    }
+#endif
 
 public:
+    std::string& PushedBackBytes() { return bytesPushedBack; }
+    bool PushbackLive() const { return pushbackLive; }
+    void ClearPushback() {
+        bytesPushedBack.clear();
+        pushbackLive = false;
+    }
+
+    bool IsRegularFile() {
+        if (seekableCache < 0) {
+#ifdef _WIN32
+            struct _stat64 status{};
+            seekableCache = ::_fstat64(::_fileno(GetHandle()), &status) == 0 && (status.st_mode & _S_IFMT) == _S_IFREG ? 1 : 0;
+#else
+            struct stat status{};
+            seekableCache = ::fstat(::fileno(GetHandle()), &status) == 0 && S_ISREG(status.st_mode) ? 1 : 0;
+#endif
+        }
+        return seekableCache == 1;
+    }
+
+    std::int64_t TellSeekable() {
+        if (!IsRegularFile()) return -1;
+#ifdef _WIN32
+        return ::_ftelli64(GetHandle());
+#else
+        return ::ftello(GetHandle());
+#endif
+    }
+
+    void NotePushedBackByte(char byte, bool wasLive) {
+        if (!wasLive) bytesPushedBack.clear();
+        bytesPushedBack.push_back(byte);
+        pushbackLive = true;
+    }
+
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
 #ifdef _WIN32
@@ -121,6 +199,10 @@ public:
 #endif
         _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
     }
+
+#ifdef _WIN32
+    ~FileStream() { ReleasePushbackBuffer(_handle); }
+#endif
 
     FileStream(const FileStream&) = delete;
     FileStream& operator=(const FileStream&) = delete;
@@ -155,12 +237,20 @@ public:
     }
 
     void Detach() {
+#ifdef _WIN32
+        if (_handle) {
+            ::_lock_file(_handle);
+            ReleasePushbackBuffer(_handle);
+            ::_unlock_file(_handle);
+        }
+#endif
         _orientation.store(0, std::memory_order_relaxed);
         _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void RestoreHostStandard(std::FILE* stream, int kept) {
@@ -183,6 +273,7 @@ public:
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     bool IsRandomDevice() const {
@@ -198,12 +289,16 @@ public:
     }
 
     bool Adopt(std::FILE* handle) {
+#ifdef _WIN32
+        ReleasePushbackBuffer(nullptr);
+#endif
         _handle = handle;
         _guest = {};
         guestError = false;
         randomDevice = false;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
         if (!_handle) return false;
         _guest.flags = 0x10;
 #ifdef _WIN32
@@ -228,12 +323,18 @@ public:
             return true;
         }
         auto* previous = GetHandle();
+#ifdef _WIN32
+        ::_lock_file(previous);
+        ReleasePushbackBuffer(previous);
+        ::_unlock_file(previous);
+#endif
         _guest = {};
         guestError = false;
         randomDevice = false;
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -323,11 +424,13 @@ public:
     }
 
     void SyncStatus() {
+        pushbackLive = false;
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
+        pushbackLive = false;
         if (!_handle) return;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
@@ -444,6 +547,19 @@ public:
 #endif
     }
 
+    int PushBack(int value) {
+#ifdef _WIN32
+        auto* native = GetHandle();
+        ::_lock_file(native);
+        if (value != EOF) MakePushbackRoomUnlocked();
+        const int result = ::_ungetc_nolock(value, native);
+        ::_unlock_file(native);
+        return result;
+#else
+        return std::ungetc(value, GetHandle());
+#endif
+    }
+
     void KeepDirectoryReadError(bool failed) {
         if (failed && directory && (__atomic_load_n(&_guest.flags, __ATOMIC_RELAXED) & 0x40) != 0) errno = 21;
     }
@@ -468,6 +584,7 @@ public:
     void SetLowSurrogate(char16_t unit) {
         lowSurrogate = unit;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void NotePushback() {
@@ -487,6 +604,11 @@ public:
 #else
         const ClosingDescriptor closing(_handle, ::fileno(_handle));
 #endif
+#ifdef _WIN32
+        ::_lock_file(_handle);
+        ReleasePushbackBuffer(_handle);
+        ::_unlock_file(_handle);
+#endif
         const int result = std::fclose(_handle);
         _handle = nullptr;
         _guest.flags = 0;
@@ -494,6 +616,7 @@ public:
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
         return result;
     }
 };

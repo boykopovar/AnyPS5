@@ -28,6 +28,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
@@ -200,6 +201,33 @@ std::int64_t CopyLinkTarget(const std::string& target, char* buffer, std::size_t
     return static_cast<std::int64_t>(count);
 }
 
+std::filesystem::path HostLongPath(const std::filesystem::path& native) {
+    std::error_code error;
+    auto verbatim = NativeVerbatimPath_nid_no_patch(native, error);
+    if (error || !verbatim.native().starts_with(std::filesystem::path(R"(\\?\)").native())) return native;
+    return verbatim;
+}
+
+bool DirectoryIsEmpty(const std::filesystem::path& directory, std::error_code& error) {
+#ifdef _WIN32
+    WIN32_FIND_DATAW entry{};
+    const HANDLE find = ::FindFirstFileW((directory.wstring() + L"\\*").c_str(), &entry);
+    if (find == INVALID_HANDLE_VALUE) {
+        error.assign(static_cast<int>(::GetLastError()), std::system_category());
+        return false;
+    }
+    bool empty = true;
+    do {
+        const std::wstring_view name(entry.cFileName);
+        if (name != L"." && name != L"..") empty = false;
+    } while (empty && ::FindNextFileW(find, &entry));
+    ::FindClose(find);
+    return empty;
+#else
+    return std::filesystem::is_empty(directory, error);
+#endif
+}
+
 bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
     std::error_code error;
     for (auto prefix = native.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
@@ -277,8 +305,9 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast)
     return 0;
 }
 
-std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
-    if (const int error = SymbolicLinkLimitError(native, false)) return Fail(error);
+std::int64_t ReadNativeLink(const std::filesystem::path& requested, char* buffer, std::size_t size) {
+    if (const int error = SymbolicLinkLimitError(requested, false)) return Fail(error);
+    const auto native = HostLongPath(requested);
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
@@ -409,13 +438,6 @@ int RenamePath(const std::filesystem::path& source, const std::filesystem::path&
 }
 
 extern "C" {
-
-int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
-    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
-    return 0;
-}
 
 int APS5_VABI is_in_sandbox_nid_postfix(void) {
     return 1;
@@ -659,7 +681,7 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
 #endif
     if (name == PcAsyncIo) return PosixAsynchronousIo;
     if (withoutVnode) return name == PcPipeBuf ? 512 : Fail(GuestEinval);
-    if (IsKqueueDescriptor_nid_no_patch(fd) || File::IsSharedMemoryDescriptor_nid_no_patch(fd)) return Fail(GuestEopnotsupp);
+    if (File::IsSharedMemoryDescriptor_nid_no_patch(fd) || DescriptorHasNoVnode_nid_no_patch(fd)) return Fail(GuestEopnotsupp);
     return PathConfigurationValue(name);
 }
 
@@ -1020,14 +1042,15 @@ int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) 
                   std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str()));
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
 #ifdef _WIN32
-    if (!CreateDirectoryW(native.wstring().c_str(), nullptr)) {
+    const auto host = HostLongPath(native);
+    if (!CreateDirectoryW(host.wstring().c_str(), nullptr)) {
         const DWORD code = GetLastError();
         if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) return static_cast<int>(Fail(GuestEexist));
         if (code == ERROR_ACCESS_DENIED) return static_cast<int>(Fail(GuestEperm));
         if (code == ERROR_FILENAME_EXCED_RANGE) return static_cast<int>(Fail(GuestEnametoolong));
         if (code == ERROR_CANT_RESOLVE_FILENAME) return static_cast<int>(Fail(GuestEloop));
         if (code == ERROR_PATH_NOT_FOUND) {
-            if (HasNonDirectoryPrefix(native)) return static_cast<int>(Fail(GuestEnotdir));
+            if (HasNonDirectoryPrefix(host)) return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));
         }
         return static_cast<int>(Fail(GuestEio));
@@ -1161,6 +1184,8 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
                   std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str()));
     const bool trailingSlash = !native.has_filename() && native.has_relative_path();
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+    const auto recorded = native;
+    native = HostLongPath(native);
     std::error_code statusError;
     const auto symlinkStatus = std::filesystem::symlink_status(native, statusError);
     if (IsDotOrDotDot(copy.c_str())) return static_cast<int>(Fail(GuestEinval));
@@ -1178,8 +1203,8 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
                 return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));
         }
-        if (!std::filesystem::is_empty(native, statusError)) return static_cast<int>(Fail(GuestEnotempty));
 #ifdef _WIN32
+        if (!DirectoryIsEmpty(native, statusError)) return static_cast<int>(Fail(GuestEnotempty));
         struct _stat64 status{};
         const bool unlocked = ::_wstat64(native.c_str(), &status) == 0 && !(status.st_mode & _S_IWRITE) &&
             ::_wchmod(native.c_str(), _S_IREAD | _S_IWRITE) == 0;
@@ -1208,7 +1233,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
             std::string junctionTarget;
             if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlinkat")) {
                 if (RemoveDirectoryW(native.c_str()) == 0) return static_cast<int>(Fail(GuestEperm));
-                RecordWrittenPath_nid_no_patch(native);
+                RecordWrittenPath_nid_no_patch(recorded);
                 return 0;
             }
         }
@@ -1233,7 +1258,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
         }
 #endif
     }
-    RecordWrittenPath_nid_no_patch(native);
+    RecordWrittenPath_nid_no_patch(recorded);
     return 0;
 }
 
@@ -1269,12 +1294,13 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
     const std::string_view fromView(fromCopy);
     const bool oldTrailingSlash = !fromView.empty() && fromView.back() == '/';
     while (!source.has_filename() && source.has_relative_path()) source = source.parent_path();
+    const auto hostSource = HostLongPath(source);
     std::error_code statusError;
-    const auto sourceStatus = std::filesystem::symlink_status(source, statusError);
+    const auto sourceStatus = std::filesystem::symlink_status(hostSource, statusError);
     if (statusError && statusError != std::errc::no_such_file_or_directory)
         return static_cast<int>(Fail(FilesystemError(statusError)));
     if (sourceStatus.type() == std::filesystem::file_type::not_found)
-        return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
+        return static_cast<int>(Fail(HasNonDirectoryPrefix(hostSource) ? GuestEnotdir : GuestEnoent));
     if (oldTrailingSlash && !std::filesystem::is_directory(sourceStatus)) return static_cast<int>(Fail(GuestEnotdir));
 
     if (const int error = CopyPath(to, toCopy)) return static_cast<int>(Fail(error));
@@ -1301,7 +1327,7 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
         !std::filesystem::is_directory(sourceStatus))
         return static_cast<int>(Fail(GuestEnotdir));
 
-    const int error = RenamePath(source, destination);
+    const int error = RenamePath(hostSource, HostLongPath(destination));
     if (error) return static_cast<int>(Fail(error));
     RecordWrittenPath_nid_no_patch(source);
     RecordWrittenPath_nid_no_patch(destination);
@@ -1323,26 +1349,6 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 }
 
-static int QueryTitleWorkaround(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) > 0x78) return static_cast<int>(0x80020016);
-    KernelTitleWorkaround localWorkaround{};
-    const int saved = errno;
-    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
-        errno = saved;
-        return static_cast<int>(0x8002000E);
-    }
-    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
-    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
-    errno = saved;
-    if (!copied) return static_cast<int>(0x8002000E);
-    return 0;
-}
-
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    return QueryTitleWorkaround(workaround, bit, enabled);
-}
-
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
@@ -1350,7 +1356,7 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
     if (selector >= 0x29) return static_cast<int>(0x80020016);
-    return QueryTitleWorkaround(workaround, static_cast<std::int32_t>(bit), enabled);
+    return sceKernelTitleWorkaroundIsEnabled(workaround, static_cast<std::int32_t>(bit), enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {

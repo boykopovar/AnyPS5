@@ -38,11 +38,7 @@ int main() {
         Require(gain == 1.0f);
         Require(sceAudioInGetGain(badHandle, nullptr) == ErrorInvalidPointer);
 
-        if ((static_cast<std::uint32_t>(badHandle) & 0xffu) >= 8u) {
-            Require(sceAudioInIsSharedDevice(badHandle) == ErrorInvalidHandle);
-        } else {
-            Require(sceAudioInIsSharedDevice(badHandle) == ErrorInvalidState);
-        }
+        Require(sceAudioInIsSharedDevice(badHandle) == ErrorInvalidState);
     }
 
     for (std::uint32_t slot = 0; slot < 8u; ++slot) {
