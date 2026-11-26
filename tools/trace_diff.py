@@ -49,8 +49,8 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
             if not digest["frames"]:
                 raise FrameWindowError(f"{path}: windowed comparison needs at least one complete frame in each capture")
 
-    a_threads = {row["thread"]: row for row in a["threads"]}
-    b_threads = {row["thread"]: row for row in b["threads"]}
+    a_threads = thread_timings(a["threads"])
+    b_threads = thread_timings(b["threads"])
     threads = []
     for name in sorted(a_threads.keys() | b_threads.keys()):
         left = a_threads.get(name, {})
@@ -81,6 +81,15 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
     return result
 
 
+def thread_timings(rows):
+    timings = {}
+    for row in rows:
+        totals = timings.setdefault(row["thread"], {"busy_ms_per_frame": 0.0, "wait_ms_per_frame": 0.0})
+        totals["busy_ms_per_frame"] += row["busy_ms_per_frame"]
+        totals["wait_ms_per_frame"] += row["wait_ms_per_frame"]
+    return timings
+
+
 def markdown(result):
     lines = [f"Frames: A {result['frames']['a']}, B {result['frames']['b']}"]
     if "windows" in result:
@@ -97,11 +106,13 @@ def markdown(result):
     lines += ["", "| thread | A busy ms/frame | B busy ms/frame | delta busy | A wait ms/frame | B wait ms/frame | delta wait |",
               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in result["threads"]:
-        lines.append(f"| {row['thread']} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
+        name = trace_digest.table_cell(row["thread"])
+        lines.append(f"| {name} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
                      f"{row['a_wait_ms_per_frame']:.3f} | {row['b_wait_ms_per_frame']:.3f} | {row['wait_delta_ms_per_frame']:+.3f} |")
     lines += ["", "| slice | A ms/frame | B ms/frame | delta |", "| --- | ---: | ---: | ---: |"]
     for row in result["slices"]:
-        lines.append(f"| {row['name']} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
+        name = trace_digest.table_cell(row["name"])
+        lines.append(f"| {name} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
     return "\n".join(lines) + "\n"
 
 

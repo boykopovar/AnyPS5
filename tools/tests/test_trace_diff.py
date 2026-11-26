@@ -61,6 +61,18 @@ class DiffTests(unittest.TestCase):
         b = write_trace(self.tmp.name, "b.json.gz", b_items)
         return trace_diff.compare(a, b, top=10)
 
+    def test_markdown_escapes_thread_and_slice_names_without_changing_comparison(self):
+        items = events(10000)
+        items[0]["args"]["name"] = "worker|lane\nnext"
+        items[2]["name"] = "draw|pass\nnext"
+        result = self.diff(items, items)
+
+        self.assertIn("worker|lane\nnext", [row["thread"] for row in result["threads"]])
+        self.assertIn("draw|pass\nnext", [row["name"] for row in result["slices"]])
+        rendered = trace_diff.markdown(result)
+        self.assertIn("| worker&#124;lane<br>next |", rendered)
+        self.assertIn("| draw&#124;pass<br>next |", rendered)
+
     def test_independent_windows_match_the_digest_of_the_same_scene(self):
         a = write_trace(self.tmp.name, "a.json.gz", events(10000))
         b = Path(self.tmp.name) / "b.json"
@@ -143,6 +155,18 @@ class DiffTests(unittest.TestCase):
         self.assertEqual(gpu["a_busy_ms_per_frame"], 0.0)
         self.assertGreater(gpu["b_busy_ms_per_frame"], 0.0)
         self.assertEqual(gpu["busy_delta_ms_per_frame"], gpu["b_busy_ms_per_frame"])
+
+    def test_threads_with_the_same_name_contribute_to_one_total(self):
+        baseline = events(10000)
+        candidate = baseline + [
+            {"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 3,
+             "args": {"name": "queue worker 0x0"}},
+            complete(3, "Driver.Packet", 0, 4000),
+        ]
+        result = self.diff(baseline, candidate)
+        worker = next(row for row in result["threads"] if row["thread"] == "queue worker 0x0")
+        self.assertEqual(worker["a_busy_ms_per_frame"], 10.0)
+        self.assertEqual(worker["b_busy_ms_per_frame"], 14.0)
 
     def test_a_slice_below_the_top_cut_on_one_side_keeps_its_real_delta(self):
         result = self.diff(stepped({}), stepped({9: 4.0, 10: 9.8}))

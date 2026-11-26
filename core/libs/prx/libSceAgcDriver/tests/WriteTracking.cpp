@@ -1931,10 +1931,45 @@ void CheckImportWindow() {
     Require(changed[1] == BlockWritten && WrittenSince(base + Block, Block, synced) && cpu[1] == 1, "a store of new bytes within an import window was missed");
     Require(changed[2] == BlockUnchanged && cpu[2] == 0, "a block the import window did not touch reads as written");
     Require(cpu[0] == 1, "a page an import window resolved no longer counts as possibly touched by the CPU");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(!StoredOver(base, 4096, synced), "a neighbouring store made an unchanged import-window page read as stored");
+    Require(StoredOver(base + 0x2000, 4096, synced), "a store beside an unchanged import-window page was missed");
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "an unchanged import-window page lost its possible CPU touch");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(StoredOver(base, 4096, synced), "a same-value CPU store after an import-window touch was missed");
     const auto after = CollectWritesUncached(base, 3 * Block);
     bytes[0x100] = 0x33;
     static_cast<void>(CollectWritesUncached(base, 3 * Block));
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
+}
+
+void CheckImportWindowTouchIsNotAStore() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWritesUncached(base, 2 * Block);
+    Require(synced != 0, "the import window touch block is not collected");
+    Require(ImportWatched(base, 2 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[Block + 0x100] = 0x22;
+        return true;
+    }, true, false), "the import window touch import failed");
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "a page an import window resolved no longer counts as possibly touched by the CPU");
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a page an import window resolved without changing its bytes reads as stored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "pages the import window did not touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + Block, 4096, synced), "a store of new bytes within an import window reads as unstored");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a store to another page of its block made an import window touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + 0x2000, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x2010, 1, synced), "a store beside an import window touch reads as unstored");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!StoreUnchangedSinceLastCollect(base, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a same-value store after an import window touch reads as unstored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x3000, Block - 0x3000, synced), "a store after the import window marked other pages as stored");
 }
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -2804,6 +2839,7 @@ int main(int argc, char** argv) {
         CheckWidenedCollectBesideUncommittedPages();
 #endif
         CheckImportWindow();
+        CheckImportWindowTouchIsNotAStore();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();

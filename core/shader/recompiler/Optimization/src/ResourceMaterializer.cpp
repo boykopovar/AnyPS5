@@ -813,6 +813,7 @@ public:
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             parentKeysRemaining = ImageTableAbi::MaxParentKeys;
             nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+            parentScans.clear();
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
@@ -1158,8 +1159,23 @@ private:
                 if (column.buffer) records.readRanges.emplace_back(records.base, records.size);
             }
         }
-        ReadColumn(column, records, column.buffer ? parentKeysRemaining : ImageTableAbi::MaxKeys);
-        if (column.buffer) parentKeysRemaining -= records.keys;
+        if (!column.buffer) {
+            ReadColumn(column, records, ImageTableAbi::MaxKeys);
+            return;
+        }
+        auto scan = column;
+        scan.indirectOffset = 0u;
+        scan.indirectImmediate = 0u;
+        const auto scanned = std::ranges::find_if(parentScans, [&](const ParentScan& known) {
+            return known.base == records.base && known.size == records.size && known.column == scan && known.column.maxKey == scan.maxKey && known.column.unkeyed == scan.unkeyed && known.column.keyDomains == scan.keyDomains;
+        });
+        if (scanned != parentScans.end()) {
+            ReadColumn(column, records, scanned->keys);
+            return;
+        }
+        ReadColumn(column, records, parentKeysRemaining);
+        parentKeysRemaining -= records.keys;
+        parentScans.push_back({std::move(scan), records.base, records.size, records.keys});
     }
 
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
@@ -1607,6 +1623,13 @@ private:
         }
     }
 
+    struct ParentScan {
+        TableColumn column;
+        std::uint64_t base = 0;
+        std::uint64_t size = 0;
+        std::uint32_t keys = 0;
+    };
+
     const IrResourcePlan& plan;
     const SrtRuntime& runtime;
     SrtWalker& walker;
@@ -1614,6 +1637,7 @@ private:
     ImageTableSnapshot& tables;
     std::uint32_t parentKeysRemaining = ImageTableAbi::MaxParentKeys;
     std::uint32_t nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+    std::vector<ParentScan> parentScans;
     std::map<std::uint32_t, ColumnRecords> columns;
     HashScratchIndex wordsIndex{threadScratch<HashSlot, WordsIndexTag>()};
     std::unordered_map<std::uint64_t, bool> pages;
@@ -1722,6 +1746,13 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         }
         snapshot.samplers[i] = values[cursor];
         cursor++;
+    }
+}
+
+void materializeBlendingReductions(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    for (std::uint32_t index = 0; index < plan.info.samplers.size() && index < snapshot.samplers.size(); ++index) {
+        auto& sampler = snapshot.samplers[index];
+        if (plan.info.samplers[index].table == NoTable && sampler.dwordCount == 4u && ((sampler.dwords[0] >> 29u) & 3u) == 3u) sampler.dwords[0] &= ~(3u << 29u);
     }
 }
 
@@ -2187,7 +2218,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         std::array<std::uint32_t, Abi::SamplerRecordWords> record{0u, 0u};
         if ((words.dwords[0] & (1u << 15u)) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
-        } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
+        } else if (const auto reduction = (words.dwords[0] >> 29u) & 3u; reduction == 1u || reduction == 2u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
         } else {
             const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
@@ -3080,6 +3111,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeBlendingReductions(plan, nextSnapshot);
                 materializeForcedDegamma(plan, nextSnapshot);
                 materializeTables(plan, nextSnapshot);
                 materializeSrtGuards(plan, nextSnapshot);

@@ -281,5 +281,6 @@ For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `k
 
 ## Checking a timeline without a controller
 
-- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the preview as JSON.
+- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the expanded events and their duration as JSON. The duration ends at the last event's release.
+  With `--repeat`, `--gap-ms` specifies the delay from one iteration's last release to the next iteration's time zero.
 - `tools/preview_pad_input.py <path> <button> [--hold-ms MS] [--left-stick X Y] [--right-stick X Y] [--touch X Y ID ACTIVE]` prints one controller pulse without modifying the command file at `<path>`.

@@ -202,7 +202,7 @@ def compare(baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
         context["window.spec"] = summary["window"]["spec"]
-        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+|summary_every [0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()
                         if key != "APS5_TRACE_DIR"})

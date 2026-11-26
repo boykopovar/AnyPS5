@@ -411,10 +411,10 @@ struct SpirvTarget {
 };
 
 struct BindingLayout {
-    std::uint32_t descriptorSet;
-    std::uint32_t firstBinding;
-    std::uint32_t pushConstantOffsetBytes;
-    std::uint32_t pushConstantSizeBytes;
+    std::uint32_t descriptorSet = 0u;
+    std::uint32_t firstBinding = 0u;
+    std::uint32_t pushConstantOffsetBytes = 0u;
+    std::uint32_t pushConstantSizeBytes = 0u;
 };
 
 enum class ProgramRole {
