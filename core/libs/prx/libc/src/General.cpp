@@ -176,8 +176,11 @@ bool CaseInsensitiveDirectoryWindows(const std::filesystem::path& directory) {
     const std::unique_ptr<void, decltype(&CloseHandle)> owner(handle, &CloseHandle);
     struct { ULONG flags; } information{};
     constexpr auto caseSensitiveInfo = static_cast<FILE_INFO_BY_HANDLE_CLASS>(23);
-    return GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)) &&
-        (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    if (GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)))
+        return (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    const auto error = GetLastError();
+    return error == ERROR_CALL_NOT_IMPLEMENTED || error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED ||
+        error == ERROR_INVALID_FUNCTION;
 }
 
 std::error_code MatchNamesWindows(const std::filesystem::path& directory, std::span<NameMatch> names) {
@@ -370,14 +373,23 @@ std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::s
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
     std::error_code error;
+#ifdef _WIN32
+    const auto hostStatus = [](const std::filesystem::path& path, std::error_code& failure) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(path, verbatimError);
+        return std::filesystem::status(verbatimError ? path : verbatim, failure);
+    };
+    const auto status = hostStatus(host, error);
+#else
     const auto status = std::filesystem::status(host, error);
+#endif
     if (std::filesystem::is_directory(status)) return;
     if (!error) error = std::make_error_code(std::filesystem::exists(status) ? std::errc::not_a_directory : std::errc::no_such_file_or_directory);
 #ifdef _WIN32
     if (error == std::errc::no_such_file_or_directory) {
         for (auto prefix = host.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
             std::error_code prefixError;
-            const auto prefixStatus = std::filesystem::status(prefix, prefixError);
+            const auto prefixStatus = hostStatus(prefix, prefixError);
             if (!std::filesystem::exists(prefixStatus)) continue;
             if (!std::filesystem::is_directory(prefixStatus)) error = std::make_error_code(std::errc::not_a_directory);
             break;

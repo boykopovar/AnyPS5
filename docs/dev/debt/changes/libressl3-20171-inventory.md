@@ -4,9 +4,7 @@
 
 - [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 50 still-unimplemented callable exports: 49 named and 1 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
-## change `4pEl-5DmrrM`
-
-| `ERR_print_errors_fp` | `4pEl-5DmrrM` |
+## remove `4pEl-5DmrrM`
 
 ## change `qGsc6uT6p1E`
 
@@ -22,4 +20,4 @@
 
 ## change [Parent export forwarding]
 
-- [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 385 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
+- [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 382 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.

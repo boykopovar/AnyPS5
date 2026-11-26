@@ -17,6 +17,7 @@ int main() {
     Require(errno == E2BIG);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    errno = E2BIG;
     PosixForWebKitTms second{};
     const auto after = times_nid_postfix(&second);
     Require(after > before);

@@ -24,6 +24,78 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+// Derived from Source/WTF/wtf/DateMath.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
+ * Copyright (C) 2007-2009 Torch Mobile, Inc.
+ * Copyright (C) 2010 &yet, LLC. (nate@andyet.net)
+ *
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * Alternatively, the contents of this file may be used under the terms
+ * of either the Mozilla Public License Version 1.1, found at
+ * http://www.mozilla.org/MPL/ (the "MPL") or the GNU General Public
+ * License Version 2.0, found at http://www.fsf.org/copyleft/gpl.html
+ * (the "GPL"), in which case the provisions of the MPL or the GPL are
+ * applicable instead of those above.  If you wish to allow use of your
+ * version of this file only under the terms of one of those two
+ * licenses (the MPL or the GPL) and not to allow others to use your
+ * version of this file under the LGPL, indicate your decision by
+ * deletingthe provisions above and replace them with the notice and
+ * other provisions required by the MPL or the GPL, as the case may be.
+ * If you do not delete the provisions above, a recipient may use your
+ * version of this file under any of the LGPL, the MPL or the GPL.
+
+ * Copyright 2006-2008 the V8 project authors. All rights reserved.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
@@ -105,10 +177,23 @@ static double ymdhmsToMilliseconds(int year, long mon, long day, long hour, long
     return dateMs;
 }
 
+static bool parseInt(const char* string, char** stopPosition, int* result) {
+    const std::int64_t value = strtol_nid_postfix(string, stopPosition, 10);
+    if (string == *stopPosition || value <= std::numeric_limits<int>::min() || value >= std::numeric_limits<int>::max()) {
+        return false;
+    }
+    *result = static_cast<int>(value);
+    return true;
+}
+
+static bool parseLong(const char* string, char** stopPosition, std::int64_t* result) {
+    *result = strtol_nid_postfix(string, stopPosition, 10);
+    return string != *stopPosition && *result != std::numeric_limits<std::int64_t>::min() && *result != std::numeric_limits<std::int64_t>::max();
+}
+
 static const char* parseES5DatePortion(const char* currentPosition, int& year, long& month, long& day) {
     char* postParse = nullptr;
-    year = static_cast<int>(std::strtol(currentPosition, &postParse, 10));
-    if (postParse == currentPosition) {
+    if (!parseInt(currentPosition, &postParse, &year)) {
         return nullptr;
     }
     if (*currentPosition == '-' && year == 0) {
@@ -173,8 +258,11 @@ static const char* parseES5TimePortion(const char* currentPosition, long& hours,
             if (*currentPosition < '0' || *currentPosition > '9') {
                 return nullptr;
             }
-            const long long frac = std::strtoll(currentPosition, &postParse, 10);
-            const long long numFracDigits = postParse - currentPosition;
+            std::int64_t frac = 0;
+            if (!parseLong(currentPosition, &postParse, &frac)) {
+                return nullptr;
+            }
+            const std::int64_t numFracDigits = postParse - currentPosition;
             milliseconds = frac * std::pow(10.0, static_cast<double>(-numFracDigits + 3));
         }
         currentPosition = postParse;
@@ -288,6 +376,14 @@ WTF::MonotonicTime approximateMonotonicTime(double wall) {
     return WTF::MonotonicTime{wall - WTF::currentWallTimeSeconds() + WTF::currentMonotonicTimeSeconds()};
 }
 
+void requireClockType(const WTF::TimeWithDynamicClockType& time, WTF::ClockType type, const char* message) {
+    if (time.m_type != type) throw std::invalid_argument(message);
+}
+
+void requireSameClockType(const WTF::TimeWithDynamicClockType& time, const WTF::TimeWithDynamicClockType& other, const char* message) {
+    if (time.m_type != other.m_type) throw std::invalid_argument(message);
+}
+
 }  // namespace
 
 extern "C" {
@@ -333,37 +429,47 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS
     case WTF::ClockType::Approximate:
         return WTF::TimeWithDynamicClockType{WTF::currentMonotonicTimeSeconds(), WTF::ClockType::Approximate};
     }
-    return WTF::TimeWithDynamicClockType{0.0, WTF::ClockType::Wall};
+    throw std::invalid_argument("TimeWithDynamicClockType::now: unknown clock type");
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireClockType(time, WTF::ClockType::Monotonic, "TimeWithDynamicClockType::monotonicTime: the clock type is not Monotonic");
     return WTF::MonotonicTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType8wallTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireClockType(time, WTF::ClockType::Wall, "TimeWithDynamicClockType::wallTime: the clock type is not Wall");
     return WTF::WallTime{time.m_value};
 }
 
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (time.m_type == WTF::ClockType::Wall) {
+    switch (time.m_type) {
+    case WTF::ClockType::Wall:
         return WTF::WallTime{time.m_value};
+    case WTF::ClockType::Monotonic:
+    case WTF::ClockType::Approximate:
+        return approximateWallTime(time.m_value);
     }
-    return approximateWallTime(time.m_value);
+    throw std::invalid_argument("TimeWithDynamicClockType::approximateWallTime: unknown clock type");
 }
 
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType24approximateMonotonicTimeEv(const WTF::TimeWithDynamicClockType* self) {
     WTF::TimeWithDynamicClockType time;
     if (!loadTime(time, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (time.m_type == WTF::ClockType::Monotonic || time.m_type == WTF::ClockType::Approximate) {
+    switch (time.m_type) {
+    case WTF::ClockType::Wall:
+        return approximateMonotonicTime(time.m_value);
+    case WTF::ClockType::Monotonic:
+    case WTF::ClockType::Approximate:
         return WTF::MonotonicTime{time.m_value};
     }
-    return approximateMonotonicTime(time.m_value);
+    throw std::invalid_argument("TimeWithDynamicClockType::approximateMonotonicTime: unknown clock type");
 }
 
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(const WTF::TimeWithDynamicClockType* self) {
@@ -376,6 +482,7 @@ WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::Tim
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator-: the clock types differ");
     return WTF::Seconds{time.m_value - right.m_value};
 }
 
@@ -383,6 +490,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator>: the clock types differ");
     return time.m_value > right.m_value;
 }
 
@@ -390,6 +498,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator>=: the clock types differ");
     return time.m_value >= right.m_value;
 }
 
@@ -397,6 +506,7 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDyn
     WTF::TimeWithDynamicClockType time;
     WTF::TimeWithDynamicClockType right;
     if (!loadTime(time, self) || !loadTime(right, &other)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    requireSameClockType(time, right, "TimeWithDynamicClockType::operator<=: the clock types differ");
     return time.m_value <= right.m_value;
 }
 

@@ -23,23 +23,17 @@ std::int64_t Bytes(std::int64_t count, std::int64_t itemSize) {
 }
 
 void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(destination, bytes);
-    errno = savedErrno;
     if (!writable) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
@@ -134,10 +128,8 @@ void* Duplicate(FreeType::GuestMemoryRec* memory, const void* address, std::uint
     std::int32_t result = 0;
     void* copy = QuickAllocate<GuestRecord>(memory, static_cast<std::int64_t>(size), result, caller);
     if (!result && address && size > 0) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(copy, address, static_cast<std::size_t>(size));
         if (!copied) Free<GuestRecord>(memory, copy, caller);
-        errno = savedErrno;
         if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
     }
     CopyOut(error, &result, sizeof(result), caller);

@@ -308,6 +308,24 @@ if(BUILD_TESTING)
         core/shader/recompiler/ControlFlow/include)
     add_test(NAME shader_ssa_pass_reads COMMAND shader_ssa_pass_reads_tests)
     set_tests_properties(shader_ssa_pass_reads PROPERTIES TIMEOUT 20)
+    add_test_executable(shader_image_overwrite_proof_tests
+        core/shader/recompiler/tests/ImageOverwriteProof.cpp
+        core/shader/recompiler/Optimization/src/ImageOverwriteProof.cpp
+        core/shader/recompiler/RdnaDecoder/src/RdnaImageOpDecoder.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrProgram.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrType.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_image_overwrite_proof_tests PRIVATE
+        core/shader/recompiler
+        core/shader/recompiler/IntermediateRepresentation/include
+        core/shader/recompiler/Optimization/include
+        core/shader/recompiler/RdnaDecoder/include
+        core/shader/recompiler/ControlFlow/include)
+    add_test(NAME shader_image_overwrite_proof COMMAND shader_image_overwrite_proof_tests)
+    set_tests_properties(shader_image_overwrite_proof PROPERTIES TIMEOUT 20)
     add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
@@ -326,7 +344,7 @@ if(BUILD_TESTING)
         ENVIRONMENT_MODIFICATION
         "TMPDIR=set:${anyps5HostTestTemp};TEMP=set:${anyps5HostTestTemp};TMP=set:${anyps5HostTestTemp}")
     if(Python3_Interpreter_FOUND)
-        get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
+        get_property(tooling_tests_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
         set_tests_properties(mingw_host_only_test_targets PROPERTIES TIMEOUT 30)
@@ -381,8 +399,14 @@ if(BUILD_TESTING)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
+        add_test(NAME progress_history_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py
+            LocationAndSeriesTests UtcDayTests SpreadTests LabelledTests ShaderCountsTests)
+        set_tests_properties(progress_history_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
+        add_test(NAME progress_fast_analysis COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_fast_analysis.py)
         add_test(NAME progress_open_pr_page COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_open_pr_page.py)
         add_test(NAME progress_prs COMMAND ${Python3_EXECUTABLE}
@@ -456,6 +480,7 @@ if(BUILD_TESTING)
         set_tests_properties(build_mingw_host_only_tests_script PROPERTIES TIMEOUT 60)
         add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
+        set_tests_properties(isa_profiles PROPERTIES TIMEOUT 60)
         set_tests_properties(export_gap PROPERTIES TIMEOUT 30)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
@@ -556,9 +581,22 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_helpers.py)
+        set_tests_properties(conventions_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py RegistrationTests)
         set_tests_properties(test_registration PROPERTIES TIMEOUT 60)
+        set(test_registration_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${test_registration_source}")
+        file(STRINGS "${test_registration_source}" test_registration_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS test_registration_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(NOT test_class STREQUAL "RegistrationTests")
+                add_test(NAME test_registration_${test_class} COMMAND ${Python3_EXECUTABLE} "${test_registration_source}" ${test_class})
+                set_tests_properties(test_registration_${test_class} PROPERTIES TIMEOUT 60)
+            endif()
+        endforeach()
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unbuilt_exports.py)
         set_tests_properties(unbuilt_exports PROPERTIES TIMEOUT 20)
@@ -584,9 +622,16 @@ if(BUILD_TESTING)
         set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
-        add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
-        set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
+        foreach(shard RANGE 0 2)
+            if(shard EQUAL 0)
+                set(rebase_verify_test_name rebase_verify)
+            else()
+                set(rebase_verify_test_name rebase_verify_shard_${shard})
+            endif()
+            add_test(NAME ${rebase_verify_test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py --shard ${shard}/3)
+            set_tests_properties(${rebase_verify_test_name} PROPERTIES TIMEOUT 60)
+        endforeach()
         add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
         set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
@@ -598,7 +643,7 @@ if(BUILD_TESTING)
         add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
         add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests EnvironmentLoaderRetentionTests)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests DeviceLimitationsTests HighRefreshLimitationTests EnvironmentLoaderRetentionTests)
         add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
         set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
@@ -665,6 +710,8 @@ if(BUILD_TESTING)
         set_tests_properties(configure_seed_parsing PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
+        add_test(NAME vulkan_validation_gate_encoding COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py EncodingTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
         add_test(NAME vulkan_validation_gate_timeouts COMMAND ${Python3_EXECUTABLE}
@@ -687,6 +734,18 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME vulkan_validation_gate_arguments COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ArgumentTests)
+        add_test(NAME vulkan_validation_gate_identity COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IdentityTests)
+        add_test(NAME vulkan_validation_gate_cache COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CacheTests)
+        add_test(NAME vulkan_validation_gate_save COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py SaveTests)
+        add_test(NAME vulkan_validation_gate_wait COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py WaitTests)
+        add_test(NAME vulkan_validation_gate_parse_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ParseReportTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
@@ -745,7 +804,9 @@ if(BUILD_TESTING)
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchScanTests)
+        add_test(NAME pr_overlap_branch_scan_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py ExportSourceTests)
         add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
         add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
@@ -762,6 +823,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
+        add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
         add_test(NAME web_release COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_web_release.py)
         set_tests_properties(web_release PROPERTIES TIMEOUT 120)
@@ -823,6 +886,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
+        add_test(NAME tool_script_modes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_tool_script_modes.py)
+        set_tests_properties(tool_script_modes PROPERTIES TIMEOUT 20)
         add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
         set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
@@ -865,6 +931,10 @@ if(BUILD_TESTING)
         add_test(NAME trace_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_timeline.py)
         set_tests_properties(trace_timeline PROPERTIES TIMEOUT 60)
+
+        add_test(NAME trace_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_diff.py)
+        set_tests_properties(trace_diff PROPERTIES TIMEOUT 60)
         set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
         file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")
@@ -907,9 +977,16 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tools_headers_manifest COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_public_headers_manifest.py)
         set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
-        add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
-        set_tests_properties(conventions_pr_template PROPERTIES TIMEOUT 180)
+        foreach(shard RANGE 0 2)
+            if(shard EQUAL 0)
+                set(conventions_pr_template_test_name conventions_pr_template)
+            else()
+                set(conventions_pr_template_test_name conventions_pr_template_shard_${shard})
+            endif()
+            add_test(NAME ${conventions_pr_template_test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py --shard ${shard}/3)
+            set_tests_properties(${conventions_pr_template_test_name} PROPERTIES TIMEOUT 180)
+        endforeach()
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
@@ -974,26 +1051,28 @@ if(BUILD_TESTING)
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
         set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
-        if(WIN32)
-            get_property(windows_tooling_after DIRECTORY PROPERTY TESTS)
-            list(REMOVE_ITEM windows_tooling_after ${windows_tooling_before})
-            function(raise_windows_tooling_test_timeouts)
-                foreach(windows_tooling_test IN LISTS ARGN)
-                    get_test_property(${windows_tooling_test} TIMEOUT windows_tooling_timeout)
+        get_property(tooling_tests_after DIRECTORY PROPERTY TESTS)
+        list(REMOVE_ITEM tooling_tests_after ${tooling_tests_before})
+        function(configure_tooling_tests)
+            foreach(tooling_test IN LISTS ARGN)
+                set_property(TEST ${tooling_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                    "GIT_CONFIG_GLOBAL=set:/dev/null" "GIT_CONFIG_NOSYSTEM=set:1")
+                if(WIN32)
+                    get_test_property(${tooling_test} TIMEOUT windows_tooling_timeout)
                     if(windows_tooling_timeout STREQUAL "windows_tooling_timeout-NOTFOUND" OR (windows_tooling_timeout MATCHES "^[0-9.]+$" AND windows_tooling_timeout LESS 120))
-                        set_tests_properties(${windows_tooling_test} PROPERTIES TIMEOUT 120)
+                        set_tests_properties(${tooling_test} PROPERTIES TIMEOUT 120)
                     endif()
-                    set_property(TEST ${windows_tooling_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "PYTHONUTF8=set:1")
-                endforeach()
-            endfunction()
-            raise_windows_tooling_test_timeouts(${windows_tooling_after})
-            function(raise_windows_deferred_tooling_test_timeouts)
-                get_property(windows_deferred_tests DIRECTORY PROPERTY TESTS)
-                list(FILTER windows_deferred_tests INCLUDE REGEX "^check_compile_")
-                raise_windows_tooling_test_timeouts(${windows_deferred_tests})
-            endfunction()
-            cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
-        endif()
+                    set_property(TEST ${tooling_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "PYTHONUTF8=set:1")
+                endif()
+            endforeach()
+        endfunction()
+        configure_tooling_tests(${tooling_tests_after})
+        function(configure_deferred_tooling_tests)
+            get_property(deferred_tooling_tests DIRECTORY PROPERTY TESTS)
+            list(FILTER deferred_tooling_tests INCLUDE REGEX "^check_compile_")
+            configure_tooling_tests(${deferred_tooling_tests})
+        endfunction()
+        cmake_language(DEFER CALL configure_deferred_tooling_tests)
     endif()
     if(ANYPS5_ENABLE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(tsan_lavapipe_unload_tests tools/tests/TsanLavapipeUnload.cpp)
@@ -1054,6 +1133,10 @@ if(NOT ANYPS5_USE_SYSTEM_DEPS)
             get_directory_property(ANYPS5_SDL_WAYLAND_LIBDECOR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_WAYLAND_LIBDECOR)
             include(cmake/PatchSdlWayland.cmake)
         endif()
+        get_directory_property(ANYPS5_SDL_PULSEAUDIO DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_PULSEAUDIO)
+        if(ANYPS5_SDL_PULSEAUDIO)
+            include(cmake/PatchSdlPulseAudio.cmake)
+        endif()
         get_directory_property(ANYPS5_SDL_X11_XRANDR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_X11_XRANDR)
         if(NOT ANYPS5_SDL_X11_XRANDR)
             message(FATAL_ERROR "SDL has no XRandR support, so X11 display refresh rates cannot be queried. "
@@ -1072,6 +1155,10 @@ if(NOT ANYPS5_USE_SYSTEM_DEPS)
 endif()
 set(ARCHITECTURE x86_64)
 add_subdirectory(3rdparty/ffmpeg-core)
+get_directory_property(ffmpegPackageDirectory DIRECTORY 3rdparty/ffmpeg-core DEFINITION FFMPEG_PREBUILT_DIR)
+get_filename_component(ffmpegPackageDirectory "${ffmpegPackageDirectory}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ffmpeg-core")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/release-ffmpeg-notices.txt"
+     CONTENT "${ffmpegPackageDirectory}/share/ffmpeg\n")
 if(MINGW)
     target_link_libraries(ffmpeg INTERFACE bcrypt ole32 user32 ws2_32)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

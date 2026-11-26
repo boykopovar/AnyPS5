@@ -377,6 +377,51 @@ void CheckTitleMetadataRequests() {
     Require(sceNpTitleMetadataIntDeleteRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 2 was accepted");
 }
 
+template <typename Init, typename Finalize, typename Create, typename Destroy, typename GetNum>
+void CheckAppLaunchLinkRequestCap(const char* name, Init init, Finalize finalize, Create create, Destroy destroy, GetNum getNum, int notInitialized) {
+    const int param[4] = {};
+    std::int32_t boundaryId = 0;
+    Require(init(0) == 0, name, "initialization for request cap check failed");
+    for (std::uint32_t index = 0; index < 0x1000; ++index) {
+        Require(create(1, param, &boundaryId) == 0, name, "a request below the host limit was refused");
+    }
+    const std::int32_t lastId = boundaryId;
+    Require(create(1, param, &boundaryId) == TooManyObjects, name, "the host request limit was not enforced");
+    Require(boundaryId == lastId, name, "the request output changed on refusal");
+    std::int32_t num = -1;
+    Require(getNum(lastId, &num) == 0 && num == 0, name, "an existing request was lost at the host limit");
+    Require(destroy(lastId) == 0, name, "destroying a request at the host limit failed");
+    Require(create(1, param, reinterpret_cast<std::int32_t*>(0x10)) != 0, name, "unwritable request output was accepted");
+    Require(create(1, param, &boundaryId) == 0 && boundaryId != lastId, name, "creating a request after destroy failed");
+    Require(destroy(boundaryId) == 0, name, "destroying the replacement request failed");
+    finalize();
+    Require(create(1, param, &boundaryId) == notInitialized, name, "a request was created after finalization");
+}
+
+void CheckRequestTableCaps() {
+    constexpr int LaunchNotInitialized = static_cast<int>(0x8055AE02u);
+    constexpr int Launch2NotInitialized = static_cast<int>(0x8055C602u);
+    constexpr int ServiceNotInitialized = static_cast<int>(0x8055AD02u);
+    CheckAppLaunchLinkRequestCap("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, LaunchNotInitialized);
+    CheckAppLaunchLinkRequestCap("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, Launch2NotInitialized);
+    std::int32_t boundaryId = 0;
+    Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceChecker", "initialization for request cap check failed");
+    for (std::uint32_t index = 0; index < 0x1000; ++index) {
+        Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &boundaryId) == 0, "sceNpServiceCheckerIntCreateRequest", "a request below the host limit was refused");
+    }
+    const std::int32_t lastId = boundaryId;
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &boundaryId) == TooManyObjects, "sceNpServiceCheckerIntCreateRequest", "the host request limit was not enforced");
+    Require(boundaryId == lastId, "sceNpServiceCheckerIntCreateRequest", "the request output changed on refusal");
+    std::uint32_t availability = 0xA5A5A5A5;
+    Require(sceNpServiceCheckerIntGetAvailability(lastId, selfNpId, &availability) == SignedOut, "sceNpServiceCheckerIntGetAvailability", "an existing request was lost at the host limit");
+    Require(sceNpServiceCheckerIntDestroyRequest(lastId) == 0, "sceNpServiceCheckerIntDestroyRequest", "destroying a request at the host limit failed");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, reinterpret_cast<std::int32_t*>(0x10)) != 0, "sceNpServiceCheckerIntCreateRequest", "unwritable request output was accepted");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &boundaryId) == 0 && boundaryId != lastId, "sceNpServiceCheckerIntCreateRequest", "creating a request after destroy failed");
+    Require(sceNpServiceCheckerIntDestroyRequest(boundaryId) == 0, "sceNpServiceCheckerIntDestroyRequest", "destroying the replacement request failed");
+    sceNpServiceCheckerIntFinalize();
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &boundaryId) == ServiceNotInitialized, "sceNpServiceCheckerIntCreateRequest", "a request was created after finalization");
+}
+
 void CheckLookupNet() {
     constexpr int NotInitialized = static_cast<int>(0x80550702u);
     constexpr int InsufficientArgumentNet = static_cast<int>(0x8055070Cu);
@@ -416,8 +461,14 @@ void CheckLookupNet() {
     Require(secondRequest == 2, "sceNpLookupNetCreateRequest", "the second request is not id 2");
     Require(sceNpLookupNetSetTimeout(999, 1, 0, 0, 0, 0) == InvalidIdNet, "sceNpLookupNetSetTimeout", "an unknown id was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative retry count was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, -1, 0, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative resolve timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, -1, 0, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative connect timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, -1, 0) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative send timeout was taken");
+    Require(sceNpLookupNetSetTimeout(firstContext, 0, 0, 0, 0, -1) == InvalidArgument, "sceNpLookupNetSetTimeout", "a negative receive timeout was taken");
     Require(sceNpLookupNetSetTimeout(firstContext, 1, 0, 0, 0, 0) == 0, "sceNpLookupNetSetTimeout", "a valid timeout was refused");
     Require(sceNpLookupNetNpId(999, selfNpId, npId, nullptr) == InvalidIdNet, "sceNpLookupNetNpId", "an unknown request was taken");
+    Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was taken");
+    Require(sceNpLookupNetNpId(firstRequest, nullptr, nullptr, selfNpId) == InvalidArgument, "sceNpLookupNetNpId", "a non-null option was not refused before the null arguments");
     Require(sceNpLookupNetNpId(firstRequest, nullptr, npId, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null online ID was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, nullptr, nullptr) == InsufficientArgumentNet, "sceNpLookupNetNpId", "a null NpId output was taken");
     Require(sceNpLookupNetNpId(firstRequest, selfNpId, npId, nullptr) == SignedOut, "sceNpLookupNetNpId", "the lookup did not return SIGNED_OUT");
@@ -664,6 +715,7 @@ int main() {
     CheckNpUtilityPayloads();
     CheckServiceChecker2();
     CheckTitleMetadataRequests();
+    CheckRequestTableCaps();
     CheckLookup();
     CheckWordFilter();
     CheckLookupAsync();
