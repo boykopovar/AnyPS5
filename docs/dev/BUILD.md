@@ -516,6 +516,12 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 ## Build inspection tools
 
 - `tools/compile_database_inventory.py <database>` groups the raw records of a saved compilation database without invoking a compiler or build tool.
+  With `--ninja-log <log>`, use the compilation database and `.ninja_log` from the same build directory. The report
+  adds the latest recorded duration to each matched compile output, counts records without an `output` field, and
+  lists log outputs absent from the database. The sum counts each matched output once and measures cumulative
+  compile work. Compiles can overlap and a log can span multiple invocations. Relative log paths use the common
+  directory of the compile commands. Use `--ninja-build-dir <original-build-directory>` when that differs from the
+  original Ninja working directory.
 
 ## Test selection tools
 
@@ -528,6 +534,8 @@ Changed-test selection uses the configured CMake target sources. Windows CI repl
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
+  Use `--list` to inspect reported skip reasons without applying the job's policy. Use `--json` for policy decisions
+  and the list of unexpected skips in machine-readable form.
 - `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything. It prints a JSON object with `added`, `removed` and `changed` lists. Exit status 0 means the recognized checks match, 1 means they differ, and 2 means the command could not read or compare the inputs.
 
 ## Public-header archives
