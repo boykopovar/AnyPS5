@@ -94,6 +94,8 @@ struct Device {
     std::vector<std::int64_t> allocations;
     std::vector<void*> releases;
     bool failAllocation = false;
+    bool throwRead = false;
+    bool throwClose = false;
     std::vector<char> order;
 };
 
@@ -101,6 +103,7 @@ Device device;
 
 std::uint64_t APS5_VABI DeviceRead(GuestStreamRec* stream, std::uint64_t offset, std::uint8_t* buffer, std::uint64_t count) {
     device.calls.push_back({stream, offset, buffer, count});
+    if (device.throwRead) throw std::runtime_error("device read failure");
     if (!buffer && count == 0) return device.seekResult;
     std::uint64_t available = offset < device.source.size() ? device.source.size() - offset : 0;
     if (available > count) available = count;
@@ -113,6 +116,7 @@ void APS5_VABI DeviceClose(GuestStreamRec* stream) {
     ++device.closes;
     device.order.push_back('c');
     stream->memory = nullptr;
+    if (device.throwClose) throw std::runtime_error("device close failure");
 }
 
 void* APS5_VABI DeviceAlloc(GuestMemoryRec*, std::int64_t size) {
@@ -414,6 +418,36 @@ void TestCloseAndFree() {
     Require(device.closes == closes, "release without memory does not close the stream");
 }
 
+void TestThrowingClose() {
+    for (int mode = 0; mode < 3; ++mode) {
+        auto stream = DeviceStream({}, 0);
+        stream.close = DeviceClose;
+        device.throwClose = true;
+        auto* target = &stream;
+        if (mode == 0) {
+            target = static_cast<GuestStreamRec*>(DeviceAlloc(&memory, sizeof(GuestStreamRec)));
+            Require(target != nullptr, "allocate an owned stream");
+            *target = stream;
+        }
+        bool threw = false;
+        try {
+            if (mode == 2) api.Close(target);
+            else api.Free(target, mode);
+        } catch (const std::runtime_error& failure) {
+            Require(std::strcmp(failure.what(), "device close failure") == 0, "the original close exception propagates");
+            threw = true;
+        }
+        Require(threw && device.closes == 1, "close callback runs once before throwing");
+        if (mode == 0) {
+            Require(device.releases.size() == 1 && device.releases[0] == target, "throwing close releases an owned stream through the original allocator");
+            Require(device.order.size() == 2 && device.order[0] == 'c' && device.order[1] == 'f', "throwing close runs before release");
+        } else {
+            Require(device.allocations.empty() && device.releases.empty(), "throwing close does not release caller-owned streams");
+            Require(stream.memory == nullptr, "close callback's caller-owned stream changes are preserved");
+        }
+    }
+}
+
 void TestReadFields() {
     std::array<std::uint8_t, 24> data{{0x7F, 0xFF, 0xFE, 0x80, 0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0xFF, 0x80, 0x00,
                                        0xAA, 'A', 'B', 'C', 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70}};
@@ -468,6 +502,37 @@ void TestReadFields() {
     const std::array<GuestFrameField, 3> memoryBytes{{{4, 0, 4}, {24, 2, 0}, {0, 0, 0}}};
     Require(Throws([&] { api.ReadFields(&stream, memoryBytes.data(), nullptr); }), "null structure in a memory frame is unsupported");
     Require(!stream.cursor && !stream.limit && stream.base == data.data() && stream.pos == 4, "refused fields leave no memory frame");
+}
+
+void TestThrowingFrameRead() {
+    for (int mode = 0; mode < 3; ++mode) {
+        auto stream = DeviceStream({1, 2, 3, 4, 5, 6, 7, 8}, 8);
+        stream.pos = 2;
+        device.throwRead = true;
+        auto* frame = At(0x99);
+        const std::array<GuestFrameField, 2> fields{{{4, 0, 4}, {0, 0, 0}}};
+        bool threw = false;
+        try {
+            if (mode == 0) api.EnterFrame(&stream, 4);
+            else if (mode == 1) api.ExtractFrame(&stream, 4, &frame);
+            else api.ReadFields(&stream, fields.data(), nullptr);
+        } catch (const std::runtime_error& failure) {
+            Require(std::strcmp(failure.what(), "device read failure") == 0, "the original read exception propagates");
+            threw = true;
+        }
+        Require(threw && device.calls.size() == 1, "frame entry calls the throwing reader");
+        Require(device.allocations.size() == 1 && device.releases.size() == 1, "a throwing reader releases the allocated frame");
+        Require(device.releases[0] == device.calls[0].buffer, "cleanup releases the reader's frame buffer");
+        Require(!stream.base && !stream.cursor && !stream.limit && stream.pos == 2, "a throwing reader leaves no frame or advanced position");
+        Require(frame == At(0x99), "a throwing reader does not publish an extracted frame");
+        api.ExitFrame(&stream);
+        Require(device.releases.size() == 1, "exit after the exception does not release the frame twice");
+        device.throwRead = false;
+        Require(api.EnterFrame(&stream, 2) == 0 && stream.pos == 4, "frame entry succeeds after the read exception");
+        Require(stream.cursor[0] == 3 && stream.cursor[1] == 4, "retried frame contains the requested bytes");
+        api.ExitFrame(&stream);
+        Require(device.allocations.size() == 2 && device.releases.size() == 2, "retry releases its own frame");
+    }
 }
 
 void TestReadFieldsLongBytes() {
@@ -562,6 +627,8 @@ void Run() {
     TestMemoryReaders();
     TestDeviceStream();
     TestCloseAndFree();
+    TestThrowingClose();
+    TestThrowingFrameRead();
     TestReadFields();
     TestReadFieldsLongBytes();
     TestNullStream();
