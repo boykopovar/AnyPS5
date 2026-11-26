@@ -16,6 +16,7 @@
 #include <list>
 #include <exception>
 #include <mutex>
+#include <shared_mutex>
 #include <memory>
 #include <optional>
 #include <limits>
@@ -89,15 +90,17 @@ struct Http2Handle {
 static std::atomic<int> g_nextHandle{1};
 static std::mutex g_handlesMutex;
 static std::unordered_map<int, Http2Handle> g_handles;
-static std::atomic<GuestSceHttp2Test::AsyncPublishHook> g_asyncPublishHook{nullptr};
-static std::atomic<void*> g_asyncPublishHookData{nullptr};
-static std::atomic<GuestSceHttp2Test::AsyncPhaseHook> g_asyncPhaseHook{nullptr};
-static std::atomic<void*> g_asyncPhaseHookData{nullptr};
+static std::shared_mutex g_asyncHooksMutex;
+static std::atomic<bool> g_asyncHooksSet{false};
+static GuestSceHttp2Test::AsyncPublishHook g_asyncPublishHook = nullptr;
+static void* g_asyncPublishHookData = nullptr;
+static GuestSceHttp2Test::AsyncPhaseHook g_asyncPhaseHook = nullptr;
+static void* g_asyncPhaseHookData = nullptr;
 
 static void ObserveAsync(int request, GuestSceHttp2Test::AsyncPhase phase) {
-    if (const auto hook = g_asyncPhaseHook.load(std::memory_order_acquire)) {
-        hook(request, phase, g_asyncPhaseHookData.load(std::memory_order_acquire));
-    }
+    if (!g_asyncHooksSet.load(std::memory_order_acquire)) return;
+    const std::shared_lock lock(g_asyncHooksMutex);
+    if (g_asyncPhaseHook) g_asyncPhaseHook(request, phase, g_asyncPhaseHookData);
 }
 
 static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state,
@@ -109,8 +112,9 @@ static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state,
     operation->completion.result.result = result;
     operation->completion.failure = std::move(failure);
     state->pending.splice(state->pending.end(), state->active, operation->position);
-    if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
-        hook(g_asyncPublishHookData.load(std::memory_order_acquire));
+    if (g_asyncHooksSet.load(std::memory_order_acquire)) {
+        const std::shared_lock lock(g_asyncHooksMutex);
+        if (g_asyncPublishHook) g_asyncPublishHook(g_asyncPublishHookData);
     }
     if (option && sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data) != 0 &&
         !operation->completion.failure) {
@@ -169,12 +173,16 @@ static void AbortAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id
 
 namespace GuestSceHttp2Test {
 void SetAsyncPublishHookForTests_nid_no_patch(AsyncPublishHook hook, void* data) noexcept {
-    g_asyncPublishHookData.store(data, std::memory_order_release);
-    g_asyncPublishHook.store(hook, std::memory_order_release);
+    const std::unique_lock lock(g_asyncHooksMutex);
+    g_asyncPublishHook = hook;
+    g_asyncPublishHookData = data;
+    g_asyncHooksSet.store(g_asyncPublishHook != nullptr || g_asyncPhaseHook != nullptr, std::memory_order_release);
 }
 void SetAsyncPhaseHookForTests_nid_no_patch(AsyncPhaseHook hook, void* data) noexcept {
-    g_asyncPhaseHookData.store(data, std::memory_order_release);
-    g_asyncPhaseHook.store(hook, std::memory_order_release);
+    const std::unique_lock lock(g_asyncHooksMutex);
+    g_asyncPhaseHook = hook;
+    g_asyncPhaseHookData = data;
+    g_asyncHooksSet.store(g_asyncPublishHook != nullptr || g_asyncPhaseHook != nullptr, std::memory_order_release);
 }
 }
 
