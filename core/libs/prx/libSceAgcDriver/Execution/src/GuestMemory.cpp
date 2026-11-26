@@ -12,7 +12,10 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include <cerrno>
+#include <unordered_set>
+#include <condition_variable>
 #include <mutex>
 #include <array>
 #include <chrono>
@@ -323,6 +326,8 @@ std::atomic<std::uint64_t> collectMemoHits{0};
 std::atomic<std::uint64_t> sharedWalkHits{0};
 std::atomic<bool> sharedCollectWalks{std::getenv("APS5_NO_SHARED_COLLECT_WALKS") == nullptr};
 std::atomic<std::uint64_t> collectEpochBumps{0};
+std::atomic<std::uint64_t> prefetchRanges{0};
+std::atomic<std::uint64_t> prefetchWalks{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
 // tracker mutex acquisitions that had to wait (APS5_PROFILE_DRAW; see lockTracker).
@@ -572,7 +577,7 @@ public:
         for (std::size_t i = 0; i < MemoryCounterCount; ++i) {
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu calls %.0f MiB %.1f s", MemoryCounterNames[i], static_cast<unsigned long long>(totals[i][0]), totals[i][1] / 1048576.0, totals[i][2] / 1e9);
         }
-        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu (%llu from other threads' walks), collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(sharedWalkHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
+        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu (%llu from other threads' walks), collect epochs %llu, prefetched %llu ranges (%llu walked)", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(sharedWalkHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()), static_cast<unsigned long long>(prefetchRanges.load()), static_cast<unsigned long long>(prefetchWalks.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -2216,6 +2221,76 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
 
 struct CollectSinceSlot {};
 
+struct CollectPrefetch {
+    static constexpr std::size_t Slots = 16;
+    static constexpr std::size_t RangesPerEpoch = 8192;
+    static constexpr std::size_t GapsBeforeDecay = 4096;
+    static constexpr std::size_t KnownRanges = 1u << 16;
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::array<std::vector<std::pair<std::uint64_t, std::uint64_t>>, Slots> ranges;
+    std::array<std::uint64_t, Slots> tags{};
+    std::array<std::uint64_t, Slots> gaps{};
+    std::size_t gapSamples = 0;
+    std::unordered_map<std::uint64_t, std::uint64_t> lastWalk;
+    std::atomic<std::uint64_t> bumps{0};
+    std::uint64_t served = 0;
+    bool started = false;
+};
+
+CollectPrefetch& collectPrefetch() {
+    static auto* prefetch = new CollectPrefetch();
+    return *prefetch;
+}
+
+std::atomic<int> collectPrefetchSetting{-1};
+
+bool collectPrefetchEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_COLLECT_PREFETCH") == nullptr;
+    return enabled && collectMemoEnabled();
+}
+
+bool collectPrefetchWalking() {
+    return collectPrefetchEnabled() && collectPrefetchSetting.load(std::memory_order_relaxed) != 0;
+}
+
+thread_local bool collectPrefetchThread = false;
+
+std::uint64_t prefetchPeriod(const CollectPrefetch& prefetch) {
+    std::size_t best = 0;
+    for (std::size_t gap = 2; gap < prefetch.gaps.size(); ++gap) {
+        if (prefetch.gaps[gap] > (best == 0 ? 0 : prefetch.gaps[best])) best = gap;
+    }
+    return best;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>>& prefetchSlot(CollectPrefetch& prefetch, std::uint64_t bump) {
+    const auto slot = bump % CollectPrefetch::Slots;
+    if (prefetch.tags[slot] != bump) {
+        prefetch.ranges[slot].clear();
+        prefetch.tags[slot] = bump;
+    }
+    return prefetch.ranges[slot];
+}
+
+void notePrefetchRange(std::uint64_t first, std::uint64_t stop) {
+    auto& prefetch = collectPrefetch();
+    std::lock_guard lock(prefetch.mutex);
+    const auto bump = prefetch.bumps.load(std::memory_order_relaxed);
+    auto& ranges = prefetchSlot(prefetch, bump);
+    if (ranges.size() < CollectPrefetch::RangesPerEpoch) ranges.emplace_back(first, stop);
+    if (prefetch.lastWalk.size() >= CollectPrefetch::KnownRanges) prefetch.lastWalk.clear();
+    auto& last = prefetch.lastWalk[first * 0x9e3779b97f4a7c15ull ^ stop];
+    if (last != 0 && bump > last && bump - last < CollectPrefetch::Slots) {
+        ++prefetch.gaps[bump - last];
+        if (++prefetch.gapSamples >= CollectPrefetch::GapsBeforeDecay) {
+            for (auto& count : prefetch.gaps) count /= 2;
+            prefetch.gapSamples /= 2;
+        }
+    }
+    last = bump;
+}
+
 Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
     using Status = Observation::Status;
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return {Status::Uncovered, 0};
@@ -2305,8 +2380,61 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
         const auto end = tracker.blockOf(runs[index].stop);
         if (end > from) tracker.publishObserved(from, end - 1, tick, walkStarted);
     }
+    if (collectPrefetchThread) {
+        if (done != 0) prefetchWalks.fetch_add(1, std::memory_order_relaxed);
+    } else if (shared && done != 0 && status == Status::Complete && collectPrefetchEnabled()) {
+        notePrefetchRange(first, stop);
+    }
     if (status != Status::Complete) return {status, 0};
     return {Status::Complete, generation};
+}
+
+void runCollectPrefetch() {
+    collectPrefetchThread = true;
+    auto& prefetch = collectPrefetch();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pending;
+    std::unordered_set<std::uint64_t> seen;
+    for (;;) {
+        std::uint64_t bump = 0;
+        {
+            std::unique_lock lock(prefetch.mutex);
+            prefetch.wake.wait(lock, [&] { return prefetch.bumps.load(std::memory_order_relaxed) != prefetch.served; });
+            bump = prefetch.bumps.load(std::memory_order_relaxed);
+            prefetch.served = bump;
+            pending.clear();
+            if (!collectPrefetchWalking()) continue;
+            const auto period = prefetchPeriod(prefetch);
+            if (period == 0 || bump < period) continue;
+            const auto source = bump - period;
+            const auto slot = source % CollectPrefetch::Slots;
+            if (prefetch.tags[slot] != source) continue;
+            pending = prefetch.ranges[slot];
+        }
+        seen.clear();
+        HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(lastBumpedEpoch.load(std::memory_order_acquire));
+        HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(SteadyNanoseconds());
+        for (const auto& [first, stop] : pending) {
+            if (prefetch.bumps.load(std::memory_order_acquire) != bump) break;
+            if (!seen.insert(first * 0x9e3779b97f4a7c15ull ^ stop).second) continue;
+            prefetchRanges.fetch_add(1, std::memory_order_relaxed);
+            static_cast<void>(observe(first, static_cast<std::size_t>(stop - first), true));
+        }
+    }
+}
+
+void bumpCollectPrefetch() {
+    if (!collectPrefetchEnabled()) return;
+    auto& prefetch = collectPrefetch();
+    {
+        std::lock_guard lock(prefetch.mutex);
+        prefetch.bumps.fetch_add(1, std::memory_order_release);
+        if (!collectPrefetchWalking()) return;
+        if (!prefetch.started) {
+            prefetch.started = true;
+            Libc::StartHostThread(runCollectPrefetch).detach();
+        }
+    }
+    prefetch.wake.notify_one();
 }
 
 }
@@ -2498,6 +2626,7 @@ void BumpCollectEpoch() {
     auto last = lastBumpedEpoch.load(std::memory_order_relaxed);
     while (last < epoch && !lastBumpedEpoch.compare_exchange_weak(last, epoch, std::memory_order_release, std::memory_order_relaxed)) {}
     collectEpochBumps.fetch_add(1, std::memory_order_relaxed);
+    bumpCollectPrefetch();
 }
 
 std::uint64_t ThreadCollectEpoch() {
@@ -2515,6 +2644,14 @@ void AdoptLatestCollectEpoch() {
 
 std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
+}
+
+void SetCollectPrefetch(bool enabled) {
+    collectPrefetchSetting.store(enabled ? 1 : 0, std::memory_order_relaxed);
+}
+
+std::uint64_t CollectPrefetchWalks() {
+    return prefetchWalks.load(std::memory_order_relaxed);
 }
 
 namespace {
