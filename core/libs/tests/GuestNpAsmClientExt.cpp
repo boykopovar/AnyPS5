@@ -218,6 +218,12 @@ void CheckNpManagerDestructors() {
     Require(clearTicket.vtable == initialVtable && clearTicket.allocator == &ticketAllocator,
         "NpTicket Clear preserves vtable and allocator");
 
+    errno = 71;
+    _ZN3sce2np8NpTicket5ClearEv(&clearTicket.vtable);
+    Require(npReleases == 1 && errno == 71, "subsequent NpTicket Clear is idempotent and preserves errno");
+    Require(clearTicket.data == nullptr && clearTicket.size == 0,
+        "subsequent NpTicket Clear keeps data and size cleared");
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
