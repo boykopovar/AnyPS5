@@ -21,7 +21,7 @@ type_traits typeindex typeinfo unordered_map unordered_set utility valarray vari
 assert.h complex.h ctype.h errno.h fenv.h float.h inttypes.h iso646.h limits.h locale.h math.h setjmp.h signal.h
 stdalign.h stdarg.h stdatomic.h stdbool.h stddef.h stdint.h stdio.h stdlib.h stdnoreturn.h string.h tgmath.h
 threads.h time.h uchar.h wchar.h wctype.h
-cxxabi.h dispatch/dispatch.h io.h link.h semaphore.h stdio_ext.h sys/uio.h unistd.h xmmintrin.h
+cxxabi.h dispatch/dispatch.h io.h link.h semaphore.h stdio_ext.h sys/stat.h sys/uio.h unistd.h xmmintrin.h
 """.split())
 
 _NON_CODE_TRIGGER = re.compile(r'//|/\*|"|\'')

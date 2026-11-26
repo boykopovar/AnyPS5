@@ -159,6 +159,10 @@ class PackageHeadersFilteringTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Public header is outside core/libs"):
             package_headers.package(self.root, self.output, "v1.0.0")
 
+    def test_sys_stat_is_a_host_header(self):
+        self.api.write_bytes(b"#include <sys/stat.h>\n")
+        self.assertEqual(set(package_headers.public_headers(self.root)), {self.api, self.umbrella})
+
     def test_unsupported_external_include_raises_runtime_error(self):
         self.api.write_text("#include <external_third_party.h>\n", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "Missing project or unsupported external include"):
