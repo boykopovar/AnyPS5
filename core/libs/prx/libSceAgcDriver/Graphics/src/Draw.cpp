@@ -1873,6 +1873,11 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     ValidateDepthBounds(context, state);
     ValidateSampleMask(context, state, shaders);
     ValidateLeadingSamples(state, shaders);
+    if (state.depthAnchorSamples != 0) {
+        const auto* recorder = Recorder::Active();
+        Require(recorder == nullptr || !recorder->CountingSamples(), "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws while occlusion queries count samples: the draw would count at the rasterizer's sample count instead of the depth target's");
+        if (const auto refusal = DepthAnchorRefusal(context, state); !refusal.empty()) throw std::runtime_error("AGC graphics: a depth target with fewer samples than the rasterizer is unsupported for color-writing draws on a device that cannot expand the depth target's samples (" + refusal + ")");
+    }
     timer.phase(PhaseValidate);
     const auto layoutStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto& attributes = shaders.front().program->vertexAttributes;
@@ -2854,6 +2859,7 @@ struct BorrowedDraw {
     std::vector<SampleOrderTarget> reordered;
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
+    const DepthAnchorExpand* anchor = nullptr;
     std::shared_ptr<std::shared_ptr<const void>>* spaceKeep = nullptr;
 };
 
@@ -3177,7 +3183,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u || record.anchor != nullptr, fenced, passAccess);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
@@ -3243,6 +3249,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
+        }
+        if (record.anchor != nullptr) {
+            std::vector<std::shared_ptr<void>> kept;
+            RecordDepthAnchorExpand(context, recording, *record.anchor, kept);
+            for (auto& object : kept) recorder->Keep(std::move(object));
         }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
@@ -3378,7 +3389,7 @@ std::optional<State> maskedState(const State& state, std::uint32_t fragmentOutpu
 }
 
 std::optional<DepthSampleLocations> passDepthLocations(const Context& context, const State& state, const Pipeline& pipeline) {
-    if (!state.depth || state.depth->samples <= 1u || !state.customSampleLocations || !pipeline.SampleLocationsEnabled()) return std::nullopt;
+    if (!state.depth || state.depth->samples <= 1u || state.depthAnchorSamples != 0 || !state.customSampleLocations || !pipeline.SampleLocationsEnabled()) return std::nullopt;
     auto locations = DepthSurfaceSampleLocations(context, *state.depth);
     locations.grid = pipeline.HostSampleLocationGrid();
     locations.locations = SampleLocations(state);
@@ -3479,6 +3490,7 @@ struct PreparedDraw {
     std::vector<SampleOrderTarget> reordered;
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
+    std::optional<DepthAnchorExpand> anchor;
     std::shared_ptr<std::shared_ptr<const void>> spaceKeep;
 };
 
@@ -4357,6 +4369,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         const auto* moved = StorageTexture::OwnRefreshWork() != ownRefreshWork ? "image content" : GuestMemory::OwnProofBreaks() != ownProofBreaks ? "proofs" : StorageTexture::OwnPendingMoves() != ownPendingMoves ? "pending" : verifyProof.MovedBefore(currentTargetProof(context));
         Require(moved == nullptr, std::string("APS5_VERIFY_TARGET_MEMO: a repeated target's lookup moved ") + (moved != nullptr ? moved : ""));
     }
+    if (state.depth && state.depthAnchorSamples != 0) {
+        Require(!prepared.attachmentsFromMemo && !repeatedDepth, "a depth target expanded for a color-writing draw was taken from a remembered attachment");
+        auto& anchor = prepared.anchor.emplace();
+        anchor.source = DepthSurfaceAnchorSource(context, *state.depth);
+        anchor.twin = DepthSurfaceAnchorTwin(context, *state.depth, state.samples);
+        depthView = anchor.twin.view;
+    }
     if (state.depth && !prepared.attachmentsFromMemo) targetViews.push_back(depthView);
     if (memoConsulted) {
         const bool retainedOwner = ownsTargetMemo(ThreadTargetMemo());
@@ -4634,6 +4653,15 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(reordered.back().method == step.method, "a reordered attachment's surface disagrees with the planned way of putting its samples in order");
         }
     }
+    if (prepared.anchor) {
+        Require(!pipeline->ReordersSamples(), "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws on a device that puts the guest's samples in order");
+        auto& anchor = *prepared.anchor;
+        const auto source = DepthAnchorSourceState(pipelineState);
+        anchor.map = pipelineState.depthAnchorMap;
+        anchor.region = {std::min({pipelineState.renderExtent.width, anchor.source.extent.width, anchor.twin.extent.width}), std::min({pipelineState.renderExtent.height, anchor.source.extent.height, anchor.twin.extent.height})};
+        anchor.sourcePass = {SampleOrder{}, anchor.region, SampleLocations(source), ValidateSampleLocations(context, source)};
+        anchor.twinPass = {SampleOrder{}, anchor.region, SampleLocations(pipelineState), pipeline->SampleLocationsEnabled()};
+    }
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
@@ -4715,6 +4743,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         record.reordered = reordered;
         record.reorderPass = reorderPass;
         record.depthLocations = depthLocations;
+        record.anchor = prepared.anchor ? &*prepared.anchor : nullptr;
         record.spaceKeep = &prepared.spaceKeep;
         record.masked = prepared.masked.has_value() ? &*prepared.masked : nullptr;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, prepared.trace);
@@ -4723,7 +4752,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples() && state.depthAnchorSamples == 0) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
@@ -4865,6 +4894,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
     std::vector<std::shared_ptr<void>> reorderKept;
+    if (prepared.anchor) RecordDepthAnchorExpand(context, recording, *prepared.anchor, reorderKept);
     RecordSampleOrder(context, recording, reorderPass, reordered, true, reorderKept);
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
     pipeline->Begin(recording, *framebuffer, state.renderExtent, state, masked.has_value() ? &*masked : nullptr);

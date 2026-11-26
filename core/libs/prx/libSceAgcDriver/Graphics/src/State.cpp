@@ -867,9 +867,8 @@ void rasterizeLeadingSamples(State& state, std::uint32_t samples) {
     state.sampleLocationGrid = grid;
 }
 
-void requireLeadingDepthSamples(const QueueState& queue, const State& state, bool writesColor) {
+void requireLeadingDepthSamples(const QueueState& queue, const State& state) {
     const auto& cx = queue.context;
-    Require(!writesColor, "a depth target with fewer samples than the rasterizer is unsupported for draws that write a color target");
     Require(!state.alphaToCoverage, "a depth target with fewer samples than the rasterizer is unsupported with alpha-to-coverage");
     Require(!state.perSampleShading, "a depth target with fewer samples than the rasterizer is unsupported with PS_ITER_SAMPLE");
     if (!PixelProgramSkipped(queue)) {
@@ -881,6 +880,49 @@ void requireLeadingDepthSamples(const QueueState& queue, const State& state, boo
     const auto eqaa = eqaaEntry == cx.end() ? 0u : eqaaEntry->second;
     if ((eqaa & 0x0f000000u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer with overrasterization (DB_EQAA)"));
     if ((eqaa & 0x000c0000u) != 0 && (read(cx, 0x200) & 2u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer with a depth test and Z interpolation (DB_EQAA)"));
+}
+
+std::array<int, 2> locationOf(std::uint8_t bits) {
+    return {static_cast<int>(bits & 7u) - static_cast<int>(bits & 8u), static_cast<int>((bits >> 4u) & 7u) - static_cast<int>((bits >> 4u) & 8u)};
+}
+
+std::array<std::uint32_t, 4> anchorMapOf(const State& state, std::uint32_t storedSamples) {
+    std::array<std::uint32_t, 4> map{};
+    for (std::uint32_t pixel = 0; pixel < map.size(); ++pixel) {
+        auto word = KeptSampleOrder;
+        for (std::uint32_t sample = storedSamples; sample < state.samples; ++sample) {
+            const auto at = locationOf(state.sampleLocations[pixel * 8u + sample]);
+            std::uint32_t nearest = 0;
+            int best = std::numeric_limits<int>::max();
+            for (std::uint32_t stored = 0; stored < storedSamples; ++stored) {
+                const auto anchor = locationOf(state.sampleLocations[pixel * 8u + stored]);
+                const auto distance = (at[0] - anchor[0]) * (at[0] - anchor[0]) + (at[1] - anchor[1]) * (at[1] - anchor[1]);
+                if (distance < best) {
+                    best = distance;
+                    nearest = stored;
+                }
+            }
+            word = (word & ~(0xfu << (4u * sample))) | (nearest << (4u * sample));
+        }
+        map[pixel] = word;
+    }
+    return map;
+}
+
+void requireAnchoredDepthSamples(const QueueState& queue, const State& state) {
+    const auto& cx = queue.context;
+    Require(!state.depthTest && !state.depthBoundsTest, "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws with a depth or depth-bounds test");
+    Require(!DepthStencilWrites(state), "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws that write depth or stencil");
+    Require(!state.alphaToCoverage, "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws with alpha-to-coverage");
+    Require(!state.perSampleShading, "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws with PS_ITER_SAMPLE");
+    if (!PixelProgramSkipped(queue)) {
+        const auto inputs = read(cx, 0x1b3) & read(cx, 0x1b4);
+        if ((inputs & (SampleZeroRefusedInputs | PixelSampleRateInputs)) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x1b3, inputs, "a depth target with fewer samples than the rasterizer in a color-writing draw with a centroid, sample, ancillary or coverage pixel input"));
+        if (const auto control = read(cx, 0x203); (control & 0x101u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x203, control, "a depth target with fewer samples than the rasterizer in a color-writing draw with a depth or sample-mask export"));
+    }
+    const auto eqaaEntry = find(cx, 0x201);
+    const auto eqaa = eqaaEntry == cx.end() ? 0u : eqaaEntry->second;
+    if ((eqaa & 0x0f000000u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x201, eqaa, "a depth target with fewer samples than the rasterizer in a color-writing draw with overrasterization (DB_EQAA)"));
 }
 
 bool documentedRop(std::uint32_t rop) {
@@ -1373,6 +1415,15 @@ std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state) {
         }
     }
     return locations;
+}
+
+State DepthAnchorSourceState(const State& state) {
+    Require(state.depthAnchorSamples > 1u && state.depthAnchorSamples < state.samples, "the stored samples of a depth target expanded for a color-writing draw are not fewer than the rasterizer's");
+    auto source = state;
+    rasterizeLeadingSamples(source, state.depthAnchorSamples);
+    source.depthAnchorSamples = 0;
+    source.depthAnchorMap = {};
+    return source;
 }
 
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
@@ -1891,8 +1942,14 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         rasterizeLeadingSamples(result, 1);
     }
     if (result.depth && result.depth->samples > 1 && result.depth->samples < result.samples && (read(cx, 0x292) & 1u) != 0) {
-        requireLeadingDepthSamples(queue, result, ColorExportCount(cx, ColorWriteMask(cx), ColorExportSlots(read(cx, 0x8f)).Span()) != 0);
-        rasterizeLeadingSamples(result, result.depth->samples);
+        if (ColorExportCount(cx, ColorWriteMask(cx), ColorExportSlots(read(cx, 0x8f)).Span()) != 0) {
+            requireAnchoredDepthSamples(queue, result);
+            result.depthAnchorSamples = result.depth->samples;
+            result.depthAnchorMap = anchorMapOf(result, result.depth->samples);
+        } else {
+            requireLeadingDepthSamples(queue, result);
+            rasterizeLeadingSamples(result, result.depth->samples);
+        }
     }
     if (result.depth && result.depth->samples > 1 && result.samples == 1) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
@@ -1901,7 +1958,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         result.customSampleLocations = true;
         result.sampleLocations.fill(0);
     }
-    Require(!result.depth || depthKeepsSampleZero || result.depth->samples == result.samples, "the depth target's sample count differs from the rasterizer's");
+    Require(!result.depth || depthKeepsSampleZero || result.depth->samples == result.samples || result.depthAnchorSamples != 0, "the depth target's sample count differs from the rasterizer's");
     zero(cx, 0x80, ~0u, "window offset");
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
