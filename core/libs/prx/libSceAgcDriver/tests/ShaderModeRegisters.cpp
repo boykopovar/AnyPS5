@@ -455,7 +455,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 22> checks{{
+    constexpr std::array<Check, 23> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
