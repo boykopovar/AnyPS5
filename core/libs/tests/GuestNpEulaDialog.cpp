@@ -17,6 +17,8 @@ constexpr int kErrNotInitialized = static_cast<int>(0x80B80003);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
 constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
+constexpr int kErrCheckBusy = static_cast<int>(0x80B80006);
+constexpr int kErrCheckArgument = static_cast<int>(0x8055A800);
 constexpr int kResultUserCanceled = 1;
 constexpr int kRaceRounds = 200000;
 
@@ -55,9 +57,18 @@ int main() {
     Require(sceNpEulaDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpEulaDialogGetStatus() == kStatusNone);
     Require(sceNpEulaDialogUpdateStatus() == kStatusNone);
+    int callbackTarget = 0;
+    Require(sceNpEulaDialogCheckVersion(1, 1, &callbackTarget, nullptr) == kErrNotInitialized);
+    Require(sceNpEulaDialogCheckVersion(-1, 0, nullptr, nullptr) == kErrNotInitialized);
+    Require(sceNpEulaDialogCheckVersionAbort() == kErrNotInitialized);
 
     Require(sceNpEulaDialogInitialize() == 0);
     Require(sceNpEulaDialogInitialize() == kErrAlreadyInitialized);
+    Require(sceNpEulaDialogCheckVersion(1, 0, &callbackTarget, nullptr) == kErrCheckArgument);
+    Require(sceNpEulaDialogCheckVersion(1, -1, &callbackTarget, nullptr) == kErrCheckArgument);
+    Require(sceNpEulaDialogCheckVersion(1, 1, nullptr, nullptr) == kErrCheckArgument);
+    Require(sceNpEulaDialogCheckVersion(-1, 0, nullptr, nullptr) == kErrCheckArgument);
+    Require(sceNpEulaDialogCheckVersionAbort() == kErrCheckBusy);
     Require(sceNpEulaDialogGetStatus() == kStatusInitialized);
     Require(sceNpEulaDialogUpdateStatus() == kStatusInitialized);
 
@@ -66,6 +77,7 @@ int main() {
 
     Require(sceNpEulaDialogOpen(&param) == 0);
     Require(sceNpEulaDialogGetStatus() == kStatusFinished);
+    Require(sceNpEulaDialogCheckVersionAbort() == kErrCheckBusy);
     Require(sceNpEulaDialogUpdateStatus() == kStatusFinished);
 
     Require(sceNpEulaDialogGetResult(nullptr) == kErrArgNull);

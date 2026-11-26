@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 static void Check(bool value, int line) {
@@ -110,7 +111,14 @@ int main() {
     Font::RendererNative notARenderer{};
     Require(sceFontRendererGetOutlineBufferSize(static_cast<FontRenderer>(&notARenderer), &size) == SCE_FONT_ERROR_INVALID_RENDERER);
     Require(sceFontRendererResetOutlineBuffer(static_cast<FontRenderer>(&notARenderer)) == SCE_FONT_ERROR_INVALID_RENDERER);
-    Require(sceFontRendererSetOutlineBufferPolicy(static_cast<FontRenderer>(&notARenderer), 0, 0, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererSetOutlineBufferPolicy(static_cast<FontRenderer>(&notARenderer), 0, 0, 0) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (const std::uint64_t policy : {std::uint64_t{0}, std::uint64_t{1}}) {
+        for (const auto& sizes : {std::pair<std::uint32_t, std::uint32_t>{0, 0}, {0x100000, 0x200000}}) {
+            Require(sceFontRendererSetOutlineBufferPolicy(nullptr, policy, sizes.first, sizes.second) == SCE_FONT_ERROR_INVALID_RENDERER);
+            Require(sceFontRendererSetOutlineBufferPolicy(static_cast<FontRenderer>(&notARenderer), policy, sizes.first, sizes.second) == SCE_FONT_ERROR_INVALID_PARAMETER);
+            Require(sceFontRendererSetOutlineBufferPolicy(reinterpret_cast<FontRenderer>(std::uintptr_t{0x10}), policy, sizes.first, sizes.second) == SCE_FONT_ERROR_INVALID_PARAMETER);
+        }
+    }
 
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);

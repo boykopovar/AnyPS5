@@ -99,7 +99,7 @@ bool SeedDefaultState() {
 
 [[maybe_unused]] const bool g_defaultStateSeeded = SeedDefaultState();
 
-std::uint16_t g_rand48Seed[3]{0x330e, 0xabcd, 0x1234};
+std::uint16_t g_rand48Seed[3]{0x330e, 0, 0};
 constexpr std::uint64_t DefaultRand48Multiplier = 0x5deece66dull;
 constexpr std::uint16_t DefaultRand48Addend = 0xb;
 std::uint64_t g_rand48Multiplier = DefaultRand48Multiplier;
@@ -231,6 +231,16 @@ char* APS5_VABI setstate_nid_postfix(char* state) {
         g_random.front = (static_cast<int>(rear) + separation) % degree;
     }
     return previous;
+}
+
+void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(void*, const void*) {}
+
+void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void*) {}
+
+std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void*) {
+    std::uint32_t value = 0;
+    HostEntropy_nid_no_patch(&value, sizeof(value));
+    return value;
 }
 
 }

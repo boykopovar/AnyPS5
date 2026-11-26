@@ -359,7 +359,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
 
 int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW, float* usedScaleH) {
     const auto clearMetrics = [&] {
-        if (metrics) *metrics = {};
+        if (metrics) CopyOutGuest(metrics, FontGlyphMetrics{});
     };
     auto* font = GetNativeFont(handle);
     if (!font || font->magic != HANDLE_MAGIC) {
@@ -370,7 +370,7 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
         clearMetrics();
         return SCE_FONT_ERROR_NO_SUPPORT_CODE;
     }
-    if (!metrics) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!metrics || !CopyOutGuest(metrics, FontGlyphMetrics{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     std::uint32_t previousFontLock = 0;
     if (!AcquireFontLock(font, previousFontLock)) {
         clearMetrics();
@@ -415,18 +415,20 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     const float ratioX = ratio(charW, usedW);
     const float ratioY = ratio(charH, usedH);
     const FT_GlyphSlot slot = face->glyph;
-    metrics->width = static_cast<float>(slot->metrics.width) / 64.0f * ratioX;
-    metrics->height = static_cast<float>(slot->metrics.height) / 64.0f * ratioY;
-    metrics->Horizontal.bearingX = static_cast<float>(slot->metrics.horiBearingX) / 64.0f * ratioX;
-    metrics->Horizontal.bearingY = static_cast<float>(slot->metrics.horiBearingY) / 64.0f * ratioY;
-    metrics->Horizontal.advance = static_cast<float>(slot->metrics.horiAdvance) / 64.0f * ratioX;
+    FontGlyphMetrics localMetrics{};
+    localMetrics.width = static_cast<float>(slot->metrics.width) / 64.0f * ratioX;
+    localMetrics.height = static_cast<float>(slot->metrics.height) / 64.0f * ratioY;
+    localMetrics.Horizontal.bearingX = static_cast<float>(slot->metrics.horiBearingX) / 64.0f * ratioX;
+    localMetrics.Horizontal.bearingY = static_cast<float>(slot->metrics.horiBearingY) / 64.0f * ratioY;
+    localMetrics.Horizontal.advance = static_cast<float>(slot->metrics.horiAdvance) / 64.0f * ratioX;
     const bool vertical = FT_HAS_VERTICAL(face);
     const FT_Pos vertBearingX = vertical ? slot->metrics.vertBearingX : slot->metrics.horiBearingX - slot->metrics.horiAdvance / 2;
     const FT_Pos vertBearingY = vertical ? slot->metrics.vertBearingY : (slot->metrics.vertAdvance - slot->metrics.height) / 2;
-    metrics->Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
-    metrics->Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
-    metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
-    if (useCachedStyle) ApplyRenderSlant(slot, style->slant_ratio, *metrics, ratioX);
+    localMetrics.Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
+    localMetrics.Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
+    localMetrics.Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
+    if (useCachedStyle) ApplyRenderSlant(slot, style->slant_ratio, localMetrics, ratioX);
+    if (!CopyOutGuest(metrics, localMetrics)) return finish(SCE_FONT_ERROR_INVALID_PARAMETER);
     if (usedScaleW) *usedScaleW = scaleW;
     if (usedScaleH) *usedScaleH = scaleH;
     return finish(SCE_FONT_OK);
