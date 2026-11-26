@@ -1,4 +1,4 @@
-// Derived from neonmodder123/PS5-WebKit-11.x/Source/WTF/wtf/WorkerPool.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from https://github.com/WebKit/WebKit/blob/9d2532291ea8c8182d78314fc3da10baa9d4a639/Source/WTF/wtf/WorkerPool.cpp
 /*
  * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>.
  *
@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Derived from neonmodder123/PS5-WebKit-11.x/Source/WTF/wtf/AutomaticThread.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from https://github.com/WebKit/WebKit/blob/9d2532291ea8c8182d78314fc3da10baa9d4a639/Source/WTF/wtf/AutomaticThread.cpp
 /*
  * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
