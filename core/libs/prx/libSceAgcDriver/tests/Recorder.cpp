@@ -2688,11 +2688,14 @@ void deferredBatchTests(const Device& device) {
         failing.deviceProc = replayFailingDeviceProc;
         Recorder recorder(failing, false, true, context.queueFamily);
         recordBarrierThrough(failing, recorder.Commands());
+        const std::uint32_t labelValue = 7;
+        recorder.NoteLabel(0x60040, std::as_bytes(std::span(&labelValue, 1)), 300, 0);
         recorder.Submit();
         recordBarrierThrough(failing, recorder.Commands());
         recorder.Submit();
         recordBarrierThrough(failing, recorder.Commands());
         Require(recorder.InFlightBatches() == 2, "two submitted batches were not in flight");
+        Require(recorder.PendingLabels() == 1, "the first batch's label did not enter the table");
         refusedSubmits.store(true);
         failingFences.store(1);
         std::string reason;
@@ -2704,6 +2707,7 @@ void deferredBatchTests(const Device& device) {
         refusedSubmits.store(false);
         Require(failingFences.load() == 0, "Sync did not wait on the first batch's fence");
         Require(recorder.InFlightBatches() == 1, "Sync left " + std::to_string(recorder.InFlightBatches()) + " batches in flight after a fence wait failed, not the one it did not reach");
+        Require(recorder.PendingLabels() == 0, "a batch retired by a failed fence wait left its label in the table");
         Require(reason.find("vkQueueSubmit") != std::string::npos, "Sync did not report the submission failure first: " + reason);
         recorder.Sync();
         Require(recorder.InFlightBatches() == 0, "a sync after a failed fence wait left " + std::to_string(recorder.InFlightBatches()) + " batches in flight");

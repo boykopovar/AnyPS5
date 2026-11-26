@@ -5834,6 +5834,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         }
         if (batch->sealed != nullptr) batch->sealed->GpuDone();
         if (result != VK_SUCCESS) {
+            removeLabels(*batch);
             release(*batch);
             if (stopped != nullptr) std::rethrow_exception(stopped);
             Check(result, fenceless ? "vkWaitSemaphoresKHR recorder" : "vkWaitForFences recorder");
