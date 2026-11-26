@@ -856,7 +856,7 @@ class CheckCompileOutputTests(CheckCompileFixture):
         compiler = shutil.which("clang") or shutil.which("gcc")
         if compiler is None or shutil.which("ninja") is None:
             self.skipTest("needs Ninja and a C compiler")
-        source = self.source("unit.c", "#ifndef REQUIRED\n#error missing definition\n#endif\nint x;\n")
+        self.source("unit.c", "#ifndef REQUIRED\n#error missing definition\n#endif\nint x;\n")
         command = subprocess.list2cmdline([compiler]) if os.name == "nt" else '"' + compiler + '"'
         (self.build / "build.ninja").write_text(
             "rule cc\n  command = " + command + " @$out.rsp\n"
