@@ -16,6 +16,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <limits>
 #include <string_view>
+#include <span>
 #include <barrier>
 #include <new>
 
@@ -722,6 +723,96 @@ void testStoreBetweenWalks(const std::filesystem::path& directory) {
     if (held != std::byte{0x6b}) throw std::runtime_error("the last memory delta holding the page has byte " + std::to_string(static_cast<int>(held)) + ", not the 107 the CPU stored between the walks of a driver store");
 }
 
+void testStoreAfterUnwatch(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* imported = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* neighbor = imported + Page;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    check(AgcDriver::GuestMemory::ImportWatched(address(imported), Page, [] { return true; }, false), "the import of the page failed");
+    check(!AgcDriver::GuestMemory::Watched(address(imported), Page), "the import left the page in the write watch");
+    std::fill_n(imported, 16, std::byte{0x51});
+    std::fill_n(neighbor, 16, std::byte{0x52});
+    recorder->Suspend([] {});
+    std::fill_n(imported + 16, 16, std::byte{0x53});
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    std::string failures;
+    const auto expect = [&](const std::byte* at, std::byte value, const char* name) {
+        const auto held = lastDeltaByte(reader, at);
+        if (held == value) return;
+        failures += std::string(failures.empty() ? "" : "; ") + name + " holds " + std::to_string(static_cast<int>(held)) + ", not " + std::to_string(static_cast<int>(value));
+    };
+    expect(imported, std::byte{0x51}, "the CPU store to the page after its import left the write watch");
+    expect(imported + 16, std::byte{0x53}, "the CPU store to that page after the next memory delta");
+    expect(neighbor, std::byte{0x52}, "the CPU store to the watched page beside it in the same block");
+    if (!failures.empty()) throw std::runtime_error(failures);
+}
+
+void testGpuStoreRestoredUnwatched(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = 4096;
+    constexpr std::uint32_t Stored = 0x600dcafeu;
+    auto* block = allocate(1u << 20);
+    std::fill_n(block, 1u << 20, std::byte{0});
+    auto* commands = reinterpret_cast<std::uint32_t*>(block);
+    auto* page = block + 2 * FrameCaptureWriter::BlockBytes;
+    auto* label = reinterpret_cast<std::uint32_t*>(page);
+    AgcDriver::GuestMemory::Unwatch(address(page), Page);
+    check(!AgcDriver::GuestMemory::Watched(address(page), Page), "the page is in the write watch");
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), Stored};
+    std::memcpy(commands, write.data(), sizeof(write));
+    Packet packet{commands, static_cast<std::uint32_t>(write.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the label write was not submitted");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*label).load(std::memory_order_acquire) == Stored, "the queue did not write the label");
+    check(!AgcDriver::GuestMemory::Watched(address(page), Page), "the label write returned the page to the write watch");
+    std::atomic_ref<std::uint32_t>(*label).store(0, std::memory_order_release);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(lastDeltaByte(reader, page) == std::byte{0}, "the capture lost the title's restore of the bytes it recorded before a queue's store, so the replayed store survives");
+}
+
+std::byte* comparedRacePage = nullptr;
+
+void unwatchComparedRacePage() {
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+    check(AgcDriver::GuestMemory::ImportWatched(address(comparedRacePage), 4096, [] { return true; }, false), "the import of the page failed");
+    std::fill_n(comparedRacePage + 32, 16, std::byte{0x5c});
+}
+
+void testComparedUnwatchRace() {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    comparedRacePage = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    struct ComparedReset {
+        ~ComparedReset() {
+            AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+            AgcDriver::GuestMemory::SetLeftWatchCompare(false);
+        }
+    } reset;
+    AgcDriver::GuestMemory::SetLeftWatchCompare(true);
+    check(AgcDriver::GuestMemory::Watched(address(comparedRacePage), Page), "the page is not in the write watch");
+    AgcDriver::GuestMemory::SeedComparedPages(address(comparedRacePage), std::span<const std::byte>(comparedRacePage, Page));
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> changed;
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(&unwatchComparedRacePage);
+    AgcDriver::GuestMemory::ChangedComparedPages(address(comparedRacePage), Page, changed);
+    AgcDriver::GuestMemory::SetComparedDecisionHookForTest(nullptr);
+    check(!AgcDriver::GuestMemory::Watched(address(comparedRacePage), Page), "the import left the page in the write watch");
+    AgcDriver::GuestMemory::ChangedComparedPages(address(comparedRacePage), Page, changed);
+    if (changed.empty()) throw std::runtime_error("the CPU store to a page that left the write watch while its compare entry was being checked was not reported");
+}
+
 #ifdef _WIN32
 bool consumeWrites(std::uintptr_t begin, std::size_t bytes, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
     std::vector<void*> pages(256);
@@ -998,22 +1089,6 @@ void testMergedBlocks() {
     Blocks unaligned{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}};
     AgcDriver::FrameRecorder::MergeOverlappingBlocks(unaligned);
     check(unaligned == Blocks{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}}, "a block with an unaligned edge was merged, so its GPU-stored words would be kept whole");
-}
-
-void testForgottenUnwatchedHashes() {
-    constexpr std::uint64_t Block = FrameCaptureWriter::BlockBytes;
-    const std::pair<std::uint64_t, std::uint64_t> sample{0x1234, 7};
-    AgcDriver::FrameRecorder::UnwatchedHashes hashes;
-    hashes.Keep(0x100000, Block, sample);
-    hashes.Keep(0x100000 + Block, Block / 2 + 2 * Block, sample);
-    hashes.Keep(0x100000 + 4 * Block, Block, sample);
-    hashes.Forget(0x100000 + 3 * Block + 0x4000, 0x100000 + 3 * Block + 0x5000);
-    check(!hashes.samples.contains({0x100000 + Block, Block / 2 + 2 * Block}), "a store into the tail of a merged unwatched block longer than a capture block left its hash, so an unchanged later sample would skip the store");
-    check(hashes.samples.contains({0x100000, Block}) && hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store forgot hashes of unwatched blocks it does not touch");
-    hashes.Forget(0x100000 + 4 * Block - 1, 0x100000 + 4 * Block);
-    check(hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store just before an unwatched block forgot its hash");
-    hashes.Forget(0x100000 + Block - 1, 0x100000 + Block);
-    check(!hashes.samples.contains({0x100000, Block}), "a store into the last byte of an unwatched block left its hash");
 }
 
 void testCapturedSpans() {
@@ -1610,14 +1685,14 @@ void testShaderBlockHole(const std::filesystem::path& directory) {
         GuestAllocations::Mutation mutation;
         mutation.Add(piece, bytes, true, true, false);
     }
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
     auto* shader = reinterpret_cast<Shader*>(tail + 0x2b0);
     *shader = {};
     shader->file_header = 0x34333231u;
     shader->version = 0x18u;
     shader->header_size = sizeof(Shader);
-    auto* recorder = AgcDriver::FrameRecorder::Active();
-    check(recorder != nullptr, "frame recorder is disabled");
-    recorder->FrameBoundary();
     recorder->RegisterShader(shader);
     recorder->FrameBoundary();
     const FrameCaptureReader reader(directory);
@@ -1876,6 +1951,9 @@ int main(int argc, char** argv) {
         else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
         else if (mode == "late_clear") testLateClear(directory);
         else if (mode == "store_between_walks") testStoreBetweenWalks(directory);
+        else if (mode == "store_after_unwatch") testStoreAfterUnwatch(directory);
+        else if (mode == "compared_unwatch_race") testComparedUnwatchRace();
+        else if (mode == "gpu_store_restored") testGpuStoreRestoredUnwatched(directory);
         else if (mode == "store_window") testStoreWindow(directory);
         else if (mode == "store_window_unwritten") testStoreWindowUnwritten(directory);
         else if (mode == "store_window_stopped") testStoreWindowStopped(directory);
@@ -1888,7 +1966,6 @@ int main(int argc, char** argv) {
         else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "merge_blocks") testMergedBlocks();
-        else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
         else if (mode == "unaligned_gpu_fill") testUnalignedGpuFill();
         else if (mode == "captured_spans") testCapturedSpans();
         else if (mode == "remapped_range") testRemappedRange(directory);

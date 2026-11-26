@@ -199,7 +199,6 @@ int APS5_VABI _ZN3WTF21LineBreakIteratorPool10sharedPoolEv();
 int APS5_VABI _ZN3WTF23openLatin1UTextProviderEPNS_15UTextWithBufferEPKhjP10UErrorCode();
 int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStringEPKDsjNS_21LineBreakIteratorModeE();
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator();
-int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE();
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm();
 int APS5_VABI _ZN3WTF6String23make8BitFrom16BitSourceEPKDsm();
 int APS5_VABI _ZN3WTF6String6appendEDs();

@@ -4280,7 +4280,7 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
     if (verified) checks.fetch_add(1, std::memory_order_relaxed);
     if (failed) failures.fetch_add(1, std::memory_order_relaxed);
     const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!report) return;
     if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
 }
@@ -7583,6 +7583,10 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+bool ShaderResources::StorePages() const {
+    return bda != nullptr && bda->StorePages();
+}
+
 void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
@@ -7613,6 +7617,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         guestMemory.DeferCopyBacks(recorder);
         guestMemory.RecordCopyBacks(recorder);
     }
+    if (bda) bda->RecordStorePageGather(recorder);
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
@@ -7650,6 +7655,8 @@ void ShaderResources::WriteBackBuffers() {
         } catch (const BdaUnalignedAccess&) {
             unaligned = std::current_exception();
         }
+        guestMemory.NoteAddressStores(bda->TakeWrittenPages());
+        guestMemory.NoteStorePages(bda->TakeStorePages());
     }
     if (!SkipWriteBack()) guestMemory.WriteBack();
     if (unaligned) std::rethrow_exception(unaligned);

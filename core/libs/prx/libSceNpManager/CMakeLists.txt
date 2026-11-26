@@ -42,4 +42,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_asm_client_ext PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_np_manager_value_class_guest_pointers_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpManagerValueClassGuestPointers.cpp)
+    target_include_directories(guest_np_manager_value_class_guest_pointers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_manager_value_class_guest_pointers_tests PRIVATE libSceNpManager libc)
+    configure_windows_unwind(guest_np_manager_value_class_guest_pointers_tests)
+    add_test(NAME guest_np_manager_value_class_guest_pointers COMMAND guest_np_manager_value_class_guest_pointers_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_manager_value_class_guest_pointers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

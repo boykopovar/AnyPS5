@@ -67,12 +67,6 @@ public:
             }
         }
     };
-    struct UnwatchedHashes {
-        std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> samples;
-        std::uint64_t longest = 0;
-        void Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample);
-        void Forget(std::uint64_t begin, std::uint64_t end);
-    };
     struct GpuStores {
         struct FillRun {
             std::uint64_t origin = 0;
@@ -139,6 +133,8 @@ private:
     std::vector<Range> committedRanges();
     std::vector<Range> newRanges();
     std::uint64_t blockSince(std::uint64_t block) const;
+    static bool collectsDeltas(const Range& range);
+    static void seedUnwatchedPages(std::uint64_t address, std::span<const std::byte> bytes);
 
     std::filesystem::path directory;
     std::filesystem::path trigger;
@@ -153,7 +149,6 @@ private:
     std::vector<Range> ranges;
     std::map<std::uint64_t, std::uint64_t> shaderMarks;
     std::map<std::uint64_t, std::uint64_t> hostPageHashes;
-    UnwatchedHashes unwatchedHashes;
     inline static std::atomic<bool> notingGpuStores{false};
     std::mutex gpuStoresMutex;
     GpuStores gpuStores;
@@ -175,8 +170,8 @@ private:
     inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
-    std::uint64_t unwatchedReadBytes = 0;
-    double unwatchedReadSeconds = 0;
+    std::uint64_t unwatchedChangedBytes = 0;
+    double unwatchedCompareSeconds = 0;
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
     std::vector<std::string> warnings;

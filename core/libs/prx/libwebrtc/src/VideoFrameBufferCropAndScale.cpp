@@ -74,7 +74,7 @@ constexpr std::size_t StrideVSlot = 16;
 constexpr std::size_t DataYSlot = 17;
 constexpr std::size_t DataUSlot = 18;
 constexpr std::size_t DataVSlot = 19;
-constexpr int MaximumCropDimension = 32768;
+constexpr int MaximumCropDimension = 32767;
 
 using ToI420 = void** (APS5_VABI*)(void** result, void* buffer);
 

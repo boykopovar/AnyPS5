@@ -97,6 +97,8 @@ bool singleComponent(VkFormat format, std::uint32_t bytes) {
 
 std::atomic<bool> depthTransferPasses{std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") == nullptr};
 std::atomic<std::uint64_t> depthTransferPassCount{0};
+std::atomic<std::uint64_t> armedHtileClears{0};
+std::atomic<std::uint64_t> discardedHtileClears{0};
 
 bool depthToStoragePass(const Context& context, VkFormat depthFormat, VkFormat colorFormat) {
     if (!context.pushDescriptors || !depthTransferPasses.load(std::memory_order_relaxed)) return false;
@@ -4752,6 +4754,7 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
 
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
+    armedHtileClears.fetch_add(1, std::memory_order_relaxed);
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || !surface->clearPending) continue;
         const auto& metadata = surface->sampling.initial[1];
@@ -4762,27 +4765,51 @@ void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     }
 }
 
-void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
+void QueueHtileDepthClear(HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
         if (bytes < surface->sampling.initial[1].bytes) continue;
         ++surface->clearDispatchesPending;
+        dispatch.surfaces.push_back(surface->active);
         if (surface->clearGeneration == 0u || !surface->sampling.refusal.empty()) continue;
         surface->clearCompletionQueued = true;
     }
 }
 
-void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
+namespace {
+
+void releaseHtileClearDispatch(const HtileClearDispatch& dispatch) {
+    for (const auto& surface : surfaces()) {
+        if (std::ranges::none_of(dispatch.surfaces, [&](const auto& active) { return active.get() == surface->active.get(); })) continue;
+        if (surface->clearDispatchesPending != 0u && --surface->clearDispatchesPending == 0u) surface->clearCompletionQueued = false;
+    }
+}
+
+}
+
+void CompleteHtileDepthClear(const HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
+    releaseHtileClearDispatch(dispatch);
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress) continue;
         const auto& metadata = surface->sampling.initial[1];
         if (bytes < metadata.bytes) continue;
-        if (surface->clearDispatchesPending != 0u && --surface->clearDispatchesPending == 0u) surface->clearCompletionQueued = false;
         if (surface->clearGeneration == 0u) continue;
         Require(GuestMemory::UnchangedSinceCollected(metadata.address, metadata.bytes, surface->clearGeneration), "CPU writes raced native multisample depth clear");
         GuestMemory::MarkWritten(metadata.address, metadata.bytes);
+    }
+}
+
+void DiscardHtileDepthClear(const HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    discardedHtileClears.fetch_add(1, std::memory_order_relaxed);
+    releaseHtileClearDispatch(dispatch);
+    for (const auto& surface : surfaces()) {
+        if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || surface->clearGeneration == 0u) continue;
+        if (bytes < surface->sampling.initial[1].bytes) continue;
+        surface->clearCompletionQueued = false;
+        surface->sampling.Refuse("native multisample depth clear dispatch was discarded before it ran");
     }
 }
 
@@ -5011,6 +5038,19 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
     return DepthFillValue(pattern, d16);
 }
 
+void settleImportsUnderFill(std::uint64_t address, std::size_t bytes) {
+    std::vector<Context> contexts;
+    {
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& surface : surfaces()) {
+            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive) continue;
+            const bool covered = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
+            if (covered && std::none_of(contexts.begin(), contexts.end(), [&](const Context& context) { return context.device == surface->context.device; })) contexts.push_back(surface->context);
+        }
+    }
+    for (const auto& context : contexts) SettleOwnImports(context, address, bytes);
+}
+
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
@@ -5027,6 +5067,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     }
     for (const auto& plane : clearedPlanes) StorageTexture::FlushPending(plane.address, plane.bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    settleImportsUnderFill(address, bytes);
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
     for (const auto& surface : surfaces()) {
@@ -5479,6 +5520,23 @@ void SetDepthTransferPasses(bool enabled) {
 
 std::uint64_t DepthTransferPassCount() {
     return depthTransferPassCount.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ArmedHtileDepthClearCount() {
+    return armedHtileClears.load(std::memory_order_relaxed);
+}
+
+std::uint64_t DiscardedHtileDepthClearCount() {
+    return discardedHtileClears.load(std::memory_order_relaxed);
+}
+
+std::uint32_t PendingHtileDepthClearDispatches(std::uint64_t htileAddress) {
+    std::lock_guard lock(surfacesMutex());
+    std::uint32_t pending = 0u;
+    for (const auto& surface : surfaces()) {
+        if (surface->active->load(std::memory_order_acquire) && surface->target.htileAddress == htileAddress) pending += surface->clearDispatchesPending;
+    }
+    return pending;
 }
 
 bool DepthUploadImage(const Context& context) {

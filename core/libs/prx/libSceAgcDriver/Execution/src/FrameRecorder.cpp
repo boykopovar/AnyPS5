@@ -350,7 +350,7 @@ void FrameRecorder::emitDelta() {
     std::vector<std::size_t> owners;
     for (std::size_t index = 0; index < ranges.size(); ++index) {
         const auto& range = ranges[index];
-        if (!range.readable || ((range.access & FrameRangeAccess::Writable) == 0 && range.kind != FrameRangeKind::Watched && range.kind != FrameRangeKind::Unwatched)) continue;
+        if (!collectsDeltas(range)) continue;
         spans.push_back({range.address, range.bytes, range.since});
         owners.push_back(index);
     }
@@ -453,6 +453,23 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
     for (const auto& [block, since] : marks) shaderMarks[block] = since;
 }
 
+bool FrameRecorder::collectsDeltas(const Range& range) {
+    return range.readable && ((range.access & FrameRangeAccess::Writable) != 0 || range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched);
+}
+
+void FrameRecorder::seedUnwatchedPages(std::uint64_t address, std::span<const std::byte> bytes) {
+    for (std::size_t at = 0; at < bytes.size();) {
+        const auto block = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes - (address + at) % FrameCaptureWriter::BlockBytes, bytes.size() - at));
+        if (!GuestMemory::Watched(address + at, block)) {
+            for (std::size_t page = at; page < at + block; page += HostPageBytes) {
+                const auto size = std::min<std::size_t>(HostPageBytes, at + block - page);
+                if (!GuestMemory::Watched(address + page, size)) GuestMemory::SeedComparedPages(address + page, bytes.subspan(page, size));
+            }
+        }
+        at += block;
+    }
+}
+
 std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
     const auto end = block + FrameCaptureWriter::BlockBytes;
     const auto found = shaderMarks.find(block);
@@ -479,19 +496,6 @@ void FrameRecorder::CapturedSpans::Add(std::uint64_t begin, std::uint64_t end) {
     spans.emplace(begin, end);
 }
 
-void FrameRecorder::UnwatchedHashes::Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample) {
-    samples[{begin, bytes}] = sample;
-    longest = std::max(longest, bytes);
-}
-
-void FrameRecorder::UnwatchedHashes::Forget(std::uint64_t begin, std::uint64_t end) {
-    auto found = samples.lower_bound({begin - std::min(begin, longest), 0});
-    while (found != samples.end() && found->first.first < end) {
-        if (found->first.first + found->first.second > begin) found = samples.erase(found);
-        else ++found;
-    }
-}
-
 void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks) {
     std::ranges::sort(blocks);
     std::size_t merged = 0;
@@ -510,12 +514,11 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (auto& span : spans) {
         if (const auto since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written); since != 0) span.since = since;
         blocks.insert(blocks.end(), written.begin(), written.end());
-        for (std::uint64_t offset = 0; offset < span.bytes;) {
-            const auto at = span.address + offset;
-            const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, span.bytes - offset));
-            if (!GuestMemory::Watched(at, bytes)) blocks.emplace_back(at, at + bytes);
-            offset += bytes;
-        }
+        const auto compare = std::chrono::steady_clock::now();
+        GuestMemory::ChangedComparedPages(span.address, static_cast<std::size_t>(span.bytes), written);
+        unwatchedCompareSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - compare).count();
+        for (const auto& [begin, end] : written) unwatchedChangedBytes += end - begin;
+        blocks.insert(blocks.end(), written.begin(), written.end());
     }
     MergeOverlappingBlocks(blocks);
     auto& driver = DriverDetail::Driver::Get();
@@ -549,9 +552,8 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             any = true;
         }
     };
-    const auto forget = [&](std::uint64_t begin, std::uint64_t end) {
+    const auto forgetHostPages = [&](std::uint64_t begin, std::uint64_t end) {
         hostPageHashes.erase(hostPageHashes.lower_bound(begin & ~std::uint64_t{HostPageBytes - 1}), hostPageHashes.lower_bound(end));
-        unwatchedHashes.Forget(begin, end);
     };
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
@@ -566,6 +568,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         for (std::uint64_t at = 0; at < range.bytes;) {
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
+            if (collectsDeltas(stored)) seedUnwatchedPages(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
             writeTitleWords(range.address + at, zero && !collected);
             at += bytes.size();
@@ -577,30 +580,16 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         std::memcpy(bytes.data(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page)), HostPageBytes);
         const auto hash = contentHash(bytes);
         if (const auto found = hostPageHashes.find(page); found != hostPageHashes.end() && found->second == hash) continue;
-        forget(page, page + HostPageBytes);
+        GuestMemory::UpdateComparedPages(page, bytes);
+        forgetHostPages(page, page + HostPageBytes);
         hostPageHashes[page] = hash;
         writeTitleWords(page);
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
-        const auto read = std::chrono::steady_clock::now();
         readGuest(begin, bytes);
-        const bool unwatched = !GuestMemory::Watched(begin, bytes.size());
-        const bool sampled = accepted == completed && unwatched;
-        const auto sample = sampled ? std::pair{contentHash(bytes), accepted} : std::pair<std::uint64_t, std::uint64_t>{};
-        if (unwatched) {
-            unwatchedReadBytes += bytes.size();
-            unwatchedReadSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - read).count();
-        }
-        if (sampled) {
-            const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
-            const auto found = unwatchedHashes.samples.find(key);
-            if (found != unwatchedHashes.samples.end() && found->second == sample) continue;
-            forget(begin, end);
-            unwatchedHashes.Keep(key.first, key.second, sample);
-        } else {
-            forget(begin, end);
-        }
+        GuestMemory::UpdateComparedPages(begin, bytes);
+        forgetHostPages(begin, end);
         writeTitleWords(begin);
     }
     if (!any) return;
@@ -622,11 +611,13 @@ void FrameRecorder::endGpuStores() {
 }
 
 void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes) {
+    GuestMemory::ForgetComparedPages(address, bytes.size());
     std::lock_guard lock(gpuStoresMutex);
     gpuStores.Store(address, bytes);
 }
 
 void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+    GuestMemory::ForgetComparedPages(address, bytes);
     std::lock_guard lock(gpuStoresMutex);
     gpuStores.Fill(address, bytes, pattern);
 }
@@ -759,6 +750,7 @@ void FrameRecorder::snapshot(const Range& range) {
         if (abandonIfDiskLow()) return;
         bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(SnapshotPieceBytes, range.bytes - at)));
         readGuest(range.address + at, bytes);
+        if (collectsDeltas(range)) seedUnwatchedPages(range.address + at, bytes);
         snapshotBytes += writer->WriteSnapshot(range.address + at, bytes);
     }
 }
@@ -778,6 +770,7 @@ bool FrameRecorder::abandonIfDiskLow() {
 
 void FrameRecorder::stop(const char* reason) {
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     warnings.push_back(reason);
     std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
@@ -807,6 +800,7 @@ void FrameRecorder::start() {
     rewindTailFlips = std::max(rewindTailFlips, driver.RewindTailFlips());
     if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
     GuestMemory::SetOwnStoreCompare(true);
+    GuestMemory::SetLeftWatchCompare(true);
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -865,6 +859,7 @@ void FrameRecorder::start() {
 void FrameRecorder::finish() {
     emitDelta();
     GuestMemory::SetOwnStoreCompare(false);
+    GuestMemory::SetLeftWatchCompare(false);
     if (!writer) return;
     auto end = make(FrameCallKind::End);
     end.ordinal = ++ordinal;
@@ -873,8 +868,8 @@ void FrameRecorder::finish() {
     writeReferenceFrames();
     writer->Finish(header());
     const auto costs = writer->Costs();
-    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched blocks read in %.2f s, %llu repeated parts compared in %.2f s, %llu parts evicted from the delta cache\n",
-                 static_cast<double>(unwatchedReadBytes) / (1024.0 * 1024.0), unwatchedReadSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
+    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched pages changed, found by compares taking %.2f s, %llu repeated parts compared in %.2f s, %llu parts evicted from the delta cache\n",
+                 static_cast<double>(unwatchedChangedBytes) / (1024.0 * 1024.0), unwatchedCompareSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
                  static_cast<unsigned long long>(costs.evicted));
     std::fprintf(stderr, "[frame-capture] %llu frames, %llu calls, %llu memory deltas (%.1f MiB), %.1f MiB raw, %.1f MiB stored in %s\n", static_cast<unsigned long long>(recordedFrames),
                  static_cast<unsigned long long>(recordedCalls), static_cast<unsigned long long>(deltaGroups), static_cast<double>(deltaBytes) / (1024.0 * 1024.0),
