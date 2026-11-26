@@ -390,7 +390,7 @@ def registered(build):
             elif command == "set_tests_properties" and "PROPERTIES" in arguments:
                 properties = arguments.index("PROPERTIES")
                 values = arguments[properties + 1:]
-                for key, value in zip(values[::2], values[1::2]):
+                for key, value in zip(values[::2], values[1::2], strict=True):
                     if key == "DISABLED":
                         for name in arguments[:properties]:
                             if name in latest:
@@ -494,7 +494,7 @@ def disabled_properties(command, arguments):
     if command == "set_tests_properties" and "PROPERTIES" in arguments:
         properties = arguments.index("PROPERTIES")
         values = arguments[properties + 1:]
-        for key, value in zip(values[::2], values[1::2]):
+        for key, value in zip(values[::2], values[1::2], strict=True):
             if key == "DISABLED":
                 yield arguments[:properties], "replace", value
     elif command == "set_property" and arguments[:1] == ["TEST"] and "PROPERTY" in arguments:
