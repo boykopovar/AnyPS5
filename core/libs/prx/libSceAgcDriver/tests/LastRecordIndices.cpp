@@ -27,6 +27,9 @@ void CheckIndices(const std::vector<const void*>& logged, const std::vector<cons
     std::vector<std::size_t> indices;
     LastRecordIndices(logged, objects, indices);
     Require(indices == BackwardScan(logged, objects), "last record indices, " + what + ": an object did not get the index of its last record");
+    std::vector<std::size_t> sorted;
+    LastRecordIndicesSorted(logged, objects, sorted);
+    Require(indices == sorted, "last record indices, " + what + ": the hashed indices differ from the sorted ones");
 }
 
 }
@@ -50,6 +53,17 @@ void RunLastRecordIndicesTests() {
     CheckIndices(missing, table, "a table of 1500 textures over a log without its first 476 records");
 
     std::mt19937 generator(0x5eed);
+    for (std::size_t round = 0; round < 40; ++round) {
+        std::vector<const void*> logged(generator() % 200);
+        for (auto& entry : logged) entry = generator() % 6 == 0 ? nullptr : object(generator() % 64);
+        std::vector<const void*> objects;
+        for (std::size_t source = generator() % 64; source-- > 0;) {
+            const auto repeats = 1 + generator() % 50;
+            const void* chosen = generator() % 8 == 0 ? nullptr : object(generator() % 96);
+            for (std::size_t copy = 0; copy < repeats; ++copy) objects.push_back(chosen);
+        }
+        CheckIndices(logged, objects, "random round " + std::to_string(round) + " with nulls, absent objects and objects repeated up to 50 times");
+    }
     for (const std::size_t records : {std::size_t{1}, std::size_t{7}, std::size_t{64}, std::size_t{1023}, std::size_t{1024}, std::size_t{1500}, std::size_t{2048}}) {
         for (const std::size_t textures : {std::size_t{1}, std::size_t{5}, std::size_t{300}, std::size_t{1500}}) {
             for (const std::size_t distinct : {std::size_t{8}, pool.size()}) {

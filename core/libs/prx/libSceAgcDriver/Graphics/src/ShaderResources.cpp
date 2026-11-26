@@ -3767,7 +3767,7 @@ bool ImportAuditAdmitted() {
 
 }
 
-void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices) {
+void LastRecordIndicesSorted(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices) {
     indices.assign(objects.size(), logged.size());
     thread_local std::vector<std::pair<const void*, std::size_t>>* wantedSlot = nullptr;
     auto& wanted = ShaderRecompiler::ThreadOwned(wantedSlot);
@@ -3785,6 +3785,43 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
     if (wanted.capacity() > LookupLogBound + LookupLogBound / 2) {
         wanted.clear();
         wanted.shrink_to_fit();
+    }
+}
+
+void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoHashedRecordIndices)) {
+        LastRecordIndicesSorted(logged, objects, indices);
+        return;
+    }
+    indices.assign(objects.size(), logged.size());
+    if (logged.empty() || objects.empty()) return;
+    constexpr std::size_t Empty = std::numeric_limits<std::size_t>::max();
+    thread_local std::vector<std::pair<const void*, std::size_t>>* tableSlot = nullptr;
+    auto& table = ShaderRecompiler::ThreadOwned(tableSlot);
+    std::size_t capacity = 64;
+    while (capacity < logged.size() * 2) capacity <<= 1;
+    table.assign(capacity, {nullptr, Empty});
+    const std::size_t mask = capacity - 1;
+    const auto slotOf = [mask](const void* object) { return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(object) >> 4) * 0x9E3779B97F4A7C15ull >> 20) & mask; };
+    const auto find = [&](const void* object) {
+        auto slot = slotOf(object);
+        while (table[slot].second != Empty && table[slot].first != object) slot = (slot + 1) & mask;
+        return slot;
+    };
+    for (std::size_t at = 0; at < logged.size(); ++at) table[find(logged[at])] = {logged[at], at};
+    for (std::size_t i = 0; i < objects.size(); ++i) {
+        const auto& entry = table[find(objects[i])];
+        if (entry.second != Empty) indices[i] = entry.second;
+    }
+    static const bool verify = std::getenv("APS5_VERIFY_PROOFS") != nullptr;
+    if (verify) {
+        std::vector<std::size_t> expected;
+        LastRecordIndicesSorted(logged, objects, expected);
+        if (expected != indices) throw std::runtime_error("APS5_VERIFY_PROOFS: the hashed last-record indices differ from the sorted ones");
+    }
+    if (table.capacity() > 4 * LookupLogBound) {
+        table.clear();
+        table.shrink_to_fit();
     }
 }
 
