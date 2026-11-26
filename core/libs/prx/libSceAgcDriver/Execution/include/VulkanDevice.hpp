@@ -74,6 +74,9 @@ public:
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
     bool HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
     void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
+    enum class PipelineAhead { Built, Building, Start, Unavailable };
+    PipelineAhead ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
+    void AbandonComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
     // Starts the journal replay if the device has not (a headless device starts it at its first
     // draw or dispatch) and joins it (tests; the teardown joins it anyway).
     void WaitForPipelineJournalReplay();
@@ -229,7 +232,7 @@ public:
     };
     static CopyAliasing CopyAliasCounts();
     struct ComputePipelineCreation {
-        std::uint64_t created, underGpuMutex;
+        std::uint64_t created, underGpuMutex, ahead;
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {
@@ -388,6 +391,7 @@ public:
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
+    bool PrebuildGraphicsLibrariesOnFirstVisit(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
 
 public:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions
@@ -407,11 +411,22 @@ public:
         bool readTargets = false;
         std::uint32_t targetSlot = 0;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+        std::uint32_t listTargets = 0;
+        std::int32_t listed = -1;
+        std::uint32_t lanesPerGroup = 0;
+        std::vector<std::uint64_t> selectTargets;
+        bool selectBegin = false;
     };
     void SetSplitSlice(const std::optional<SplitSlice>& slice);
     std::span<const std::uint32_t> SplitTargets();
+    static constexpr std::uint32_t SplitSelectMaxTargets = 64u;
 
 private:
+    static constexpr std::uint32_t SplitSelectTargetWords = 4u;
+    static constexpr std::uint32_t SplitSelectCountWords = SplitSelectTargetWords + 2u * SplitSelectMaxTargets;
+    static constexpr std::uint32_t SplitSelectArgumentWords = SplitSelectCountWords + SplitSelectMaxTargets + 4u;
+    static constexpr std::uint32_t SplitSelectWords = SplitSelectArgumentWords + 4u * (SplitSelectMaxTargets + 1u);
+    void recordSplitSelect(const Graphics::Context& context, VkCommandBuffer commands, VkDescriptorSet stateSet, const SplitSlice& slice, std::uint64_t listBase);
     std::optional<SplitSlice> splitSlice;
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;

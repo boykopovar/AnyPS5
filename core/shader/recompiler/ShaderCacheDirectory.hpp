@@ -107,8 +107,15 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
 #ifdef _WIN32
     DWORD renameError = ERROR_SUCCESS;
     {
-        const auto handle = CreateFileW(temporary.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        const auto openForDelete = [&temporary] {
+            return CreateFileW(temporary.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        };
+        auto handle = openForDelete();
+        for (int attempt = 0; handle == INVALID_HANDLE_VALUE && GetLastError() == ERROR_SHARING_VIOLATION && attempt < 40; ++attempt) {
+            Sleep(50);
+            handle = openForDelete();
+        }
         if (handle == INVALID_HANDLE_VALUE) {
             std::filesystem::remove(temporary, error);
             return false;
