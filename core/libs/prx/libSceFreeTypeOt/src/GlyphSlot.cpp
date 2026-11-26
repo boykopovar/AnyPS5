@@ -183,6 +183,10 @@ void SlotDoneWithDriver(
         }
     }
     Free(memory, internal, function);
+    void* clearedInternal = nullptr;
+    const int writeErrno = errno;
+    GuestCopyOut_nid_no_patch(&slot->internal, &clearedInternal, sizeof(clearedInternal));
+    errno = writeErrno;
 }
 
 void RollbackSlot(
