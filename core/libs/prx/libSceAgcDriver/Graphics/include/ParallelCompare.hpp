@@ -18,6 +18,7 @@ void CompareSpansFrom(std::span<const CompareSpan> spans, std::span<std::uint8_t
 unsigned CompareHelpers();
 void StopCompareHelpers();
 unsigned CompareHelpersRunning();
+bool CompareHelperServesGpuHolder();
 
 }
 

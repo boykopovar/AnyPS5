@@ -30,6 +30,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/KeptUnits.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
@@ -5305,7 +5306,7 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 }
 
 bool LabelTrapBypassed() {
-    return GuestMemory::GpuMutex().HeldByThisThread();
+    return GuestMemory::GpuMutex().HeldByThisThread() || CompareHelperServesGpuHolder();
 }
 
 bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes) {

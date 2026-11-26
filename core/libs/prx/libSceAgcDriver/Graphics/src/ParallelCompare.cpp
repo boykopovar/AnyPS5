@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include <algorithm>
 #include <atomic>
@@ -12,6 +13,7 @@ namespace AgcDriver::Graphics {
 namespace {
 
 std::atomic<unsigned> runningHelpers{0};
+thread_local bool servingGpuHolder = false;
 
 class ComparePool {
 public:
@@ -26,12 +28,14 @@ public:
     bool Run(std::span<const CompareSpan> spans, std::span<std::uint8_t> equal) {
         std::unique_lock caller(callers, std::try_to_lock);
         if (!caller.owns_lock()) return false;
+        const bool gpuHolder = GuestMemory::GpuMutex().HeldByThisThread();
         {
             std::unique_lock lock(mutex);
             if (stopping) return false;
             finished.wait(lock, [&] { return working == 0; });
             jobSpans = spans;
             jobEqual = equal;
+            jobGpuHolder = gpuHolder;
             next.store(0, std::memory_order_relaxed);
             done.store(0, std::memory_order_relaxed);
             ++generation;
@@ -42,6 +46,7 @@ public:
         finished.wait(lock, [&] { return working == 0 && done.load(std::memory_order_acquire) == spans.size(); });
         jobSpans = {};
         jobEqual = {};
+        jobGpuHolder = false;
         return true;
     }
 
@@ -80,9 +85,12 @@ private:
             seen = generation;
             const auto spans = jobSpans;
             const auto equal = jobEqual;
+            const bool gpuHolder = jobGpuHolder;
             ++working;
             lock.unlock();
+            servingGpuHolder = gpuHolder;
             drain(spans, equal);
+            servingGpuHolder = false;
             lock.lock();
             --working;
             if (working == 0) finished.notify_all();
@@ -98,6 +106,7 @@ private:
     unsigned working = 0;
     std::span<const CompareSpan> jobSpans;
     std::span<std::uint8_t> jobEqual;
+    bool jobGpuHolder = false;
     std::atomic<std::size_t> next{0};
     std::atomic<std::size_t> done{0};
     std::vector<std::thread> workers;
@@ -153,6 +162,10 @@ void StopCompareHelpers() {
         pool = createdPool().load(std::memory_order_acquire);
     }
     if (pool != nullptr) pool->Stop();
+}
+
+bool CompareHelperServesGpuHolder() {
+    return servingGpuHolder;
 }
 
 unsigned CompareHelpersRunning() {
