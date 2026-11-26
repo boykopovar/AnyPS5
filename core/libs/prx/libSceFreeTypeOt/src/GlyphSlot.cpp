@@ -156,16 +156,22 @@ int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std
     if (!slot || !slot->internal) NotImplemented_nid_no_patch(function);
     GuestMemoryRec* memory = FaceMemory(slot, function);
     GuestSlotInternalRec* internal = Internal(slot);
-    if (internal->flags & GlyphOwnBitmap) {
+    const bool owned = (internal->flags & GlyphOwnBitmap) != 0;
+    if (owned) {
         FreeOwned(memory, slot, function);
     } else {
         internal->flags |= GlyphOwnBitmap;
     }
-    const auto bytes = static_cast<std::int64_t>(size);
-    if (bytes > 0 && !memory) NotImplemented_nid_no_patch(function);
-    std::int32_t error = 0;
-    slot->bitmap.buffer = static_cast<unsigned char*>(OtMemAlloc(memory, bytes, &error));
-    return error;
+    try {
+        const auto bytes = static_cast<std::int64_t>(size);
+        if (bytes > 0 && !memory) NotImplemented_nid_no_patch(function);
+        std::int32_t error = 0;
+        slot->bitmap.buffer = static_cast<unsigned char*>(OtMemAlloc(memory, bytes, &error));
+        return error;
+    } catch (...) {
+        if (!owned) internal->flags &= ~GlyphOwnBitmap;
+        throw;
+    }
 }
 
 }
