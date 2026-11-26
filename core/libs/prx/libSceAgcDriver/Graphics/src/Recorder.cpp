@@ -5151,7 +5151,12 @@ void Recorder::Sync() {
     PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
-    Submit();
+    std::exception_ptr submitFailure;
+    try {
+        Submit();
+    } catch (...) {
+        submitFailure = std::current_exception();
+    }
     // Counted only when something is waited for: an idle recorder's Sync is free and would only
     // swamp the site table with the callers that check nothing first.
     const auto previousSite = inFlight.empty() ? activeSyncSite : BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0));
@@ -5161,6 +5166,7 @@ void Recorder::Sync() {
         finish(std::move(batch), true, source);
     }
     activeSyncSite = previousSite;
+    if (submitFailure != nullptr) std::rethrow_exception(submitFailure);
 }
 
 void Recorder::FlushDeferredReleases() {
