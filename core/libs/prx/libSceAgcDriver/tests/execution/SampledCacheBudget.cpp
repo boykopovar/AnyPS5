@@ -1608,6 +1608,7 @@ bool surfaceImportTests(Context context) {
         return false;
     }
     const bool importing = std::getenv("APS5_NO_SAMPLED_SURFACE_IMPORT") == nullptr && std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") == nullptr;
+    const bool segmented = std::getenv("APS5_NO_IMPORT_SEGMENT_VIEWS") == nullptr && std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") == nullptr;
     const auto surfaceBytes = DescribeSurface(Resource(JoinWindow, SplitSide)).guestBytes;
     const auto viewBytes = DescribeSurface(Resource(JoinWindow, SplitViewSide)).guestBytes;
     Require(SplitSurfaceOffset + surfaceBytes <= SplitBytes && SplitSurfaceOffset + surfaceBytes > 2u * SplitHeadBytes, "the split surface does not end inside the tail allocation");
@@ -1690,7 +1691,8 @@ bool surfaceImportTests(Context context) {
         ClearCachedTextures(context.device);
         auto produced = Sampled(context, split.Surface(), SplitSide);
         Require(produced != nullptr, "the split surface the GPU wrote was not sampled");
-        if (importing) Require(produced->ViewsStorageImage() && joinedOverSurface(split), "a split surface the GPU wrote through its allocations' imports was not imported as one joined run and viewed through its storage image");
+        if (segmented) Require(produced->ViewsStorageImage() && !joinedOverSurface(split) && HostImportSegmentsCover(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "a split surface the GPU wrote through its allocations' imports was not viewed through its storage image over those imports, without a joined import");
+        else if (importing) Require(produced->ViewsStorageImage() && joinedOverSurface(split), "a split surface the GPU wrote through its allocations' imports was not imported as one joined run and viewed through its storage image");
         else Require(!produced->ViewsStorageImage(), "a split surface the GPU wrote was viewed through a storage image with the sampled surface import off");
         recorder.Sync();
         const auto texels = FetchTexels(context, *produced, SplitSide);
@@ -1705,7 +1707,7 @@ bool surfaceImportTests(Context context) {
                 if (texel != patterns[piece]) {
                     char text[192];
                     std::snprintf(text, sizeof(text), "texel (%u, %u) at guest offset 0x%llx in allocation %zu sampled 0x%08x, not the 0x%08x the GPU wrote there", x, y, static_cast<unsigned long long>(address - split.Base()), piece, texel, patterns[piece]);
-                    Require(false, std::string(importing ? "through the joined import, " : "through the snapshot, ") + text);
+                    Require(false, std::string(segmented ? "through the import segments, " : importing ? "through the joined import, " : "through the snapshot, ") + text);
                 }
                 ++sampled[piece];
             }

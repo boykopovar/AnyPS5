@@ -34,8 +34,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_sampled_surface_import PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_driver_sampled_surface_import_off COMMAND agc_driver_sampled_cache_budget_tests surface-import)
     set_tests_properties(agc_driver_sampled_surface_import_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_SAMPLED_SURFACE_IMPORT=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_driver_sampled_surface_import_joined COMMAND agc_driver_sampled_cache_budget_tests surface-import)
+    set_tests_properties(agc_driver_sampled_surface_import_joined PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_IMPORT_SEGMENT_VIEWS=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_driver_sampled_surface_import agc_driver_sampled_surface_import_off PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_sampled_surface_import agc_driver_sampled_surface_import_off agc_driver_sampled_surface_import_joined PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_sampled_lookup_memo_proofs COMMAND agc_driver_sampled_cache_budget_tests lookup-memo-proofs)

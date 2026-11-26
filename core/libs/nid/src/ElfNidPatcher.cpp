@@ -164,6 +164,9 @@ void FixupRelocationSymbolIndices(
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
         if (shdr.sh_type != kShtRela) continue;
         if (shdr.sh_link != dynSymSectionIndex) continue;
+        if (shdr.sh_entsize != sizeof(Elf64_Rela) || shdr.sh_size % sizeof(Elf64_Rela))
+            throw std::runtime_error("invalid ELF relocation section layout");
+        RequireElfRange(elf, shdr.sh_offset, shdr.sh_size, "relocation");
 
         const std::size_t relaOffset = static_cast<std::size_t>(shdr.sh_offset);
         const std::size_t relaCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Rela);
@@ -395,7 +398,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type == kShtDynamic) hasDynamic = true;
+        if (shdr.sh_type == kShtDynamic) {
+            if (shdr.sh_entsize != sizeof(Elf64_Dyn) || shdr.sh_size % sizeof(Elf64_Dyn))
+                throw std::runtime_error("invalid ELF dynamic section layout");
+            hasDynamic = true;
+        }
         if (shdr.sh_type == kShtDynsym) {
             if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) || shdr.sh_link >= ehdr.e_shnum)
                 throw std::runtime_error("invalid ELF dynsym layout");

@@ -41,6 +41,15 @@ class SanitizerReportTests(unittest.TestCase):
             code = sanitizer_report.main([str(arg) for arg in args])
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_main_uses_one_junit_parse_for_outcomes_and_diagnostics(self):
+        path = self.write(suite(case("broken", "fail", '<system-err>ERROR: AddressSanitizer: sample</system-err>')))
+        original_parse = sanitizer_report.ET.parse
+        with unittest.mock.patch.object(sanitizer_report.ET, "parse", wraps=original_parse) as parse:
+            code, stdout, stderr = self.run_main(path, "--json")
+        self.assertEqual((code, stderr), (1, ""))
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], "ERROR: AddressSanitizer: sample")
+        parse.assert_called_once_with(path)
+
     def test_classifies_passed_skipped_failed_and_not_run_tests(self):
         path = self.write(suite(
             case("passes"),
@@ -130,10 +139,12 @@ class SanitizerReportTests(unittest.TestCase):
     def test_unreadable_reports_exit_with_2(self):
         for text in ("<results/>", suite('<testcase status="run"/>'), "not xml"):
             with self.subTest(text=text):
-                code, stdout, stderr = self.run_main(self.write(text))
+                path = self.write(text)
+                code, stdout, stderr = self.run_main(path)
                 self.assertEqual(code, 2)
                 self.assertEqual(stdout, "")
                 self.assertTrue(stderr.startswith("sanitizer_report: "))
+                self.assertIn(str(path), stderr)
         code, _, stderr = self.run_main(Path(self.directory.name) / "missing.xml")
         self.assertEqual(code, 2)
 
@@ -333,6 +344,16 @@ class SanitizerReportTests(unittest.TestCase):
                       "| `plain` |  |\n"
                       "| `ub` | /a.cpp:1:2: runtime error: shift exponent 64 |\n", stdout)
 
+    def test_reports_include_junit_failure_and_error_diagnostics(self):
+        summary = "SUMMARY: AddressSanitizer: example"
+        for tag in ("failure", "error"):
+            for element in (f'<{tag} message="{summary}"/>', f"<{tag}>{summary}</{tag}>"):
+                with self.subTest(element=element):
+                    junit = self.write(suite(case("unit", "fail", element)))
+                    code, stdout, _ = self.run_main(junit, "--json")
+                    self.assertEqual(code, 1)
+                    self.assertEqual(json.loads(stdout)["tests"][0]["report"], summary)
+
     def test_failed_tests_without_reports_keep_the_single_column_table(self):
         code, stdout, _ = self.run_main(self.write(suite(case("plain", "fail", '<failure message=""/><system-out>FAIL</system-out>'))))
         self.assertEqual(code, 1)
@@ -474,6 +495,15 @@ class SummaryInputAliasTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), b"existing\n" + completed.stdout)
             self.assertEqual(source.read_text(), suite(case("unit")))
 
+
+class CellTextTests(unittest.TestCase):
+    def test_cell_collapses_whitespace_and_escapes_pipes(self):
+        self.assertEqual(sanitizer_report.cell(' a  b|c '), 'a b\\|c')
+        self.assertEqual(sanitizer_report.detail_cell('x|y'), 'x\\|y')
+
+    def test_test_name_uses_backticks_unless_the_name_has_pipes_or_breaks(self):
+        self.assertEqual(sanitizer_report.test_name('ok'), '`ok`')
+        self.assertEqual(sanitizer_report.test_name('a|b'), '<code>a&#124;b</code>')
 
 
 if __name__ == "__main__":

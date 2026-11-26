@@ -1,6 +1,9 @@
 #include "prx/libcairo/include/ContextFontOptions.hpp"
 #include "prx/libcairo/include/InventoryExports.hpp"
 #include "prx/libcairo/include/FontOptions.hpp"
+#include "prx/libcairo/include/ScaledFontOptions.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 namespace {
@@ -88,6 +91,31 @@ void APS5_VABI cairo_set_font_options(CairoContext* context, const cairo_font_op
             storage->antialias, storage->subpixel_order, storage->hint_style, storage->hint_metrics};
         CairoContextSetFontOptions(context, &values);
     }
+}
+
+CairoScaledFont* APS5_VABI cairo_scaled_font_create(CairoFontFace* face, const CairoMatrix* fontMatrix,
+    const CairoMatrix* ctm, const cairo_font_options_t* options) {
+    const int previousErrno = errno;
+    CairoMatrix matrix{}, transform{};
+    const bool readable = (!fontMatrix || GuestCopyIn_nid_no_patch(&matrix, fontMatrix, sizeof(matrix))) &&
+        (!ctm || GuestCopyIn_nid_no_patch(&transform, ctm, sizeof(transform)));
+    errno = previousErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    CairoContextFontOptions values{};
+    if (!Invalid(options)) {
+        const auto* storage = Storage(options);
+        values = {storage->antialias, storage->subpixel_order, storage->hint_style, storage->hint_metrics};
+    }
+    return CairoScaledFontCreate_nid_no_patch(face, fontMatrix ? &matrix : nullptr, ctm ? &transform : nullptr,
+        options ? &values : nullptr, options && Invalid(options));
+}
+
+void APS5_VABI cairo_scaled_font_get_font_options(CairoScaledFont* scaledFont, cairo_font_options_t* options) {
+    if (Invalid(options)) return;
+    const auto values = CairoScaledFontOptions_nid_no_patch(scaledFont);
+    *Storage(options) = {static_cast<cairo_antialias_t>(values.antialias),
+        static_cast<cairo_subpixel_order_t>(values.subpixelOrder),
+        static_cast<cairo_hint_style_t>(values.hintStyle), static_cast<cairo_hint_metrics_t>(values.hintMetrics)};
 }
 
 }

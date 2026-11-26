@@ -1,6 +1,8 @@
+#include "LibcxxRegexErrorMessage.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -10,17 +12,7 @@
 #include <string>
 
 namespace LibcException {
-struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
-
 struct ClassTypeRecord { const void* const* vtable; const char* name; };
-
-struct ExceptionVtable {
-    std::ptrdiff_t offset;
-    const TypeRecord* type;
-    void (APS5_VABI *destroy)(ExceptionObject*);
-    void (APS5_VABI *deleteObject)(ExceptionObject*);
-    const char* (APS5_VABI *what)(const ExceptionObject*);
-};
 
 struct FutureErrorVtable {
     std::ptrdiff_t offset;
@@ -109,7 +101,7 @@ const char* PlainWhat(const ExceptionObject* object) {
     if (std::strcmp(name, "St9bad_alloc") == 0) return "bad allocation";
     if (std::strcmp(name, "St20bad_array_new_length") == 0) return "bad allocation";
     if (std::strcmp(name, "St17bad_function_call") == 0) return "bad function call";
-    if (std::strcmp(name, "St12bad_weak_ptr") == 0) return "bad_weak_ptr";
+    if (std::strcmp(name, "St12bad_weak_ptr") == 0 || std::strcmp(name, "NSt3__112bad_weak_ptrE") == 0) return "bad_weak_ptr";
     if (std::strcmp(name, "St18bad_variant_access") == 0) return "bad_variant_access";
     if (std::strcmp(name, "St19bad_optional_access") == 0) return "bad_optional_access";
     return name;
@@ -408,9 +400,13 @@ const CategoryObject SystemCategory {SystemCategoryVtable + 2};
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
+static std::atomic<LibcRaiseHandler> RaiseHandler {nullptr};
 }
 
 extern "C" {
+LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler) {
+    return LibcException::RaiseHandler.exchange(handler);
+}
 const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value) {
     return LibcException::GenericErrorMessage(value);
 }
@@ -438,6 +434,7 @@ const char* APS5_VABI _ZNKSt9exception4whatEv_nid_postfix(const LibcException::E
 
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
     if (!self) throw std::invalid_argument("exception object is null");
+    if (const auto handler = LibcException::RaiseHandler.load()) handler(*self);
     LibcException::ThrowPlain(_ZTVSt9exception_nid_postfix);
 }
 void APS5_VABI _ZNSt9exceptionC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9exception_nid_postfix.destroy; }
@@ -501,6 +498,18 @@ void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObjec
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
+
+void APS5_VABI _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObject* self) noexcept {
+    LibcException::DestroyPlain(self);
+}
+
+constinit const LibcException::TypeRecord _ZTINSt3__112bad_weak_ptrE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__112bad_weak_ptrE", &_ZTISt9exception_nid_postfix,
+};
+constinit const LibcException::ExceptionVtable _ZTVNSt3__112bad_weak_ptrE_nid_postfix {
+    0, &_ZTINSt3__112bad_weak_ptrE_nid_postfix, _ZNSt3__112bad_weak_ptrD1Ev_nid_postfix,
+    LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch,
+};
 
 LibcException::TypeRecord _ZTISt18bad_variant_access_nid_postfix {LibcException::SingleTypeVtable + 2, "St18bad_variant_access", &_ZTISt9exception_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt18bad_variant_access_nid_postfix {0, &_ZTISt18bad_variant_access_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
@@ -630,6 +639,26 @@ const char* APS5_VABI _ZNKSt11regex_error4whatEv_nid_postfix(const LibcException
 void APS5_VABI _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
+
+static_assert(sizeof(LibcException::LibcxxRegexErrorObject) == 24);
+static_assert(offsetof(LibcException::LibcxxRegexErrorObject, code) == 16);
+
+LibcException::TypeRecord _ZTINSt3__111regex_errorE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__111regex_errorE", &_ZTISt13runtime_error_nid_postfix,
+};
+static const LibcException::ExceptionVtable LibcxxRegexErrorVtable {
+    0, &_ZTINSt3__111regex_errorE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch,
+    LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch,
+};
+
+void APS5_VABI _ZNSt3__111regex_errorC1ENS_15regex_constants10error_typeE_nid_postfix(LibcException::LibcxxRegexErrorObject* self, std::int32_t code) {
+    LibcException::Construct(&self->base, LibcxxRegexErrorVtable, LibcException::LibcxxRegexErrorMessage(code));
+    self->code = code;
+}
+
+void APS5_VABI _ZNSt3__111regex_errorD1Ev_nid_postfix(LibcException::LibcxxRegexErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
 
 LibcException::TypeRecord _ZTISt11range_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11range_error", &_ZTISt13runtime_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt11range_error_nid_postfix {0, &_ZTISt11range_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
