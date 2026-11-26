@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -16,8 +17,9 @@
 #include "prx/libc/include/General.hpp"
 
 #ifdef _WIN32
+#include <vector>
 #include <windows.h>
-#include <psapi.h>
+#include <winternl.h>
 #elif defined(__APPLE__)
 #include <dlfcn.h>
 #include <mach/mach.h>
@@ -87,6 +89,22 @@ std::uintptr_t loaderImage(std::uint64_t addr) {
     return reinterpret_cast<std::uintptr_t>(image);
 }
 
+std::string mappedFileName(const void* address) {
+    using QueryFunction = LONG(NTAPI*)(HANDLE, PVOID, int, PVOID, SIZE_T, SIZE_T*);
+    static const auto query = reinterpret_cast<QueryFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryVirtualMemory")));
+    if (query == nullptr) throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: ntdll.dll has no NtQueryVirtualMemory");
+    constexpr int memoryMappedFilenameInformation = 2;
+    std::vector<std::uint64_t> buffer((sizeof(UNICODE_STRING) + 32768 * sizeof(wchar_t)) / sizeof(std::uint64_t) + 1);
+    if (query(GetCurrentProcess(), const_cast<void*>(address), memoryMappedFilenameInformation, buffer.data(), buffer.size() * sizeof(std::uint64_t), nullptr) < 0) return {};
+    const auto* name = reinterpret_cast<const UNICODE_STRING*>(buffer.data());
+    const int characters = name->Length / sizeof(wchar_t);
+    if (characters == 0) return {};
+    const int bytes = WideCharToMultiByte(CP_ACP, 0, name->Buffer, characters, nullptr, 0, nullptr, nullptr);
+    std::string result(static_cast<std::size_t>(bytes), '\0');
+    if (bytes == 0 || WideCharToMultiByte(CP_ACP, 0, name->Buffer, characters, result.data(), bytes, nullptr, nullptr) != bytes) return {};
+    return result;
+}
+
 void writeUnwindRegion(std::uint64_t begin, std::uint64_t size, const std::string& name, ModuleInfoForUnwind* info) {
     info->st_size = sizeof(ModuleInfoForUnwind);
     info->eh_frame_hdr_addr = 0;
@@ -126,9 +144,7 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) {
         return false;
     }
-    char path[4096] = {};
-    DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.BaseAddress, path, sizeof(path) - 1);
-    path[len] = '\0';
+    const auto path = mappedFileName(mbi.BaseAddress);
     const auto begin = reinterpret_cast<std::uint64_t>(mbi.BaseAddress);
     writeUnwindRegion(begin, mbi.RegionSize, path, info);
     ImageRegion region;
@@ -422,8 +438,8 @@ int APS5_VABI sceSysmoduleIsCalledFromSysModule(const void* address) {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleIsCameraPreloaded() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSysmoduleIsCameraPreloaded(void) {
+    if (sceKernelIsPs4Process() == 1) NotImplemented_nid_no_patch("sceSysmoduleIsCameraPreloaded in a PS4 process");
     return 0;
 }
 
@@ -465,9 +481,8 @@ int APS5_VABI sceSysmodulePreloadModuleForLibkernel() {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleUnloadModuleByNameInternal() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSysmoduleUnloadModuleByNameInternal(KernelModule handle, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
+    return sceKernelStopUnloadModule(handle, args, argp, flags, nullptr, res);
 }
 
 }

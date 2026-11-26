@@ -42,6 +42,7 @@ test('search uses configured alternatives in place of built-ins', () => {
     assert.deepEqual(actionsForInput('PAD:L1+R1', entries), new Set(['Screenshot']));
     assert.deepEqual(actionsForInput('J', [...entries, binding('Options', 'KEY', 'J')]), new Set(['Square', 'Options']));
     assert.deepEqual(actionsForInput('F7', [...entries, binding('ToggleMouse', 'KEY', '')]), new Set());
+    assert.deepEqual(actionsForInput('PAD:R1+L1', entries), new Set(['Screenshot']));
 });
 
 test('action names and pad button categories agree with the current native parser', () => {
@@ -76,8 +77,67 @@ test('built-in conflict catalogue agrees with the current native bindings', () =
 test('setting names and order agree with the current native parser', () => {
     const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
     const definitions = [...source.matchAll(/InputSettingName\{"(\w+)", InputSetting::\w+\}/gu)].map(match => match[1]);
-    assert.deepEqual(settings.map(setting => setting.name), definitions);
+    assert.match(source, /if \(upper\(actionName\) == "TOGGLEACTIONS"\) \{/u);
+    assert.deepEqual(settings.map(setting => setting.name), [...definitions, 'ToggleActions']);
     assert.equal(new Set(definitions).size, definitions.length);
+});
+
+test('setting hints show the built-in values of the native settings', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libScePad/include/InputMapping.hpp', import.meta.url), 'utf8');
+    const constants = Object.fromEntries([...source.matchAll(/inline constexpr \w+ (\w+) = ([\d.]+);/gu)].map(match => [match[1], match[2]]));
+    const fields = source.match(/struct InputSettings \{([^}]*)\}/u)[1];
+    const native = {};
+    for (const [, field, value] of fields.matchAll(/(?:int|double) (\w+) = (\w[\w.]*);/gu)) {
+        native[field[0].toUpperCase() + field.slice(1).replace(/Percent$/u, '')] = Number(constants[value] ?? value);
+    }
+    native.MouseStickTarget = /bool mouseControlsRightStick = true;/u.test(fields) ? 'Right' : 'Left';
+    const builtin = Object.fromEntries(settings.filter(setting => setting.builtin !== undefined).map(setting => [setting.name, setting.name === 'MouseStickTarget' ? setting.builtin : Number(setting.builtin)]));
+    assert.deepEqual(builtin, native);
+});
+
+test('ToggleActions values follow the current native list parser', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
+    const parser = source.match(/std::uint32_t parseToggleActions[\s\S]*?return mask;/u)[0];
+    assert.match(parser, /value\.find\(',', start\)/u);
+    assert.match(parser, /if \(part\.empty\(\)\) throw/u);
+    assert.match(parser, /findAction\(part\)/u);
+    assert.match(parser, /if \(action->control != Pad::InputControl::Button\)/u);
+});
+
+test('ToggleActions from the documented example imports and round trips', () => {
+    const imported = parseIni('ToggleActions = R2, L1\nR2 = KEY:Z\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, [binding('R2', 'KEY', 'Z')]);
+    assert.deepEqual(imported.settings, [{name: 'ToggleActions', value: 'R2, L1'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'R2 = KEY:Z\nToggleActions = R2, L1\n');
+});
+
+test('ToggleActions accepts every pad button in any case and repeated names', () => {
+    assert.deepEqual(validateSettings([{name: 'ToggleActions', value: [...padButtons].join(',')}]).errors, []);
+    const imported = parseIni('toggleactions = r2 ,cross, R2\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'ToggleActions', value: 'r2 ,cross, R2'}]);
+});
+
+test('ToggleActions refuses empty names, unknown actions and actions that are not pad buttons', () => {
+    const cases = {
+        'ToggleActions =': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2,': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2,,L1': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2, Jump': "ToggleActions: unknown action 'Jump'.",
+        'ToggleActions = TouchPad': "ToggleActions: unknown action 'TouchPad'.",
+        'ToggleActions = leftstickup': "ToggleActions only lists pad buttons, not 'LeftStickUp'.",
+        'ToggleActions = R2, ToggleFullscreen': "ToggleActions only lists pad buttons, not 'ToggleFullscreen'."
+    };
+    for (const [line, message] of Object.entries(cases)) {
+        const result = parseIni(line);
+        assert.deepEqual(result.errors, [{line: 1, message}], line);
+        assert.deepEqual(result.settings, [], line);
+        assert.throws(() => serialize([], [{name: 'ToggleActions', value: line.slice(line.indexOf('=') + 1)}]), {message}, line);
+    }
+    const repeated = parseIni('ToggleActions = R2\nToggleActions = L1\n');
+    assert.deepEqual(repeated.errors, [{line: 2, message: 'ToggleActions is set more than once.'}]);
+    assert.deepEqual(repeated.settings, [{name: 'ToggleActions', value: 'R2'}]);
 });
 
 test('settings from a documented configuration import and round trip', () => {
@@ -139,6 +199,14 @@ test('unknown, malformed and duplicate controller remaps report their line', () 
     assert.throws(() => serialize([], [], [{button: 'leftx', destination: 'Cross'}]), /Unknown SDL controller button/);
     assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross+Circle'}]), /expected a PlayStation button or None/);
     assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross'}, {button: 'A', destination: 'None'}]), /set more than once/);
+});
+
+test('binding errors name the action without the spaces around it', () => {
+    assert.deepEqual(parseIni('Cross = KEY:\n  Cross  = PAD:x\nFoo bar = KEY:A\n').errors, [
+        {line: 1, message: 'Cross: Unknown or empty KEY value.'},
+        {line: 2, message: 'Cross: Cross cannot use PAD.'},
+        {line: 3, message: 'Foo bar: Unknown or empty action.'}
+    ]);
 });
 
 test('setting names canonicalize like the native parser', () => {
@@ -209,6 +277,34 @@ test('a setting set more than once is refused like the native parser', () => {
     assert.deepEqual(result.settings, [{name: 'MouseSensitivity', value: '1'}]);
 });
 
+test('names fold case and trim spaces in ASCII only, like the native parser', () => {
+    const lines = [
+        'Trıangle = KEY:A',
+        'ſquare = KEY:A',
+        'Cross = KEY:ſpace',
+        'Cross = MıDDLE:Left',
+        ' Cross = KEY:A',
+        'Cross = KEY:A ',
+        'Cross　= KEY:A',
+        'MouseSensitivity = 2 ',
+        'MouseStickTarget = RıGHT',
+        'ToggleActions = Cross, Circle',
+        'SDLButton:a = Cross',
+        'SDLButton:a = Croſſ'
+    ];
+    for (const line of lines) {
+        const result = parseIni(line);
+        assert.equal(result.errors.length, 1, line);
+        assert.deepEqual([result.entries, result.settings, result.controllerRemaps], [[], [], []], line);
+    }
+    assert.equal(validate([binding('Trıangle', 'KEY', 'A')]).errors.length, 1);
+    assert.equal(validateSettings([{name: 'MouseSensitivity', value: '2 '}]).errors.length, 1);
+    const imported = parseIni('\tTRIANGLE\v=\fkey: a\r\nmousesensitivity =\v2\f\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, [binding('Triangle', 'KEY', 'A')]);
+    assert.deepEqual(imported.settings, [{name: 'MouseSensitivity', value: '2'}]);
+});
+
 test('serialize refuses invalid settings it is handed', () => {
     for (const configuration of [[{name: 'MouseSensitivity', value: '0'}], [{name: 'MadeUp', value: '1'}], [{name: 'MouseCurve', value: '9'}], [{name: 'MouseCurve', value: '1'}, {name: 'MouseCurve', value: '2'}], null]) {
         assert.throws(() => serialize([], configuration));
@@ -251,7 +347,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'ToggleBorderless', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -280,7 +376,7 @@ test('new utility actions import and round trip without accepting unsupported so
     }
 });
 
-test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+test('ShowPadStatus is an emulator action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
     assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');

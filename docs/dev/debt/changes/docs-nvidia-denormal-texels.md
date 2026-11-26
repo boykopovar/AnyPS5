@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Denormal 32_FLOAT texels](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp) (libSceAgcDriver) take the host sampler's bits. RDNA2 (gfx1036 with the [hardware oracle](../HW_ORACLE.md)) flushes a denormal texel to a zero of its sign in point-filtered and bilinear `image_sample_lz`, returns it unchanged from `image_gather4` and `image_load`, and does the same whether the shader's `FLOAT_MODE` flushes or keeps f32 denormals; AMD's Windows driver returns the same bits. NVIDIA's Windows driver (RTX 5080, 610.74) returns the texel unchanged from a point-filtered sample and flushes it to a zero of its sign in a gather, so a point sample of 0x00000001 gives 0x00000001 instead of 0, and a gather of 0x807fffff gives 0x80000000 instead of 0x807fffff. Bilinear samples and loads match RDNA2. Point samples of 16_FLOAT denormal texels return the same f32 values on all three; NVIDIA's bilinear 16_FLOAT results differ only by its half-precision filtering.

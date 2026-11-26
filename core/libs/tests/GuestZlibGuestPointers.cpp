@@ -1,4 +1,5 @@
 #include "prx/libSceZlib/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
 #include <cerrno>
@@ -15,6 +16,15 @@ void Require(bool valid, int line) {
 }
 
 #define Check(value) Require((value), __LINE__)
+
+struct RequestWriteInterrupted {};
+
+std::uintptr_t requestAddress = 0;
+int requestWrites = 0;
+
+void InterruptRequestWrite(std::uintptr_t address, std::size_t) {
+    if (address == requestAddress && ++requestWrites == 2) throw RequestWriteInterrupted{};
+}
 
 }
 
@@ -41,5 +51,27 @@ int main() {
     std::uint64_t completed = 0;
     std::uint32_t timeout = 0;
     Check(sceZlibWaitForDone(&completed, &timeout) == timedOut);
+
+    requestAddress = reinterpret_cast<std::uintptr_t>(&requestId);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(InterruptRequestWrite);
+    bool interrupted = false;
+    try {
+        sceZlibInflate(compressed.data(), compressed.size(), output.data(), output.size(), &requestId);
+    } catch (const RequestWriteInterrupted&) {
+        interrupted = true;
+    }
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Check(interrupted && requestWrites == 2);
+    Check(requestId == 0x1122334455667788);
+    Check(sceZlibWaitForDone(&completed, &timeout) == timedOut && completed == 0);
+
+    constexpr std::array<std::uint8_t, 8> empty{0x78, 0x9c, 0x03, 0, 0, 0, 0, 1};
+    Check(sceZlibInflate(empty.data(), empty.size(), output.data(), output.size(), &requestId) == 0);
+    Check(requestId != 0x1122334455667788);
+    Check(sceZlibWaitForDone(&completed, &timeout) == 0 && completed == requestId);
+    Check(sceZlibWaitForDone(&completed, &timeout) == timedOut);
+    std::uint32_t produced = 1;
+    std::int32_t status = -1;
+    Check(sceZlibGetResult(requestId, &produced, &status) == 0 && produced == 0 && status == 0);
     Check(sceZlibFinalize() == 0);
 }

@@ -205,6 +205,10 @@ int CompareObjects(const LibreSslAsn1Object* first, const LibreSslAsn1Object* se
     return std::memcmp(first->data, second->data, static_cast<std::size_t>(first->length));
 }
 
+const LibreSslAsn1Object& ObjectAt(int nid) {
+    return Entry(nid);
+}
+
 const LibreSslAsn1Object* ObjectByNid(int nid) {
     if (nid >= 0 && nid < ObjectCount) {
         const LibreSslAsn1Object& object = Entry(nid);
@@ -217,8 +221,9 @@ const LibreSslAsn1Object* ObjectByNid(int nid) {
 }
 
 int ObjectNid(const LibreSslAsn1Object* object) {
-    if (!object || object->length == 0) return 0;
+    if (!object) return 0;
     if (object->nid != 0) return object->nid;
+    if (object->length == 0) return 0;
     if (LibreSslAddedObjectsExist_nid_no_patch()) {
         if (object->length < 0 || object->length > std::numeric_limits<int>::max() >> 20)
             throw std::overflow_error("OBJ_obj2nid: encoded length overflows the added-object hash");

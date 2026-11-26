@@ -40,6 +40,7 @@ static bool SeedIs(const std::uint16_t* seed, std::uint16_t low, std::uint16_t m
 }
 
 static void CheckRand48() {
+    Require(drand48_nid_postfix() == 0x2bbb62dcp-32 && lrand48_nid_postfix() == 0x5ffcc9c0 && mrand48_nid_postfix() == 0x18abd015, "unseeded rand48 starts from the seed of srand48(0)");
     std::uint16_t seed[3] = {0x330e, 0xabcd, 0x1234};
     Require(erand48_nid_postfix(seed) == 0x657eb725p-32 && SeedIs(seed, 0x5101, 0xb725, 0x657e), "erand48 first value");
     Require(nrand48_nid_postfix(seed) == 1804928587 && SeedIs(seed, 0x6378, 0x0c96, 0xd72a), "nrand48 second value");

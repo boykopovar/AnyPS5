@@ -43,13 +43,6 @@ struct ErrnoGuard {
     ~ErrnoGuard() { errno = saved; }
 };
 
-bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return ok;
-}
-
 bool CopyGuestString(std::string& dst, const char* src, std::size_t maximum) {
     const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(src, maximum, dst);
@@ -64,7 +57,7 @@ struct Language {
 bool CopyLanguage(const char*& language, Language& local) {
     if (language == nullptr) return true;
     for (std::size_t index = 0; index < 3; ++index) {
-        if (!CopyGuestIn(&local.text[index], language + index, sizeof(char))) return false;
+        if (!GuestCopyIn_nid_no_patch(&local.text[index], language + index, sizeof(char))) return false;
         if (local.text[index] == '\0') break;
     }
     language = local.text;
@@ -112,10 +105,10 @@ int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal* h, uint32_t uri_type, con
     const ErrnoGuard errnoGuard;
     if (!h || uri_type != 0 || !source_details) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerSourceDetails details{};
-    if (!CopyGuestIn(&details, source_details, sizeof(details)) || !details.uri.name) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    if (!GuestCopyIn_nid_no_patch(&details, source_details, sizeof(details)) || !details.uri.name) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     if (details.uri.length > MaxSourceUriLength) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::string uri(details.uri.length, '\0');
-    if (details.uri.length > 0 && !CopyGuestIn(uri.data(), details.uri.name, details.uri.length)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    if (details.uri.length > 0 && !GuestCopyIn_nid_no_patch(uri.data(), details.uri.name, details.uri.length)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     return ToPlayer(h)->AddSource(uri, details.source_type);
 }
 
@@ -228,14 +221,14 @@ AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData* init) {
     if (!init) return nullptr;
     AvPlayerInitData localInit{};
     Language language;
-    if (!CopyGuestIn(&localInit, init, sizeof(localInit)) || !CopyLanguage(localInit.default_language, language)) return nullptr;
+    if (!GuestCopyIn_nid_no_patch(&localInit, init, sizeof(localInit)) || !CopyLanguage(localInit.default_language, language)) return nullptr;
     return new Player(localInit, VideoBufferCount(localInit.num_output_video_framebuffers));
 }
 
 int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInternal** handle) {
     if (!init_ex || !handle) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerInitDataEx localEx{};
-    if (!CopyGuestIn(&localEx, init_ex, sizeof(localEx))) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    if (!GuestCopyIn_nid_no_patch(&localEx, init_ex, sizeof(localEx))) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerInitData init{};
     init.memory_replacement = localEx.memory_replacement;
     init.file_replacement = localEx.file_replacement;
@@ -243,7 +236,7 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
     init.debug_level = localEx.debug_level;
     if (localEx.this_size >= Ps5InitDataExSize) {
         std::array<std::uint8_t, Ps5InitDataExSize> ps5Bytes{};
-        if (!CopyGuestIn(ps5Bytes.data(), init_ex, ps5Bytes.size())) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+        if (!GuestCopyIn_nid_no_patch(ps5Bytes.data(), init_ex, ps5Bytes.size())) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
         std::memcpy(&init.num_output_video_framebuffers, ps5Bytes.data() + Ps5VideoFrameBuffersOffset, sizeof(init.num_output_video_framebuffers));
         init.auto_start = ps5Bytes[Ps5AutoStartOffset] != 0;
     } else {
@@ -254,9 +247,7 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
     Language language;
     if (!CopyLanguage(init.default_language, language)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));
-    errno = savedErrno;
     if (!copied) {
         delete player;
         return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
@@ -282,9 +273,7 @@ int APS5_VABI sceAvPlayerPause(AvPlayerInternal* h) {
 int APS5_VABI sceAvPlayerPostInit(AvPlayerInternal* h, const AvPlayerPostInitData* post_init) {
     if (!h || !post_init) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     AvPlayerPostInitData localPost{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localPost, post_init, sizeof(localPost));
-    errno = savedErrno;
     if (!copied) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     return ToPlayer(h)->PostInit(localPost);
 }
@@ -330,9 +319,7 @@ int APS5_VABI sceAvPlayerStart(AvPlayerInternal* h) {
 int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal* handle, const StartInfo* startInfo) {
     if (handle == nullptr || startInfo == nullptr) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     StartInfo localStart{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localStart, startInfo, sizeof(localStart));
-    errno = savedErrno;
     if (!copied || localStart.size != sizeof(localStart)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     return ToPlayer(handle)->Start(localStart.startTime);
 }
@@ -350,6 +337,10 @@ int APS5_VABI sceAvPlayerStreamCount(AvPlayerInternal* h) {
 }
 
 namespace AvPlayer {
+
+void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t)) {
+    SetBufferWaitObserverForTest(observer);
+}
 
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds) {
     if (h) ToPlayer(h)->SetClockTimeForTest(milliseconds);
