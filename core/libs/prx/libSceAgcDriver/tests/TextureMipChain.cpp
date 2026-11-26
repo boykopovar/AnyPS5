@@ -731,6 +731,8 @@ void TestStorageExtraMipClears(const Context& context, TextureDetiler& detiler) 
             Recorder recorder(context);
             recorder.Activate();
             for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+                texture->WriteBack();
+                recorder.Sync();
                 const auto clearsBefore = mock.clears.size();
                 const auto barriersBefore = mock.transitions.size();
                 const char* refusal = nullptr;

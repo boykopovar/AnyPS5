@@ -312,9 +312,10 @@ void CheckPartialMipClears(AgcDriver::VulkanDevice& device) {
         descriptor.baseAddress = reinterpret_cast<std::uintptr_t>(block.Surface());
         auto expected = std::vector<std::byte>(block.registered, block.registered + block.bytes);
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        auto texture = StorageTexture::Create(context, *context.detiler, descriptor, 0u);
         Recorder recorder(context);
         recorder.Activate();
+        auto texture = StorageTexture::Create(context, *context.detiler, descriptor, 0u);
+        recorder.Sync();
         for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
             const auto& mip = geometry.mips[level];
             Require(!mip.tail, "linear mip clear fixture unexpectedly has a packed tail");
