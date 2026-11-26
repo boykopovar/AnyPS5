@@ -679,6 +679,130 @@ struct Client {
     ~Client() { if (context > 0) Require(sceHttp2Term(context) == 0, "client term"); }
 };
 
+using AsyncPhase = GuestSceHttp2Test::AsyncPhase;
+
+struct AsyncPhases {
+    int request;
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::array<bool, 5> blocked{};
+    std::array<bool, 5> seen{};
+    bool finished = false;
+
+    explicit AsyncPhases(int id) : request(id) {
+        GuestSceHttp2Test::SetAsyncPhaseHookForTests_nid_no_patch(Observe, this);
+    }
+    ~AsyncPhases() { GuestSceHttp2Test::SetAsyncPhaseHookForTests_nid_no_patch(nullptr, nullptr); }
+    static void Observe(int request, AsyncPhase phase, void* data) {
+        auto& self = *static_cast<AsyncPhases*>(data);
+        if (request != self.request) return;
+        const auto index = static_cast<std::size_t>(phase);
+        std::unique_lock lock(self.mutex);
+        self.seen[index] = true;
+        self.changed.notify_all();
+        Require(self.changed.wait_for(lock, std::chrono::seconds(5), [&] { return !self.blocked[index]; }), "async phase release deadline");
+    }
+    void Block(AsyncPhase phase) {
+        std::lock_guard lock(mutex);
+        blocked[static_cast<std::size_t>(phase)] = true;
+    }
+    void Release(AsyncPhase phase) {
+        std::lock_guard lock(mutex);
+        blocked[static_cast<std::size_t>(phase)] = false;
+        changed.notify_all();
+    }
+    void Wait(AsyncPhase phase) {
+        std::unique_lock lock(mutex);
+        Require(changed.wait_for(lock, std::chrono::seconds(5), [&] { return seen[static_cast<std::size_t>(phase)]; }), "async phase entry deadline");
+    }
+    void Finish() {
+        std::lock_guard lock(mutex);
+        finished = true;
+        changed.notify_all();
+    }
+    void WaitPendingOrFinished() {
+        std::unique_lock lock(mutex);
+        Require(changed.wait_for(lock, std::chrono::seconds(5), [&] { return seen[static_cast<std::size_t>(AsyncPhase::WaitPending)] || finished; }), "resolved waiter decision deadline");
+        Require(!finished, "resolved waiter remains pending while deletion owes abort");
+    }
+};
+
+void AsyncDeletionPublicationRace(int ssl) {
+    std::fprintf(stderr, "HTTP2 resolved wait during deletion publication gap\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr) == 0, "submit deletion-gap send");
+    server.WaitStage(2);
+    AsyncPhases phases(client.request);
+    phases.Block(AsyncPhase::WaitResolved);
+    phases.Block(AsyncPhase::Deleting);
+    Http2AsyncResult completion{};
+    auto waiter = std::async(std::launch::async, [&] {
+        const int result = sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr);
+        phases.Finish();
+        return result;
+    });
+    phases.Wait(AsyncPhase::WaitResolved);
+    auto deleting = std::async(std::launch::async, [&] { return sceHttp2DeleteRequest(client.request); });
+    phases.Wait(AsyncPhase::Deleting);
+    server.Release();
+    phases.Wait(AsyncPhase::Completed);
+    phases.Release(AsyncPhase::WaitResolved);
+    phases.WaitPendingOrFinished();
+    phases.Release(AsyncPhase::Deleting);
+    Require(deleting.wait_for(std::chrono::seconds(5)) == std::future_status::ready && deleting.get() == 0, "deletion publication completes");
+    Require(waiter.wait_for(std::chrono::seconds(5)) == std::future_status::ready && waiter.get() == 0, "resolved waiter receives deletion completion");
+    Require(completion.event_type == 0 && completion.req_id == client.request && completion.result == static_cast<int>(0x817b1080), "resolved waiter receives the send abort");
+    Require(sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr) == static_cast<int>(0x817b1100), "deleted request stays invalid after the resolved wait");
+    server.Join();
+}
+
+void AsyncSubmissionDeletionRace(int ssl, std::string_view mode) {
+    std::fprintf(stderr, "HTTP2 submission registration after deletion: %.*s\n", static_cast<int>(mode.size()), mode.data());
+    Require(mode == "send" || mode == "read" || mode == "offline", "known submission race mode");
+    Client client(ssl);
+    std::unique_ptr<Server> server;
+    if (mode == "read") {
+        server = std::make_unique<Server>(Mode::Normal);
+        client.Create(server->Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before read registration race");
+        server->Join();
+    } else {
+        client.Create("https://127.0.0.1:1/");
+    }
+    const char* previous = std::getenv("APS5_NET_DISCONNECTED");
+    const bool hadPrevious = previous != nullptr;
+    const std::string saved = previous ? previous : "";
+    if (mode == "offline") {
+#ifdef _WIN32
+        Require(::_putenv_s("APS5_NET_DISCONNECTED", "1") == 0, "enable offline submission path");
+#else
+        Require(::setenv("APS5_NET_DISCONNECTED", "1", 1) == 0, "enable offline submission path");
+#endif
+    }
+    AsyncPhases phases(client.request);
+    phases.Block(AsyncPhase::SubmissionResolved);
+    std::array<char, 8> buffer{};
+    auto submitting = std::async(std::launch::async, [&] {
+        return mode == "read" ? sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr)
+            : sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr);
+    });
+    phases.Wait(AsyncPhase::SubmissionResolved);
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete before async registration");
+    phases.Release(AsyncPhase::SubmissionResolved);
+    Require(submitting.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "submission rejection deadline");
+    Require(submitting.get() == static_cast<int>(0x817b1100), "submission after deletion returns invalid ID");
+    Require(buffer == std::array<char, 8>{}, "rejected read leaves its buffer untouched");
+    if (mode == "offline") {
+#ifdef _WIN32
+        Require(::_putenv_s("APS5_NET_DISCONNECTED", hadPrevious ? saved.c_str() : "") == 0, "restore offline state");
+#else
+        Require((hadPrevious ? ::setenv("APS5_NET_DISCONNECTED", saved.c_str(), 1) : ::unsetenv("APS5_NET_DISCONNECTED")) == 0, "restore offline state");
+#endif
+    }
+}
+
 void CookieBox(int ssl) {
     std::fprintf(stderr, "HTTP2 cookie box scenario\n");
     Server server(Mode::Cookie);
@@ -2882,7 +3006,11 @@ int main(int argc, char** argv) {
     SceSsl::Data root{reinterpret_cast<std::uint8_t*>(const_cast<char*>(RootPem)), sizeof(RootPem)};
     SceSsl::Data* authorities[] = {&root};
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
-    if (argc == 2 && std::string_view(argv[1]) == "--async-completed-zero") {
+    if (argc == 2 && std::string_view(argv[1]) == "--async-deletion-publication-race") {
+        AsyncDeletionPublicationRace(ssl);
+    } else if (argc == 3 && std::string_view(argv[1]) == "--async-submission-deletion-race") {
+        AsyncSubmissionDeletionRace(ssl, argv[2]);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--async-completed-zero") {
         Async(ssl, true);
     } else if (argc == 2 && std::string_view(argv[1]) == "--system-roots") {
         const auto list = std::filesystem::current_path() / sceKernelGetFsSandboxRandomWord() / "common" / "cert" / "CA_LIST.cer";
