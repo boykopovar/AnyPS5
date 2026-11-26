@@ -461,9 +461,10 @@ void FrameRecorder::seedUnwatchedPages(std::uint64_t address, std::span<const st
     for (std::size_t at = 0; at < bytes.size();) {
         const auto block = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes - (address + at) % FrameCaptureWriter::BlockBytes, bytes.size() - at));
         if (!GuestMemory::Watched(address + at, block)) {
-            for (std::size_t page = at; page < at + block; page += HostPageBytes) {
-                const auto size = std::min<std::size_t>(HostPageBytes, at + block - page);
+            for (std::size_t page = at; page < at + block;) {
+                const auto size = std::min<std::size_t>(HostPageBytes - (address + page) % HostPageBytes, at + block - page);
                 if (!GuestMemory::Watched(address + page, size)) GuestMemory::SeedComparedPages(address + page, bytes.subspan(page, size));
+                page += size;
             }
         }
         at += block;

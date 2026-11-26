@@ -781,6 +781,33 @@ void testGpuStoreRestoredUnwatched(const std::filesystem::path& directory) {
     check(lastDeltaByte(reader, page) == std::byte{0}, "the capture lost the title's restore of the bytes it recorded before a queue's store, so the replayed store survives");
 }
 
+void testUnalignedUnwatchedRange(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t Page = 4096;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    check(block != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaCommit_nid_postfix(block, Block, 0x04, Block);
+    std::fill_n(block, Block, std::byte{0});
+    AgcDriver::GuestMemory::Unwatch(address(block), Block);
+    check(!AgcDriver::GuestMemory::Watched(address(block), Block), "the range is write-watched");
+    auto* range = block + 32;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(range, 3 * Page, true, true, false);
+    }
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    auto* head = block + 64;
+    auto* interior = block + Page + 8;
+    *head = std::byte{0x41};
+    *interior = std::byte{0x42};
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(lastDeltaByte(reader, head) == std::byte{0x41}, "the capture lost a store to the first page of a range that starts inside it");
+    check(lastDeltaByte(reader, interior) == std::byte{0x42}, "the capture lost a store to a whole page inside a range that starts inside a page");
+}
+
 std::byte* comparedRacePage = nullptr;
 
 void unwatchComparedRacePage() {
@@ -1954,6 +1981,7 @@ int main(int argc, char** argv) {
         else if (mode == "store_after_unwatch") testStoreAfterUnwatch(directory);
         else if (mode == "compared_unwatch_race") testComparedUnwatchRace();
         else if (mode == "gpu_store_restored") testGpuStoreRestoredUnwatched(directory);
+        else if (mode == "unaligned_unwatched") testUnalignedUnwatchedRange(directory);
         else if (mode == "store_window") testStoreWindow(directory);
         else if (mode == "store_window_unwritten") testStoreWindowUnwritten(directory);
         else if (mode == "store_window_stopped") testStoreWindowStopped(directory);
