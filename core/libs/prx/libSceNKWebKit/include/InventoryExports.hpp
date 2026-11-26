@@ -212,7 +212,6 @@ void APS5_VABI WKCookieManagerGetHostnamesWithCookies();
 void APS5_VABI WKCookieManagerSetClient();
 void APS5_VABI WKCookieManagerStartObservingCookieChanges();
 void APS5_VABI WKCookieManagerStopObservingCookieChanges();
-int APS5_VABI WKFormSubmissionListenerContinue();
 int APS5_VABI WKFrameCreateFrameInfo();
 int APS5_VABI WKFrameGetMainResourceData();
 int APS5_VABI WKFrameGetPage();

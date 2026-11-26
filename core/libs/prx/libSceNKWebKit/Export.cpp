@@ -8677,10 +8677,6 @@ int APS5_VABI WKContextStopMemorySampler() {
 }
 
 
-int APS5_VABI WKFormSubmissionListenerContinue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameGetMainResourceData() {
     NotImplemented_nid_no_patch(__func__);
 }
