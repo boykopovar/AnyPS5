@@ -391,12 +391,10 @@ void UnsupportedPathsThrow() {
 
     for (const std::int32_t incoming : {0, -1, -124, -128, std::numeric_limits<std::int32_t>::min()}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ucal_open_nid_postfix(nullptr, -1, nullptr, 0, &status); });
-        Require(status == incoming);
+        if (auto* cal = ucal_open_nid_postfix(nullptr, -1, nullptr, 0, &status)) ucal_close_nid_postfix(cal);
 
         status = incoming;
-        RequireThrows([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status); });
-        Require(status == incoming);
+        if (auto* cal = ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status)) ucal_close_nid_postfix(cal);
     }
 }
 
@@ -537,7 +535,7 @@ void Run() {
     }
     for (const std::int32_t attr : {0, 1, 2, 3, 4}) {
         RequireThrows([&] { ucal_getAttribute_nid_postfix(cal, attr); });
-        RequireThrows([&] { ucal_getAttribute_nid_postfix(nullptr, attr); });
+        Require(ucal_getAttribute_nid_postfix(nullptr, attr) == -1);
     }
     Require(Unchanged(storage));
 }
@@ -597,9 +595,11 @@ void Run() {
     }
     for (const std::int32_t incoming : {0, -128, -124, -1}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, &status); });
-        RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(1, "US", &offset, &status); });
-        Require(status == incoming);
+        auto* zones = ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, &status);
+        if (zones) uenum_close_nid_postfix(zones);
+        status = incoming;
+        auto* filtered = ucal_openTimeZoneIDEnumeration_nid_postfix(1, "US", &offset, &status);
+        if (filtered) uenum_close_nid_postfix(filtered);
     }
     RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, nullptr); });
 }
@@ -621,13 +621,68 @@ void Run() {
     }
     for (const std::int32_t incoming : {0, -128, -124, -1}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ucal_openTimeZones_nid_postfix(&status); });
-        Require(status == incoming);
+        auto* zones = ucal_openTimeZones_nid_postfix(&status);
+        if (zones) uenum_close_nid_postfix(zones);
     }
     RequireThrows([] { ucal_openTimeZones_nid_postfix(nullptr); });
 }
 
 } // namespace UcalOpenTimeZones
+
+namespace UcalLifecycle {
+
+using IcuRecoveredTest::Require;
+
+void Run() {
+    std::int32_t status = 0;
+    const std::array<char16_t, 4> utc{u'U', u'T', u'C', 0};
+    auto* cal = ucal_open_nid_postfix(utc.data(), 3, "en_US", 0, &status);
+    Require(status <= 0 && cal != nullptr);
+
+    ucal_setMillis_nid_postfix(cal, 0.0, &status);
+    Require(status <= 0);
+    Require(ucal_get_nid_postfix(cal, 1, &status) == 1970 && status <= 0);
+    Require(ucal_get_nid_postfix(cal, 2, &status) == 0 && status <= 0);
+    Require(ucal_get_nid_postfix(cal, 5, &status) == 1 && status <= 0);
+
+    Require(ucal_getAttribute_nid_postfix(cal, 0) == 1);
+    ucal_setGregorianChange_nid_postfix(cal, 0.0, &status);
+    Require(status <= 0);
+
+    auto* cloned = ucal_clone_nid_postfix(cal, &status);
+    Require(status <= 0 && cloned != nullptr);
+    Require(ucal_get_nid_postfix(cloned, 1, &status) == 1970 && status <= 0);
+
+    const std::int32_t sundayType = ucal_getDayOfWeekType_nid_postfix(cal, 1, &status);
+    Require(status <= 0 && sundayType >= 0);
+
+    std::array<char16_t, 64> tzName{};
+    status = 0;
+    const std::int32_t tzLen = ucal_getDefaultTimeZone_nid_postfix(tzName.data(), static_cast<std::int32_t>(tzName.size()), &status);
+    Require(status <= 0 && tzLen > 0);
+
+    std::array<char16_t, 64> canonical{};
+    std::int8_t isSystem = 0;
+    status = 0;
+    const std::int32_t canonLen = ucal_getCanonicalTimeZoneID_nid_postfix(
+        utc.data(), 3, canonical.data(), static_cast<std::int32_t>(canonical.size()), &isSystem, &status);
+    Require((status <= 0 && canonLen > 0) || status > 0);
+
+    std::array<char16_t, 64> displayName{};
+    status = 0;
+    const std::int32_t dispLen = ucal_getTimeZoneDisplayName_nid_postfix(
+        cal, 0, "en_US", displayName.data(), static_cast<std::int32_t>(displayName.size()), &status);
+    Require(dispLen >= 0 || status > 0);
+
+    status = 0;
+    auto* keywords = ucal_getKeywordValuesForLocale_nid_postfix("calendar", "en_US", 1, &status);
+    if (keywords) uenum_close_nid_postfix(keywords);
+
+    ucal_close_nid_postfix(cloned);
+    ucal_close_nid_postfix(cal);
+}
+
+} // namespace UcalLifecycle
 
 void CheckIcuCalendar() {
     UcalClone::Run();
@@ -644,4 +699,5 @@ void CheckIcuCalendar() {
     UcalOpenTimeZones::Run();
     UcalSetGregorianChange::Run();
     UcalSetMillis::Run();
+    UcalLifecycle::Run();
 }

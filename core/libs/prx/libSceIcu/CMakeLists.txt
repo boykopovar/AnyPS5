@@ -803,6 +803,7 @@ endif()
 
 set(ICU_RECOVERED_SOURCES
     Calendar.cpp
+    CalendarBackend.cpp
     Collator.cpp
     DataMemoryClose.cpp
     DateFormat.cpp

@@ -23,16 +23,21 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/IcuNormalizationData.cpp.in ${ICU_NORMA
 add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/appendable.cpp
     ${ICU_SOURCE_DIR}/common/bmpset.cpp
+    ${ICU_SOURCE_DIR}/common/brkeng.cpp
+    ${ICU_SOURCE_DIR}/common/brkiter.cpp
     ${ICU_SOURCE_DIR}/common/bytesinkutil.cpp
     ${ICU_SOURCE_DIR}/common/bytestream.cpp
     ${ICU_SOURCE_DIR}/common/bytestrie.cpp
     ${ICU_SOURCE_DIR}/common/characterproperties.cpp
+    ${ICU_SOURCE_DIR}/common/chariter.cpp
     ${ICU_SOURCE_DIR}/common/charstr.cpp
     ${ICU_SOURCE_DIR}/common/cmemory.cpp
     ${ICU_SOURCE_DIR}/common/cstring.cpp
+    ${ICU_SOURCE_DIR}/common/dictbe.cpp
     ${ICU_SOURCE_DIR}/common/dictionarydata.cpp
     ${ICU_SOURCE_DIR}/common/edits.cpp
     ${ICU_SOURCE_DIR}/common/emojiprops.cpp
+    ${ICU_SOURCE_DIR}/common/filteredbrk.cpp
     ${ICU_SOURCE_DIR}/common/filterednormalizer2.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/errorcode.cpp
@@ -122,18 +127,61 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/localebuilder.cpp
     ${ICU_SOURCE_DIR}/common/locid.cpp
     ${ICU_SOURCE_DIR}/common/locdispnames.cpp
+    ${ICU_SOURCE_DIR}/common/locbased.cpp
+    ${ICU_SOURCE_DIR}/common/locdspnm.cpp
     ${ICU_SOURCE_DIR}/common/loclikely.cpp
     ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
     ${ICU_SOURCE_DIR}/common/locresdata.cpp
+    ${ICU_SOURCE_DIR}/common/locutil.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
+    ${ICU_SOURCE_DIR}/common/lstmbe.cpp
+    ${ICU_SOURCE_DIR}/common/rbbi.cpp
+    ${ICU_SOURCE_DIR}/common/rbbi_cache.cpp
+    ${ICU_SOURCE_DIR}/common/rbbidata.cpp
+    ${ICU_SOURCE_DIR}/common/rbbinode.cpp
+    ${ICU_SOURCE_DIR}/common/rbbirb.cpp
+    ${ICU_SOURCE_DIR}/common/rbbiscan.cpp
+    ${ICU_SOURCE_DIR}/common/rbbisetb.cpp
+    ${ICU_SOURCE_DIR}/common/rbbistbl.cpp
+    ${ICU_SOURCE_DIR}/common/rbbitblb.cpp
+    ${ICU_SOURCE_DIR}/common/resbund.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
+    ${ICU_SOURCE_DIR}/common/serv.cpp
+    ${ICU_SOURCE_DIR}/common/servlk.cpp
+    ${ICU_SOURCE_DIR}/common/servlkf.cpp
+    ${ICU_SOURCE_DIR}/common/servls.cpp
+    ${ICU_SOURCE_DIR}/common/servnotf.cpp
+    ${ICU_SOURCE_DIR}/common/servrbf.cpp
+    ${ICU_SOURCE_DIR}/common/servslkf.cpp
+    ${ICU_SOURCE_DIR}/common/sharedobject.cpp
+    ${ICU_SOURCE_DIR}/common/simpleformatter.cpp
+    ${ICU_SOURCE_DIR}/common/static_unicode_sets.cpp
+    ${ICU_SOURCE_DIR}/common/stringtriebuilder.cpp
+    ${ICU_SOURCE_DIR}/common/ubrk.cpp
+    ${ICU_SOURCE_DIR}/common/ucasemap.cpp
+    ${ICU_SOURCE_DIR}/common/ucasemap_titlecase_brkiter.cpp
+    ${ICU_SOURCE_DIR}/common/ucharstriebuilder.cpp
+    ${ICU_SOURCE_DIR}/common/uchriter.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
+    ${ICU_SOURCE_DIR}/common/ucurr.cpp
+    ${ICU_SOURCE_DIR}/common/uhash.cpp
+    ${ICU_SOURCE_DIR}/common/uhash_us.cpp
+    ${ICU_SOURCE_DIR}/common/ulist.cpp
     ${ICU_SOURCE_DIR}/common/uloc.cpp
     ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
     ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
+    ${ICU_SOURCE_DIR}/common/unifiedcache.cpp
+    ${ICU_SOURCE_DIR}/common/unistr_titlecase_brkiter.cpp
     ${ICU_SOURCE_DIR}/common/uresbund.cpp
     ${ICU_SOURCE_DIR}/common/uresdata.cpp
+    ${ICU_SOURCE_DIR}/common/usetiter.cpp
+    ${ICU_SOURCE_DIR}/common/ustack.cpp
+    ${ICU_SOURCE_DIR}/common/ustr_titlecase_brkiter.cpp
+    ${ICU_SOURCE_DIR}/common/ustrcase.cpp
+    ${ICU_SOURCE_DIR}/common/ustrcase_locale.cpp
     ${ICU_SOURCE_DIR}/common/ustrenum.cpp
+    ${ICU_SOURCE_DIR}/common/util.cpp
+    ${ICU_SOURCE_DIR}/common/util_props.cpp
     ${ICU_SOURCE_DIR}/common/utypes.cpp)
 if(WIN32)
     target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)
@@ -168,6 +216,54 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 target_sources(icu_i18n PRIVATE
+    ${ICU_SOURCE_DIR}/i18n/astro.cpp
+    ${ICU_SOURCE_DIR}/i18n/basictz.cpp
+    ${ICU_SOURCE_DIR}/i18n/buddhcal.cpp
+    ${ICU_SOURCE_DIR}/i18n/calendar.cpp
+    ${ICU_SOURCE_DIR}/i18n/cecal.cpp
+    ${ICU_SOURCE_DIR}/i18n/chnsecal.cpp
+    ${ICU_SOURCE_DIR}/i18n/coptccal.cpp
+    ${ICU_SOURCE_DIR}/i18n/dangical.cpp
+    ${ICU_SOURCE_DIR}/i18n/decContext.cpp
+    ${ICU_SOURCE_DIR}/i18n/decNumber.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-bignum.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-bignum-dtoa.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-cached-powers.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-double-to-string.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-fast-dtoa.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-string-to-double.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-strtod.cpp
+    ${ICU_SOURCE_DIR}/i18n/dtrule.cpp
+    ${ICU_SOURCE_DIR}/i18n/erarules.cpp
+    ${ICU_SOURCE_DIR}/i18n/ethpccal.cpp
+    ${ICU_SOURCE_DIR}/i18n/fmtable.cpp
+    ${ICU_SOURCE_DIR}/i18n/format.cpp
+    ${ICU_SOURCE_DIR}/i18n/gregocal.cpp
+    ${ICU_SOURCE_DIR}/i18n/gregoimp.cpp
+    ${ICU_SOURCE_DIR}/i18n/hebrwcal.cpp
+    ${ICU_SOURCE_DIR}/i18n/indiancal.cpp
+    ${ICU_SOURCE_DIR}/i18n/islamcal.cpp
+    ${ICU_SOURCE_DIR}/i18n/iso8601cal.cpp
+    ${ICU_SOURCE_DIR}/i18n/japancal.cpp
+    ${ICU_SOURCE_DIR}/i18n/measure.cpp
+    ${ICU_SOURCE_DIR}/i18n/number_decimalquantity.cpp
+    ${ICU_SOURCE_DIR}/i18n/number_utils.cpp
+    ${ICU_SOURCE_DIR}/i18n/numsys.cpp
+    ${ICU_SOURCE_DIR}/i18n/olsontz.cpp
+    ${ICU_SOURCE_DIR}/i18n/persncal.cpp
+    ${ICU_SOURCE_DIR}/i18n/rbtz.cpp
+    ${ICU_SOURCE_DIR}/i18n/simpletz.cpp
+    ${ICU_SOURCE_DIR}/i18n/taiwncal.cpp
+    ${ICU_SOURCE_DIR}/i18n/timezone.cpp
+    ${ICU_SOURCE_DIR}/i18n/tzfmt.cpp
+    ${ICU_SOURCE_DIR}/i18n/tzgnames.cpp
+    ${ICU_SOURCE_DIR}/i18n/tznames.cpp
+    ${ICU_SOURCE_DIR}/i18n/tznames_impl.cpp
+    ${ICU_SOURCE_DIR}/i18n/tzrule.cpp
+    ${ICU_SOURCE_DIR}/i18n/tztrans.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucal.cpp
+    ${ICU_SOURCE_DIR}/i18n/vtzone.cpp
+    ${ICU_SOURCE_DIR}/i18n/zonemeta.cpp
     ${ICU_SOURCE_DIR}/i18n/ufieldpositer.cpp
     ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
     ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
