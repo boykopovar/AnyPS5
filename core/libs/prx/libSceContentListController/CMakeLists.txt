@@ -1,0 +1,15 @@
+add_library(libSceContentListController SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceContentListController PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceContentListController)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_content_list_controller_tests ${LIBS_INCLUDE_DIR}/tests/GuestContentListController.cpp)
+    target_include_directories(guest_content_list_controller_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_content_list_controller_tests PRIVATE libSceContentListController libc)
+    configure_windows_unwind(guest_content_list_controller_tests)
+    add_test(NAME guest_content_list_controller COMMAND guest_content_list_controller_tests)
+    if(WIN32)
+        set_tests_properties(guest_content_list_controller PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceContentListController>")
+    endif()
+endif()
