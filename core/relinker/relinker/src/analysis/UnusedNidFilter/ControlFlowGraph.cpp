@@ -215,7 +215,34 @@ std::vector<VirtualAddress> ExtendControlFlowGraph(std::span<const std::uint8_t>
     if (reached.size() != text.size()) throw RelinkerException("CFG: the reached map does not cover the text", textVaddr);
     std::vector<VirtualAddress> added;
     walkGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reached, nullptr, static_cast<std::size_t>(std::count(reached.begin(), reached.end(), Reached)), added, progress, isData, strictFallThrough);
-    std::sort(added.begin(), added.end());
+
+    bool usedBitmap = false;
+    if (added.size() >= 1'000'000 && added.size() >= text.size() / 8) {
+        std::vector<bool> present(text.size());
+        usedBitmap = true;
+
+        for (const auto address : added) {
+            const auto offset = address - textVaddr;
+            if (offset >= present.size() || present[offset]) {
+                usedBitmap = false;
+                break;
+            }
+            present[offset] = true;
+        }
+
+        if (usedBitmap) {
+            auto destination = added.begin();
+            for (std::size_t offset = 0; offset < present.size(); ++offset) {
+                if (present[offset]) {
+                    *destination++ = textVaddr + offset;
+                }
+            }
+        }
+    }
+
+    if (!usedBitmap) {
+        std::sort(added.begin(), added.end());
+    }
     return added;
 }
 
