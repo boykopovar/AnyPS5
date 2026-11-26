@@ -312,6 +312,7 @@ int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) 
     GuestSizeRec* created = &entry->rec;
     if (!CopyGuestOut(asize, &created, sizeof(created))) {
         FT_Done_Size(host);
+        owner->sizes.erase(entry);
         SyncSizePointer_nid_no_patch(*owner);
         return FT_Err_Invalid_Argument;
     }
