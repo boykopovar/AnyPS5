@@ -1484,7 +1484,12 @@ int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_
         if (!WriteGuest(info, Ngs2VoiceMatrixInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         return SCE_NGS2_OK;
     }
-    if (!WriteGuest(&info->num_levels, static_cast<std::uint32_t>(levels->size())) || !WriteGuestBytes(info->levels, levels->data(), levels->size() * sizeof(info->levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    const auto levelCount = static_cast<std::uint32_t>(levels->size());
+    auto* matrix = reinterpret_cast<char*>(info);
+    if (!WriteGuestBytes(matrix, &levelCount, sizeof(levelCount)) ||
+        !WriteGuestBytes(matrix + offsetof(Ngs2VoiceMatrixInfo, levels), levels->data(), levels->size() * sizeof(levels->front()))) {
+        return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    }
     return SCE_NGS2_OK;
 }
 
