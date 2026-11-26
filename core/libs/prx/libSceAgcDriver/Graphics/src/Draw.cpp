@@ -3054,14 +3054,9 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
     CaptureTrace::Log("input-capture draw=%llu batch=%llu target=%llx ranges=%zu bytes=%zu", draw, batch, static_cast<unsigned long long>(target), samples.size(), total);
     if (samples.empty()) return;
     auto readback = std::make_shared<Buffer>(context, total, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-    const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
-    for (const auto& sample : samples) {
-        const VkBufferCopy region{sample.sourceOffset, sample.offset, sample.expected.size()};
-        copy(commands, sample.source, readback->Handle(), 1, &region);
-    }
-    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
-    recorder.OnComplete([draw, batch, target, readback, samples = std::move(samples)] {
+    const auto kept = std::make_shared<const std::vector<Sample>>(std::move(samples));
+    recorder.OnComplete([draw, batch, target, readback, kept] {
+        const auto& samples = *kept;
         const auto actual = readback->Bytes();
         std::size_t differences = 0;
         for (const auto& sample : samples) {
@@ -3079,6 +3074,13 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
         }
         CaptureTrace::Log("input-result draw=%llu batch=%llu ranges=%zu mismatched=%zu", draw, batch, samples.size(), differences);
     });
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    for (const auto& sample : *kept) {
+        const VkBufferCopy region{sample.sourceOffset, sample.offset, sample.expected.size()};
+        copy(commands, sample.source, readback->Handle(), 1, &region);
+    }
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
 }
 
 bool WriteOnlyPasses() {
