@@ -1,5 +1,6 @@
 import contextlib
 import io
+from multiprocessing.connection import Listener
 import os
 from pathlib import Path
 import sys
@@ -83,6 +84,15 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("controller command path must be a regular file", result.stderr)
                 self.assertTrue(stat.S_ISFIFO(self.path.stat().st_mode))
+
+    @unittest.skipUnless(os.name == "nt", "requires a Windows named pipe")
+    def test_queue_and_preview_reject_a_windows_named_pipe(self):
+        for script in ("pad_input.py", "preview_pad_input.py"):
+            with self.subTest(script=script), Listener(family="AF_PIPE") as pipe:
+                result = subprocess.run([sys.executable, str(Path(pad_input.__file__).with_name(script)),
+                                         pipe.address, "cross"], capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("controller command path must be a regular file", result.stderr)
 
     def test_malformed_timeline_bodies_do_not_exhaust_sequence(self):
         maximum = 2**64 - 1

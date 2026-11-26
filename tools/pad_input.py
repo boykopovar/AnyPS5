@@ -162,8 +162,6 @@ def main(argv=None):
         mask = button_mask(args.button)
     except argparse.ArgumentTypeError as error:
         parser.error(str(error))
-    if args.path.is_dir():
-        parser.error(f"{args.path} is a directory")
     if not args.path.parent.is_dir():
         parser.error(f"directory does not exist: {args.path.parent}")
     if not 1 <= args.hold_ms <= 5000:
@@ -181,6 +179,10 @@ def main(argv=None):
         sticks = "".join(f" {axis}" for axis in axes)
     try:
         sequence = next_sequence(args.path)
+    except (IsADirectoryError, PermissionError):
+        if args.path.is_dir():
+            parser.error(f"{args.path} is a directory")
+        raise
     except ValueError as error:
         parser.error(str(error))
     metadata = None
