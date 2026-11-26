@@ -617,6 +617,11 @@ int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd) {
     return 1;
 }
 
+void APS5_VABI SSL_set_bio_nid_postfix(LibreSslSsl* ssl, void* rbio, void* wbio) {
+    if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
+    SetBio(*ssl, static_cast<LibreSsl::Bio*>(rbio), static_cast<LibreSsl::Bio*>(wbio));
+}
+
 int APS5_VABI SSL_get_fd_nid_postfix(const LibreSslSsl* ssl) {
     if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
     return LibreSslBioDescriptor_nid_no_patch(static_cast<const LibreSsl::Bio*>(ssl->rbio));

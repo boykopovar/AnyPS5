@@ -963,7 +963,7 @@ int APS5_VABI SSL_pending_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_read_nid_postfix(LibreSslSsl* ssl, void* buffer, int length);
 int APS5_VABI SSL_select_next_proto_nid_postfix(unsigned char** output, unsigned char* outputLength, const unsigned char* peer, std::uint32_t peerLength, const unsigned char* supported, std::uint32_t supportedLength);
 int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void);
-int APS5_VABI SSL_set_bio_nid_postfix(void);
+void APS5_VABI SSL_set_bio_nid_postfix(LibreSslSsl* ssl, void* rbio, void* wbio);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd);
