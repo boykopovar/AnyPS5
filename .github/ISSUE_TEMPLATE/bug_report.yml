@@ -54,7 +54,7 @@ body:
     id: log
     attributes:
       label: Log
-      description: The lines around the stop. Setting ANYPS5_LOG_FILE=<path> before the run saves the whole log to a file you can attach.
+      description: Paste the lines around the stop. For a converted game, set `ANYPS5_LOG_FILE` to a path before launch to copy its stdout and stderr to that file.
       render: text
     validations:
       required: true
@@ -62,4 +62,4 @@ body:
     id: notes
     attributes:
       label: What was checked
-      description: Other devices or commits tried, and whether it is the same every run. Attach the full log and screenshots here.
+      description: Other devices or commits tried, and whether it happens every run. If you have a run report, attach the [redacted bug report bundle](https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#bug-report-bundle). Attach screenshots if relevant.
