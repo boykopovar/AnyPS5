@@ -3803,6 +3803,7 @@ void Recorder::CountRetainedBytes(const void* owner, std::size_t bytes) {
 }
 
 void Recorder::ForgetKeptBytes(const void* owner) {
+    GuestMemory::AssertGpuLockHeld("Recorder::ForgetKeptBytes");
     if (owner == nullptr) return;
     const auto forget = [&](Batch& batch) {
         const auto found = batch.keptOwners.find(owner);
