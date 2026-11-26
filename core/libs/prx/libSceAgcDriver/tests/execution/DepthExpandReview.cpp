@@ -653,7 +653,7 @@ void SecondSlice(TexelReader& reader) {
     std::puts("  slice 0 of the write base still holds what the CPU wrote");
 }
 
-Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, const std::string& what) {
+Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, const std::string& what, bool readStencil = true) {
     const auto live = NewSurfaces();
     auto draw = DepthDrawn(live, Gradient, stencil ? StencilInfo : NoStencilInfo);
     draw.width = width;
@@ -663,14 +663,14 @@ Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, 
         draw.stencilReference = StencilValue | (0xffu << 8u) | (0xffu << 16u);
     }
     Submit(Draw(live, draw), what + ": depth draw into the surface at the write base");
-    if (stencil) RequireSame(reader.Read(live.stencil, Format8Uint, what + ": stencil at the write base"), std::vector<std::uint32_t>(Texels, StencilValue), what + ": stencil drawn at the write base");
+    if (stencil && readStencil) RequireSame(reader.Read(live.stencil, Format8Uint, what + ": stencil at the write base"), std::vector<std::uint32_t>(Texels, StencilValue), what + ": stencil drawn at the write base");
     return live;
 }
 
-void LiveSurfaceCovered(TexelReader& reader, bool liveStencil) {
-    const auto name = std::string(liveStencil ? "covered live depth and stencil surface" : "covered live depth surface");
-    std::puts(liveStencil ? "an expand whose write base holds a live depth and stencil surface it covers whole" : "an expand whose write base holds a live depth-only surface it covers whole");
-    const auto live = NewLiveSurface(reader, liveStencil, Width, name);
+void LiveSurfaceCovered(TexelReader& reader, bool liveStencil, bool readStencil = true) {
+    const auto name = std::string(!liveStencil ? "covered live depth surface" : readStencil ? "covered live depth and stencil surface" : "covered live depth and unread stencil surface");
+    std::puts(!liveStencil ? "an expand whose write base holds a live depth-only surface it covers whole" : readStencil ? "an expand whose write base holds a live depth and stencil surface it covers whole" : "an expand whose write base holds a live depth and stencil surface it covers whole, its stencil plane never read before the expand");
+    const auto live = NewLiveSurface(reader, liveStencil, Width, name, readStencil);
     const auto surfaces = NewSurfaces();
     Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), name + ": depth draw into the read surface");
     Submit(Draw(surfaces, Expand(live.depth)), name + ": DB expand");
@@ -787,6 +787,7 @@ int main(int argc, char** argv) {
         StencilMoved(reader, false);
         LiveSurfaceCovered(reader, false);
         LiveSurfaceCovered(reader, true);
+        LiveSurfaceCovered(reader, true, false);
         AgcDriverShutdown_nid_postfix();
         std::puts("depth expand review tests passed");
         return 0;
