@@ -40,6 +40,15 @@ static void* FindSymbol(void* module, const char* name) {
 #endif
 }
 
+#ifndef _WIN32
+static bool OwnedByLoadedImage(void* symbol, const char* imageName) {
+    Dl_info info;
+    if (dladdr(symbol, &info) == 0 || info.dli_fname == nullptr) return false;
+    const char* slash = std::strrchr(info.dli_fname, '/');
+    return std::strcmp(slash ? slash + 1 : info.dli_fname, imageName) == 0;
+}
+#endif
+
 int main(int argc, char** argv) {
     Require(argc == 3);
     const auto directory = std::filesystem::absolute(argv[1]);
@@ -384,10 +393,17 @@ int main(int argc, char** argv) {
         const auto symbol = patched
             ? Nid::ComputeNid(entry.name, "")
             : std::string(entry.name) + entry.suffix + "_nid_postfix";
-        if (FindSymbol(module, symbol.c_str()) == nullptr) {
+        void* found = FindSymbol(module, symbol.c_str());
+        if (found == nullptr) {
             std::fprintf(stderr, "libSceLibcInternal.prx does not export %s (%s)\n", entry.name, symbol.c_str());
             return 1;
         }
+#ifndef _WIN32
+        if (!OwnedByLoadedImage(found, "libSceLibcInternal.prx")) {
+            std::fprintf(stderr, "%s (%s) resolved through a dependency rather than libSceLibcInternal.prx itself\n", entry.name, symbol.c_str());
+            return 1;
+        }
+#endif
     }
     const auto absent = patched ? Nid::ComputeNid("sceLibcInternalExportParityProbe", "") : std::string("sceLibcInternalExportParityProbe");
     if (FindSymbol(module, absent.c_str()) != nullptr) {

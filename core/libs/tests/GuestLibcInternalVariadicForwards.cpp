@@ -46,6 +46,15 @@ int main() {
     Require(securedScan == 2 && ivalue == 42 && std::strcmp(svalue, "text") == 0,
         "sscanf_s dropped the pointer or size variadic arguments");
 
+    {
+        char directbuf[8] {};
+        char wrapbuf[8] {};
+        const int directNarrow = sscanf_s_nid_postfix("abc", "%3c", directbuf, static_cast<unsigned int>(2));
+        const int wrapNarrow = sscanf_s_nid_disambig1_nid_postfix("abc", "%3c", wrapbuf, static_cast<unsigned int>(2));
+        Require(directNarrow == wrapNarrow && directbuf[0] == wrapbuf[0] && directbuf[1] == wrapbuf[1],
+            "sscanf_s wrapper diverges from the direct provider on a narrow %c conversion");
+    }
+
     char16_t wide[64] {};
     const int wideWritten = swprintf_nid_disambig1_nid_postfix(wide, 64, u"%d|%f", 42, 1.5);
     Require(wideWritten == 11 && std::char_traits<char16_t>::compare(wide, u"42|1.500000", 11) == 0 && wide[11] == 0,
@@ -54,8 +63,8 @@ int main() {
     const int echoed = printf_nid_disambig1_nid_postfix("%d|%s|%f\n", 1, "x", 2.5);
     Require(echoed == 13, "printf dropped or mangled variadic arguments");
 
-    const std::filesystem::path tempPath = std::filesystem::temp_directory_path()
-        / ("libc_internal_variadic_forwards-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp");
+    const std::filesystem::path tempPath = "libc_internal_variadic_forwards-"
+        + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
     FileStream* stream = fopen_nid_postfix(tempPath.string().c_str(), "w+");
     Require(stream != nullptr, "fopen did not create the probe stream");
     const int streamWritten = fprintf_nid_disambig1_nid_postfix(stream, "%d %s %f", 11, "str", 3.25);

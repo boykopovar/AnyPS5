@@ -5,6 +5,8 @@
 #include "prx/libSceLibcInternal/include/Forwards.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
+extern "C" int ScanfStringSecureVaList_nid_no_patch(const char* buffer, const char* format, VaList* args);
+
 #ifdef _WIN32
 #define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
 #define APS5_VA_END() __builtin_sysv_va_end(args)
@@ -1079,7 +1081,7 @@ int APS5_VABI sscanf_nid_disambig1_nid_postfix(const char* input, const char* fo
 
 int APS5_VABI sscanf_s_nid_disambig1_nid_postfix(const char* buffer, const char* format, ...) {
     APS5_VA_BEGIN(format);
-    const int result = vsscanf_s_nid_postfix(buffer, format, reinterpret_cast<VaList*>(args));
+    const int result = ScanfStringSecureVaList_nid_no_patch(buffer, format, reinterpret_cast<VaList*>(args));
     APS5_VA_END();
     return result;
 }

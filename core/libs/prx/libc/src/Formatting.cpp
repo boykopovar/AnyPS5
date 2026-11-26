@@ -920,10 +920,15 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
 
 #ifdef _WIN32
 
+extern "C" int ScanfStringSecureVaList_nid_no_patch(const char* buffer, const char* format, VaList* args) {
+    LibcDetail::FormatArguments arguments(args);
+    return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
+}
+
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return __builtin_va_arg(args, void*); }, [&] { return __builtin_va_arg(args, unsigned int); });
+    const int result = ScanfStringSecureVaList_nid_no_patch(buffer, format, reinterpret_cast<VaList*>(args));
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -933,7 +938,7 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return va_arg(args, void*); }, [&] { return va_arg(args, unsigned int); });
+    const int result = ScanfStringSecureVaList_nid_no_patch(buffer, format, reinterpret_cast<VaList*>(args));
     va_end(args);
     return result;
 }
