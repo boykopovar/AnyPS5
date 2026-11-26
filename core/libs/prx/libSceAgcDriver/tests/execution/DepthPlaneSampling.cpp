@@ -795,6 +795,11 @@ int main(int argc, char** argv) {
             std::puts("depth plane epoch exit tests passed");
             return 0;
         }
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-surface") {
+            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
+            std::puts("depth surface epoch exit tests passed");
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {
             EpochExitRetiredSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
             std::puts("retired depth surface epoch exit tests passed");
