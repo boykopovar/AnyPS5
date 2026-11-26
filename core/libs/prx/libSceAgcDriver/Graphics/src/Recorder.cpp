@@ -4743,7 +4743,6 @@ bool Recorder::AfterRecordedWork(std::function<void()> action) {
     batch.completions.push_back(std::move(action));
     ++batch.completionLabelCount;
     completionLabels.fetch_add(1, std::memory_order_acq_rel);
-        GuestMemory::BreakProofs(GuestMemory::ProofBreakSite::RecordedWork);
     if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
         pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
     }

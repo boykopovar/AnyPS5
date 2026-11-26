@@ -5347,6 +5347,25 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
     return GuestMemory::Watched(address, bytes);
 }
 
+void SettleOwnImports(const Context& context, std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    ensurePinWaiter();
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device) return;
+    if (importsStale(context, state)) {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        refreshImports(context, state, lease);
+    }
+    settleImportsNow(context, state, address, address + bytes);
+#else
+    static_cast<void>(context);
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
 #ifndef _WIN32
 namespace {
 

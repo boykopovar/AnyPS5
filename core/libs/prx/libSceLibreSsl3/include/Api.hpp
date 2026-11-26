@@ -316,8 +316,8 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsi
     const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const LibreSsl3::DigestMethod* maskDigest,
     int saltLength);
 int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa);
-int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void);
-int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void);
+int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(LibreSslCtx* context, LibreSsl3X509* certificate);
+int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(LibreSslCtx* context);
 int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(LibreSsl3SslCtx* context, std::uint16_t version);
 int APS5_VABI SSL_CTX_set_min_proto_version_nid_postfix(LibreSsl3SslCtx* context, std::uint16_t version);
 int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSslCtx* ctx);

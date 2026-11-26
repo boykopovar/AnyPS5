@@ -155,6 +155,8 @@ The executable, registry, Windows import diagnostics, icon and desktop entry out
 
 On Linux and macOS, replacing a regular output file requires write access to its directory. If creating the temporary file or replacing the old file fails, you get an error. The previous file is never overwritten in place.
 
+On Windows, the relinker writes regular, unencrypted outputs to a temporary file before replacing the destination. A write, flush or close failure preserves the previous output. Replacing a regular file requires write access to the destination and permission to create and replace files in its directory. If a replacement error prevents restoring the original name, the error reports the path where the previous output is retained. If the process is terminated during a write, temporary files or recovery directories beginning with `.anyps5-` can remain beside the destination. Check them for a recoverable previous output before removing them.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
@@ -221,6 +223,10 @@ python3 tools/validate_patch_catalog.py --catalog <directory>
 ```
 
 The validator checks the index format, duplicate JSON keys, required and optional fields, relative patch and target paths, patch-file presence, TOML structure, target-hash coverage, and duplicate `id` entries that could match the same title build. Entries with the same `id` and content version may coexist when a shared target has different hashes, making their matches mutually exclusive. To publish a new `revision` for the same build, remove the old entry. An empty `entries` array is valid and reports `0 entries valid`.
+
+Use `--json` to get the per-entry results on stdout with `entries`, `total` and `invalid`. Each entry includes its
+one-based index, patch path when available, validation status and error. If the index cannot be read or validated,
+the JSON instead contains a top-level `error`.
 
 The validator reports each invalid entry and exits `2` if any entry is invalid; a valid catalog exits `0`. This is a structural check: the relinker accepts a stricter subset of TOML, and only `relinker --verify-patches` with the title files can establish whether the patch parses and matches those files. The validator does not read target files, download anything, or apply patches.
 

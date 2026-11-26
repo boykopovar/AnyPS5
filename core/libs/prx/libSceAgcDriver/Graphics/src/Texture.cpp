@@ -3022,11 +3022,16 @@ std::uint64_t StorageTexture::LinearImportRetiles() {
     return linearImportRetiles.load(std::memory_order_relaxed);
 }
 
+bool StorageTexture::OtherPendingOverlaps() const {
+    return otherPendingOverlaps();
+}
+
 bool StorageTexture::otherPendingOverlaps() const {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); };
-    return std::any_of(pending.textures.begin(), pending.textures.end(), other) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
+    const auto owed = [&](const StorageTexture* texture) { return other(texture) && texture->pendingUnitInside(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); };
+    return std::any_of(pending.textures.begin(), pending.textures.end(), owed) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
 }
 
 const char* StorageTexture::RefreshObligation(std::uint32_t first, std::uint32_t count) const {

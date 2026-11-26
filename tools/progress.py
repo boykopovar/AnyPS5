@@ -61,6 +61,8 @@ ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
+_VABI_FUNCTION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
+_VABI_DECLARATION = re.compile(_VABI_FUNCTION.pattern + r"[^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
@@ -74,6 +76,7 @@ STUB_WRAPPER = re.compile(
     r"^(?=[\w:<>,\s*&\[\]]*\()[ \t]*(?:static\s+)?(?:\[\[noreturn\]\]\s+)?(?:(?!APS5_VABI)[\w:<>,\s*&])+?[\s*&]"
     r"(?!(?:if|while|for|switch|catch|return|else)\b)(\w+)\s*\([^;{]*\)\s*"
     r"(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{", re.M)
+_WRAPPER_CANDIDATE = re.compile(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>*&\s]+?)?\{")
 DISCARD = re.compile(r"\(void\)\s*\w+\s*;")
 EMPTY_RETURN = re.compile(r"return\s*;")
 CONST_RETURN = re.compile(r"return\s+(?:[+-]?\s*(?:0[xX][0-9a-fA-F]+|\d+)[uUlL]*|\w+|\"(?:\\.|[^\"\\])*\")\s*;")
@@ -250,6 +253,28 @@ def code(text):
 
 
 def body_end(text, start):
+    if start < len(text) and text[start] == "{":
+        close = text.find("}", start + 1)
+        if close < 0:
+            return len(text)
+        nxt = text.find("{", start + 1, close)
+        if nxt < 0:
+            return close
+        depth = 2
+        pos = nxt + 1
+        while True:
+            nxt = text.find("{", pos, close)
+            if nxt >= 0:
+                depth += 1
+                pos = nxt + 1
+                continue
+            depth -= 1
+            if depth == 0:
+                return close
+            pos = close + 1
+            close = text.find("}", pos)
+            if close < 0:
+                return len(text)
     depth = 0
     for brace in BRACE.finditer(text, start):
         if brace.group() == "{":
@@ -266,14 +291,56 @@ def brace_spans(text, pattern):
     return [(match.end() - 1, body_end(text, match.end() - 1)) for match in finder]
 
 
+def _anon_namespace_spans(text):
+    spans = []
+    pos = 0
+    length = len(text)
+    while True:
+        idx = text.find("namespace", pos)
+        if idx < 0:
+            return spans
+        end = idx + 9
+        if idx == 0 or not (text[idx - 1].isalnum() or text[idx - 1] == "_"):
+            cur = end
+            while cur < length and text[cur].isspace():
+                cur += 1
+            if cur < length and text[cur] == "{":
+                spans.append((cur, body_end(text, cur)))
+                pos = cur + 1
+                continue
+        pos = end
+
+
 class Linkage:
     def __init__(self, text):
         self.text = text
-        self.anonymous = brace_spans(text, _ANON_NAMESPACE) if "namespace" in text else []
-        self.classes = brace_spans(text, _CLASS_SCOPE) if ("class" in text or "struct" in text or "union" in text) else []
-        self.declared = ({match.group(1) for match in STATIC_DECLARATION.finditer(text)
-                          if self.namespace_scope(match.start())}
-                         if "static" in text and "APS5_VABI" in text else set())
+        self.anonymous = _anon_namespace_spans(text) if "namespace" in text else []
+        self._classes = None
+        self.declared = set()
+        if "static" in text and "APS5_VABI" in text:
+            previous_end = 0
+            for match in _VABI_DECLARATION.finditer(text):
+                start = match.start()
+                boundary = previous_end
+                for delimiter in ";{}":
+                    boundary = max(boundary, text.rfind(delimiter, previous_end, start) + 1)
+                previous_end = match.end()
+                static_match = _STATIC_KW.search(text, boundary, start)
+                if static_match is not None and self.namespace_scope(static_match.start()):
+                    cursor = static_match.end()
+                    depth = 0
+                    for declarator in _VABI_FUNCTION.finditer(text, cursor, match.end()):
+                        depth += text.count("(", cursor, declarator.start()) - text.count(")", cursor, declarator.start())
+                        if depth == 0:
+                            self.declared.add(declarator.group(1))
+                        cursor = declarator.start()
+
+    @property
+    def classes(self):
+        if self._classes is None:
+            self._classes = (brace_spans(self.text, _CLASS_SCOPE)
+                             if ("class" in self.text or "struct" in self.text or "union" in self.text) else [])
+        return self._classes
 
     def namespace_scope(self, start):
         return not any(open_brace < start < close for open_brace, close in self.classes)
@@ -281,17 +348,43 @@ class Linkage:
     def internal(self, name, start):
         if any(open_brace < start < close for open_brace, close in self.anonymous):
             return True
-        if not self.namespace_scope(start):
-            return False
-        boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
-        return name in self.declared or bool(_STATIC_KW.search(self.text, boundary + 1, start))
+        if name not in self.declared:
+            boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
+            if not _STATIC_KW.search(self.text, boundary + 1, start):
+                return False
+        return self.namespace_scope(start)
+
+
+def _iter_stub_wrappers(text):
+    if "(" not in text or "{" not in text:
+        return
+    position = 0
+    for candidate in _WRAPPER_CANDIDATE.finditer(text):
+        end = candidate.end()
+        if end <= position:
+            continue
+        param_end = candidate.start()
+        bound = max(position, text.rfind(";", position, param_end) + 1, text.rfind("{", position, param_end) + 1)
+        if bound == 0 or text[bound - 1] == "\n":
+            search_start = bound
+        else:
+            newline = text.find("\n", bound, param_end)
+            if newline < 0:
+                continue
+            search_start = newline + 1
+        if "(" not in text[search_start:param_end]:
+            continue
+        match = STUB_WRAPPER.search(text, search_start, end)
+        if match is not None:
+            yield match
+            position = match.end()
 
 
 def stub_calls(text):
     if STUB not in text:
         return {STUB}
     helpers = {}
-    for match in STUB_WRAPPER.finditer(text):
+    for match in _iter_stub_wrappers(text):
         body = text[match.end() - 1:body_end(text, match.end() - 1)]
         helpers.setdefault(match.group(1), set()).update(call.group(1) for call in CALL.finditer(body))
     calls = {STUB}
@@ -359,7 +452,8 @@ class TypeIndex:
                 self.opaque.update(match.group(1) for match in CONVERSION.finditer(text))
         roots = {self.find(name) for name in self.known}
         self.concrete = {name for name in self.parent if self.find(name) in roots} | self.known
-        self.concrete -= {name for name in self.concrete if self.find(name) in {self.find(o) for o in self.opaque}}
+        opaque_roots = {self.find(o) for o in self.opaque}
+        self.concrete -= {name for name in self.concrete if self.find(name) in opaque_roots}
 
     def find(self, name):
         self.parent.setdefault(name, name)
@@ -565,7 +659,13 @@ def resolve(caller, arguments, candidates, types):
         return candidates
     count = len(arguments)
     fitting = [c for c in candidates if c.required <= count <= c.maximum] or candidates
+    if len(fitting) == 1 or not any(c.parameters for c in fitting):
+        return fitting
     kinds = [caller.argument(argument) for argument in arguments]
+    if not any(kinds):
+        return fitting
+    if callable(types):
+        types = types()
     typed = [c for c in fitting if all(accepts(c, kind, parameter, types)
                                        for kind, parameter in zip(kinds, c.parameters))]
     return typed or fitting
@@ -604,7 +704,7 @@ def reaching_definitions(texts, headers, asm_names):
         if not has_stub and STUB in text:
             has_stub = True
         helpers = {}
-        for match in STUB_WRAPPER.finditer(text):
+        for match in _iter_stub_wrappers(text):
             helpers.setdefault(match.group(1), []).append(Definition(match.group(1), text, match, True))
         definitions = ([Definition(match.group(1), text, match, False) for match in DEFINITION.finditer(text)]
                        if "APS5_VABI" in text else [])
@@ -613,36 +713,82 @@ def reaching_definitions(texts, headers, asm_names):
         files.append((helpers, definitions))
     if not has_stub:
         return files
-    types = None
+    export_names = set(exports)
+    export_names.add(STUB)
     nodes = []
+    raw_calls = {}
+    approx_callers = {}
+    direct_stub = set()
     for helpers, definitions in files:
         local = [d for group in helpers.values() for d in group] + definitions
+        known = export_names | helpers.keys() if helpers else export_names
         for definition in local:
             body = definition.body
             if "(" in body:
+                entries = []
                 for call in CALL.finditer(body):
                     name = call.group(1)
-                    if name != STUB and name not in helpers and name not in exports:
+                    if name not in known:
                         continue
                     if not definition.follow_qualified and _is_qualified(body, call.start()):
                         continue
                     if name == STUB:
-                        definition.calls.append(None)
-                        continue
+                        entries = None
+                        direct_stub.add(id(definition))
+                        break
                     targets = helpers.get(name, [])
-                    if len(targets) > 1:
-                        if types is None:
-                            loaded_headers = headers() if callable(headers) else headers
-                            types = TypeIndex(texts + loaded_headers)
-                        targets = resolve(definition, call_arguments(body, call.end() - 1), targets, types)
-                    definition.calls.append((targets, exports.get(name, []) if name not in asm_names else []))
+                    export_targets = exports.get(name, []) if name not in asm_names else []
+                    entries.append((call.end() - 1, targets, export_targets))
+                if entries is None:
+                    definition.calls.append(None)
+                elif entries:
+                    raw_calls[id(definition)] = entries
+                    for _, targets, export_targets in entries:
+                        for target in targets:
+                            approx_callers.setdefault(id(target), []).append(definition)
+                        for target in export_targets:
+                            approx_callers.setdefault(id(target), []).append(definition)
             nodes.append(definition)
+    can_reach = set(direct_stub)
+    approx_pending = [node for node in nodes if id(node) in direct_stub]
+    while approx_pending:
+        node = approx_pending.pop()
+        for caller in approx_callers.get(id(node), ()):
+            caller_id = id(caller)
+            if caller_id not in can_reach:
+                can_reach.add(caller_id)
+                approx_pending.append(caller)
+    types = None
+
+    def get_types():
+        nonlocal types
+        if types is None:
+            loaded_headers = headers() if callable(headers) else headers
+            types = TypeIndex(texts + loaded_headers)
+        return types
+
     callers = {}
+    pending = []
     for node in nodes:
-        for call in node.calls:
-            for target in call[0] + call[1] if call else ():
+        node_id = id(node)
+        if node_id not in can_reach:
+            continue
+        if node_id in direct_stub:
+            pending.append(node)
+            continue
+        body = node.body
+        for paren_pos, targets, export_targets in raw_calls.get(node_id, ()):
+            if len(targets) > 1:
+                if not any(id(target) in can_reach for target in targets):
+                    targets = []
+                elif not all(id(target) in direct_stub for target in targets):
+                    targets = resolve(node, call_arguments(body, paren_pos), targets, get_types)
+            node.calls.append((targets, export_targets))
+            for target in targets:
                 callers.setdefault(id(target), []).append(node)
-    pending = list(nodes)
+            for target in export_targets:
+                callers.setdefault(id(target), []).append(node)
+        pending.append(node)
     while pending:
         node = pending.pop()
         if node.reaches or not any(call is None or any(t.reaches for t in call[0]) or
@@ -653,8 +799,8 @@ def reaching_definitions(texts, headers, asm_names):
     return files
 
 
-def statements(body):
-    depth, start, parts = 0, 1, []
+def _iter_statements(body):
+    depth, start = 0, 1
     for match in _STMT_DELIM.finditer(body, 1):
         character = match.group()
         if character == "{":
@@ -663,10 +809,13 @@ def statements(body):
             depth -= 1
         elif not depth:
             end = match.end()
-            parts.append(body[start:end])
+            yield body[start:end]
             start = end
-    parts.append(body[start:])
-    return parts
+    yield body[start:]
+
+
+def statements(body):
+    return list(_iter_statements(body))
 
 
 def template_open(tokens, index):
@@ -709,7 +858,7 @@ def _classify_inert(body, wrappers, signature):
     parameters = None
     terminals = 0
     wrapper_target = None
-    for statement in statements(body):
+    for statement in _iter_statements(body):
         statement = statement.strip()
         if not statement:
             continue
@@ -820,7 +969,7 @@ def scan_library(path):
     for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, load_headers, assembled)):
         if not definitions:
             continue
-        wrappers = inert_wrappers(helpers)
+        wrappers = None
         linkage = None
         for definition in definitions:
             name = definition.name
@@ -835,6 +984,8 @@ def scan_library(path):
                 todo.add(name)
                 continue
             done.add(name)
+            if wrappers is None:
+                wrappers = inert_wrappers(helpers)
             (inert if inert_body(definition.body, wrappers, definition.signature) else live).add(name)
     todo -= done
     inert -= live

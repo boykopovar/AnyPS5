@@ -1573,10 +1573,6 @@ int APS5_VABI _ZN6icu_687unisets10chooseFromENS_13UnicodeStringENS0_3KeyES2__nid
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN6icu_68eqERKNS_11StringPieceES2__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_90djDyTuFX0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

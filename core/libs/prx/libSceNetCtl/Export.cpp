@@ -1154,11 +1154,12 @@ int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event == NET_CTL_EVENT_DISCONNECT_REQ_FINISHED || event == NET_CTL_EVENT_IPOBTAINED) return SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED;
-    const int val = 0;
-    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event != NET_CTL_EVENT_DISCONNECTED) {
         throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
     }
+    const int val = 0;
+    if (!GuestCopyOut_nid_no_patch(result, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1367,6 +1368,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6IpcInt(int callbackId) {
 
 int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (!error_code) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!GuestWritable_nid_no_patch(error_code, sizeof(*error_code))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }

@@ -61,6 +61,18 @@ class DiffTests(unittest.TestCase):
         b = write_trace(self.tmp.name, "b.json.gz", b_items)
         return trace_diff.compare(a, b, top=10)
 
+    def test_markdown_escapes_thread_and_slice_names_without_changing_comparison(self):
+        items = events(10000)
+        items[0]["args"]["name"] = "worker|lane\nnext"
+        items[2]["name"] = "draw|pass\nnext"
+        result = self.diff(items, items)
+
+        self.assertIn("worker|lane\nnext", [row["thread"] for row in result["threads"]])
+        self.assertIn("draw|pass\nnext", [row["name"] for row in result["slices"]])
+        rendered = trace_diff.markdown(result)
+        self.assertIn("| worker&#124;lane<br>next |", rendered)
+        self.assertIn("| draw&#124;pass<br>next |", rendered)
+
     def test_independent_windows_match_the_digest_of_the_same_scene(self):
         a = write_trace(self.tmp.name, "a.json.gz", events(10000))
         b = Path(self.tmp.name) / "b.json"
