@@ -26,11 +26,24 @@ inline bool Decode(const std::uint8_t* bytes, std::size_t available) {
     return available >= kInstructionSize && bytes[0] == 0x0f && bytes[1] == 0x01 && bytes[2] == 0xfc;
 }
 
+// A 64-byte aligned cache line never straddles a page boundary, so one probe covers the line.
+inline bool LineWritable(std::uintptr_t line) {
+    MEMORY_BASIC_INFORMATION info;
+    if (VirtualQuery(reinterpret_cast<const void*>(line), &info, sizeof(info)) == 0) return false;
+    if (info.State != MEM_COMMIT) return false;
+    if ((info.Protect & PAGE_GUARD) != 0) return false;
+    return (info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
 // Zeroes the cache line containing the address in the context's rax and advances Rip past the
-// instruction. Returns false, leaving the context untouched, when the bytes are not CLZERO.
+// instruction. Returns false, leaving the context untouched, when the bytes are not CLZERO or the
+// line is not writable: real hardware faults on such a target, so the correct outcome is the
+// existing exception path rather than a nested fault inside the vectored handler.
 inline bool Emulate(const std::uint8_t* bytes, std::size_t available, CONTEXT& context) {
     if (!Decode(bytes, available)) return false;
-    std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(context.Rax) & ~kLineMask), 0, kLineMask + 1);
+    const auto line = static_cast<std::uintptr_t>(context.Rax) & ~kLineMask;
+    if (!LineWritable(line)) return false;
+    std::memset(reinterpret_cast<void*>(line), 0, kLineMask + 1);
     context.Rip += kInstructionSize;
     return true;
 }
