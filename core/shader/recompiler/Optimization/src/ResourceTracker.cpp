@@ -1381,9 +1381,21 @@ private:
         column.laneKey = true;
         column.implicitDerivatives = implicitDerivatives;
         plan.loaded = &m_builder.Constant(1u);
-        if (reads[0].written != nullptr) {
-            const std::array<IrValue*, 3> active {reads[0].written, &m_builder.Constant(1u), &m_builder.Constant(0u)};
+        IrValue* enabled = reads[0].written;
+        for (const auto& read : reads) {
+            IrValue* exec = read.load->Argument(4)->Resolve();
+            if (enabled == nullptr) {
+                enabled = exec;
+            } else if (enabled != exec) {
+                const std::array<IrValue*, 2> both {enabled, exec};
+                enabled = EmitBefore(handle, IrOpcode::LogicalAnd, IrType::Bool, both);
+            }
+        }
+        if (enabled != nullptr) {
+            const std::array<IrValue*, 3> active {enabled, &m_builder.Constant(1u), &m_builder.Constant(0u)};
             plan.loaded = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, active);
+        }
+        if (reads[0].written != nullptr) {
             const std::array<IrValue*, 3> arguments {reads[0].written, key, &m_builder.Constant(std::numeric_limits<std::uint32_t>::max())};
             key = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
         }
