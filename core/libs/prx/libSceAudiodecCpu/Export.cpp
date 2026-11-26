@@ -330,6 +330,8 @@ int DecodeLpcmDvd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localM
     } else {
         samples = auBytes / 3;
     }
+    if ((bitsIndex == 2 || bitsIndex == 3) && (samples % 4) != 0) return ErrorLpcmParam;
+    if (samples > LpcmOutputSamples) NotImplemented_nid_no_patch("sceAudiodecCpuDecode: an LPCM frame larger than the output buffer of the module");
     if (localPcm.ui_pcm_size < samples * 4) NotImplemented_nid_no_patch("sceAudiodecCpuDecode: a PCM buffer smaller than the decoded frame");
 
     LpcmBsiInfo localInfo{};
@@ -338,30 +340,27 @@ int DecodeLpcmDvd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localM
     std::uint32_t lpcmState[2]{};
     CopyIn(lpcmState, stateAddress, sizeof(lpcmState), "sceAudiodecCpuDecode: unreadable LPCM memory");
 
-    const std::uint32_t usedSamples = std::min(samples, LpcmOutputSamples);
     std::size_t inputBytes = 0;
     if (bitsIndex == 1) {
-        inputBytes = static_cast<std::size_t>(usedSamples / 2) * 4;
+        inputBytes = static_cast<std::size_t>(samples) * 2;
     } else if (bitsIndex == 2) {
-        inputBytes = static_cast<std::size_t>(usedSamples / 4) * 10;
+        inputBytes = static_cast<std::size_t>(samples / 4) * 10;
     } else {
-        inputBytes = static_cast<std::size_t>(usedSamples / 4) * 12;
+        inputBytes = static_cast<std::size_t>(samples / 4) * 12;
     }
     std::vector<std::uint8_t> input(inputBytes);
     CopyIn(input.data(), localAu.p_au_addr, input.size(), "sceAudiodecCpuDecode: unreadable AU buffer");
 
     std::vector<float> output(samples);
     if (bitsIndex == 1) {
-        for (std::uint32_t index = 0; index + 1 < samples; index += 2) {
-            const std::uint8_t* group = input.data() + ((index % LpcmOutputSamples) / 2) * 4;
-            const std::uint32_t s0 = static_cast<std::uint32_t>(group[0]) << 24 | static_cast<std::uint32_t>(group[1]) << 16;
-            const std::uint32_t s1 = static_cast<std::uint32_t>(group[2]) << 24 | static_cast<std::uint32_t>(group[3]) << 16;
-            output[index] = LpcmSample(static_cast<std::int32_t>(s0));
-            output[index + 1] = LpcmSample(static_cast<std::int32_t>(s1));
+        for (std::uint32_t index = 0; index < samples; ++index) {
+            const std::uint8_t* sample = input.data() + static_cast<std::size_t>(index) * 2;
+            const std::uint32_t value = static_cast<std::uint32_t>(sample[0]) << 24 | static_cast<std::uint32_t>(sample[1]) << 16;
+            output[index] = LpcmSample(static_cast<std::int32_t>(value));
         }
     } else if (bitsIndex == 2) {
-        for (std::uint32_t index = 0; index + 3 < samples; index += 4) {
-            const std::uint8_t* group = input.data() + ((index % LpcmOutputSamples) / 4) * 10;
+        for (std::uint32_t index = 0; index < samples; index += 4) {
+            const std::uint8_t* group = input.data() + static_cast<std::size_t>(index / 4) * 10;
             const std::uint32_t s0 = static_cast<std::uint32_t>(group[0]) << 24 | static_cast<std::uint32_t>(group[1]) << 16 | static_cast<std::uint32_t>(group[8] & 0xf0u) << 8;
             const std::uint32_t s1 = static_cast<std::uint32_t>(group[2]) << 24 | static_cast<std::uint32_t>(group[3]) << 16 | static_cast<std::uint32_t>(group[8] & 0x0fu) << 12;
             const std::uint32_t s2 = static_cast<std::uint32_t>(group[4]) << 24 | static_cast<std::uint32_t>(group[5]) << 16 | static_cast<std::uint32_t>(group[9] & 0xf0u) << 8;
@@ -372,8 +371,8 @@ int DecodeLpcmDvd(const AudiodecCtrl& localCtrl, const AudiodecCpuMemory& localM
             output[index + 3] = LpcmSample(static_cast<std::int32_t>(s3));
         }
     } else {
-        for (std::uint32_t index = 0; index + 3 < samples; index += 4) {
-            const std::uint8_t* group = input.data() + ((index % LpcmOutputSamples) / 4) * 12;
+        for (std::uint32_t index = 0; index < samples; index += 4) {
+            const std::uint8_t* group = input.data() + static_cast<std::size_t>(index / 4) * 12;
             const std::uint32_t s0 = static_cast<std::uint32_t>(group[0]) << 24 | static_cast<std::uint32_t>(group[1]) << 16 | static_cast<std::uint32_t>(group[8]) << 8;
             const std::uint32_t s1 = static_cast<std::uint32_t>(group[2]) << 24 | static_cast<std::uint32_t>(group[3]) << 16 | static_cast<std::uint32_t>(group[9]) << 8;
             const std::uint32_t s2 = static_cast<std::uint32_t>(group[4]) << 24 | static_cast<std::uint32_t>(group[5]) << 16 | static_cast<std::uint32_t>(group[10]) << 8;

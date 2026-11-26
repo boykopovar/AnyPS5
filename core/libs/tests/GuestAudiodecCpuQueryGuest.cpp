@@ -204,8 +204,8 @@ void TestDvdLpcmDecode(ProtectedRegion& guarded) {
     std::vector<std::uint8_t> dvdMem(0x200u, 0u);
     std::array<std::uint32_t, 10> dvdParam{};
     std::array<std::uint32_t, 8> dvdBsi{};
-    std::array<std::uint8_t, 480> auBuf{};
-    std::array<float, 240> pcmBuf{};
+    std::array<std::uint8_t, 960> auBuf{};
+    std::array<float, 480> pcmBuf{};
 
     auto resetDvd = [&](std::uint32_t rate, std::uint32_t bits, std::uint32_t frames, std::uint32_t ptsHi, std::uint32_t ptsLo) {
         dvdParam.fill(0);
@@ -243,27 +243,42 @@ void TestDvdLpcmDecode(ProtectedRegion& guarded) {
     Require(sceAudiodecCpuInternalDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD PTS continuation failed");
     Require(dvdBsi[6] == 0u && dvdBsi[7] == 650u, "DVD PTS did not advance by 150");
 
+    resetDvd(1u, 1u, 3u, 0xffffffffu, 0xffffffffu);
+    auBuf.fill(0);
+    auBuf[958] = 0x40u;
+    auBuf[959] = 0x00u;
+    auInfo.ui_au_size = 960u;
+    pcmItem.ui_pcm_size = 1920u;
+    Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD 16-bit multi-frame Decode failed");
+    Require(pcmItem.ui_pcm_size == 1920u && pcmBuf[479] == 0.5f, "DVD 16-bit trailing sample mismatch");
+
     resetDvd(1u, 2u, 1u, 0xffffffffu, 0xffffffffu);
     auBuf.fill(0);
     auBuf[0] = 0x00u;
     auBuf[1] = 0x00u;
     auBuf[8] = 0x10u;
+    auBuf[396] = 0x40u;
+    auBuf[397] = 0x00u;
+    auBuf[399] = 0x01u;
     auInfo.ui_au_size = 400u;
     pcmItem.ui_pcm_size = 640u;
     Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD 20-bit Decode failed");
     Require(dvdParam[4] == 400u && pcmItem.ui_pcm_size == 640u, "DVD 20-bit sizes mismatch");
-    Require(pcmBuf[0] == 0x1p-19f, "DVD 20-bit sample mismatch");
+    Require(pcmBuf[0] == 0x1p-19f && pcmBuf[159] == (0.5f + 0x1p-19f), "DVD 20-bit sample mismatch");
 
     resetDvd(1u, 3u, 1u, 0xffffffffu, 0xffffffffu);
     auBuf.fill(0);
     auBuf[0] = 0x00u;
     auBuf[1] = 0x00u;
     auBuf[8] = 0x01u;
+    auBuf[474] = 0x40u;
+    auBuf[475] = 0x00u;
+    auBuf[479] = 0x01u;
     auInfo.ui_au_size = 480u;
     pcmItem.ui_pcm_size = 640u;
     Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == 0, "DVD 24-bit Decode failed");
     Require(dvdParam[4] == 480u && pcmItem.ui_pcm_size == 640u, "DVD 24-bit sizes mismatch");
-    Require(pcmBuf[0] == 0x1p-23f, "DVD 24-bit sample mismatch");
+    Require(pcmBuf[0] == 0x1p-23f && pcmBuf[159] == (0.5f + 0x1p-23f), "DVD 24-bit sample mismatch");
 
     resetDvd(3u, 1u, 1u, 0xffffffffu, 0xffffffffu);
     Require(sceAudiodecCpuDecode(&ctrl, &mem, LpcmDvd) == ErrorLpcmParam, "DVD accepted 192 kHz");
@@ -279,6 +294,30 @@ void TestDvdLpcmDecode(ProtectedRegion& guarded) {
     errno = 71;
     RequireThrows([&] { sceAudiodecCpuDecode(&roBsiCtrl, &mem, LpcmDvd); }, "read-only DVD BSI accepted");
     Require(dvdParam[1] == 0u && errno == 71, "failed DVD Decode mutated pParam or errno");
+
+    std::vector<std::uint8_t> largeAu(960u * 217u, 0u);
+    std::vector<float> largePcm(69440u, 1.5f);
+    AudiodecAuInfo largeAuInfo{0x18u, largeAu.data(), 640u * 216u};
+    AudiodecPcmItem largePcmItem{0x18u, largePcm.data(), 0x43800u};
+    AudiodecCtrl largeCtrl{dvdParam.data(), dvdBsi.data(), &largeAuInfo, &largePcmItem};
+
+    resetDvd(2u, 1u, 216u, 0xffffffffu, 0xffffffffu);
+    largeAu[640u * 216u - 2u] = 0x40u;
+    largeAu[640u * 216u - 1u] = 0x00u;
+    Require(sceAudiodecCpuDecode(&largeCtrl, &mem, LpcmDvd) == 0, "DVD exact 0x43800 PCM capacity boundary failed");
+    Require(largePcmItem.ui_pcm_size == 0x43800u && dvdBsi[3] == 0x43800u, "DVD exact 0x43800 size mismatch");
+    Require(largePcm[69119] == 0.5f, "DVD exact 0x43800 final sample mismatch");
+
+    for (std::uint32_t bitsIndex = 1u; bitsIndex <= 3u; ++bitsIndex) {
+        const std::uint32_t bytesPerFrame = bitsIndex == 1u ? 640u : (bitsIndex == 2u ? 800u : 960u);
+        resetDvd(2u, bitsIndex, 217u, 0xffffffffu, 0xffffffffu);
+        std::fill(largeAu.begin(), largeAu.end(), 0u);
+        std::fill(largePcm.begin(), largePcm.end(), 1.5f);
+        largeAuInfo.ui_au_size = bytesPerFrame * 217u;
+        largePcmItem.ui_pcm_size = 69440u * sizeof(float);
+        RequireThrows([&] { sceAudiodecCpuDecode(&largeCtrl, &mem, LpcmDvd); }, "oversized DVD PCM output (> 0x43800) accepted");
+        Require(dvdParam[1] == 0u && largePcm[0] == 1.5f, "oversized DVD Decode mutated state or PCM buffer");
+    }
 }
 
 }
