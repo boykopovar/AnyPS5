@@ -10,16 +10,32 @@ SCRIPT = Path(__file__).resolve().parents[1] / "compile_slot.sh"
 BASH = shutil.which("bash")
 
 
-def run(path, slot_dir, command):
-    env = {"PATH": path, "ANYPS5_COMPILE_SLOT_DIR": str(slot_dir), "ANYPS5_COMPILE_SLOTS": "1"}
+def run(path, slot_dir, command, slots="1", timeout=10):
+    env = {"PATH": path, "ANYPS5_COMPILE_SLOT_DIR": str(slot_dir), "ANYPS5_COMPILE_SLOTS": slots}
     try:
-        return subprocess.run([BASH, str(SCRIPT), *command], env=env, capture_output=True, text=True, timeout=10)
+        return subprocess.run([BASH, str(SCRIPT), *command], env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise AssertionError("compile_slot.sh did not exit within 10 seconds")
+        raise AssertionError(f"compile_slot.sh did not exit within {timeout} seconds")
 
 
 @unittest.skipUnless(BASH and sys.platform.startswith("linux"), "needs bash on Linux")
 class CompileSlotTests(unittest.TestCase):
+    def test_invalid_slot_counts_fail_without_waiting_for_a_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for count in ("0", "-1", "garbage", "18446744073709551616"):
+                with self.subTest(count=count):
+                    result = run(os.environ["PATH"], Path(tmp), ["true"], slots=count, timeout=1)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("positive decimal integer", result.stderr)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_missing_compiler_command_fails_before_opening_a_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run(os.environ["PATH"], Path(tmp), [], timeout=1)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("compiler command is required", result.stderr)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
     def test_exits_when_flock_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
