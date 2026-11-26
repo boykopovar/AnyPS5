@@ -92,6 +92,9 @@ Run this command from a Git checkout that contains the commit recorded in the re
 
 `tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit the release-body limit (`BODY_LIMIT` characters in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
+The input is the JSON response with the generated notes in its `body` string. If you specify `--marker`, it goes
+only in the short body and counts toward its limit. Supply the same marker in `--check` to verify those outputs.
+
 ## Commands
 
 ```sh
