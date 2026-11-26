@@ -215,7 +215,7 @@ public:
     }
 
     bool HandleFault(std::uintptr_t address) {
-        if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return false;
+        if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return publicationPageWritable(address);
         timespec started{};
         static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &started));
         unsigned spins = 0;
@@ -235,7 +235,7 @@ public:
                             break;
                         }
                     }
-                    if (!opened) return false;
+                    if (!opened) return publicationPageWritable(address);
                 }
             } else {
                 if (publicationPageWritable(address)) return true;
