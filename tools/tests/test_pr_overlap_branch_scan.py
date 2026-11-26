@@ -60,7 +60,7 @@ class RepositoryTestCase(unittest.TestCase):
         self.tmp.cleanup()
 
 
-class BranchScanTests(RepositoryTestCase):
+class BranchScanFixture(RepositoryTestCase):
     @classmethod
     def build(cls):
         run("init", "-q")
@@ -84,20 +84,25 @@ class BranchScanTests(RepositoryTestCase):
         cls.template_prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "depends": set()} for n, sha in numbers.items()}
         cls.template_prs[0] = {"ref": branch, "author": None, "depends": set()}
 
+
+class BranchScanTests(BranchScanFixture):
     def test_reports_match_a_scan_of_every_pull_request(self):
         everything = copy.deepcopy(self.prs)
         for pr in everything.values():
             pr_overlap.scan(pr)
         pr_overlap.scan_all(self.prs, 2)
 
-        for number in (1, 2, 3, 4):
+        found = {n: pr_overlap.overlaps(self.prs, 0, n) for n in (1, 2, 3, 4)}
+        for number, overlap in found.items():
             with self.subTest(number=number):
-                self.assertEqual(pr_overlap.overlaps(self.prs, 0, number), pr_overlap.overlaps(everything, 0, number))
-        self.assertIn("a.txt", pr_overlap.overlaps(self.prs, 0, 1)["conflicts"])
-        self.assertEqual(pr_overlap.overlaps(self.prs, 0, 3)["exports"], {"shared"})
-        self.assertIsNone(pr_overlap.overlaps(self.prs, 0, 2))
-        self.assertIsNone(pr_overlap.overlaps(self.prs, 0, 4))
+                self.assertEqual(overlap, pr_overlap.overlaps(everything, 0, number))
+        self.assertIn("a.txt", found[1]["conflicts"])
+        self.assertEqual(found[3]["exports"], {"shared"})
+        self.assertIsNone(found[2])
+        self.assertIsNone(found[4])
 
+
+class BranchSelectionTests(BranchScanFixture):
     def test_only_pull_requests_sharing_a_file_or_an_export_are_merged(self):
         merged = []
 
@@ -125,6 +130,8 @@ class BranchScanTests(RepositoryTestCase):
 
         self.assertCountEqual(merged, ["refs/pr/1", "refs/pr/2", "refs/pr/3", "refs/pr/4"])
 
+
+class BranchPathTests(BranchScanFixture):
     def test_a_pull_request_on_a_path_the_base_renamed_is_still_compared(self):
         old = run("rev-parse", "refs/pr/base")
         older = commit_on_base(old, "older pull request", {"b.txt": "older\ntwo\nthree\n"})
@@ -168,6 +175,8 @@ class BranchScanTests(RepositoryTestCase):
             pr_overlap.scan_all(prs, 2)
         self.assertIn("refs/pr/6", merged)
 
+
+class BranchAliasTests(BranchScanFixture):
     def test_a_pull_request_exporting_the_same_nid_under_another_name_is_merged(self):
         base = run("rev-parse", "refs/pr/base")
         nid = pr_overlap.nid_names.compute_nid("shared")
@@ -190,7 +199,7 @@ class BranchScanTests(RepositoryTestCase):
         self.assertEqual(pr_overlap.overlaps(self.prs, 0, 5)["exports"], {"shared", "renamed"})
 
 
-class ExportSourceTests(RepositoryTestCase):
+class ExportSourceFixture(RepositoryTestCase):
     template_prs = {}
 
     @classmethod
@@ -202,6 +211,8 @@ class ExportSourceTests(RepositoryTestCase):
         run("commit", "-q", "-m", "base")
         run("update-ref", "refs/pr/base", run("rev-parse", "HEAD"))
 
+
+class ExportSourceTests(ExportSourceFixture):
     def test_callbacks_in_test_directories_are_not_export_candidates(self):
         base = run("rev-parse", "refs/pr/base")
         for folder in ("test", "tests", "Tests"):
@@ -234,6 +245,8 @@ class ExportSourceTests(RepositoryTestCase):
             pr_overlap.scan(pr)
         self.assertEqual(pr_overlap.overlaps(prs, 0, 1)["exports"], {"shared"})
 
+
+class ExportChangeTests(ExportSourceFixture):
     def test_conflicting_test_sources_are_still_reported(self):
         path = "core/libs/prx/lib/tests/Shared.cpp"
         base = commit_on_base(run("rev-parse", "refs/pr/base"), "test source base", {path: "int value = 0;\n"})

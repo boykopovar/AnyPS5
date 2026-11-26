@@ -803,6 +803,14 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchScanTests)
+        add_test(NAME pr_overlap_branch_scan_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchPathTests)
+        add_test(NAME pr_overlap_branch_scan_selection COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchSelectionTests)
+        add_test(NAME pr_overlap_branch_scan_alias COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py BranchAliasTests)
+        add_test(NAME pr_overlap_branch_scan_export_changes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py ExportChangeTests)
         add_test(NAME pr_overlap_branch_scan_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py ExportSourceTests)
         add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
@@ -816,7 +824,11 @@ if(BUILD_TESTING)
         add_test(NAME pr_overlap_fail_closed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_fail_closed.py)
         add_test(NAME pr_overlap_names COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py NamesLookupTests)
+        add_test(NAME pr_overlap_names_aliases COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py NamesAliasTests)
+        add_test(NAME pr_overlap_names_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py NamesReportTests LibraryStatusScanTests)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
