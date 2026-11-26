@@ -49,6 +49,7 @@ static constexpr int VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE = -2144796650;
 static constexpr int VIDEO_OUT_ERROR_UNAVAILABLE_OUTPUT_MODE = -2144796647;
 static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT = -2144796659;
 static constexpr int VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE = -2144796642;
+static constexpr int VIDEO_OUT_ERROR_NOT_MAIN_BUS = static_cast<int>(0x8029001bu);
 
 static constexpr int VIDEO_OUT_BUS_TYPE_MAIN = 0;
 static constexpr int VIDEO_OUT_BUS_TYPE_OVERLAY = 1;
