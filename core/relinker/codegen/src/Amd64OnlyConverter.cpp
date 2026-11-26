@@ -412,11 +412,15 @@ void Amd64OnlyConverter::_convertSegment(
 
     std::set<std::size_t> pendingIndices;
     std::set<std::size_t> claimed;
+    std::set<std::size_t> optionalKeptIndices;
     for (const auto& item : pending) {
-        if (item.Substitution.Lowering == Amd64OnlyLowering::Kept)
+        if (item.Substitution.Lowering == Amd64OnlyLowering::Kept) {
             claimed.insert(item.Index);
-        else
+            if (item.Substitution.Optional)
+                optionalKeptIndices.insert(item.Index);
+        } else {
             pendingIndices.insert(item.Index);
+        }
     }
     std::set<std::size_t> consumed;
 
@@ -467,7 +471,7 @@ void Amd64OnlyConverter::_convertSegment(
                     for (auto next = item.Index + 1; siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size; ++next) {
                         if (next >= matches.size() || matches[next].Offset != match.Offset + siteLength)
                             throw CodegenException("AMD-only instruction too short for a jump and not followed by an instruction", fileOffset);
-                        if (claimed.contains(next))
+                        if (claimed.contains(next) && (!optionalKeptIndices.contains(next) || consumed.contains(next)))
                             throw CodegenException("AMD-only instruction too short for a jump is followed by an instruction another stub already moved", ph.Offset + matches[next].Offset);
                         const auto& following = matches[next];
                         const std::span<const std::uint8_t> bytes(seg.data() + following.Offset, following.Length);

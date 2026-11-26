@@ -466,6 +466,18 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
     const char* name = nullptr;
     for (const auto& instruction : instructions) {
         const DecodedInstruction instr{instruction.data(), instruction.size()};
+        if (const auto match = Match(instr.Data, instr.Length); match && match->Lowering == Amd64OnlyLowering::Kept) {
+            if (!match->Optional || match->InstructionName != "MULX")
+                return std::nullopt;
+            const X64InstructionDecoder decoder;
+            const auto info = decoder.DecodeInstruction(instr.Data, instr.Length);
+            if (info.Length != instr.Length)
+                return std::nullopt;
+            if (name == nullptr)
+                name = "MULX";
+            body.Move(instruction, info.HasRipRelativeDisp ? std::optional<std::size_t>(info.RipRelativeDispOffset) : std::nullopt);
+            continue;
+        }
         auto emitted = _emitOutOfLine(body, instr);
         if (emitted == nullptr && name != nullptr)
             emitted = _emitInPlace(body, instr);

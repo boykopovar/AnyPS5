@@ -98,6 +98,13 @@ void matching() {
     require(match && match->InstructionName == "MULX" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "Rosetta mode did not require a MULX trampoline");
     const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
     require(rosetta->MatchSequence(sequence, {}).has_value(), "A MULX sequence could not move out of line");
+    const Bytes keptRip{0xC4, 0xE2, 0xEB, 0xF6, 0x15, 0x40, 0, 0, 0};
+    const std::array<std::span<const std::uint8_t>, 2> keptRipSequence{bytes, keptRip};
+    const auto keptRipMatch = rosetta->MatchSequence(keptRipSequence, {});
+    require(keptRipMatch && keptRipMatch->Lowering == Codegen::Amd64OnlyLowering::Trampoline
+                && keptRipMatch->Relocations.size() == 1
+                && keptRipMatch->Relocations[0].SiteTarget == bytes.size() + keptRip.size() + 0x40,
+            "A kept MULX in a sequence lost its RIP-relative memory target");
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     const auto avxConverter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Avx);
     for (const auto [high, low] : {std::pair<std::uint8_t, std::uint8_t>{2, 2}, {2, 4}, {4, 2}, {4, 4}}) {
@@ -118,6 +125,22 @@ void matching() {
         try { (void)avxConverter->Convert(file, {segment}); }
         catch (const Codegen::CodegenException&) { avxRejected = true; }
         require(avxRejected, "The AVX-only target kept a native MULX instruction that requires BMI2");
+    }
+    {
+        const Bytes shortRequired{0x0F, 0x01, 0xFD};
+        const Bytes keptStackMulx{0xC4, 0xE2, 0xEB, 0xF6, 0x14, 0x24};
+        Bytes file(0x300, 0xCC);
+        std::copy(shortRequired.begin(), shortRequired.end(), file.begin() + 0x200);
+        std::copy(keptStackMulx.begin(), keptStackMulx.end(), file.begin() + 0x200 + shortRequired.size());
+        const auto length = shortRequired.size() + keptStackMulx.size();
+        const Domain::ProgramHeader segment{1, 5, 0x200, 0x1000, 0, length, length, 16};
+        const auto converted = converter->Convert(file, {segment});
+        require(converted.Trampolines.size() == 1 && converted.Trampolines[0].Length == length,
+                "A kept stack-based MULX prevented a short required neighbour from being lowered");
+        const auto& body = converted.Trampolines[0].Body;
+        require(std::search(body.begin(), body.end(), keptStackMulx.begin(), keptStackMulx.end()) != body.end(),
+                "The sequence trampoline did not preserve the kept MULX instruction");
+        require(converted.Bytes == file, "Sequence conversion changed the input image before patching");
     }
     for (const Bytes site : {bytes, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x05, 0x40, 0, 0, 0}}) {
         Bytes file(0x300, 0xCC);
