@@ -87,11 +87,11 @@ bool BasicEvaluator<TNode>::EvaluateWide(TNode value, std::uint64_t& result) {
         return false;
     }
     const TNode& inst = value;
-    if (_masked && inst.Type() == IrType::Bool && ActiveMaskImplies(_activeMask, inst)) {
+    if (_masked && inst.Type() == IrType::Bool && ActiveMaskImplies(_program, _activeMask, inst)) {
         result = 1u;
         return true;
     }
-    if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
+    if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_program, _activeMask, inst.Argument(0))) {
         return EvaluateWide(inst.Argument(1), result);
     }
     if (inst.Id() < _dense.Size()) {
@@ -223,7 +223,7 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     if (!argsEvaluated) {
         return false;
     }
-    const auto base = ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
+    const auto base = inst.Opcode() == IrOpcode::ReadConstBuffer ? ConstBufferBase(low, high) : ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
     const auto immediate = static_cast<std::int64_t>(static_cast<std::int32_t>(mem.offset));
     std::uint64_t address = 0;
     if (inst.Opcode() == IrOpcode::ReadConstBuffer) {
@@ -407,8 +407,8 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
     std::array<std::byte, 2048> scratch;
     std::pmr::monotonic_buffer_resource arena(scratch.data(), scratch.size());
     std::pmr::unordered_map<const IrValue*, bool> known(&arena);
-    const auto takesActiveArm = [activeMask](const IrValue* current) {
-        return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
+    const auto takesActiveArm = [activeMask, &program](const IrValue* current) {
+        return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(program, activeMask, current->Argument(0));
     };
     std::pmr::vector<IrValue*> required(&arena);
     const auto requirements = [&program, &takesActiveArm, &required](IrValue* current) {
@@ -457,7 +457,7 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
         const auto [current, expanded] = pending.back();
         pending.pop_back();
         if (known.contains(current)) continue;
-        if (activeMask != nullptr && current->Type() == IrType::Bool && ActiveMaskImplies(activeMask, current)) {
+        if (activeMask != nullptr && current->Type() == IrType::Bool && ActiveMaskImplies(program, activeMask, current)) {
             known.emplace(current, true);
             continue;
         }

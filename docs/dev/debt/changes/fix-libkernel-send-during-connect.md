@@ -1,0 +1,5 @@
+# libkernel
+
+## change [send, sendto, write]
+
+- [send, sendto, write](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) on a stream socket that is not connected - a `sendto` with an address before `connect` goes to the host: FreeBSD 11.4's [`sosend_generic`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/uipc_socket.c#L1260-L1292) connects implicitly to the address, as TCP has `PR_IMPLOPCL`, where Linux ignores the address and fails with `EPIPE` and the host's `SIGPIPE`. On Windows and macOS a send while a `connect` is in progress also goes to the host. A socket on which `connect` was never called and that was not accepted, such as a new or a listening one, a socket received in a message whose host socket has no peer, or, on Linux, one whose `connect` has not completed (the host does not report it writable), fails with `ENOTCONN` and no signal without asking the host, as `sosend_generic` does; this is not measured on a console.

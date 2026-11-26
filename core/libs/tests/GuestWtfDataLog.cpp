@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -23,8 +24,16 @@
 #include <thread>
 #ifdef _WIN32
 #include <io.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -164,6 +173,33 @@ bool ThrowsLogicError(TCall call) {
     return false;
 }
 
+template <typename TCall>
+bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TValue>
+TValue* ReadOnlyCopy(const TValue& value) {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, sizeof(value), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "read-only page allocation");
+    std::memcpy(page, &value, sizeof(value));
+    DWORD previous = 0;
+    Require(VirtualProtect(page, sizeof(value), PAGE_READONLY, &previous) != 0, "read-only page protection");
+#else
+    void* page = mmap(nullptr, sizeof(value), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "read-only page allocation");
+    std::memcpy(page, &value, sizeof(value));
+    Require(mprotect(page, sizeof(value), PROT_READ) == 0, "read-only page protection");
+#endif
+    return static_cast<TValue*>(page);
+}
+
 void CheckVtableLayout() {
     FilePrintStream* stream = Open("layout.txt");
     const void* const* vtable = stream->vtable;
@@ -175,9 +211,7 @@ void CheckVtableLayout() {
     _ZN3WTF15FilePrintStreamD0Ev(stream);
 }
 
-std::string CaptureStdout(void (*print)()) {
-    const auto path = std::filesystem::temp_directory_path() /
-        ("anyps5-wtf-data-log-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+std::string CaptureStdout(const std::filesystem::path& path, void (*print)()) {
     std::fflush(stdout);
 #ifdef _WIN32
     const int saved = ::_dup(::_fileno(stdout));
@@ -212,8 +246,8 @@ void PrintThroughDefaultSink() {
     FlushStream(stream);
 }
 
-void CheckDefaultSink() {
-    const std::string printed = CaptureStdout(PrintThroughDefaultSink);
+void CheckDefaultSink(const std::filesystem::path& directory) {
+    const std::string printed = CaptureStdout(directory / "stdout.txt", PrintThroughDefaultSink);
     Require(printed == "guest_wtf_data_log: default sink 1\n", "the default sink writes to stdout");
     PrintStream& first = _ZN3WTF8dataFileEv();
     Require(&first == &_ZN3WTF8dataFileEv(), "dataFile is one stream");
@@ -332,6 +366,40 @@ void CheckOpenFailure() {
     Require(result.pointer == nullptr, "failed fopen gives a null stream");
 }
 
+void CheckUnusableGuestPointers(const std::filesystem::path& directory) {
+    errno = 71;
+    Require(ThrowsInvalidArgument([] {
+        _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(reinterpret_cast<PrintStreamPtr*>(0x10));
+    }), "setDataFile rejects an unreadable unique_ptr");
+    Require(errno == 71, "setDataFile keeps errno for an unreadable unique_ptr");
+
+    FilePrintStream* stream = Open("read-only-owner.txt");
+    PrintStreamPtr* owner = ReadOnlyCopy(PrintStreamPtr{AsStream(stream)});
+    errno = 71;
+    Require(ThrowsInvalidArgument([owner] {
+        _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(owner);
+    }), "setDataFile rejects a read-only unique_ptr");
+    Require(errno == 71, "setDataFile keeps errno for a read-only unique_ptr");
+    Require(owner->pointer == AsStream(stream), "a rejected setDataFile keeps a read-only owner unchanged");
+    Require(&_ZN3WTF8dataFileEv() != AsStream(stream), "a rejected setDataFile installs nothing");
+    _ZN3WTF15FilePrintStreamD0Ev(stream);
+
+    const std::string path = GuestPath("unusable-result.txt");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&path] {
+        _ZN3WTF15FilePrintStream4openEPKcS2_(reinterpret_cast<FilePrintStreamPtr*>(0x10), path.c_str(), "w");
+    }), "open rejects an unmapped result");
+    Require(errno == 71, "open keeps errno for an unmapped result");
+    FilePrintStreamPtr* result = ReadOnlyCopy(FilePrintStreamPtr{reinterpret_cast<FilePrintStream*>(1)});
+    errno = 71;
+    Require(ThrowsInvalidArgument([result, &path] {
+        _ZN3WTF15FilePrintStream4openEPKcS2_(result, path.c_str(), "w");
+    }), "open rejects a read-only result");
+    Require(errno == 71, "open keeps errno for a read-only result");
+    Require(result->pointer == reinterpret_cast<FilePrintStream*>(1), "a rejected open leaves a read-only result unchanged");
+    Require(!std::filesystem::exists(directory / "unusable-result.txt"), "a rejected open creates no file");
+}
+
 void InstallDataFile(PrintStream* stream) {
     PrintStreamPtr owner{stream};
     _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE(&owner);
@@ -361,8 +429,24 @@ void CheckSetDataFileAfterDefault(const std::filesystem::path& directory) {
     CheckInstalledStream(directory, installed, "installed.txt");
 }
 
+std::filesystem::path CreateTemporaryDirectory(const std::filesystem::path& root, const std::string& prefix) {
+    auto directory = root / prefix;
+    for (unsigned suffix = 1; !std::filesystem::create_directory(directory); ++suffix) {
+        directory = root / (prefix + "-" + std::to_string(suffix));
+    }
+    return directory;
+}
+
+void CheckTemporaryDirectoryCollision(const std::filesystem::path& directory) {
+    const auto first = CreateTemporaryDirectory(directory, "collision");
+    const auto second = CreateTemporaryDirectory(directory, "collision");
+    Require(first != second, "each caller gets a distinct temporary directory");
+    Require(std::filesystem::is_directory(first) && std::filesystem::is_directory(second), "both temporary directories exist");
+}
+
 void RunDefault(const std::filesystem::path& directory) {
-    CheckDefaultSink();
+    CheckTemporaryDirectoryCollision(directory);
+    CheckDefaultSink(directory);
     CheckStaticStreamIsNotDestroyed();
     CheckLockExcludesOtherThreads();
     CheckVtableLayout();
@@ -377,6 +461,7 @@ void RunDefault(const std::filesystem::path& directory) {
     CheckBorrowedFileStaysOpen(directory, "borrow-d0.txt", DestroyD0Export, true);
     CheckBorrowedFileStaysOpen(directory, "borrow-slot1.txt", DestroySlot1, true);
     CheckOpenFailure();
+    CheckUnusableGuestPointers(directory);
     CheckSetDataFileAfterDefault(directory);
 }
 
@@ -400,9 +485,9 @@ void RunInstallNull() {
 
 int main(int argc, char** argv) {
     RegisterTrackingHeap();
-    const auto directory = std::filesystem::temp_directory_path() /
-        ("anyps5-wtf-data-log-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(directory), "temporary directory");
+    const auto root = std::filesystem::temp_directory_path();
+    const auto prefix = "anyps5-wtf-data-log-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto directory = CreateTemporaryDirectory(root, prefix);
     AddPathAlias_nid_no_patch("/wtf-data-log", directory.string().c_str());
     const std::string mode = argc > 1 ? argv[1] : "default";
     if (mode == "default") {

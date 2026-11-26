@@ -68,7 +68,7 @@ int APS5_VABI sceAvControlSetHdcpEncryption(std::uint64_t argument1, std::uint32
 int APS5_VABI sceAvControlSetHdcpStatus(std::uint32_t argument1, std::uint32_t argument2);
 int APS5_VABI sceAvControlSetHdmiGamutMetadata(void);
 int APS5_VABI sceAvControlSetHdrMetadata(std::uint64_t type);
-int APS5_VABI sceAvControlSetVideoOutSource(void);
+void APS5_VABI sceAvControlSetVideoOutSource(std::int32_t* out, std::int32_t source);
 int APS5_VABI sceAvControlSimulateProcessOutputModeArbitration(void);
 int APS5_VABI sceAvSettingAddCallbacks(void);
 int APS5_VABI sceAvSettingAddCallbacksForLnc(void);
