@@ -62,6 +62,7 @@ struct DecodedImage {
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     bool srgbDecode = false;
     bool layerRows = false;
+    std::uint32_t byTexelBytes = 0;
 };
 
 ShaderBufferResource decodeBufferDescriptor(const DescriptorValue& value) {
@@ -351,6 +352,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             return rejectImage(PoisonReason::InvalidFormat, base.packed ? "MIMG PCK2/PCK4 requires an identity-swizzled 2D UNORM, UINT or SINT image whose elements fill one dword: R8, R16 or RG8 for PCK2, R8 for PCK4"
                                                                      : "MIMG BY2/BY4 requires an identity-swizzled 2D image whose elements fill one dword: R8, R16 or RG8 for BY2, R8 for BY4");
         }
+        if (!base.packed) decoded.byTexelBytes = eightBit ? 1u : 2u;
     }
     const bool nativeRepacked = (format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !storage && !base.packed;
     const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
@@ -2612,6 +2614,18 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
+    if (image.byElements != 0u && !image.packed) {
+        std::vector<ImageResource> split;
+        for (const auto& mode : modes) {
+            for (const auto bytes : {1u, 2u}) {
+                if (bytes * image.byElements > 4u) continue;
+                auto variant = mode;
+                variant.byTexelBytes = bytes;
+                split.push_back(variant);
+            }
+        }
+        modes = std::move(split);
+    }
     if (modes.empty() && !table) throw std::runtime_error("image instruction has no supported runtime modes");
     if (image.foldTexelOffsetsOnly && std::ranges::any_of(modes, [](const ImageResource& mode) { return UnnormalizedSampleMismatch(mode) == nullptr; })) {
         std::erase_if(modes, [](const ImageResource& mode) { return UnnormalizedSampleMismatch(mode) != nullptr; });
@@ -2679,7 +2693,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         const auto& mode = modes[index];
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
-        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode && mode.layerRows == decoded.layerRows) {
+        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode && mode.layerRows == decoded.layerRows && mode.byTexelBytes == decoded.byTexelBytes) {
             result.mode = index;
             return result;
         }

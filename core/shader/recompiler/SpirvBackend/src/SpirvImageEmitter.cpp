@@ -1643,6 +1643,7 @@ void EmitByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.image.dimension != RdnaImageDimension::Dim2D || components == 0u || components * elements != access.mem.dataDwords || access.mem.dataDwords > 4u || access.mem.dataBits != 32u) {
         ctx.Fail(access.inst, "is a MIMG BY2/BY4 store outside the measured 2D, 32-bit data subset");
     }
+    if (access.mem.dmask != (1u << access.mem.dataDwords) - 1u) return;
     state.module.EmitCapability(spv::CapabilityImageQuery);
     const auto condition = ctx.Arg(access.inst, 3);
     EmitIfCondition(state, condition, [&]() {
@@ -1668,8 +1669,12 @@ void EmitByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             const auto count = state.registrationModules ? RuntimeMipCount(state, access.mem.resource) : state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MipCountBase + access.mem.resource, access.image.mipCount);
             inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), lod, count));
         }
-        const auto first = Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, ~(elements - 1u)));
-        const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, elements - 1u));
+        const auto u32 = TypeU32(state);
+        const auto boolean = TypeBool(state);
+        const auto texelBytes = access.image.byTexelBytes;
+        if (texelBytes == 0u || texelBytes * elements > 4u) ctx.Fail(access.inst, "is a MIMG BY2/BY4 store outside the measured byte-sized formats");
+        const auto groupTexels = ConstantU32(state, 4u / texelBytes);
+        const auto lane = Binary(state, spv::OpBitwiseAnd, u32, x, ConstantU32(state, 4u / texelBytes - 1u));
         const auto data = ctx.Arg(access.inst, 2);
         MemoryInfo texelMemory = access.mem;
         texelMemory.dmask = (1u << components) - 1u;
@@ -1679,9 +1684,9 @@ void EmitByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? lod : 0u;
         for (std::uint32_t element = 0; element < elements; ++element) {
-            const auto enabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), ConstantU32(state, element), lane));
+            const auto enabled = Binary(state, spv::OpLogicalAnd, boolean, inside, Binary(state, spv::OpULessThan, boolean, Binary(state, spv::OpIAdd, u32, lane, ConstantU32(state, element)), groupTexels));
             EmitIfCondition(state, enabled, [&]() {
-                const auto column = Binary(state, spv::OpIAdd, TypeU32(state), first, ConstantU32(state, element));
+                const auto column = Binary(state, spv::OpIAdd, u32, x, ConstantU32(state, element));
                 const auto coord = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, column, y);
                 std::uint32_t lanes[4] = {ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
@@ -2861,7 +2866,7 @@ bool SameImageModeForInstruction(const IrValue& inst, const MemoryInfo& memory, 
         return a.conversionFormat == b.conversionFormat && (a.conversionFormat == IrBufferFormat::Invalid || a.shaderSwizzle == b.shaderSwizzle);
     }
     if (opcode == IrOpcode::ImageWrite) {
-        if (a.mipMode != b.mipMode) {
+        if (a.mipMode != b.mipMode || (memory.imageByElements != 0u && a.byTexelBytes != b.byTexelBytes)) {
             return false;
         }
         if (memory.imagePacked) {

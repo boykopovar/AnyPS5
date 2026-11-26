@@ -182,12 +182,13 @@ void CheckStore(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const For
         const auto width = level < Levels ? std::max(Width >> level, 1u) : 0u;
         const auto height = level < Levels ? std::max(Height >> level, 1u) : 0u;
         if (!(level < Levels && x < width && width - x >= elements && y < height)) continue;
-        const auto first = x & ~(elements - 1u);
-        for (std::uint32_t element = x - first; element < elements; ++element) {
+        const auto groupTexels = 4u / (format.bytes * format.components);
+        const auto laneInGroup = x % groupTexels;
+        for (std::uint32_t element = 0u; element < elements && laneInGroup + element < groupTexels; ++element) {
             for (std::uint32_t component = 0; component < format.components; ++component) {
                 const auto lane = element * format.components + component;
                 const auto value = std::min(FillValue(lane), format.bytes == 1u ? 0xffu : 0xffffu);
-                std::memcpy(expected.data() + TexelOffset(surface.mips[level], format, first + element, y, component), &value, format.bytes);
+                std::memcpy(expected.data() + TexelOffset(surface.mips[level], format, x + element, y, component), &value, format.bytes);
             }
         }
     }
