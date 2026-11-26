@@ -1332,7 +1332,7 @@ void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t le
 void ReplaceFixedOverlap(GuestAllocations::Mutation& mutation, void* addr, size_t len, int flags) {
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixedFlag) == 0) return;
-    if ((flags & GuestMapNoOverwrite) == 0 && mutation.Overlaps(addr, len)) UnmapRegistered(mutation, addr, len);
+    if (mutation.Overlaps(addr, len) && ((flags & GuestMapNoOverwrite) == 0 || Reserved(addr, len))) UnmapRegistered(mutation, addr, len);
     mutation.RequireAvailable(addr, len);
 }
 
