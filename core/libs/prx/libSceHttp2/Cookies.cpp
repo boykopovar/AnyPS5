@@ -12,6 +12,8 @@
 #include <vector>
 #include <array>
 #include <new>
+#include <set>
+#include <tuple>
 #include "GuestAccess.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
@@ -613,6 +615,7 @@ bool ImportBlob(const std::vector<std::uint8_t>& input, std::vector<Cookie>& coo
     if (count > static_cast<std::size_t>(end - cursor) / COOKIE_RECORD_MIN_BYTES) return false;
     cookies.clear();
     cookies.reserve(count);
+    std::set<std::tuple<std::string, std::string, std::string>> seen;
     for (std::uint32_t index = 0; index < count; ++index) {
         Cookie cookie{};
         if (!TakeString(cursor, end, cookie.name) || !TakeString(cursor, end, cookie.value) ||
@@ -630,7 +633,8 @@ bool ImportBlob(const std::vector<std::uint8_t>& input, std::vector<Cookie>& coo
         if (hasValue == 0 && !cookie.value.empty()) return false;
         if (cookie.name.empty() && cookie.value.empty()) return false;
         if (cookie.domain.empty() || cookie.domain.size() > MAX_URL_LENGTH) return false;
-        if (cookie.path.empty() || cookie.path.front() != '/' || cookie.path.size() > MAX_URL_LENGTH) return false;
+        if (cookie.path.empty() || cookie.path.front() != '/') return false;
+        if (!seen.emplace(cookie.name, cookie.domain, cookie.path).second) return false;
         cookie.hasValue = hasValue != 0;
         cookie.secure = secure != 0;
         if (hasExpiry == 0) {
@@ -688,12 +692,14 @@ int APS5_VABI sceHttp2CookieImport(int cookieBoxId, const void* buffer, std::siz
     std::lock_guard lock(g_cookiesMutex);
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
-    if (cookies.size() > box->maxNum) return ERROR_OUT_OF_SIZE;
+    const std::uint32_t maxNum = std::max<std::uint32_t>(box->maxNum, 1);
+    const std::uint32_t maxNumPerDomain = std::max<std::uint32_t>(box->maxNumPerDomain, 1);
+    if (cookies.size() > maxNum) return ERROR_OUT_OF_SIZE;
     std::unordered_map<std::string, std::uint32_t> perDomain;
     try {
         for (const Cookie& cookie : cookies) {
             if (box->maxSize == 0 || PairSize(cookie) > box->maxSize) return ERROR_OUT_OF_SIZE;
-            if (++perDomain[cookie.domain] > box->maxNumPerDomain) return ERROR_OUT_OF_SIZE;
+            if (++perDomain[cookie.domain] > maxNumPerDomain) return ERROR_OUT_OF_SIZE;
         }
     } catch (const std::bad_alloc&) {
         return ERROR_OUT_OF_MEMORY;

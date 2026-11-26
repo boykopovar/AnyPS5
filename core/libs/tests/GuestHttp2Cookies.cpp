@@ -386,7 +386,91 @@ static void CheckExportImport() {
     Require(sceHttp2SetCookieMaxNum(limitedCount, 0) == 0);
     Require(sceHttp2CookieImport(limitedCount, emptyBlob.data(), emptyBlob.size()) == 0);
 
-    for (const int id : {source, target, expiryBox, empty, limitedSize, same, limitedDomain, limitedCount}) {
+    const int longPathSource = sceHttp2CreateCookieBox(0x10000);
+    const int longPathTarget = sceHttp2CreateCookieBox(0x10000);
+    Require(longPathSource > 0 && longPathTarget > 0);
+    const std::string longCookie = "lp=1; Path=/" + std::string(70000, 'p');
+    Require(Add(longPathSource, "http://long.test/", longCookie) == 0);
+    std::size_t longSize = 0;
+    Require(sceHttp2CookieExport(longPathSource, nullptr, 0, &longSize) == 0 && longSize > 70000);
+    std::vector<std::uint8_t> longBlob(longSize);
+    std::size_t longWritten = 0;
+    Require(sceHttp2CookieExport(longPathSource, longBlob.data(), longBlob.size(), &longWritten) == 0 && longWritten == longSize);
+    Require(sceHttp2CookieImport(longPathTarget, longBlob.data(), longBlob.size()) == 0);
+    Require(Stats(longPathTarget).currentInuseNum == 1);
+    Require(Stats(longPathTarget).currentInuseSize == Stats(longPathSource).currentInuseSize);
+
+    const int dupBox = sceHttp2CreateCookieBox(0x10000);
+    Require(dupBox > 0 && Add(dupBox, "http://keep.test/", "keep=1") == 0);
+    std::vector<std::uint8_t> dupBlob{'A', 'P', 'S', '5', 'H', '2', 'C', 1};
+    AppendU32(dupBlob, 2);
+    for (const char* value : {"1", "2"}) {
+        AppendString(dupBlob, "dup");
+        AppendString(dupBlob, value);
+        AppendString(dupBlob, "a.test");
+        AppendString(dupBlob, "/");
+        dupBlob.push_back(1);
+        dupBlob.push_back(0);
+        dupBlob.push_back(0);
+        AppendU64(dupBlob, 0);
+    }
+    Require(sceHttp2CookieImport(dupBox, dupBlob.data(), dupBlob.size()) == InvalidValue);
+    Require(Get(dupBox, "http://keep.test/") == "keep=1");
+
+    std::vector<std::uint8_t> caseDistinctBlob{'A', 'P', 'S', '5', 'H', '2', 'C', 1};
+    AppendU32(caseDistinctBlob, 2);
+    for (const char* name : {"Dup", "dup"}) {
+        AppendString(caseDistinctBlob, name);
+        AppendString(caseDistinctBlob, "1");
+        AppendString(caseDistinctBlob, "a.test");
+        AppendString(caseDistinctBlob, "/");
+        caseDistinctBlob.push_back(1);
+        caseDistinctBlob.push_back(0);
+        caseDistinctBlob.push_back(0);
+        AppendU64(caseDistinctBlob, 0);
+    }
+    Require(sceHttp2CookieImport(dupBox, caseDistinctBlob.data(), caseDistinctBlob.size()) == 0);
+    Require(Stats(dupBox).currentInuseNum == 2);
+
+    const int zeroTotalSource = sceHttp2CreateCookieBox(0x10000);
+    const int zeroTotalTarget = sceHttp2CreateCookieBox(0x10000);
+    Require(zeroTotalSource > 0 && zeroTotalTarget > 0);
+    Require(sceHttp2SetCookieMaxNum(zeroTotalSource, 0) == 0 && sceHttp2SetCookieMaxNum(zeroTotalTarget, 0) == 0);
+    Require(Add(zeroTotalSource, "http://zero.test/", "first=1") == 0);
+    Require(Add(zeroTotalSource, "http://zero.test/", "second=2") == 0);
+    Require(Stats(zeroTotalSource).currentInuseNum == 1);
+    std::size_t zeroTotalSize = 0;
+    Require(sceHttp2CookieExport(zeroTotalSource, nullptr, 0, &zeroTotalSize) == 0);
+    std::vector<std::uint8_t> zeroTotalBlob(zeroTotalSize);
+    std::size_t zeroTotalWritten = 0;
+    Require(sceHttp2CookieExport(zeroTotalSource, zeroTotalBlob.data(), zeroTotalBlob.size(), &zeroTotalWritten) == 0 && zeroTotalWritten == zeroTotalSize);
+    Require(sceHttp2CookieImport(zeroTotalTarget, zeroTotalBlob.data(), zeroTotalBlob.size()) == 0);
+    Require(Get(zeroTotalTarget, "http://zero.test/") == "second=2");
+    Require(sceHttp2CookieImport(zeroTotalTarget, sameBlob.data(), sameBlob.size()) == OutOfSize);
+    Require(Get(zeroTotalTarget, "http://zero.test/") == "second=2");
+
+    const int zeroDomainSource = sceHttp2CreateCookieBox(0x10000);
+    const int zeroDomainTarget = sceHttp2CreateCookieBox(0x10000);
+    Require(zeroDomainSource > 0 && zeroDomainTarget > 0);
+    Require(sceHttp2SetCookieMaxNumPerDomain(zeroDomainSource, 0) == 0 && sceHttp2SetCookieMaxNumPerDomain(zeroDomainTarget, 0) == 0);
+    Require(Add(zeroDomainSource, "http://one.test/", "a=1") == 0);
+    Require(Add(zeroDomainSource, "http://one.test/", "b=2") == 0);
+    Require(Add(zeroDomainSource, "http://two.test/", "c=3") == 0);
+    Require(Stats(zeroDomainSource).currentInuseNum == 2);
+    std::size_t zeroDomainSize = 0;
+    Require(sceHttp2CookieExport(zeroDomainSource, nullptr, 0, &zeroDomainSize) == 0);
+    std::vector<std::uint8_t> zeroDomainBlob(zeroDomainSize);
+    std::size_t zeroDomainWritten = 0;
+    Require(sceHttp2CookieExport(zeroDomainSource, zeroDomainBlob.data(), zeroDomainBlob.size(), &zeroDomainWritten) == 0 && zeroDomainWritten == zeroDomainSize);
+    Require(sceHttp2CookieImport(zeroDomainTarget, zeroDomainBlob.data(), zeroDomainBlob.size()) == 0);
+    Require(Get(zeroDomainTarget, "http://one.test/") == "b=2");
+    Require(Get(zeroDomainTarget, "http://two.test/") == "c=3");
+    Require(sceHttp2CookieImport(zeroDomainTarget, sameBlob.data(), sameBlob.size()) == OutOfSize);
+    Require(Get(zeroDomainTarget, "http://one.test/") == "b=2");
+
+    for (const int id : {source, target, expiryBox, empty, limitedSize, same, limitedDomain, limitedCount,
+                         longPathSource, longPathTarget, dupBox, zeroTotalSource, zeroTotalTarget,
+                         zeroDomainSource, zeroDomainTarget}) {
         Require(sceHttp2DeleteCookieBox(id) == 0);
     }
     Require(sceHttp2CookieExport(source, nullptr, 0, &required) == InvalidId);
