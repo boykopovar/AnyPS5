@@ -2521,7 +2521,7 @@ void deferredBatchTests(const Device& device) {
         recorder.Submit();
         recorder.Sync();
         const auto submitted = countedSubmits.load();
-        Require(submitted != 0, "the counting submit wrapper was not used");
+        Require(submitted == counted + 1, "the recorder's submit did not reach the counting submit wrapper");
         recordBarrierThrough(failing, recorder.Commands());
         static_cast<void>(recorder.AfterRecordedWork([&] { ran = true; }));
         refusedSubmits.store(true);
