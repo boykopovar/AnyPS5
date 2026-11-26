@@ -46,11 +46,11 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uint32_t queueCount, std
         e->triggered = false;
         e->event.data = 0;
     };
+    std::lock_guard lock(g_mutex);
     const int result = EqueueAddEvent_nid_postfix(eq, event);
     if (result != EQUEUE_OK) {
         throw std::runtime_error(std::string(caller) + ": event queue rejected the event");
     }
-    std::lock_guard lock(g_mutex);
     const auto found = std::find_if(g_registrations.begin(), g_registrations.end(), [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
     if (found == g_registrations.end()) g_registrations.push_back({eq, queue, queueCount, ident, identData});
     else *found = {eq, queue, queueCount, ident, identData};
@@ -61,10 +61,10 @@ int DeleteEvent(KernelEqueue eq, std::uintptr_t ident, const char* caller) {
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         throw std::runtime_error(std::string(caller) + ": invalid event queue");
     }
+    std::lock_guard lock(g_mutex);
     if (EqueueDeleteEvent_nid_postfix(eq, ident, EvfiltGraphicsCore) != EQUEUE_OK) {
         throw std::runtime_error(std::string(caller) + ": event is not registered");
     }
-    std::lock_guard lock(g_mutex);
     std::erase_if(g_registrations, [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
     return 0;
 }
