@@ -15,14 +15,12 @@ static std::mutex g_mutex;
 static bool g_initialized = false;
 static bool g_screenInitialized = false;
 static bool g_separateModeOpen = false;
-static std::uint32_t g_screenMode = 1;
 static std::array<std::uint8_t, 0x44> g_separateModeConfig{};
-static std::size_t g_guardAreaCount = 0;
-static std::array<float, 32> g_guardAreas{};
 static void* g_callback = nullptr;
 static void* g_callbackUserData = nullptr;
 static constexpr int ErrorInvalidArgument = static_cast<int>(0x80A00002);
 static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
+static constexpr int ErrorSeparateModeNotOpen = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
 static constexpr int ErrorScreenNotInitialized = static_cast<int>(0x80A0000A);
 static constexpr std::size_t ProgramInfoSize = 0x134C;
@@ -33,7 +31,7 @@ static constexpr std::size_t MaxInvitationSessionIdLength = 45;
 static constexpr std::size_t MaxSocialMessageLength = 360;
 static constexpr std::size_t MaxSpoilerTags = 16;
 static constexpr std::size_t MaxPresetCommands = 5;
-static constexpr std::size_t MaxGuardAreas = 8;
+static constexpr std::uint32_t MaxGuardAreas = 8;
 
 static bool ValidFeedbackType(int type) {
     return type >= 1 && type <= 3;
@@ -81,12 +79,6 @@ static bool ValidSeparateModeParam(const std::array<std::uint8_t, 0x44>& cfg) {
     return (field0 & 0xFFFFFFF6u) == 6u && field4 <= 1u && field24 < 2u;
 }
 
-static float ClampUnitFloat(float value) {
-    if (!(value >= 0.0f)) return 0.0f;
-    if (value > 1.0f) return 1.0f;
-    return value;
-}
-
 static int WriteGuestOutput(void* destination, const void* source, std::size_t size) {
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
@@ -112,10 +104,7 @@ int APS5_VABI sceGameLiveStreamingTerminate(void) {
     g_initialized = false;
     g_screenInitialized = false;
     g_separateModeOpen = false;
-    g_screenMode = 1;
     g_separateModeConfig.fill(0);
-    g_guardAreaCount = 0;
-    g_guardAreas.fill(0.0f);
     return 0;
 }
 
@@ -142,7 +131,6 @@ int APS5_VABI sceGameLiveStreamingScreenInitialize(void) {
     if (g_screenInitialized) return ErrorAlreadyInitialized;
     g_screenInitialized = true;
     g_separateModeOpen = false;
-    g_screenMode = 1;
     g_separateModeConfig.fill(0);
     return 0;
 }
@@ -159,7 +147,6 @@ int APS5_VABI sceGameLiveStreamingScreenTerminate(void) {
     if (!g_screenInitialized) return ErrorScreenNotInitialized;
     g_screenInitialized = false;
     g_separateModeOpen = false;
-    g_screenMode = 1;
     g_separateModeConfig.fill(0);
     return 0;
 }
@@ -168,9 +155,8 @@ int APS5_VABI sceGameLiveStreamingScreenCloseSeparateMode(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (!g_screenInitialized) return ErrorScreenNotInitialized;
-    if (!g_separateModeOpen) return ErrorAlreadyInitialized;
+    if (!g_separateModeOpen) return ErrorSeparateModeNotOpen;
     g_separateModeOpen = false;
-    g_screenMode = 1;
     return 0;
 }
 
@@ -203,7 +189,6 @@ int APS5_VABI sceGameLiveStreamingScreenOpenSeparateMode(void) {
     if (g_separateModeOpen) return ErrorAlreadyInitialized;
     if (!ValidSeparateModeParam(g_separateModeConfig)) return ErrorInvalidArgument;
     g_separateModeOpen = true;
-    g_screenMode = 1;
     return 0;
 }
 
@@ -211,9 +196,8 @@ int APS5_VABI sceGameLiveStreamingScreenSetMode(std::uint32_t mode) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (!g_screenInitialized) return ErrorScreenNotInitialized;
-    if (!g_separateModeOpen) return ErrorAlreadyInitialized;
+    if (!g_separateModeOpen) return ErrorSeparateModeNotOpen;
     if (mode < 1 || mode > 2) return ErrorInvalidArgument;
-    g_screenMode = mode;
     return 0;
 }
 
@@ -366,17 +350,15 @@ int APS5_VABI sceGameLiveStreamingSetInvitationSessionId(const char* sessionId) 
 int APS5_VABI sceGameLiveStreamingStartGenerateStandbyScreenResource(const void* parameter) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
-    if (parameter == nullptr) return ErrorInvalidArgument;
-    std::array<std::uint8_t, 0x80> localParam{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), parameter, localParam.size());
-    errno = savedErrno;
-    return copied ? 0 : ErrorInvalidArgument;
+    (void)parameter;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -399,6 +381,7 @@ int APS5_VABI sceGameLiveStreamingUnregisterCallback(void) {
 int APS5_VABI sceGameLiveStreamingCheckCallback(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -427,36 +410,32 @@ int APS5_VABI sceGameLiveStreamingLaunchLiveViewerA(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::size_t count, const void* areas) {
+int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::uint32_t count, const void* areas) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (count > MaxGuardAreas || (count != 0 && areas == nullptr)) return ErrorInvalidArgument;
-    std::array<float, 32> clamped{};
     if (count > 0) {
         std::array<float, 32> input{};
-        const std::size_t bytes = count * 4 * sizeof(float);
+        const std::size_t bytes = static_cast<std::size_t>(count) * 4 * sizeof(float);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(input.data(), areas, bytes);
         errno = savedErrno;
         if (!copied) return ErrorInvalidArgument;
-        for (std::size_t i = 0; i < count * 4; ++i) {
-            clamped[i] = ClampUnitFloat(input[i]);
-        }
     }
-    g_guardAreas = clamped;
-    g_guardAreaCount = count;
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStartSocialFeedbackMessageFiltering(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingStopSocialFeedbackMessageFiltering(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -494,6 +473,7 @@ int APS5_VABI sceGameLiveStreamingStartDebugBroadcast(const void* parameter) {
 int APS5_VABI sceGameLiveStreamingStopDebugBroadcast(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

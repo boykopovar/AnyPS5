@@ -29,6 +29,16 @@ bool EnableThrowsNotInitialized(bool isEnableLiveStreaming) {
     return false;
 }
 
+template <typename Fn>
+bool ThrowsNotImplemented(Fn call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 constexpr int kInvalidArgument = static_cast<int>(0x80A00002);
 
 GameLiveStreamingFeedbackMessage* AsMessages(std::array<std::uint8_t, 256>& buffer) {
@@ -232,6 +242,7 @@ void CheckInvalidOutputPointers() {
 
 void CheckScreenSeparateMode() {
     constexpr int alreadyInitialized = static_cast<int>(0x80A00003);
+    constexpr int separateModeNotOpen = static_cast<int>(0x80A00003);
     constexpr int screenNotInitialized = static_cast<int>(0x80A0000A);
 
     Require(sceGameLiveStreamingScreenTerminate() == screenNotInitialized);
@@ -243,8 +254,8 @@ void CheckScreenSeparateMode() {
     Require(sceGameLiveStreamingScreenInitialize() == 0);
     Require(sceGameLiveStreamingScreenInitialize() == alreadyInitialized);
     Require(sceGameLiveStreamingScreenOpenSeparateMode() == kInvalidArgument);
-    Require(sceGameLiveStreamingScreenCloseSeparateMode() == alreadyInitialized);
-    Require(sceGameLiveStreamingScreenSetMode(1) == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == separateModeNotOpen);
+    Require(sceGameLiveStreamingScreenSetMode(1) == separateModeNotOpen);
 
     std::array<std::uint8_t, 0x44> separateParam{};
     Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(separateParam.data()) == 0);
@@ -266,7 +277,7 @@ void CheckScreenSeparateMode() {
     Require(sceGameLiveStreamingScreenSetMode(2) == 0);
     Require(sceGameLiveStreamingScreenConfigureSeparateMode(separateParam.data()) == alreadyInitialized);
     Require(sceGameLiveStreamingScreenCloseSeparateMode() == 0);
-    Require(sceGameLiveStreamingScreenCloseSeparateMode() == alreadyInitialized);
+    Require(sceGameLiveStreamingScreenCloseSeparateMode() == separateModeNotOpen);
     Require(sceGameLiveStreamingScreenTerminate() == 0);
     Require(sceGameLiveStreamingScreenTerminate() == screenNotInitialized);
 }
@@ -281,14 +292,11 @@ void CheckBroadcastControls() {
     Require(sceGameLiveStreamingSetDefaultServiceProviderPermission(true) == 0);
     Require(sceGameLiveStreamingSetDefaultServiceProviderPermission(false) == 0);
 
-    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(nullptr) == kInvalidArgument);
-    errno = 71;
-    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
-    Require(errno == 71);
     std::array<std::uint8_t, 0x80> standby{};
-    Require(sceGameLiveStreamingStartGenerateStandbyScreenResource(standby.data()) == 0);
-    Require(sceGameLiveStreamingStopGenerateStandbyScreenResource() == 0);
-    Require(sceGameLiveStreamingCheckCallback() == 0);
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingStartGenerateStandbyScreenResource(nullptr); }));
+    Require(ThrowsNotImplemented([&] { sceGameLiveStreamingStartGenerateStandbyScreenResource(standby.data()); }));
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingStopGenerateStandbyScreenResource(); }));
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingCheckCallback(); }));
 
     Require(sceGameLiveStreamingGetCurrentBroadcastScreenLayout(nullptr) == kInvalidArgument);
     errno = 71;
@@ -303,6 +311,7 @@ void CheckBroadcastControls() {
     areas.fill(0.5f);
     Require(sceGameLiveStreamingSetGuardAreas(1, nullptr) == kInvalidArgument);
     Require(sceGameLiveStreamingSetGuardAreas(9, areas.data()) == kInvalidArgument);
+    Require(sceGameLiveStreamingSetGuardAreas(0xffffffffu, areas.data()) == kInvalidArgument);
     Require(sceGameLiveStreamingSetGuardAreas(0, nullptr) == 0);
     errno = 71;
     Require(sceGameLiveStreamingSetGuardAreas(1, reinterpret_cast<const void*>(0x10)) == kInvalidArgument);
@@ -311,8 +320,8 @@ void CheckBroadcastControls() {
     areas[1] = 2.0f;
     Require(sceGameLiveStreamingSetGuardAreas(8, areas.data()) == 0);
 
-    Require(sceGameLiveStreamingStartSocialFeedbackMessageFiltering() == 0);
-    Require(sceGameLiveStreamingStopSocialFeedbackMessageFiltering() == 0);
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingStartSocialFeedbackMessageFiltering(); }));
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingStopSocialFeedbackMessageFiltering(); }));
 
     Require(sceGameLiveStreamingStartDebugBroadcast(nullptr) == kInvalidArgument);
     errno = 71;
@@ -328,7 +337,7 @@ void CheckBroadcastControls() {
     debugParam[0x410] = 0;
     std::memset(debugParam.data() + 4, 'x', 0x401);
     Require(sceGameLiveStreamingStartDebugBroadcast(debugParam.data()) == kInvalidArgument);
-    Require(sceGameLiveStreamingStopDebugBroadcast() == 0);
+    Require(ThrowsNotImplemented([] { sceGameLiveStreamingStopDebugBroadcast(); }));
 }
 
 }

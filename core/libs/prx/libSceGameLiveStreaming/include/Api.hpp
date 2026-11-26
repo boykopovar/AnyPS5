@@ -91,7 +91,7 @@ int APS5_VABI sceGameLiveStreamingSetStandbyScreenResource(void);
 int APS5_VABI sceGameLiveStreamingGetCurrentBroadcastScreenLayout(void* layout);
 int APS5_VABI sceGameLiveStreamingLaunchLiveViewer(void);
 int APS5_VABI sceGameLiveStreamingLaunchLiveViewerA(void);
-int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::size_t count, const void* areas);
+int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::uint32_t count, const void* areas);
 int APS5_VABI sceGameLiveStreamingStartSocialFeedbackMessageFiltering(void);
 int APS5_VABI sceGameLiveStreamingStopSocialFeedbackMessageFiltering(void);
 int APS5_VABI sceGameLiveStreamingApplySocialFeedbackMessageFilter(void);
