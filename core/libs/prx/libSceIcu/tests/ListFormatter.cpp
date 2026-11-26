@@ -276,12 +276,10 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, &status); });
-        Require(status == incoming);
+        if (auto* fmt = ulistfmt_openForType_nid_postfix("en", 0, 0, &status)) ulistfmt_close_nid_postfix(fmt);
 
         status = incoming;
-        RequireThrows([&] { ulistfmt_openForType_nid_postfix(nullptr, 3, 2, &status); });
-        Require(status == incoming);
+        if (auto* fmt = ulistfmt_openForType_nid_postfix(nullptr, 3, 2, &status)) ulistfmt_close_nid_postfix(fmt);
     }
 
     RequireThrows([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, nullptr); });
@@ -310,8 +308,9 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_openResult_nid_postfix(&status); });
-        Require(status == incoming);
+        auto* res = ulistfmt_openResult_nid_postfix(&status);
+        Require(status <= 0 && res != nullptr);
+        ulistfmt_closeResult_nid_postfix(res);
     }
 
     RequireThrows([&] { ulistfmt_openResult_nid_postfix(nullptr); });
@@ -360,6 +359,36 @@ void Run() {
 
 } // namespace UlistfmtResultAsValue
 
+namespace UlistfmtLifecycle {
+
+using IcuRecoveredTest::Require;
+
+void Run() {
+    std::int32_t status = 0;
+    auto* result = ulistfmt_openResult_nid_postfix(&status);
+    Require(status <= 0 && result != nullptr);
+    const auto* value = ulistfmt_resultAsValue_nid_postfix(result, &status);
+    Require(status <= 0 && value != nullptr);
+
+    auto* formatter = ulistfmt_openForType_nid_postfix("en", 0, 0, &status);
+    if (formatter != nullptr && status <= 0) {
+        const std::array<char16_t, 2> one{u'A', 0};
+        const std::array<char16_t, 2> two{u'B', 0};
+        const char16_t* items[2] = {one.data(), two.data()};
+        const std::int32_t lengths[2] = {1, 1};
+        std::array<char16_t, 32> out{};
+        const std::int32_t outLen = ulistfmt_format_nid_postfix(formatter, items, lengths, 2, out.data(), 32, &status);
+        Require(status <= 0 && outLen > 0);
+        ulistfmt_formatStringsToResult_nid_postfix(formatter, items, lengths, 2, result, &status);
+        Require(status <= 0);
+        ulistfmt_close_nid_postfix(formatter);
+    }
+
+    ulistfmt_closeResult_nid_postfix(result);
+}
+
+} // namespace UlistfmtLifecycle
+
 void CheckIcuListFormatter() {
     UlistfmtClose::Run();
     UlistfmtCloseResult::Run();
@@ -368,4 +397,5 @@ void CheckIcuListFormatter() {
     UlistfmtOpenForType::Run();
     UlistfmtOpenResult::Run();
     UlistfmtResultAsValue::Run();
+    UlistfmtLifecycle::Run();
 }

@@ -812,6 +812,7 @@ set(ICU_RECOVERED_SOURCES
     FormattedValue.cpp
     Idna.cpp
     ListFormatter.cpp
+    ListFormatterBackend.cpp
     LocaleDisplayNames.cpp
     NumberFormat.cpp
     NumberFormatter.cpp

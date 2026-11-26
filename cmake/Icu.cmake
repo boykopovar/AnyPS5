@@ -127,6 +127,8 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/locresdata.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
+    ${ICU_SOURCE_DIR}/common/simpleformatter.cpp
+    ${ICU_SOURCE_DIR}/common/static_unicode_sets.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
     ${ICU_SOURCE_DIR}/common/uloc.cpp
     ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
@@ -168,6 +170,12 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 target_sources(icu_i18n PRIVATE
+    ${ICU_SOURCE_DIR}/i18n/formatted_string_builder.cpp
+    ${ICU_SOURCE_DIR}/i18n/formattedval_iterimpl.cpp
+    ${ICU_SOURCE_DIR}/i18n/formattedval_sbimpl.cpp
+    ${ICU_SOURCE_DIR}/i18n/formattedvalue.cpp
+    ${ICU_SOURCE_DIR}/i18n/listformatter.cpp
+    ${ICU_SOURCE_DIR}/i18n/ulistformatter.cpp
     ${ICU_SOURCE_DIR}/i18n/ufieldpositer.cpp
     ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
     ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
