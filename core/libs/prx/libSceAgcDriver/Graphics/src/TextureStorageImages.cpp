@@ -93,6 +93,10 @@ void StorageTexture::copyImageToBuffer(VkCommandBuffer commands, VkImage source,
 }
 
 void StorageTexture::clearColorImage(VkCommandBuffer commands, VkImage destination, VkImageLayout layout, const VkClearColorValue* value, std::uint32_t count, const VkImageSubresourceRange* ranges) const {
+    if (extraMipImages.empty()) {
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, destination, layout, value, count, ranges);
+        return;
+    }
     Require(destination == image && count == 1u && ranges != nullptr && ranges->baseMipLevel == 0u && ranges->levelCount == geometry.imageLevels, "storage clear does not cover its physical chain");
     context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image, layout, value, count, ranges);
     auto range = *ranges;
