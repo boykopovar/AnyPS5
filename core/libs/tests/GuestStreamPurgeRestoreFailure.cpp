@@ -70,6 +70,7 @@ int main(int argc, char** argv) {
         Require(result == -1 && savedErrno == EIO, "report input synchronization failure");
         Require(restoreCalls == 0 && rejectedCalls == 0, "do not restore bytes after synchronization fails");
         Require(stream.PushedBackBytes().empty() && !stream.PushbackLive(), "do not publish input that was never restored");
+        Require(stream.GuestState().position == stream.GuestState().buffer, "discard the guest buffer after synchronization fails");
         Require(stream.Close() == 0, "close stream after synchronization failure");
         std::puts("stream purge synchronization failure test passed");
         return 0;
