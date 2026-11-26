@@ -94,10 +94,53 @@ static void TestNeverSetUpVoicesOfOtherRacks() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static void Render(uintptr_t system) {
+    std::vector<float> out(Grain, -1.0f);
+    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+}
+
+static void TestPs4PausedSamplerKeepsPausedFlags() {
+    static std::vector<std::int16_t> pcm(4096, 1000);
+    const auto system = CreateSystem();
+    const auto voice = Sampler(system);
+    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, SamplerSetup);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 1, &block});
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    Render(system);
+    Event(voice, SCE_NGS2_VOICE_EVENT_PAUSE);
+    for (int grain = 0; grain < 2; grain++) {
+        Render(system);
+        Require(Flags(voice) == (SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PAUSED));
+    }
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPs4StarvedSamplerReportsEmptyOnly() {
+    const auto system = CreateSystem();
+    const auto voice = Sampler(system);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, SamplerSetup);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, nullptr,
+        SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 0, nullptr});
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    for (int grain = 0; grain < 2; grain++) {
+        Render(system);
+        Require(Flags(voice) == (SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_EMPTY));
+    }
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+#endif
+
 int main() {
     TestPlayWithoutSetup();
     TestEmptyFormatKeepsTheSetup();
     TestPlayAfterSetupInOneList();
     TestNeverSetUpVoicesOfOtherRacks();
+#ifdef APS5_NGS2_PS4_LIBRARY
+    TestPs4PausedSamplerKeepsPausedFlags();
+    TestPs4StarvedSamplerReportsEmptyOnly();
+#endif
     return 0;
 }
