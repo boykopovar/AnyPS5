@@ -15003,6 +15003,35 @@ void discardedSampleTests(const Device& device) {
     failedSubmit("a batch that folded earlier samples at capacity");
     Require(Recorder::SampleDumpCounts().capacityFolds == capacityFolds + 1, "a discarded batch at the fold capacity did not fold");
     restoredTotal("a discarded batch that folded earlier samples at capacity", beforeCapacity, shortOfCapacity);
+    if (recorder.QueuesSampleDumps()) {
+        recorder.Sync();
+        const auto beforeSealed = recorder.SamplesTotal();
+        const auto foldsBeforeSealed = Recorder::SampleDumpCounts().capacityFolds;
+        std::size_t sealed = 0;
+        while (Recorder::SampleDumpCounts().capacityFolds == foldsBeforeSealed && sealed < 4096) {
+            cover.Draw(recorder);
+            recorder.EndPassSamples();
+            recorder.Seal();
+            ++sealed;
+        }
+        Require(Recorder::SampleDumpCounts().capacityFolds == foldsBeforeSealed + 1 && recorder.SealedBatches() == sealed, "sealed batches never folded their occlusion segments at capacity");
+        Recorder::FailNextSubmitsForTest(1);
+        while (recorder.SealedBatches() != 0) {
+            try {
+                recorder.QueueSealed();
+            } catch (const std::exception&) {
+            }
+        }
+        Recorder::FailNextSubmitsForTest(0);
+        cover.Draw(recorder);
+        recorder.EndPassSamples();
+        recorder.Submit();
+        recorder.Sync();
+        std::uint64_t afterSealed = 0;
+        completesWithin(std::chrono::seconds(20), "the sample total after refused sealed batches", [&] { afterSealed = recorder.SamplesTotal(); });
+        Require(afterSealed >= beforeSealed, "the sample total fell after refused sealed batches");
+        if (context.occlusionQueryPrecise) Require(afterSealed == beforeSealed + CoverPass::Samples, "the segments of refused sealed batches were counted again after a later batch was refused (" + std::to_string(afterSealed - beforeSealed) + " samples past the batch that ran)");
+    }
     std::cout << "Recorder discarded sample tests passed\n";
 }
 

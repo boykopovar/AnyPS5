@@ -5923,6 +5923,8 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (batch->sealed != nullptr && !batch->sealed->SubmitReturned()) batch->sealed->NotSubmitted();
     std::erase_if(pendingSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
     std::erase_if(batch->foldedSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
+    if (open != nullptr) std::erase_if(open->foldedSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
+    for (const auto& sealedBatch : sealedBatches) std::erase_if(sealedBatch->foldedSamples, [&](const SampleSegment& sample) { return sample.batch == batch->sampleBatch; });
     if (pendingSamples.size() + batch->foldedSamples.size() <= pendingSamples.capacity()) {
         pendingSamples.insert(pendingSamples.begin(), std::make_move_iterator(batch->foldedSamples.begin()), std::make_move_iterator(batch->foldedSamples.end()));
     } else {
