@@ -195,6 +195,21 @@ void TestUnavailable() {
     Require(threw, "reading a node after the builder parsed again throws");
     _ZN3sce3Xml3Dom4NodeD1Ev(&first);
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
+
+    XmlHandle orphanDocument{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&orphanDocument, &f.builder);
+    XmlNode orphan{};
+    _ZN3sce3Xml3Dom4NodeC1ENS1_6NodeIdE(&orphan, Root(&orphanDocument));
+    _ZN3sce3Xml3Dom8Document9terminateEv(&orphanDocument);
+    Require(f.Parse("<t/>") == 0, "parse after the only document was terminated");
+    threw = false;
+    try {
+        _ZNK3sce3Xml3Dom4Node11getNodeTypeEv(&orphan);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "reading a node whose document and generation are both gone throws");
+    _ZN3sce3Xml3Dom4NodeD1Ev(&orphan);
 }
 
 }

@@ -12,12 +12,27 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace XmlDom {
+
+std::shared_ptr<Generation> NewGeneration() {
+    return std::shared_ptr<Generation>(new Generation, [](Generation* generation) {
+        generation->alive = false;
+        generation->buffers = {};
+        generation->lentBuffers = {};
+        generation->tree.reset();
+        static std::mutex retiredMutex;
+        static auto* retired = new std::vector<Generation*>();
+        std::lock_guard lock(retiredMutex);
+        retired->push_back(generation);
+    });
+}
 
 namespace {
 
@@ -257,7 +272,7 @@ int DocumentInitialize(XmlHandle* document, const XmlHandle* initializer) {
     if (localInit.impl == nullptr) return ErrorNotInitialized;
     const auto* parameter = static_cast<const XmlInitParameter*>(localInit.impl);
     if (parameter->allocator == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document::initialize: null allocator");
-    auto generation = std::make_shared<Generation>();
+    auto generation = NewGeneration();
     generation->writable = true;
     generation->alive = true;
     generation->tree = std::make_unique<WritableTree>();
@@ -359,7 +374,7 @@ XmlNodeId* DocumentSetWritable(XmlNodeId* result, XmlHandle* document) {
         WriteGuestWritableNode(result, ref->generation.get(), ref->generation->tree->DocRoot(), fn);
         return result;
     }
-    auto writable = std::make_shared<Generation>();
+    auto writable = NewGeneration();
     writable->writable = true;
     writable->alive = true;
     writable->status = 0;
