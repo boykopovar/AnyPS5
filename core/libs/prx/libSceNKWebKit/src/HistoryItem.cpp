@@ -29,6 +29,9 @@
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <algorithm>
+#include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -62,7 +65,104 @@ void Assign(String& target, const String& source) {
     std::swap(target.impl, copy.impl);
 }
 
+void InitString(String& target, const String& source) {
+    target.impl = source.impl;
+    if (target.impl) target.impl->refCount += 2;
+}
+
 void HistoryItemChangedNoOp(HistoryItem*) {
+}
+
+std::once_flag sequenceNumberOnce;
+std::int64_t sequenceNumberNext = 0;
+
+std::int64_t GenerateSequenceNumber() {
+    std::call_once(sequenceNumberOnce, [] {
+        sequenceNumberNext = static_cast<std::int64_t>(_ZN3WTF8WallTime3nowEv().m_value * 1000.0 * 1000.0);
+    });
+    return ++sequenceNumberNext;
+}
+
+void Construct(HistoryItem& item, const String* urlString, const String* title, const String* alternateTitle, const NKWebKit::WebCoreAbi::BackForwardItemIdentifier& identifier) {
+    const String& url = Checked(urlString, "null WTF::String");
+    const String& itemTitle = Checked(title, "null WTF::String");
+    const String& itemAlternateTitle = Checked(alternateTitle, "null WTF::String");
+    item.refCount = 1;
+    InitString(item.urlString, url);
+    InitString(item.originalURLString, url);
+    item.referrer.impl = nullptr;
+    item.target.impl = nullptr;
+    InitString(item.title, itemTitle);
+    InitString(item.displayTitle, itemAlternateTitle);
+    item.scrollPosition = IntPoint{};
+    item.pageScaleFactor = 0;
+    item.documentState = {};
+    item.shouldOpenExternalURLsPolicy = 0;
+    item.children = {};
+    item.lastVisitWasFailure = false;
+    item.isTargetItem = false;
+    item.wasRestoredFromSession = false;
+    item.wasCreatedByJSWithoutUserInteraction = false;
+    item.shouldRestoreScrollPosition = true;
+    item.itemSequenceNumber = GenerateSequenceNumber();
+    item.documentSequenceNumber = GenerateSequenceNumber();
+    item.stateObject = nullptr;
+    item.formData = nullptr;
+    item.formContentType.impl = nullptr;
+    item.cachedPage = nullptr;
+    item.pruningReason = 0;
+    item.identifier = identifier;
+    item.policyContainer.engaged = 0;
+}
+
+void AssignDocumentState(HistoryItemVectorStorage& target, const HistoryItemVectorStorage& source) {
+    if (&target == &source) return;
+    auto* targetElements = static_cast<String*>(target.buffer);
+    const String* sourceElements = static_cast<const String*>(source.buffer);
+    if (target.size > source.size) {
+        for (unsigned i = source.size; i < target.size; ++i) Release(targetElements[i].impl);
+        target.size = source.size;
+    } else if (source.size > target.capacity) {
+        for (unsigned i = 0; i < target.size; ++i) Release(targetElements[i].impl);
+        if (target.buffer) _ZN3WTF8fastFreeEPv(target.buffer);
+        target.buffer = nullptr;
+        target.capacity = 0;
+        target.size = 0;
+        if (source.size > 0) {
+            target.buffer = _ZN3WTF10fastMallocEm(static_cast<std::size_t>(source.size) * sizeof(String));
+            target.capacity = source.size;
+        }
+        targetElements = static_cast<String*>(target.buffer);
+    }
+    unsigned common = target.size;
+    for (unsigned i = 0; i < common; ++i) {
+        if (sourceElements[i].impl) sourceElements[i].impl->refCount += 2;
+        Release(targetElements[i].impl);
+        targetElements[i].impl = sourceElements[i].impl;
+    }
+    for (unsigned i = common; i < source.size; ++i) {
+        if (sourceElements[i].impl) sourceElements[i].impl->refCount += 2;
+        targetElements[i].impl = sourceElements[i].impl;
+    }
+    target.size = source.size;
+}
+
+void AppendChild(HistoryItemVectorStorage& children, HistoryItem** refSlot) {
+    if (children.size == children.capacity) {
+        std::size_t newMinCapacity = static_cast<std::size_t>(children.size) + 1;
+        std::size_t growth = static_cast<std::size_t>(children.capacity) + children.capacity / 4 + 1;
+        std::size_t newCapacity = std::max(newMinCapacity, std::max<std::size_t>(16, growth));
+        auto* newBuffer = static_cast<HistoryItem**>(_ZN3WTF10fastMallocEm(newCapacity * sizeof(HistoryItem*)));
+        if (children.buffer) {
+            std::memcpy(newBuffer, children.buffer, static_cast<std::size_t>(children.size) * sizeof(HistoryItem*));
+            _ZN3WTF8fastFreeEPv(children.buffer);
+        }
+        children.buffer = newBuffer;
+        children.capacity = static_cast<unsigned>(newCapacity);
+    }
+    static_cast<HistoryItem**>(children.buffer)[children.size] = *refSlot;
+    *refSlot = nullptr;
+    ++children.size;
 }
 
 }
@@ -218,6 +318,44 @@ HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6Str
         if (child && _ZN3WTF5equalEPKNS_10StringImplES2_(child->target.impl, key.impl)) return child;
     }
     return nullptr;
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(HistoryItem* self, const String* urlString, const String* title, const String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier) {
+    Construct(Checked(self), urlString, title, alternateTitle, identifier);
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(HistoryItem* self, const String* urlString, const String* title, const String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier) {
+    Construct(Checked(self), urlString, title, alternateTitle, identifier);
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(HistoryItem* self, const HistoryItemVectorStorage* state) {
+    AssignDocumentState(Checked(self).documentState, Checked(state, "null WTF::Vector"));
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(HistoryItem* self, HistoryItem** child) {
+    if (!child) throw std::invalid_argument("null WTF::Ref");
+    AppendChild(Checked(self).children, child);
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(HistoryItem* self, void** object) {
+    auto& item = Checked(self);
+    if (!object) throw std::invalid_argument("null WTF::RefPtr");
+    if (item.stateObject && *object != item.stateObject) NotImplemented_nid_no_patch(__func__);
+    if (object != &item.stateObject) {
+        item.stateObject = *object;
+        *object = nullptr;
+    }
+    historyItemChangedHook(&item);
+}
+
+void APS5_VABI _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(HistoryItem* self, void** formData) {
+    auto& item = Checked(self);
+    if (!formData) throw std::invalid_argument("null WTF::RefPtr");
+    if (item.formData && *formData != item.formData) NotImplemented_nid_no_patch(__func__);
+    if (formData != &item.formData) {
+        item.formData = *formData;
+        *formData = nullptr;
+    }
 }
 
 }

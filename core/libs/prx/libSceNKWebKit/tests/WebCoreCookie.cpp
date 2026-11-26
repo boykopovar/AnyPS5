@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <iterator>
 #include <stdexcept>
 #include <vector>
@@ -147,8 +146,6 @@ struct GuestCookie {
     explicit GuestCookie(const CookieDriver::Fields& fields) {
         cookie.expires = {};
         cookie.sameSite = 0;
-        std::memset(cookie.commentURL, 0, sizeof(cookie.commentURL));
-        std::memset(cookie.ports, 0, sizeof(cookie.ports));
         cookie.name = Make(fields.name);
         cookie.value = Make(fields.value);
         cookie.domain = Make(fields.domain);

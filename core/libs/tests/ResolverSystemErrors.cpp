@@ -65,6 +65,8 @@ int main() {
         {EAI_AGAIN, 0, 2, 77},
         {EAI_FAIL, 0, 4, 77},
         {EAI_NONAME, 0, 8, 77},
+        {EAI_ADDRFAMILY, 0, 8, 77},
+        {EAI_NODATA, 0, 8, 77},
     };
     const std::array<unsigned char, 16> address{16, 2, 0, 80, 127, 0, 0, 1};
     for (const auto& scenario : scenarios) {

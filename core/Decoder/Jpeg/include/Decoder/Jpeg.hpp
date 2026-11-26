@@ -25,6 +25,15 @@ struct Header {
     bool app0BeforeFrame = false;
 };
 
+struct PlanarImage {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t components;
+    std::uint32_t planeWidths[3]{};
+    std::uint32_t planeHeights[3]{};
+    std::vector<std::uint8_t> planes[3];
+};
+
 enum class Sampling {
     Yuv444,
     Yuv422,
@@ -35,9 +44,16 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
                                  std::uint32_t channels, int quality, Sampling sampling = Sampling::Yuv444,
                                  std::uint32_t restartBlocks = 0, std::uint32_t restartRows = 0);
 
+std::vector<std::uint8_t> EncodePlanarYuv(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
+                                          int quality, Sampling sampling, std::uint32_t restartBlocks, std::uint32_t restartRows);
+
+bool HasScanHeader(std::span<const std::uint8_t> jpeg);
+
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg);
+
+std::optional<PlanarImage> DecodePlanarYuv(std::span<const std::uint8_t> jpeg, std::uint32_t denominator);
 
 std::uint32_t ScaledDimension(std::uint32_t dimension, std::uint32_t denominator);
 
