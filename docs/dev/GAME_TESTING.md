@@ -63,6 +63,14 @@ cmd /c '.\app.exe > run.log 2>&1'
 
   Report these lines. Set either variable only for a comparison, and say so.
 
+## Verify captured frames
+
+A compositor or window capture can lag behind the title's rendered frames. An unchanged capture alone does not establish a hang, and an advancing present counter does not establish that the captured scene is current. Record the capture method and request/file times; compare visible animation or a scene transition before treating an image as evidence of progress or a stall.
+
+For a native frame, use the [screenshot key](../user/USAGE.md#screenshots) or set `APS5_SCREENSHOT_TRIGGER` before launch and create a regular file at that path to request the next presented frame. The process consumes the file; recreate it for another request and use a separate path per process. `ANYPS5_SCREENSHOTS` selects the PNG directory. The trigger works with `APS5_NO_PAD_INPUT=1`, so a capture need not change the input or focus the window. A native PNG records the game's display buffer, not physical monitor scan-out.
+
+Keep screenshot requests outside a timed comparison window: readback and PNG encoding add work. If a window capture and a native frame disagree, retain both with their times and report the uncertainty rather than using either alone to diagnose a freeze.
+
 ## What to read
 
 | Check | Where | Meaning |
