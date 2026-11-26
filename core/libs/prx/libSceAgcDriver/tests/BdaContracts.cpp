@@ -350,13 +350,15 @@ void RunBdaContractTests() {
         const auto [byteLoops, rolled] = LoopsKeptRolled(shader, "write_bda_bytes");
         AgcDriver::Graphics::Require(byteLoops == 1u && rolled == 1u, "the byte loop of write_bda_bytes may be unrolled, which copies its write lookup once per byte");
     }
-    for (const bool coherent : {false, true}) {
-        const auto shader = MakeBdaDwordReadTestShader(0x1000, 4, coherent, false);
-        const std::string span = coherent ? "read_bda_span_coherent" : "read_bda_span";
-        const std::string loader = coherent ? "load_bda_span_coherent" : "load_bda_span";
-        const auto nesting = CallNesting(shader, span.c_str(), loader.c_str());
-        AgcDriver::Graphics::Require(nesting.has_value(), "a four-dword BDA read has no call from " + span + " to " + loader);
-        AgcDriver::Graphics::Require(*nesting == 0u, span + " calls " + loader + " inside a selection or loop; NVIDIA's Blackwell driver then gives the lanes that take the dword path the results of other lanes");
+    for (const bool stops : {false, true}) {
+        for (const bool coherent : {false, true}) {
+            const auto shader = MakeBdaDwordReadTestShader(0x1000, 4, coherent, stops);
+            const std::string span = std::string("read_bda_span") + (stops ? "_stop" : "") + (coherent ? "_coherent" : "");
+            const std::string loader = coherent ? "load_bda_span_coherent" : "load_bda_span";
+            const auto nesting = CallNesting(shader, span.c_str(), loader.c_str());
+            AgcDriver::Graphics::Require(nesting.has_value(), "a four-dword BDA read has no call from " + span + " to " + loader);
+            AgcDriver::Graphics::Require(*nesting == 0u, span + " calls " + loader + " inside a selection or loop; NVIDIA's Blackwell driver then gives the lanes that take the dword path the results of other lanes");
+        }
     }
     const std::array<std::uint32_t, 4> dwordValues{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
     for (const std::uint32_t dwords : {2u, 3u, 4u}) {
