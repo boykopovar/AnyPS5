@@ -10,6 +10,7 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,7 @@ namespace {
 
 constexpr int nullPointer = static_cast<int>(0x817B1225);
 constexpr int invalidValue = static_cast<int>(0x817B11FE);
+constexpr int receiveTimedOut = static_cast<int>(0x817B1222);
 constexpr int savedErrno = 71;
 
 void Check(bool value, int line) {
@@ -108,6 +110,89 @@ std::string ServePlainHttpOnce(const std::string& response) {
         CloseSocket(listener);
     }).detach();
     return url;
+}
+
+std::string ServeStalledBodyOnce(const std::string& headers, const std::string& prefix) {
+#ifdef _WIN32
+    const SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    Require(listener != INVALID_SOCKET);
+#else
+    const int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    Require(listener >= 0);
+#endif
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    Require(bind(listener, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0);
+    Require(listen(listener, 8) == 0);
+#ifdef _WIN32
+    int size = sizeof(address);
+#else
+    socklen_t size = sizeof(address);
+#endif
+    Require(getsockname(listener, reinterpret_cast<sockaddr*>(&address), &size) == 0);
+    const std::string url = "http://127.0.0.1:" + std::to_string(ntohs(address.sin_port)) + "/path";
+    std::thread([listener, headers, prefix] {
+#ifdef _WIN32
+        const SOCKET client = accept(listener, nullptr, nullptr);
+        if (client == INVALID_SOCKET) {
+            CloseSocket(listener);
+            return;
+        }
+#else
+        const int client = accept(listener, nullptr, nullptr);
+        if (client < 0) {
+            CloseSocket(listener);
+            return;
+        }
+#endif
+        std::array<char, 4096> input;
+        std::string seen;
+        while (seen.find("\r\n\r\n") == std::string::npos) {
+            const auto got = recv(client, input.data(), static_cast<int>(input.size()), 0);
+            if (got <= 0) break;
+            seen.append(input.data(), static_cast<std::size_t>(got));
+        }
+        std::size_t sent = 0;
+        while (sent < headers.size()) {
+            const auto wrote = send(client, headers.data() + sent, static_cast<int>(headers.size() - sent), 0);
+            if (wrote <= 0) break;
+            sent += static_cast<std::size_t>(wrote);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        sent = 0;
+        while (sent < prefix.size()) {
+            const auto wrote = send(client, prefix.data() + sent, static_cast<int>(prefix.size() - sent), 0);
+            if (wrote <= 0) break;
+            sent += static_cast<std::size_t>(wrote);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        CloseSocket(client);
+        CloseSocket(listener);
+    }).detach();
+    return url;
+}
+
+void StalledReadReturnsCopiedPrefix(int tmpl) {
+    const std::string headers = "HTTP/1.1 200 OK\r\nContent-Length: 32768\r\nConnection: close\r\n\r\n";
+    const std::string prefix(16384, 'C');
+    const std::string url = ServeStalledBodyOnce(headers, prefix);
+    const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", url.c_str(), 0);
+    Require(request > 0);
+    Require(sceHttp2SetRecvTimeOut(request, 200000) == 0);
+    Require(sceHttp2SendRequest(request, nullptr, 0) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::array<std::uint8_t, 32768> buffer{};
+    std::size_t seen = 0;
+    int result = 0;
+    while (seen < buffer.size() && (result = sceHttp2ReadData(request, buffer.data() + seen, buffer.size() - seen)) > 0)
+        seen += static_cast<std::size_t>(result);
+    Require(result == receiveTimedOut);
+    Require(seen == prefix.size());
+    for (std::size_t index = 0; index < seen; ++index) Require(buffer[index] == static_cast<std::uint8_t>('C'));
+    Require(sceHttp2ReadData(request, buffer.data(), buffer.size()) == receiveTimedOut);
+    Require(sceHttp2DeleteRequest(request) == 0);
 }
 
 void UnmappedReadData(int tmpl) {
@@ -208,6 +293,7 @@ int main() {
     UnmappedReadData(tmpl);
     UnmappedSendRequest(tmpl);
     UnmappedGzipReadData(context);
+    StalledReadReturnsCopiedPrefix(tmpl);
 
     std::puts("guest_http2_guest_pointers ok");
     return 0;
