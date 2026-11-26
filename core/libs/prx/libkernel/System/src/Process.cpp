@@ -44,6 +44,8 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdarg>
+#include <vector>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -53,6 +55,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -87,6 +90,8 @@ constexpr int errnoNotDir = 20;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
+std::mutex processPropertiesMutex;
+std::map<std::array<char, 32>, std::array<std::int64_t, 4>> processProperties;
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 constexpr std::size_t ExecArgumentBytesLimit = 262144;
 constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
@@ -958,6 +963,94 @@ int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char*
     return ExecProgram(path, arguments, environment, false, false);
 }
 
+namespace {
+
+std::vector<char*> CollectArguments(const char* first, const void* (*next)(void*), void* list) {
+    std::vector<char*> arguments;
+    for (const char* text = first; text != nullptr; text = static_cast<const char*>(next(list))) arguments.push_back(const_cast<char*>(text));
+    return arguments;
+}
+
+#ifdef _WIN32
+struct SysVVaList {
+    unsigned int gpOffset;
+    unsigned int fpOffset;
+    void* overflowArea;
+    void* registerSaveArea;
+};
+
+const void* NextVaPointer(void* list) {
+    auto* state = static_cast<SysVVaList*>(list);
+    const void* address;
+    if (state->gpOffset < 48) {
+        address = static_cast<const char*>(state->registerSaveArea) + state->gpOffset;
+        state->gpOffset += 8;
+    } else {
+        address = state->overflowArea;
+        state->overflowArea = static_cast<char*>(state->overflowArea) + 8;
+    }
+    const void* value;
+    std::memcpy(&value, address, sizeof(value));
+    return value;
+}
+#else
+const void* NextVaPointer(void* list) {
+    return va_arg(*static_cast<va_list*>(list), const void*);
+}
+#endif
+
+}
+
+int APS5_VABI execl_nid_postfix(const char* path, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execv_nid_postfix(path, arguments.data());
+}
+
+int APS5_VABI execle_nid_postfix(const char* path, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    char* const* environment = static_cast<char* const*>(const_cast<void*>(NextVaPointer(&list)));
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    char* const* environment = static_cast<char* const*>(const_cast<void*>(NextVaPointer(&list)));
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execve_nid_postfix(path, arguments.data(), environment);
+}
+
+int APS5_VABI execlp_nid_postfix(const char* file, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execvp_nid_postfix(file, arguments.data());
+}
+
 int APS5_VABI sceKernelGetCurrentCpu(void) {
 #ifdef _WIN32
     PROCESSOR_NUMBER processor{};
@@ -1009,6 +1102,16 @@ int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
 
 void* APS5_VABI sceKernelGetProcParam(void) {
     return const_cast<void*>(ApplicationProcessParameters_nid_no_patch());
+}
+
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4) {
+    if (name == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<char, 32> key;
+    if (!GuestCopyIn_nid_no_patch(key.data(), name, key.size())) return SCE_KERNEL_ERROR_EFAULT;
+    const std::array<std::int64_t, 4> values{value1, value2, value3, value4};
+    std::lock_guard guard(processPropertiesMutex);
+    processProperties[key] = values;
+    return 0;
 }
 
 int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {

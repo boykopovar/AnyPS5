@@ -9,6 +9,7 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DrawStageTimingKeys.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -2105,7 +2106,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
         return {open->commands, true, false, PassBreak::Continued};
     }
     const auto reason = PassBreakFor(hazard);
-    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
+    const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass && pass.afterEnd.empty();
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(reason, !merge);
     const auto commands = Commands();
@@ -2125,6 +2126,11 @@ void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool
     pass.key = key;
     pass.fenced = pass.fenced || fenced;
     open->passHazards.Add(access);
+}
+
+void Recorder::AfterRenderPass(std::function<void(Recorder&)> work) {
+    Require(RenderPassOpen(), "work after a render pass without an open render pass");
+    open->renderPass.afterEnd.push_back(std::move(work));
 }
 
 void Recorder::SealPassWriteOnly() {
@@ -2150,9 +2156,19 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
+    auto after = std::move(pass.afterEnd);
     pass = {};
     pass.closedBy = by;
     PerformanceTrace::Amount(PassBreakScopeNames[static_cast<std::size_t>(by)], 1);
+    std::exception_ptr failure;
+    for (auto& work : after) {
+        try {
+            work(*this);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
@@ -2382,7 +2398,7 @@ bool Recorder::closeStoreRun(bool atSubmit) {
         // A label says the work before it is done: the queued key stores (results of that work)
         // land ahead of every store of the run, and the pass a draw left open ends.
         if (!open->keyStores.empty()) recordKeyStores(true);
-        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass;
+        const bool passEndLast = open->renderPass.open && !open->renderPass.afterPass && open->renderPass.afterEnd.empty();
         if (open->renderPass.open) endOpenRenderPass(PassBreak::Label);
         const auto commands = open->commands;
         run.timing = beginTiming(ClassKey(CommandClass::LabelRun));
@@ -2713,8 +2729,34 @@ std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
 
 std::string Recorder::TimingKeyLabel(std::uint64_t key) {
     char text[32];
+    if (DrawStageTimingEnabled() && (key & (DrawTimingFlag | DrawStageTimingFlag)) == (DrawTimingFlag | DrawStageTimingFlag)) {
+        std::snprintf(text, sizeof(text), "drawset 0x%llx", static_cast<unsigned long long>(key & ~(DrawTimingFlag | DrawStageTimingFlag)));
+        return text;
+    }
     std::snprintf(text, sizeof(text), (key & DrawTimingFlag) != 0 ? "draw 0x%llx" : "0x%llx", static_cast<unsigned long long>(key & ~DrawTimingFlag));
     return text;
+}
+
+bool Recorder::DrawStageTimingEnabled() {
+    static const bool enabled = std::getenv("APS5_PROFILE_GPU_DRAW_STAGES") != nullptr;
+    return enabled;
+}
+
+std::uint64_t Recorder::DrawStageTimingKey(std::span<const std::pair<std::uint32_t, std::uint64_t>> stages) {
+    static auto* keys = new DrawStageTimingKeys;
+    const auto [key, inserted] = keys->Intern(stages);
+    if (inserted) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "[drawstages] drawset 0x%llx", static_cast<unsigned long long>(key));
+        std::string line = text;
+        for (const auto& [stage, variant] : stages) {
+            std::snprintf(text, sizeof(text), " %u:0x%llx", stage, static_cast<unsigned long long>(variant));
+            line += text;
+        }
+        line += '\n';
+        AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
+    }
+    return key | DrawTimingFlag | DrawStageTimingFlag;
 }
 
 std::uint32_t Recorder::BeginInPassGpuTiming(std::uint64_t key) {
