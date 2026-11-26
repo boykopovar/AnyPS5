@@ -471,6 +471,17 @@ class RunReportTriageTests(unittest.TestCase):
         path.write_text(json.dumps(report), encoding="utf-8")
         return path
 
+    def test_unknown_version_and_literal_none_have_stable_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unknown = self.write_report(directory, "unknown.json", game={"contentVersion": None})
+            named = self.write_report(directory, "named.json", game={"contentVersion": "None"}, run={"id": "1" * 32})
+            forward = self.triage(unknown, named)
+            reverse = self.triage(named, unknown)
+        self.assertEqual(forward.returncode, 0, forward.stderr)
+        self.assertEqual(reverse.returncode, 0, reverse.stderr)
+        self.assertCountEqual([group["content_version"] for group in json.loads(forward.stdout)["groups"]], [None, "None"])
+        self.assertEqual(forward.stdout, reverse.stdout)
+
     def test_triage_groups_runs_without_counting_copies_or_exposing_ids(self):
         missing = self.fixtures / "stop-missing-function.json"
         with tempfile.TemporaryDirectory() as directory:

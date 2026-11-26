@@ -291,11 +291,11 @@ def triage(paths):
             continue
         seen[run_id] = (identity, record)
         groups[identity].append(record)
+    identities = sorted(groups, key=lambda key: tuple((str(value), value is not None) for value in key))
     return {
         "format": "anyps5-run-triage", "version": 1,
         "input_reports": len(paths), "unique_runs": len(seen), "duplicate_reports": len(paths) - len(seen),
-        "groups": [summarize_group(identity, groups[identity])
-                   for identity in sorted(groups, key=lambda key: tuple(map(str, key)))],
+        "groups": [summarize_group(identity, groups[identity]) for identity in identities],
     }
 
 
