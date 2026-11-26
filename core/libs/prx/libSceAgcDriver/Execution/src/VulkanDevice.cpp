@@ -3399,6 +3399,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     if (OpportunisticReap()) recorder.Reap();
     const auto context = graphicsContext();
     const Graphics::HostImport* import = Graphics::HostImportFor(context, address, bytes);
+    if (import == nullptr) import = Graphics::HostImportJoinedFor(context, address, bytes);
     if (import == nullptr) return false;
     // Earlier recorded work that stores into the range must land before the fill, or it would
     // overwrite the fill later. Stores the GPU makes (direct dispatch writes, GPU labels, earlier
@@ -3453,6 +3454,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             // The sync ran completions, whose write-backs can refresh the import table and retire
             // the import looked up above; the caller stores the fill itself when it is gone.
             import = Graphics::HostImportFor(context, address, bytes);
+            if (import == nullptr) import = Graphics::HostImportJoinedFor(context, address, bytes);
             if (import == nullptr) return false;
         } else {
             ++ordered;
