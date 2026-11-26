@@ -401,13 +401,34 @@ int APS5_VABI sceMbusGetDeviceInfoByBusId_(std::int32_t busId, MbusDeviceInfo* i
     return 0;
 }
 
+static bool WriteEmptyQueryCount(std::int32_t* out) {
+    if (out == nullptr) return true;
+    const std::int32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &zero, sizeof(zero));
+    errno = savedErrno;
+    return copied;
+}
+
 int APS5_VABI sceMbusGetDeviceInfoByConditionForDeviceService(std::int32_t flags, MbusDeviceServiceInfo* infos, std::int32_t capacity, std::int32_t* first, std::int32_t* second, MbusDeviceCondition condition) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)flags;
+    (void)condition;
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    if (capacity < 0 || (capacity != 0 && infos == nullptr)) return invalidArgument;
+    if (!WriteEmptyQueryCount(first) || !WriteEmptyQueryCount(second)) return invalidArgument;
     return 0;
 }
 
 int APS5_VABI sceMbusGetDeviceInfoByCondition_(const MbusDeviceCondition* condition, std::int32_t flags, MbusDeviceInfo* infos, std::int32_t capacity, std::int32_t* first, std::int32_t* second, std::uint32_t infoSize) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)flags;
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    if (infoSize != sizeof(MbusDeviceCondition) || capacity < 0 || (capacity != 0 && infos == nullptr)) return invalidArgument;
+    MbusDeviceCondition local{};
+    const int savedErrno = errno;
+    const bool readable = condition != nullptr && GuestCopyIn_nid_no_patch(&local, condition, sizeof(local));
+    errno = savedErrno;
+    if (!readable) return invalidArgument;
+    if (!WriteEmptyQueryCount(first) || !WriteEmptyQueryCount(second)) return invalidArgument;
     return 0;
 }
 

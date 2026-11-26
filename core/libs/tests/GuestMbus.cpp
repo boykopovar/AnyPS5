@@ -63,6 +63,44 @@ void CheckDeviceIdConversion() {
     Require(errno == 71, "errno modified by unwritable mbus device id check");
 }
 
+void CheckEmptyDeviceQueries() {
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    MbusDeviceCondition condition{};
+    alignas(16) std::array<std::uint8_t, 256> records{};
+    records.fill(0xa5);
+    std::int32_t first = 7;
+    std::int32_t second = 9;
+    auto* infos = reinterpret_cast<MbusDeviceInfo*>(records.data());
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 3, infos, 1, &first, &second, sizeof(condition)) == 0, "condition query failed");
+    Require(first == 0 && second == 0, "condition query reported a device");
+    Require(records[0] == 0xa5 && records[255] == 0xa5, "condition query wrote a record");
+    first = 7;
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 1, nullptr, 0, &first, nullptr, sizeof(condition)) == 0 && first == 0, "empty condition query rejected");
+    Require(sceMbusGetDeviceInfoByCondition_(nullptr, 0, infos, 1, &first, &second, sizeof(condition)) == invalidArgument, "null condition accepted");
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 0, nullptr, 1, &first, &second, sizeof(condition)) == invalidArgument, "null record buffer accepted");
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 0, infos, -1, &first, &second, sizeof(condition)) == invalidArgument, "negative capacity accepted");
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 0, infos, 1, &first, &second, 112) == invalidArgument, "wrong record size accepted");
+    errno = 71;
+    Require(sceMbusGetDeviceInfoByCondition_(&condition, 0, infos, 1, reinterpret_cast<std::int32_t*>(0x10), &second, sizeof(condition)) == invalidArgument, "unwritable count accepted");
+    Require(errno == 71, "condition query altered errno");
+    Require(sceMbusGetDeviceInfoByCondition_(reinterpret_cast<const MbusDeviceCondition*>(0x10), 0, infos, 0, &first, &second, sizeof(condition)) == invalidArgument, "unreadable condition accepted");
+
+    alignas(16) std::array<std::uint8_t, 112> serviceRecords{};
+    serviceRecords.fill(0xa5);
+    first = 4;
+    second = 5;
+    auto* serviceInfos = reinterpret_cast<MbusDeviceServiceInfo*>(serviceRecords.data());
+    Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, serviceInfos, 1, &first, &second, condition) == 0, "service condition query failed");
+    Require(first == 0 && second == 0, "service condition query reported a device");
+    Require(serviceRecords[0] == 0xa5 && serviceRecords[111] == 0xa5, "service condition query wrote a record");
+    Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, nullptr, 0, nullptr, nullptr, condition) == 0, "empty service query rejected");
+    Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, nullptr, 1, &first, &second, condition) == invalidArgument, "null service buffer accepted");
+    Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, serviceInfos, -1, &first, &second, condition) == invalidArgument, "negative service capacity accepted");
+    errno = 71;
+    Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, serviceInfos, 1, reinterpret_cast<std::int32_t*>(0x10), &second, condition) == invalidArgument, "unwritable service count accepted");
+    Require(errno == 71, "service condition query altered errno");
+}
+
 void CheckInit() {
     Require(sceMbusInit() == 0, "the first initialization failed");
     Require(sceMbusInit() == 0, "a second initialization failed");
@@ -101,6 +139,7 @@ int main() {
 
     Require(sceMbusAcquireControlList() == static_cast<int>(0x809B00FFu), "control-list fallback changed");
     CheckDeviceIdConversion();
+    CheckEmptyDeviceQueries();
     CheckInit();
     DeviceServiceInitParam param{};
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
