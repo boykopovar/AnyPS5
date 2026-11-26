@@ -291,19 +291,21 @@ void Run() {
 
     {
         std::int32_t status = 0;
-        if (auto* idna = uidna_openUTS46_nid_postfix(0, &status)) {
-            std::array<std::int16_t, 8> info{16, 0, 0, 0, 0, 0, 0, 0};
-            auto* pInfo = reinterpret_cast<UIDNAInfo*>(info.data());
-            const std::array<char16_t, 12> domain{u'e', u'x', u'a', u'm', u'p', u'l', u'e', u'.', u'o', u'r', u'g', 0};
-            std::array<char16_t, 32> out{};
-            const std::int32_t asciiLen = uidna_nameToASCII_nid_postfix(idna, domain.data(), 11, out.data(), 32, pInfo, &status);
-            Require(asciiLen >= 0);
-            status = 0;
-            std::array<char16_t, 32> uni{};
-            const std::int32_t uniLen = uidna_nameToUnicode_nid_postfix(idna, domain.data(), 11, uni.data(), 32, pInfo, &status);
-            Require(uniLen >= 0);
-            uidna_close_nid_postfix(idna);
-        }
+        auto* idna = uidna_openUTS46_nid_postfix(0, &status);
+        Require(idna != nullptr && status <= 0);
+        std::array<std::int16_t, 8> info{16, 0, 0, 0, 0, 0, 0, 0};
+        auto* pInfo = reinterpret_cast<UIDNAInfo*>(info.data());
+        const std::array<char16_t, 12> domain{u'e', u'x', u'a', u'm', u'p', u'l', u'e', u'.', u'o', u'r', u'g', 0};
+        std::array<char16_t, 32> out{};
+        const std::int32_t asciiLen = uidna_nameToASCII_nid_postfix(idna, domain.data(), 11, out.data(), 32, pInfo, &status);
+        Require(asciiLen == 11 && status <= 0 && info[2] == 0 && info[3] == 0);
+        Require(std::memcmp(out.data(), domain.data(), 12 * sizeof(char16_t)) == 0);
+        status = 0;
+        std::array<char16_t, 32> uni{};
+        const std::int32_t uniLen = uidna_nameToUnicode_nid_postfix(idna, domain.data(), 11, uni.data(), 32, pInfo, &status);
+        Require(uniLen == 11 && status <= 0 && info[2] == 0 && info[3] == 0);
+        Require(std::memcmp(uni.data(), domain.data(), 12 * sizeof(char16_t)) == 0);
+        uidna_close_nid_postfix(idna);
     }
 
     RequireThrows([&] { uidna_openUTS46_nid_postfix(0, nullptr); });

@@ -83,15 +83,25 @@ std::int32_t TransformName(const UIDNA* idna, const char16_t* name, std::int32_t
     const auto incoming = ReadStatus(pErrorCode, caller);
     if (incoming > 0) return 0;
     Icu::IdnaBackend::Info hostInfo{};
-    if (pInfo != nullptr) {
+    if (!pInfo) {
+        WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
+        return 0;
+    }
+    {
+        const int savedErrno = errno;
+        const bool okSize = GuestCopyIn_nid_no_patch(&hostInfo.size, pInfo, sizeof(hostInfo.size));
+        errno = savedErrno;
+        if (!okSize) NotImplemented_nid_no_patch(caller);
+    }
+    if (hostInfo.size < static_cast<std::int16_t>(sizeof(hostInfo))) {
+        WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
+        return 0;
+    }
+    {
         const int savedErrno = errno;
         const bool ok = GuestCopyIn_nid_no_patch(&hostInfo, pInfo, sizeof(hostInfo));
         errno = savedErrno;
         if (!ok) NotImplemented_nid_no_patch(caller);
-    }
-    if (!pInfo || hostInfo.size < static_cast<std::int16_t>(sizeof(hostInfo))) {
-        WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
-        return 0;
     }
     if ((name == nullptr) ? length != 0 : length < -1) {
         WriteStatus(pErrorCode, incoming, Icu::IllegalArgument, caller);
