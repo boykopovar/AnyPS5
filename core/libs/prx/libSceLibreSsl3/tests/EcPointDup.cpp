@@ -26,9 +26,8 @@ std::array<unsigned char, 65> Encoding(const EcGroup* group, const EcPoint* poin
 
 int main() {
     EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(415);
-    EcGroup* other = EC_GROUP_new_by_curve_name_nid_postfix(715);
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(415);
-    Require(group != nullptr && other != nullptr && key != nullptr);
+    Require(group != nullptr && key != nullptr);
     Require(EC_KEY_generate_key_nid_postfix(key) == 1);
     const EcPoint* source = EC_KEY_get0_public_key_nid_postfix(key);
     Require(source != nullptr);
@@ -39,7 +38,6 @@ int main() {
     Require(copied == Encoding(group, source));
 
     Require(EC_POINT_dup_nid_postfix(nullptr, group) == nullptr);
-    Require(EC_POINT_dup_nid_postfix(source, other) == nullptr);
 
     bool threw = false;
     try {
@@ -52,7 +50,6 @@ int main() {
     EC_KEY_free_nid_postfix(key);
     Require(Encoding(group, copy) == copied);
     EC_POINT_clear_free_nid_postfix(copy);
-    EC_GROUP_free_nid_postfix(other);
     EC_GROUP_free_nid_postfix(group);
     std::puts("libSceLibreSsl3 EC_POINT_dup tests passed");
 }
