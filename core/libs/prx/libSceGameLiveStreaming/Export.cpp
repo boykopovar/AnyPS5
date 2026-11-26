@@ -198,6 +198,7 @@ int APS5_VABI sceGameLiveStreamingScreenSetMode(std::uint32_t mode) {
     if (!g_screenInitialized) return ErrorScreenNotInitialized;
     if (!g_separateModeOpen) return ErrorSeparateModeNotOpen;
     if (mode < 1 || mode > 2) return ErrorInvalidArgument;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -330,6 +331,7 @@ int APS5_VABI sceGameLiveStreamingSetServiceProviderPermission(std::uint32_t pro
     if (!g_initialized) return ErrorNotInitialized;
     if (provider < 1 || provider > 5) return ErrorInvalidArgument;
     (void)permit;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -337,6 +339,7 @@ int APS5_VABI sceGameLiveStreamingSetDefaultServiceProviderPermission(bool permi
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     (void)permit;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -396,8 +399,8 @@ int APS5_VABI sceGameLiveStreamingGetCurrentBroadcastScreenLayout(void* layout) 
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (layout == nullptr) return ErrorInvalidArgument;
-    const std::array<std::uint8_t, 0x20> result{};
-    return WriteGuestOutput(layout, result.data(), result.size());
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceGameLiveStreamingLaunchLiveViewer(void) {
@@ -422,6 +425,7 @@ int APS5_VABI sceGameLiveStreamingSetGuardAreas(std::uint32_t count, const void*
         errno = savedErrno;
         if (!copied) return ErrorInvalidArgument;
     }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -450,6 +454,7 @@ int APS5_VABI sceGameLiveStreamingSetLinkCommentPreset(const char* preset) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     if (preset == nullptr || !ValidString(preset, MaxLinkCommentPresetLength)) return ErrorInvalidArgument;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -467,6 +472,7 @@ int APS5_VABI sceGameLiveStreamingStartDebugBroadcast(const void* parameter) {
     if (!BytesAllZero(localParam.data(), 0x406, 0x408) || !BytesAllZero(localParam.data(), 0x410, 0x424)) {
         return ErrorInvalidArgument;
     }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
