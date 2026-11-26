@@ -1294,7 +1294,7 @@ private:
             for (std::size_t dword = 0; dword < tuple.size(); dword++) {
                 const IrValue& value = *tuple[dword];
                 if (value.Opcode() != IrOpcode::SelectU32 || value.ArgumentCount() != 3u || value.Argument(0)->Resolve() != condition) {
-                    return false;
+                    return true;
                 }
                 selected[dword] = value.Argument(1);
                 kept[dword] = value.Argument(2);
