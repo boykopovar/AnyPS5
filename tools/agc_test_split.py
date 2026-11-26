@@ -137,7 +137,7 @@ def arguments_of(text, position, line):
         position += 1
 
 
-def commands(text):
+def commands(text, single_line_comments=None):
     lines = text.split("\n")
     offsets = [0]
     for item in lines:
@@ -146,6 +146,7 @@ def commands(text):
     while index < len(lines):
         stripped = lines[index].strip()
         if stripped.startswith("#"):
+            first = index
             position = offsets[index] + lines[index].index("#") + 1
             while comment := BRACKET.match(text, position):
                 delimiter = "]" + comment[1] + "]"
@@ -160,6 +161,8 @@ def commands(text):
                 if not rest.lstrip().startswith("#"):
                     raise SplitError(f"line {index + 1}: expected a command on its own line after a bracket comment")
                 position = after + rest.index("#") + 1
+            if single_line_comments is not None and first == index:
+                single_line_comments.add(first)
             index += 1
             continue
         if not stripped:
@@ -177,9 +180,9 @@ def commands(text):
     return found
 
 
-def tree(text):
+def tree(text, single_line_comments=None):
     root, stack = [], []
-    for command in commands(text):
+    for command in commands(text, single_line_comments):
         if command.name in OPEN:
             block = Block(command)
             (stack[-1].branches[-1][1] if stack else root).append(block)
@@ -519,7 +522,8 @@ def reads(facts):
 class Plan:
     def __init__(self, text, execution=()):
         self.lines = text.split("\n")
-        self.roots = tree(text)
+        self.single_line_comments = set()
+        self.roots = tree(text, self.single_line_comments)
         self.atoms = list(atoms(self.roots))
         self.facts = [facts_of(atom) for atom in self.atoms]
         self.known = {name for facts in self.facts for name in facts.targets | facts.subject_targets | set(facts.tests.values())
@@ -697,8 +701,10 @@ class Plan:
         return max(low, min(high, max(top[index] for index in moved) + 1))
 
 
-def leading(lines, first):
-    while first > 0 and lines[first - 1].lstrip().startswith("#"):
+def leading(lines, first, single_line_comments=None):
+    if single_line_comments is None:
+        single_line_comments = {i for i, line in enumerate(lines[:first]) if line.lstrip().startswith("#")}
+    while first - 1 in single_line_comments:
         first -= 1
     return first
 
@@ -721,7 +727,9 @@ def wrappers(nodes):
             yield node
 
 
-def fragment_text(lines, members):
+def fragment_text(lines, members, single_line_comments=None):
+    if single_line_comments is None:
+        single_line_comments = {i for i, line in enumerate(lines) if line.lstrip().startswith("#")}
     out, stack = [], []
     for atom in members:
         conditions = list(atom.conditions)
@@ -731,7 +739,7 @@ def fragment_text(lines, members):
         while len(stack) > common:
             block = stack.pop()
             out.extend(lines[block.end.first:block.end.last + 1])
-        first = leading(lines, atom.node.first)
+        first = leading(lines, atom.node.first, single_line_comments)
         separated = first > 0 and not lines[first - 1].strip()
         for block in conditions[common:]:
             if out and not stack and out[-1].strip():
@@ -740,7 +748,7 @@ def fragment_text(lines, members):
             stack.append(block)
         if out and separated and out[-1].strip() and not opener(out[-1]):
             out.append("")
-        out.extend(line for line in lines[first:atom.node.last + 1] if not line.lstrip().startswith("#"))
+        out.extend(lines[i] for i in range(first, atom.node.last + 1) if i not in single_line_comments)
     while stack:
         block = stack.pop()
         out.extend(lines[block.end.first:block.end.last + 1])
@@ -750,6 +758,7 @@ def fragment_text(lines, members):
 def split_text(text, execution=()):
     plan = Plan(text, execution)
     lines = plan.lines
+    comments = plan.single_line_comments
     units = {}
     for atom, unit in zip(plan.atoms, plan.units):
         if unit:
@@ -757,14 +766,14 @@ def split_text(text, execution=()):
     deleted = set()
     for members in units.values():
         for atom in members:
-            deleted.update(range(leading(lines, atom.node.first), atom.node.last + 1))
+            deleted.update(range(leading(lines, atom.node.first, comments), atom.node.last + 1))
     for block in wrappers(plan.roots):
         if block.header.name != "if" or len(block.branches) != 1:
             continue
         body = range(block.header.last + 1, block.end.first)
-        if all(index in deleted or not lines[index].strip() or lines[index].lstrip().startswith("#") for index in body):
-            deleted.update(range(leading(lines, block.header.first), block.end.last + 1))
-    at = leading(lines, plan.roots[plan.include].first) if plan.include < len(plan.roots) else len(lines)
+        if all(index in deleted or not lines[index].strip() or index in comments for index in body):
+            deleted.update(range(leading(lines, block.header.first, comments), block.end.last + 1))
+    at = leading(lines, plan.roots[plan.include].first, comments) if plan.include < len(plan.roots) else len(lines)
     kept = []
     for index, line in enumerate(lines):
         if index == at:
@@ -782,7 +791,7 @@ def split_text(text, execution=()):
         residual.append(line)
     while residual and not residual[-1].strip():
         residual.pop()
-    return "\n".join(residual) + "\n", {name: fragment_text(lines, members) for name, members in units.items()}
+    return "\n".join(residual) + "\n", {name: fragment_text(lines, members, comments) for name, members in units.items()}
 
 
 def migrated(text, execution=()):

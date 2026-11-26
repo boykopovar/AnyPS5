@@ -66,6 +66,18 @@ def original(blocks=(ALPHA, BETA), items="agc_gamma_tests", tweaks="", image=Tru
 
 
 class SplitTextTests(unittest.TestCase):
+    def test_split_keeps_multiline_bracket_comments_together(self):
+        before = "    #[=[disabled\n    add_test(NAME hidden_alpha COMMAND agc_alpha_tests)\n    #]=]\n"
+        inside = "        #[=[disabled\n        add_test(NAME hidden_beta COMMAND agc_beta_tests)\n        #]=]\n"
+        beta = BETA.replace("        add_test(", inside + "        add_test(", 1)
+        lists, fragments = agc_test_split.migrated(original(blocks=(before + ALPHA, beta)), EXECUTION)
+        self.assertIn(before, lists)
+        self.assertIn(inside, fragments["agc_beta_tests"])
+        for text in (lists, *fragments.values()):
+            names = [command.arguments[1] for command in agc_test_split.commands(text) if command.name == "add_test"]
+            self.assertNotIn("hidden_alpha", names)
+            self.assertNotIn("hidden_beta", names)
+
     def test_split_moves_properties_for_a_multiline_bracket_test_name(self):
         property_call = "set_tests_properties([=[\nagc_alpha]=] PROPERTIES TIMEOUT 20)"
         alpha = ALPHA.replace("set_tests_properties(agc_alpha PROPERTIES TIMEOUT 20)", property_call)
