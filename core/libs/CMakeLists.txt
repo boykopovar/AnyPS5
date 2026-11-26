@@ -1018,6 +1018,12 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "C\\+\\+ exception St9bad_alloc raised on thread [0-9]+ cannot be delivered: 0x[0-9a-f]+ undeliverable_host_exception_tests\\.exe\\+0x[0-9a-f]+ has no unwind data")
     endif()
 
+    if(MINGW AND Python3_Interpreter_FOUND AND ANYPS5_MINGW_DWARF_EXCEPTIONS)
+        add_test(NAME mingw_unwind_probe COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/check_mingw_unwind.py --compiler ${CMAKE_CXX_COMPILER} --dwarf 1)
+        set_tests_properties(mingw_unwind_probe PROPERTIES TIMEOUT 30)
+    endif()
+
     add_test_executable(guest_kernel_sys_uuid_tests tests/GuestKernelSysUuid.cpp)
     target_include_directories(guest_kernel_sys_uuid_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_uuid_tests PRIVATE libkernel_sys libkernel libc)
