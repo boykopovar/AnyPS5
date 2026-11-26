@@ -375,13 +375,16 @@ GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* gue
 }
 
 void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo* first) {
+    const int savedErrno = errno;
     while (first) {
-        auto* next = first->next;
-        std::free(first->canonicalName);
-        std::free(first->address);
+        GuestResolver::AddressInfo node{};
+        if (!GuestCopyIn_nid_no_patch(&node, first, sizeof(node))) break;
+        std::free(node.canonicalName);
+        std::free(node.address);
         std::free(first);
-        first = next;
+        first = node.next;
     }
+    errno = savedErrno;
 }
 
 int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,

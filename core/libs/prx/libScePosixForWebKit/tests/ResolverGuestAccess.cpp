@@ -196,11 +196,37 @@ void HostEntry() {
     Require(result == nullptr && errno == 34);
 }
 
+void FreeAddressInfo() {
+    auto* tail = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    auto* head = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    Require(tail != nullptr && head != nullptr);
+    tail->canonicalName = static_cast<char*>(std::malloc(8));
+    tail->address = static_cast<decltype(tail->address)>(std::malloc(16));
+    head->canonicalName = static_cast<char*>(std::malloc(8));
+    head->address = static_cast<decltype(head->address)>(std::malloc(16));
+    head->next = tail;
+    errno = 321;
+    freeaddrinfo_nid_postfix(head);
+    Require(errno == 321);
+
+    freeaddrinfo_nid_postfix(nullptr);
+    Require(errno == 321);
+    freeaddrinfo_nid_postfix(reinterpret_cast<GuestResolver::AddressInfo*>(0x10));
+    Require(errno == 321);
+
+    auto* badNext = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    Require(badNext != nullptr);
+    badNext->next = reinterpret_cast<GuestResolver::AddressInfo*>(0x10);
+    freeaddrinfo_nid_postfix(badNext);
+    Require(errno == 321);
+}
+
 }
 
 int main() {
     AddressInfo();
     NumericCanonicalNames();
     HostEntry();
+    FreeAddressInfo();
     std::puts("resolver checked guest access tests passed");
 }
