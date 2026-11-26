@@ -44,9 +44,8 @@ struct ClientState {
 std::mutex g_clientLifecycleMutex;
 std::shared_ptr<ClientState> g_client;
 
-bool ProbeGuestCString(const char* str, std::string* out) {
+bool ProbeGuestCString(const char* str) {
     if (str == nullptr) return false;
-    if (out != nullptr) out->clear();
     const auto base = reinterpret_cast<std::uintptr_t>(str);
     constexpr std::uintptr_t kMaxAddr = (std::numeric_limits<std::uintptr_t>::max)();
     for (std::size_t i = 0; i < kMaxProbeStringBytes; ++i) {
@@ -54,7 +53,6 @@ bool ProbeGuestCString(const char* str, std::string* out) {
         char ch = '\0';
         if (!GuestCopyIn_nid_no_patch(&ch, reinterpret_cast<const void*>(base + i), 1)) return false;
         if (ch == '\0') return true;
-        if (out != nullptr) out->push_back(ch);
     }
     return false;
 }
@@ -122,8 +120,7 @@ int APS5_VABI sceUgcServiceS3CreateRequest(const char* accessKey) {
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
     if (accessKey != nullptr) {
-        std::string probedKey;
-        if (!ProbeGuestCString(accessKey, &probedKey)) return kErrInvalidArg;
+        if (!ProbeGuestCString(accessKey)) return kErrInvalidArg;
     }
     std::lock_guard<std::mutex> lock(client->mutex);
     if (client->nextRequestId >= (std::numeric_limits<int>::max)()) {
@@ -226,10 +223,10 @@ int APS5_VABI sceUgcServiceS3Unknown06(int requestId, std::uint64_t* progressSiz
 int APS5_VABI sceUgcServiceS3UploadFileWithGmsResponse(int requestId, int fileType, const char* filePath, const char* gmsResponse) {
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
-    if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(filePath)) return kErrInvalidArg;
     if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
-    if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(gmsResponse)) return kErrInvalidArg;
     const int resetRet = ResetRequestProgress(client, requestId);
     if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch(__func__);
@@ -241,11 +238,11 @@ int APS5_VABI sceUgcServiceS3Unknown07(int requestId, int fileType, const char* 
     (void)outInfo;
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
-    if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(filePath)) return kErrInvalidArg;
     if (!ValidatePartInfo(partInfo)) return kErrInvalidArg;
     if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
-    if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(gmsResponse)) return kErrInvalidArg;
     const int resetRet = ResetRequestProgress(client, requestId);
     if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch("QOhoeuKdo7E");
@@ -257,11 +254,11 @@ int APS5_VABI sceUgcServiceS3Unknown08(int requestId, int fileType, const char* 
     (void)outInfo;
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
-    if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(filePath)) return kErrInvalidArg;
     if (!ValidatePartInfo(partInfo)) return kErrInvalidArg;
     if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, false)) return kErrUnsupportedFileType;
-    if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(gmsResponse)) return kErrInvalidArg;
     const int resetRet = ResetRequestProgress(client, requestId);
     if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch("9967FcQ+zos");
@@ -272,10 +269,10 @@ int APS5_VABI sceUgcServiceS3DownloadFileWithGmsResponse(int requestId, int file
     (void)outSize;
     const std::shared_ptr<ClientState> client = GetClient();
     if (client == nullptr) return kErrNoClient;
-    if (!ProbeGuestCString(filePath, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(filePath)) return kErrInvalidArg;
     if (!RequestExists(client, requestId)) return kErrNotFoundRequest;
     if (!IsValidFileType(fileType, true)) return kErrUnsupportedFileType;
-    if (!ProbeGuestCString(gmsResponse, nullptr)) return kErrInvalidArg;
+    if (!ProbeGuestCString(gmsResponse)) return kErrInvalidArg;
     const int resetRet = ResetRequestProgress(client, requestId);
     if (resetRet != 0) return resetRet;
     NotImplemented_nid_no_patch(__func__);
