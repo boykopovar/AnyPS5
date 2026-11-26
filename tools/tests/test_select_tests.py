@@ -91,7 +91,7 @@ class SelectFixture(unittest.TestCase):
         for name, content in PROJECT.items():
             (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
             (cls.source / name).write_text(content, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
         subprocess.run(["cmake", "-S", str(cls.source), "-B", str(cls.build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                        check=True, capture_output=True)
         subprocess.run(["cmake", "--build", str(cls.build)], check=True, capture_output=True)
@@ -253,7 +253,7 @@ class SelectBuildTests(SelectFixture):
     def test_fresh_build_keeps_a_shared_selected_executable(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory) / "fresh"
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             changed = build / "changed.txt"
@@ -481,7 +481,7 @@ class FixtureBuildTests(unittest.TestCase):
         for name, content in project.items():
             (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
             (cls.source / name).write_text(content, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
         subprocess.run(["cmake", "-S", str(cls.source), "-B", str(cls.build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                        check=True, capture_output=True)
         subprocess.run(["cmake", "--build", str(cls.build)], check=True, capture_output=True)
@@ -543,7 +543,7 @@ class NonAsciiDirectoryTests(unittest.TestCase):
             for name, content in PROJECT.items():
                 (source / name).parent.mkdir(parents=True, exist_ok=True)
                 (source / name).write_text(content, encoding="utf-8")
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
@@ -874,7 +874,7 @@ class LinkedDirectoryTests(unittest.TestCase):
                 import _winapi
                 _winapi.CreateJunction(str(real), str(link))
             source, build, graph = link / "source", link / "build", Path(directory) / "graph.json"
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)

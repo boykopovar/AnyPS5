@@ -532,6 +532,23 @@ void MultiMaster(decltype(&FT_Get_Multi_Master_nid_postfix) query) {
     Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release multi-master libraries");
 }
 
+void VariantSelectors(decltype(&FT_Face_GetCharsOfVariant_nid_postfix) getChars,
+                      decltype(&FT_Face_GetVariantSelectors_nid_postfix) getSelectors,
+                      decltype(&FT_Face_GetVariantsOfChar_nid_postfix) getVariants) {
+    Require(getChars(nullptr, 0xFE0F) == nullptr, "null face chars of variant");
+    Require(getSelectors(nullptr) == nullptr, "null face variant selectors");
+    Require(getVariants(nullptr, 'A') == nullptr, "null face variants of char");
+    FreeType::GuestLibrary* library = nullptr;
+    FreeType::GuestFaceRec* face = nullptr;
+    Require(forwarded.init(&library) == 0, "init variant selectors library");
+    const auto font = SquareGlyphFont('A', 800);
+    Require(forwarded.newMemoryFace(library, font.data(), font.size(), 0, &face) == 0, "open font for variant selectors");
+    Require(getChars(face, 0xFE0F) == nullptr, "font chars of variant");
+    Require(getSelectors(face) == nullptr, "font variant selectors");
+    Require(getVariants(face, 'A') == nullptr, "font variants of char");
+    Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release variant selectors face and library");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -722,6 +739,19 @@ int main(int argc, char** argv) {
     Resolve(multiMaster, library, patched, "pORpGtdlfqQ", "FT_Get_Multi_Master_nid_postfix");
 #endif
     MultiMaster(multiMaster);
+    decltype(&FT_Face_GetCharsOfVariant_nid_postfix) getCharsOfVariant = nullptr;
+    decltype(&FT_Face_GetVariantSelectors_nid_postfix) getVariantSelectors = nullptr;
+    decltype(&FT_Face_GetVariantsOfChar_nid_postfix) getVariantsOfChar = nullptr;
+#ifdef _WIN32
+    Resolve(getCharsOfVariant, library, patched, "tl72PmqhXww", "FT_Face_GetCharsOfVariantForward_nid_no_patch");
+    Resolve(getVariantSelectors, library, patched, "9Lm2mfsSmws", "FT_Face_GetVariantSelectorsForward_nid_no_patch");
+    Resolve(getVariantsOfChar, library, patched, "mGMeRKWGTL4", "FT_Face_GetVariantsOfCharForward_nid_no_patch");
+#else
+    Resolve(getCharsOfVariant, library, patched, "tl72PmqhXww", "FT_Face_GetCharsOfVariant_nid_postfix");
+    Resolve(getVariantSelectors, library, patched, "9Lm2mfsSmws", "FT_Face_GetVariantSelectors_nid_postfix");
+    Resolve(getVariantsOfChar, library, patched, "mGMeRKWGTL4", "FT_Face_GetVariantsOfChar_nid_postfix");
+#endif
+    VariantSelectors(getCharsOfVariant, getVariantSelectors, getVariantsOfChar);
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
     if (forwards) {
         Resolve(strokers.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");
