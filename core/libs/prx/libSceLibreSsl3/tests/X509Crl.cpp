@@ -445,7 +445,7 @@ void TestParsedStructure() {
     RequireString(first->revocationDate, 23, "240102000000Z");
     Require(first->extensions == nullptr);
     Require(first->issuer == nullptr);
-    Require(first->reason == 0);
+    Require(first->reason == -1);
     const LibreSsl3Revoked* second = RevokedEntryAt(crl, 1);
     Require(second != nullptr);
     RequireInteger(second->serialNumber, {0x10, 0x02});
@@ -1399,6 +1399,176 @@ void TestGet0ByCertCanonicalIssuer() {
 
 }
 
+Bytes Sha512(const Bytes& data) {
+    Sha512Context context;
+    Require(SHA512_Init_nid_postfix(&context) == 1);
+    Require(SHA512_Update_nid_postfix(&context, data.data(), data.size()) == 1);
+    Bytes digest(64);
+    Require(SHA512_Final_nid_postfix(digest.data(), &context) == 1);
+    return digest;
+}
+
+void RequireHash(const LibreSsl3X509Crl* crl, const Bytes& expected) {
+    Require(expected.size() == sizeof(crl->hash));
+    Require(std::memcmp(crl->hash, expected.data(), sizeof(crl->hash)) == 0);
+}
+
+Bytes AuthorityKeyIdExtension(bool critical) {
+    return Extension({0x55, 0x1d, 0x23}, critical, Sequence({Tlv(0x80, Bytes{0x01, 0x02, 0x03})}));
+}
+
+Bytes DeltaCrlExtension(bool critical) {
+    return Extension({0x55, 0x1d, 0x1b}, critical, Tlv(0x02, Bytes{0x07}));
+}
+
+Bytes IssuingDistributionPointExtension() {
+    return Extension({0x55, 0x1d, 0x1c}, true, Sequence({}));
+}
+
+Bytes FreshestCrlExtension() {
+    return Extension({0x55, 0x1d, 0x2e}, false, Sequence({}));
+}
+
+Bytes DistributionPointsExtension(bool critical) {
+    return Extension({0x55, 0x1d, 0x1f}, critical, Sequence({}));
+}
+
+Bytes CrlWithExtensions(const Bytes& extensions) {
+    return BuildCrl(Join({TbsHead(), Tlv(0xa0, Tlv(0x30, extensions))}));
+}
+
+Bytes CrlWithEntries(const Bytes& entries) {
+    return BuildCrl(Join({TbsHead(), Tlv(0x30, entries)}));
+}
+
+int ParsedFlags(const Bytes& der) {
+    LibreSsl3X509Crl* crl = Parse(der);
+    Require(crl != nullptr);
+    const int flags = crl->flags;
+    FreeCrlValue(crl);
+    return flags;
+}
+
+void TestPostDecodeDefaults() {
+    const Bytes der = BuildCrl(TbsHead());
+    LibreSsl3X509Crl* crl = Parse(der);
+    Require(crl != nullptr);
+    RequireHash(crl, Hex("806340a019a7679f4c7c7be838792eff1a93a1743df6505d9d2c9a8a8c75b022"
+                         "fb4e8c195b0cf7e1b25ced77f9594ac87e4fec74149ade8a513ef0ea9e28590f"));
+    RequireHash(crl, Sha512(der));
+    Require(crl->flags == 0);
+    Require(crl->akid == nullptr && crl->idp == nullptr && crl->issuers == nullptr);
+    Require(crl->crlNumber == nullptr && crl->baseCrlNumber == nullptr);
+    Require(crl->idpFlags == 0);
+    Require(crl->idpReasons == 0x807f);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestHashOfReencoding() {
+    const Bytes tbs = NonMinimal(0x30, Join({NonMinimal(0x02, Bytes{0x01}), SignatureAlgorithm(),
+        IssuerName("Test CA"), UtcTime("240101000000Z")}));
+    const Bytes algorithm = Join({Oid({0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b}), Tlv(0x05, Bytes{})});
+    const Bytes received = NonMinimal(0x30, Join({tbs, NonMinimal(0x30, algorithm), Bytes{0x03, 0x81, 0x03, 0x04, 0x5a, 0x5f}}));
+    LibreSsl3X509Crl* crl = Parse(received);
+    Require(crl != nullptr);
+    Require(crl->signature->length == 2 && crl->signature->data[1] == 0x50);
+    RequireHash(crl, Sha512(Sequence({tbs, Tlv(0x30, algorithm), Bytes{0x03, 0x03, 0x04, 0x5a, 0x50}})));
+    FreeCrlValue(crl);
+
+    const Bytes octetOid = Oid({0x2b, 0x06, 0x01, 0x04, 0x01});
+    crl = Parse(BuildCrl(TbsHead(), Sequence({octetOid, NonMinimal(0x04, Bytes{0x01, 0x02})})));
+    Require(crl != nullptr);
+    RequireHash(crl, Sha512(BuildCrl(TbsHead(), Sequence({octetOid, Tlv(0x04, Bytes{0x01, 0x02})}))));
+    FreeCrlValue(crl);
+
+    const Bytes absent = BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70})}));
+    crl = Parse(absent);
+    Require(crl != nullptr);
+    RequireHash(crl, Sha512(absent));
+    FreeCrlValue(crl);
+
+    const Bytes integerParameter = BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x02, Bytes{0x01})}));
+    RequireNotImplemented([&] { Parse(integerParameter); });
+    DrainErrors();
+    Require(allocations.empty());
+}
+
+void TestCachedExtensions() {
+    LibreSsl3X509Crl* crl = Parse(CrlWithExtensions(Join({CrlNumberExtension(5), DeltaCrlExtension(true),
+        AuthorityKeyIdExtension(false)})));
+    Require(crl != nullptr);
+    RequireInteger(crl->crlNumber, {0x05});
+    RequireInteger(crl->baseCrlNumber, {0x07});
+    Require(crl->akid != nullptr);
+    RequireString(*static_cast<Asn1String* const*>(crl->akid), 4, "\x01\x02\x03");
+    Require(crl->flags == 0);
+    FreeCrlValue(crl);
+
+    Require(ParsedFlags(CrlWithExtensions(DeltaCrlExtension(false))) == 0x80);
+    Require(ParsedFlags(CrlWithExtensions(FreshestCrlExtension())) == 0x1000);
+    Require(ParsedFlags(CrlWithExtensions(DistributionPointsExtension(true))) == 0x200);
+    Require(ParsedFlags(CrlWithExtensions(Join({DistributionPointsExtension(false), FreshestCrlExtension()}))) == 0x1000);
+    Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(true)}))) == 0);
+    Require(ParsedFlags(CrlWithExtensions(Join({DistributionPointsExtension(true), FreshestCrlExtension()}))) == 0x200);
+
+    RequireNotImplemented([] { Parse(CrlWithExtensions(Join({CrlNumberExtension(5), IssuingDistributionPointExtension()}))); });
+    Require(allocations.empty());
+    crl = Parse(CrlWithExtensions(Join({IssuingDistributionPointExtension(), IssuingDistributionPointExtension()})));
+    Require(crl != nullptr);
+    Require(crl->idp == nullptr);
+    Require(crl->flags == 0);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
+void TestEntryReasons() {
+    LibreSsl3X509Crl* crl = Parse(CrlWithEntries(Join({
+        RevokedEntry(Bytes{0x10, 0x01}),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x02}, CrlReasonExtension(1)),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x03}, Extension({0x55, 0x1d, 0x15}, false, Tlv(0x0a, Bytes{0xff}))),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x04}, CertificateIssuerExtension("Other CA")),
+    })));
+    Require(crl != nullptr);
+    Require(RevokedEntryAt(crl, 0)->reason == -1);
+    Require(RevokedEntryAt(crl, 1)->reason == 1);
+    Require(RevokedEntryAt(crl, 2)->reason == -1);
+    Require(RevokedEntryAt(crl, 3)->reason == -1);
+    Require(crl->flags == 0);
+    FreeCrlValue(crl);
+    RequireQueue({});
+
+    crl = Parse(CrlWithEntries(Join({
+        RevokedEntryWithExtensions(Bytes{0x10, 0x01}, CrlReasonExtension(1)),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x02}, Join({CrlReasonExtension(1), CrlReasonExtension(2)})),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x03}, CrlReasonExtension(3)),
+    })));
+    Require(crl != nullptr);
+    Require(RevokedEntryAt(crl, 0)->reason == 1);
+    Require(RevokedEntryAt(crl, 1)->reason == 0);
+    Require(RevokedEntryAt(crl, 2)->reason == 0);
+    Require(crl->flags == 0x80);
+    FreeCrlValue(crl);
+
+    Require(ParsedFlags(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Extension({0x55, 0x1d, 0x15}, false, Tlv(0x02, Bytes{0x01}))))) == 0x80);
+    DrainErrors();
+    Require(ParsedFlags(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Extension({0x55, 0x1d, 0x18}, true, GeneralizedTime("20240102000000Z"))))) == 0x200);
+    Require(ParsedFlags(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Join({CertificateIssuerExtension("Other CA"), CertificateIssuerExtension("Other CA")})))) == 0x80);
+
+    crl = Parse(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Extension({0x55, 0x1d, 0x15}, false, Tlv(0x0a, Bytes(9, 0x01))))));
+    Require(crl != nullptr);
+    Require(RevokedEntryAt(crl, 0)->reason == -1);
+    FreeCrlValue(crl);
+    RequireQueue({223});
+    Require(allocations.empty());
+}
+
 int main() {
     std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch),
@@ -1431,6 +1601,10 @@ int main() {
     TestNameStructures();
     TestLongFormTags();
     TestGet0ByCertCanonicalIssuer();
+    TestPostDecodeDefaults();
+    TestHashOfReencoding();
+    TestCachedExtensions();
+    TestEntryReasons();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509_CRL tests passed");
 }
