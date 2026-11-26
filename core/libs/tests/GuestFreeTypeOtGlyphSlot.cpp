@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <initializer_list>
 
 namespace {
 
@@ -25,6 +27,7 @@ struct Recorder {
     void* lastFreed = nullptr;
     bool fail = false;
     int failAt = 0;
+    bool throwAllocation = false;
 };
 
 Recorder* Owner(GuestMemoryRec* memory) {
@@ -35,6 +38,7 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     auto* recorder = Owner(memory);
     ++recorder->allocs;
     recorder->lastSize = size;
+    if (recorder->throwAllocation) throw std::runtime_error("bitmap allocation failure");
     if (recorder->fail || recorder->allocs == recorder->failAt) return nullptr;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
@@ -115,6 +119,38 @@ void AllocationErrors() {
     nullMemory.face.memory = nullptr;
     Require(ft_glyphslot_alloc_bitmap_nid_postfix(&nullMemory.slot, 0) == 0, "alloc_bitmap of 0 bytes does not read a null memory");
     Require(!nullMemory.slot.bitmap.buffer && nullMemory.internal.flags == FreeType::GlyphOwnBitmap, "alloc_bitmap of 0 bytes with a null memory stores null");
+}
+
+void AllocationException() {
+    for (const bool owned : {false, true}) {
+        Fixture fixture;
+        unsigned char borrowed[4]{1, 2, 3, 4};
+        fixture.internal.flags = 0x40;
+        if (owned) Require(ft_glyphslot_alloc_bitmap_nid_postfix(&fixture.slot, 4) == 0, "prepare an owned bitmap");
+        else fixture.slot.bitmap.buffer = borrowed;
+        auto* previous = fixture.slot.bitmap.buffer;
+        fixture.recorder.throwAllocation = true;
+        bool threw = false;
+        try {
+            ft_glyphslot_alloc_bitmap_nid_postfix(&fixture.slot, 8);
+        } catch (const std::runtime_error& failure) {
+            Require(std::strcmp(failure.what(), "bitmap allocation failure") == 0, "the original allocation exception propagates");
+            threw = true;
+        }
+        Require(threw, "a throwing bitmap allocator propagates its exception");
+        Require(fixture.internal.flags == (0x40 | (owned ? FreeType::GlyphOwnBitmap : 0)), "a failed allocation does not claim a borrowed bitmap");
+        Require(fixture.slot.bitmap.buffer == (owned ? nullptr : borrowed), "allocation failure keeps a borrowed bitmap and clears a released owned bitmap");
+        Require(fixture.recorder.frees == (owned ? 1 : 0), "allocation failure releases only a previously owned bitmap");
+        if (owned) Require(fixture.recorder.lastFreed == previous, "allocation failure releases the original owned pointer");
+        ft_glyphslot_free_bitmap_nid_postfix(&fixture.slot);
+        ft_glyphslot_free_bitmap_nid_postfix(&fixture.slot);
+        Require(fixture.recorder.frees == (owned ? 1 : 0) && !fixture.slot.bitmap.buffer && fixture.internal.flags == 0x40, "cleanup after allocation failure never frees a borrowed bitmap or releases twice");
+        Require(borrowed[0] == 1 && borrowed[3] == 4, "allocation failure and cleanup preserve borrowed pixels");
+        fixture.recorder.throwAllocation = false;
+        Require(ft_glyphslot_alloc_bitmap_nid_postfix(&fixture.slot, 4) == 0 && Zeroed(fixture.slot.bitmap.buffer, 4), "allocation succeeds after a throwing callback");
+        ft_glyphslot_free_bitmap_nid_postfix(&fixture.slot);
+        Require(fixture.recorder.allocs == (owned ? 3 : 2) && fixture.recorder.frees == (owned ? 2 : 1), "retry releases exactly its owned allocation");
+    }
 }
 
 void Release() {
@@ -345,6 +381,7 @@ void NewSlotFailures() {
 int main() {
     Allocation();
     AllocationErrors();
+    AllocationException();
     Release();
     Replacement();
     Ownership();
