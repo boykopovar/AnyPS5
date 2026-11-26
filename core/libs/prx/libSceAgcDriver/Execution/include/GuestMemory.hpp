@@ -169,7 +169,7 @@ std::uint64_t CollectSince();
 std::uint64_t SteadyNanoseconds();
 void AdoptLatestCollectEpoch();
 std::uint64_t ProofSerial();
-enum class ProofBreakSite : std::uint8_t { Other, DriverStore, Written, GpuMutex, WriteBack, WriteBackIfHeld, Packet, CompletionStore, RecordedWork, WrittenBack, KeptDraw, ResourceWriteBack };
+enum class ProofBreakSite : std::uint8_t { Other, DriverStore, Written, GpuMutex, WriteBack, WriteBackIfHeld, Packet, CompletionStore, WrittenBack, KeptDraw, ResourceWriteBack };
 const char* ProofBreakSiteName(ProofBreakSite site);
 inline constexpr std::size_t ProofBreakSiteCount = static_cast<std::size_t>(ProofBreakSite::ResourceWriteBack) + 1;
 struct ProofBreakCounts {

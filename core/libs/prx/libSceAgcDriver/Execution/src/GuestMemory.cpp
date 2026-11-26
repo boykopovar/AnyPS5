@@ -2538,7 +2538,6 @@ const char* ProofBreakSiteName(ProofBreakSite site) {
         case ProofBreakSite::WriteBackIfHeld: return "held write-back";
         case ProofBreakSite::Packet: return "non-draw packet";
         case ProofBreakSite::CompletionStore: return "completion store";
-        case ProofBreakSite::RecordedWork: return "recorded work";
         case ProofBreakSite::WrittenBack: return "written back";
         case ProofBreakSite::KeptDraw: return "kept writing draw";
         case ProofBreakSite::ResourceWriteBack: return "resource write-back";
