@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -48,6 +49,9 @@ constexpr std::uint32_t WrappedScaleOffset = 32u;
 constexpr std::uint32_t FindBitOffset = 32u;
 constexpr std::uint32_t InactiveKey = 40u;
 constexpr std::uint32_t FormatBytes = 16u;
+constexpr std::uint32_t BeyondRecordOffset = 64u;
+constexpr std::uint32_t BeyondRecordIndex = BeyondRecordOffset / 16u;
+constexpr std::uint32_t IndexedValue = 7u;
 constexpr std::uint32_t CountRecordOffset = 0x800u;
 constexpr std::uint32_t LiveCountOffset = 0x2000u;
 
@@ -63,6 +67,10 @@ alignas(256) constexpr std::array<std::uint32_t, 20> CarriedSelectCode{0x3604008
 alignas(256) constexpr std::array<std::uint32_t, 20> CarriedReadCode{0xbe960380u, 0xbe830380u, 0x7d8400a8u, 0xbefe036au, 0x9885b016u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbe94037eu, 0xbefe03c1u, 0x7e040202u, 0xbefe0314u, 0x7e040282u, 0x7e2c0502u, 0xbefe03c1u, 0x81038103u, 0xbf0a8203u, 0xbf85fff1u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 20> RereadCode{0x7e280500u, 0x8f148214u, 0xf4000180u, 0x28000000u, 0xbf0a8406u, 0xbf84000du, 0x7e0402a8u, 0xf4080200u, 0xfa000800u, 0xe0700000u, 0x80020200u, 0xbf8cc07fu, 0xf4000180u, 0x28000000u, 0x9885b006u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 20> LiveBoundCode{0x7e0802c0u, 0xf4080300u, 0xfa000020u, 0xe0700000u, 0x80030400u, 0xbf8cc07fu, 0x4a040002u, 0x7e060502u, 0xf4080200u, 0xfa000010u, 0xf4200184u, 0xfa000000u, 0xbf0a0603u, 0xbf840005u, 0x9885b003u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> BoundedIndexCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0xf4280202u, 0x1a000000u, 0x7e020287u, 0x7e060284u, 0xe0702000u, 0x80020103u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> BoundedOffsetCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0xf4280202u, 0x1a000000u, 0x7e020287u, 0x7e0602c0u, 0xe0701000u, 0x80020103u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> UnboundedIndexCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0xf4280202u, 0x1a000000u, 0x7e020287u, 0x7e060203u, 0xe0702000u, 0x80020103u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> UnboundedOffsetCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0xf4280202u, 0x1a000000u, 0x7e020287u, 0x7e060203u, 0xe0701000u, 0x80020103u, 0xbf810000u};
 
 struct Header {
     Shader shader{};
@@ -81,6 +89,10 @@ alignas(8) Header CarriedSelectHeader{};
 alignas(8) Header CarriedReadHeader{};
 alignas(8) Header RereadHeader{};
 alignas(8) Header LiveBoundHeader{};
+alignas(8) Header BoundedIndexHeader{};
+alignas(8) Header BoundedOffsetHeader{};
+alignas(8) Header UnboundedIndexHeader{};
+alignas(8) Header UnboundedOffsetHeader{};
 
 void Register(Header& header, std::span<const std::uint32_t> code) {
     header.shader.file_header = 0x34333231u;
@@ -240,6 +252,7 @@ struct Pending {
     bool table = false;
     bool beside = false;
     bool formatTail = false;
+    bool beyondRecord = false;
 };
 
 void WriteRecord(const GuestBlock& table, std::size_t offset, const std::array<std::uint32_t, 4>& descriptor) {
@@ -283,6 +296,7 @@ Pending HeldDispatch(std::span<const std::uint32_t> program, std::initializer_li
         pending.table = recorder->PendingWriteOverlaps(table.At(0), BlockBytes);
         pending.beside = recorder->PendingWriteOverlaps(beside.At(0), BlockBytes);
         pending.formatTail = recorder->PendingWriteOverlaps(output.At(sizeof(std::uint32_t)), FormatBytes - sizeof(std::uint32_t));
+        pending.beyondRecord = recorder->PendingWriteOverlaps(output.At(BeyondRecordOffset), sizeof(std::uint32_t));
     }
     hold.Finish();
     AgcDriverWaitIdle_nid_postfix();
@@ -377,6 +391,61 @@ void FormattedExtent(const GuestBlock& table, const GuestBlock& output, const Gu
     if (!whole) RequireUnreachedUnpending(pending, "the formatted store");
 }
 
+std::array<std::uint32_t, 4> ModeDescriptor(std::uint64_t address, std::uint32_t stride, std::uint32_t records, std::uint32_t mode) {
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), records, 0x01016facu | (mode << 28u)};
+}
+
+Pending ModeDispatch(std::span<const std::uint32_t> program, std::uint32_t argument, const std::array<std::uint32_t, 4>& descriptor, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
+    std::memset(table.Bytes(0), 0, BlockBytes);
+    std::memset(output.Bytes(0), 0, OutputBytes);
+    std::memset(beside.Bytes(0), 0, OutputBytes);
+    WriteRecord(table, 0, RawDescriptor(table.At(TableOffset), HolderBytes));
+    for (std::uint32_t record = 0; record < HolderRecords; ++record) WriteRecord(table, TableOffset + record * 16u, descriptor);
+    return HeldDispatch(program, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), 0u, argument}, table, output, beside);
+}
+
+void BoundsModes(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole) {
+    const auto structured = ModeDescriptor(output.At(0), 16u, 1u, 0u);
+    const auto inStructured = ModeDispatch(UnboundedIndexCode, 0u, structured, table, output, beside);
+    if (*output.Words(0) != IndexedValue) throw std::runtime_error("store windows: OOB_SELECT 0 dropped an in-bounds structured store");
+    RequireOutputPending(inStructured, "OOB_SELECT 0 in-bounds store");
+    if (!whole && (inStructured.beyondRecord || inStructured.beside || inStructured.table)) throw std::runtime_error("store windows: OOB_SELECT 0 noted bytes past records * stride + 16");
+
+    const auto pastRecords = ModeDispatch(UnboundedIndexCode, BeyondRecordIndex, structured, table, output, beside);
+    if (!Untouched(output) || !Untouched(beside)) throw std::runtime_error("store windows: OOB_SELECT 0 wrote at index >= num_records");
+    if (!whole && (pastRecords.beyondRecord || pastRecords.beside || pastRecords.table)) throw std::runtime_error("store windows: OOB_SELECT 0 fell back or noted past records * stride + 16");
+
+    const auto pastStride = ModeDispatch(UnboundedOffsetCode, BeyondRecordOffset, structured, table, output, beside);
+    if (!Untouched(output) || !Untouched(beside)) throw std::runtime_error("store windows: OOB_SELECT 0 wrote at offset >= stride");
+    if (!whole && (pastStride.beyondRecord || pastStride.beside || pastStride.table)) throw std::runtime_error("store windows: OOB_SELECT 0 with unbounded offset fell back or noted past records * stride + 16");
+
+    const auto indexOnly = ModeDescriptor(output.At(0), 16u, 1u, 1u);
+    const auto indexOnlyPastRecords = ModeDispatch(UnboundedIndexCode, BeyondRecordIndex, indexOnly, table, output, beside);
+    if (!Untouched(output) || !Untouched(beside)) throw std::runtime_error("store windows: OOB_SELECT 1 wrote at index >= num_records");
+    if (!whole && (indexOnlyPastRecords.beyondRecord || indexOnlyPastRecords.beside || indexOnlyPastRecords.table)) throw std::runtime_error("store windows: OOB_SELECT 1 with unbounded index fell back or noted past records");
+
+    const auto indexOnlyBoundedOffset = ModeDispatch(BoundedOffsetCode, 0u, indexOnly, table, output, beside);
+    if (*output.Words(BeyondRecordOffset) != IndexedValue) throw std::runtime_error("store windows: OOB_SELECT 1 dropped a bounded store at offset >= stride");
+    if (!indexOnlyBoundedOffset.beyondRecord) throw std::runtime_error("store windows: OOB_SELECT 1 left a bounded store at offset >= stride unpending");
+    if (!whole) RequireUnreachedUnpending(indexOnlyBoundedOffset, "OOB_SELECT 1");
+
+    const auto indexOnlyUnboundedOffset = ModeDispatch(UnboundedOffsetCode, BeyondRecordOffset, indexOnly, table, output, beside);
+    if (*output.Words(BeyondRecordOffset) != IndexedValue) throw std::runtime_error("store windows: OOB_SELECT 1 dropped an unbounded store at offset >= stride");
+    if (!indexOnlyUnboundedOffset.beyondRecord || !indexOnlyUnboundedOffset.beside) throw std::runtime_error("store windows: OOB_SELECT 1 with an unbounded offset did not keep the whole reach");
+
+    for (const auto& [mode, records, name] : {std::tuple{2u, 1u, "OOB_SELECT 2"}, std::tuple{3u, 4u, "OOB_SELECT 3"}}) {
+        const auto descriptor = ModeDescriptor(output.At(0), 16u, records, mode);
+        const auto bounded = ModeDispatch(BoundedIndexCode, 0u, descriptor, table, output, beside);
+        if (*output.Words(BeyondRecordOffset) != IndexedValue) throw std::runtime_error(std::string("store windows: ") + name + " dropped a bounded store beyond num_records");
+        if (!bounded.beyondRecord) throw std::runtime_error(std::string("store windows: ") + name + " left a bounded store beyond num_records unpending");
+        if (!whole) RequireUnreachedUnpending(bounded, name);
+
+        const auto unbounded = ModeDispatch(UnboundedIndexCode, BeyondRecordIndex, descriptor, table, output, beside);
+        if (*output.Words(BeyondRecordOffset) != IndexedValue) throw std::runtime_error(std::string("store windows: ") + name + " dropped an unbounded store beyond num_records");
+        if (!unbounded.beyondRecord || !unbounded.beside) throw std::runtime_error(std::string("store windows: ") + name + " with an unbounded index did not keep the whole reach");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -398,6 +467,10 @@ int main(int argc, char** argv) {
         Register(CarriedReadHeader, CarriedReadCode);
         Register(RereadHeader, RereadCode);
         Register(LiveBoundHeader, LiveBoundCode);
+        Register(BoundedIndexHeader, BoundedIndexCode);
+        Register(BoundedOffsetHeader, BoundedOffsetCode);
+        Register(UnboundedIndexHeader, UnboundedIndexCode);
+        Register(UnboundedOffsetHeader, UnboundedOffsetCode);
         GuestBlock table, output, beside;
         PointerTable(table, output, beside, whole);
         const auto besideRaw = RawDescriptor(beside.At(0), OutputBytes);
@@ -409,6 +482,7 @@ int main(int argc, char** argv) {
         EscapingRecord(ScaleCode, WrappedScaleKey, WrappedScaleOffset, besideRaw, table, output, beside, "a key offset whose scale wraps");
         EscapingRecord(UnalignedCode, 0u, CutOffset, besideFormatHigh, table, output, beside, "an unaligned table offset");
         FormattedExtent(table, output, beside, whole);
+        BoundsModes(table, output, beside, whole);
         EscapingRecord(FindBitCode, 0u, FindBitOffset, besideRaw, table, output, beside, "a find-bit key of a zero word");
         EscapingRecord(InactiveCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a key read under an empty mask");
         EscapingRecord(CarriedReadCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a lane read carried by a loop");
