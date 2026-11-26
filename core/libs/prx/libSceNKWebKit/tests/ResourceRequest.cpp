@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::StringImpl;
@@ -17,6 +18,16 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template<typename Exception, typename Action>
+static bool Throws(Action action) {
+    try {
+        action();
+    } catch (const Exception&) {
+        return true;
+    }
+    return false;
+}
 
 static StringImpl Make(const char* text) {
     return StringImpl{2, static_cast<unsigned>(std::strlen(text)), text, 4};
@@ -321,6 +332,74 @@ static void TestUpdateFromDelegateInspectorFallback() {
     Require(request.resourceRequestBodyUpdated && !request.platformRequestBodyUpdated);
 }
 
+static void TestUpdateFromDelegateFailure() {
+    ResourceRequestBase request{};
+    request.resourceRequestUpdated = true;
+    request.resourceRequestBodyUpdated = true;
+    request.platformRequestUpdated = true;
+    request.platformRequestBodyUpdated = true;
+    auto oldURLText = Make("http://old/");
+    auto oldInitiatorText = Make("old-initiator");
+    SetOwnedURL(request.url, oldURLText, 1);
+    SetOwnedString(request.initiatorIdentifier, oldInitiatorText);
+    request.priority = 3;
+    request.requester = 6;
+    request.hiddenFromInspector = true;
+    request.inspectorInitiatorNodeIdentifier = 42;
+    request.httpBody = CreateForm();
+    auto* oldBody = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
+
+    ResourceRequestBase delegate{};
+    delegate.resourceRequestUpdated = true;
+    delegate.resourceRequestBodyUpdated = true;
+    delegate.priority = 1;
+    delegate.requester = 2;
+
+    auto requireUnchanged = [&](bool requestUpdated, bool bodyUpdated) {
+        Require(request.url.impl == &oldURLText && request.url.bits == 1);
+        Require(request.initiatorIdentifier.impl == &oldInitiatorText);
+        Require(request.priority == 3 && request.requester == 6 && request.hiddenFromInspector);
+        Require(request.inspectorInitiatorNodeIdentifier && *request.inspectorInitiatorNodeIdentifier == 42);
+        Require(request.httpBody == oldBody && oldBody->refCount == 1);
+        Require(request.resourceRequestUpdated == requestUpdated);
+        Require(request.resourceRequestBodyUpdated == bodyUpdated);
+        Require(request.platformRequestUpdated && request.platformRequestBodyUpdated);
+        Require(oldURLText.refCount == 4 && oldInitiatorText.refCount == 4);
+    };
+
+    request.resourceRequestUpdated = false;
+    Require(Throws<std::logic_error>([&] {
+        _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(&request, &delegate);
+    }));
+    requireUnchanged(false, true);
+    request.resourceRequestUpdated = true;
+
+    request.resourceRequestBodyUpdated = false;
+    Require(Throws<std::logic_error>([&] {
+        _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(&request, &delegate);
+    }));
+    requireUnchanged(true, false);
+    request.resourceRequestBodyUpdated = true;
+
+    delegate.resourceRequestUpdated = false;
+    Require(Throws<std::logic_error>([&] {
+        _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(&request, &delegate);
+    }));
+    requireUnchanged(true, true);
+    Require(!delegate.resourceRequestUpdated);
+
+    delegate.resourceRequestUpdated = true;
+    delegate.resourceRequestBodyUpdated = false;
+    _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_(&request, &delegate);
+    Require(request.url.impl == nullptr);
+    Require(request.priority == 3 && request.requester == 6 && request.hiddenFromInspector);
+    Require(request.inspectorInitiatorNodeIdentifier && *request.inspectorInitiatorNodeIdentifier == 42);
+    Require(request.httpBody == oldBody && oldBody->refCount == 1);
+    Require(request.resourceRequestUpdated && request.resourceRequestBodyUpdated);
+    Require(!request.platformRequestUpdated && !request.platformRequestBodyUpdated);
+    Require(oldURLText.refCount == 2 && oldInitiatorText.refCount == 4);
+}
+
 static void TestDefaultTimeout() {
     Require(_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv() == 0);
     WKURLRequestSetDefaultTimeoutInterval(45.5);
@@ -340,6 +419,7 @@ int main() {
     TestScalars();
     TestUpdateFromDelegate();
     TestUpdateFromDelegateInspectorFallback();
+    TestUpdateFromDelegateFailure();
     TestDefaultTimeout();
     return 0;
 }

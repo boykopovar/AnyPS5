@@ -284,6 +284,19 @@ void SetHTTPBody(ResourceRequestBase& request, NKWebKit::WebCoreAbi::FormData* a
     request.platformRequestBodyUpdated = false;
 }
 
+struct OwnedFormData {
+    explicit OwnedFormData(NKWebKit::WebCoreAbi::FormData* value) : body(value) {
+        if (body) body->ref();
+    }
+    ~OwnedFormData() {
+        if (body) body->deref();
+    }
+    NKWebKit::WebCoreAbi::FormData* release() {
+        return std::exchange(body, nullptr);
+    }
+    NKWebKit::WebCoreAbi::FormData* body;
+};
+
 bool EqualBodyBytes(const NKWebKit::WebCoreAbi::FormDataByteVector& left, const NKWebKit::WebCoreAbi::FormDataByteVector& right) {
     if (left.size != right.size) return false;
     if (!left.size) return true;
@@ -1007,20 +1020,21 @@ extern "C" void APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreser
     ResourceRequestBase* self, const ResourceRequestBase* delegateProvidedRequest) {
     auto& request = Checked(self);
     const auto& delegate = Checked(delegateProvidedRequest);
-    UpdateResourceRequest(request);
-    UpdateResourceRequestBody(request);
     const auto oldPriority = request.priority;
-    auto* oldHTTPBody = static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody);
-    if (oldHTTPBody) oldHTTPBody->ref();
+    OwnedFormData oldHTTPBody(static_cast<NKWebKit::WebCoreAbi::FormData*>(request.httpBody));
     const bool oldHiddenFromInspector = request.hiddenFromInspector;
     const auto oldRequester = request.requester;
     const String oldInitiatorIdentifier(request.initiatorIdentifier);
     const auto oldInspectorInitiatorNodeIdentifier = request.inspectorInitiatorNodeIdentifier;
 
+    UpdateResourceRequest(request);
+    UpdateResourceRequestBody(request);
+    UpdateResourceRequest(delegate);
+
     AssignRequest(request, delegate);
 
     _ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE(&request, oldPriority);
-    SetHTTPBody(request, oldHTTPBody);
+    SetHTTPBody(request, oldHTTPBody.release());
     request.hiddenFromInspector = oldHiddenFromInspector;
     request.requester = oldRequester;
     Assign(request.initiatorIdentifier, oldInitiatorIdentifier);
