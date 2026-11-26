@@ -73,6 +73,17 @@ class PadInputTests(unittest.TestCase):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires a named pipe")
+    def test_controller_command_rejects_a_named_pipe_without_waiting(self):
+        os.mkfifo(self.path)
+        for script in ("pad_input.py", "preview_pad_input.py"):
+            with self.subTest(script=script):
+                result = subprocess.run([sys.executable, str(Path(pad_input.__file__).with_name(script)),
+                                         str(self.path), "cross"], capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("controller command path must be a regular file", result.stderr)
+                self.assertTrue(stat.S_ISFIFO(self.path.stat().st_mode))
+
     def test_malformed_timeline_bodies_do_not_exhaust_sequence(self):
         maximum = 2**64 - 1
         cases = [
@@ -377,7 +388,7 @@ class PadInputTests(unittest.TestCase):
     def test_unreadable_command_file_is_not_replaced(self):
         original = "7 16384 300\n"
         self.path.write_text(original, encoding="utf-8")
-        with mock.patch.object(Path, "open", side_effect=PermissionError("denied")), \
+        with mock.patch.object(pad_input.os, "open", side_effect=PermissionError("denied")), \
                 self.assertRaises(PermissionError):
             self.queue(1000, "cross")
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
