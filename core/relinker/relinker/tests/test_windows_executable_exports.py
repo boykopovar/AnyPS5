@@ -112,6 +112,13 @@ def main():
             result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', *options,
                                      str(source), str(output)], capture_output=True, text=True, timeout=10)
             return result, output
+        def convert_image(label, image):
+            source = work / (label + '.elf')
+            output = work / (label + '.exe')
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module',
+                                     str(source), str(output)], capture_output=True, text=True, timeout=10)
+            return result, output
         symbols = [('zeta', 0x12, 0, 1, 0x4000, 6),
                    ('alpha#A#B', 0x12, 0, 1, 0x4000, 6),
                    ('alpha#B#B', 0x12, 0, 1, 0x4000, 6),
@@ -153,6 +160,17 @@ def main():
         assert result.returncode == 0 and crossing_output.exists(), (result.stdout, result.stderr)
         assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
         assert 'absolute_function' not in exports(crossing_output.read_bytes())
+        overlapping_symbols = [(name, info, visibility, section,
+                                0x4ff0 if name == 'absolute_function' else value,
+                                0x20 if name == 'absolute_function' else size)
+                               for name, info, visibility, section, value, size in symbols]
+        overlapping_image = fixture(overlapping_symbols)
+        struct.pack_into('<QQ', overlapping_image, 64 + 32, 0x2000, 0x2000)
+        struct.pack_into('<IIQQQQQQ', overlapping_image, 64 + 2 * 56, 1, 5, 0x5000, 0x5000, 0x5000,
+                         0x1000, 0x1000, 0x1000)
+        result, overlapping_output = convert_image('overlapping-absolute-function', overlapping_image)
+        assert result.returncode == 0 and overlapping_output.exists(), (result.stdout, result.stderr)
+        assert 'absolute_function' not in exports(overlapping_output.read_bytes())
         for label, changed, expected in (
                 ('conflict', symbols[:2] + [('alpha#C#B', 0x12, 0, 1, 0x4020, 6)], 'Conflicting executable exports after stripping #: alpha'),
                 ('unmapped', [('bad', 0x11, 0, 1, 0x9000, 6)], 'does not fit inside a PT_LOAD segment'),

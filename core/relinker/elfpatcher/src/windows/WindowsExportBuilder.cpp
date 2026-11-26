@@ -72,7 +72,11 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
                 return offset < segmentSize && extent <= segmentSize - offset;
             });
             if (!mapped) continue;
-            rva = image.GetRva(symbol.Value, extent);
+            try {
+                rva = image.GetRva(symbol.Value, extent);
+            } catch (const Domain::RelinkerException&) {
+                continue;
+            }
             exports.emplace(symbolName, rva);
             continue;
         }
