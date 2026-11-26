@@ -21,6 +21,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
   files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only. `--trap-sdk-syscall-stubs`
   and `--function-symbol-roots` pass the relinker options of the same name, for a title converted with them.
+  Use a dedicated `--work` directory. The audit clears its `source/` and `output/` subdirectories before reuse.
+  Save a machine-readable result with `--json` using a path outside the dump and those generated directories.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
 
 ## Launch
