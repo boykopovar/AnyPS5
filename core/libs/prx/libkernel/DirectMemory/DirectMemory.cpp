@@ -1339,7 +1339,7 @@ void ReplaceFixedOverlap(GuestAllocations::Mutation& mutation, void* addr, size_
 bool FixedNoOverwriteConflict(const GuestAllocations::Mutation& mutation, void* addr, size_t len, int flags) {
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixedFlag) == 0 || (flags & GuestMapNoOverwrite) == 0) return false;
-    return mutation.Overlaps(addr, len) && !Reserved(addr, len);
+    return mutation.Overlaps(addr, len);
 }
 
 int PlaceHintInReservation(void* addr, size_t len, int flags) {
@@ -1358,8 +1358,8 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     const DirectMapHold hold(static_cast<std::uint64_t>(physStart), static_cast<std::uint64_t>(physStart) + len);
     if (!hold) return SCE_KERNEL_ERROR_ENOMEM;
     GuestAllocations::Mutation mutation;
-    flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    flags = PlaceHintInReservation(*addr, len, flags);
     if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, physStart)) {
         EraseReservations(*addr, len);
         RecordProtection(*addr, len, prot);
@@ -1388,8 +1388,8 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, bool zero) {
     GuestAllocations::Mutation mutation;
     if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
-    flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+    flags = PlaceHintInReservation(*addr, len, flags);
     if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, -1, zero)) {
         EraseReservations(*addr, len);
         RecordProtection(*addr, len, prot);
