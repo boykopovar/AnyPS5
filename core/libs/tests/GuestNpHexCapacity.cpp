@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -96,6 +97,51 @@ static void CheckRingBufNullSelfLifecycle() {
     Require(ring->vtable != nullptr);
 }
 
+static void CheckRingBufPointerProbing() {
+    constexpr int invalidArgument = static_cast<int>(0x80558009);
+    std::array<std::uint8_t, 16> backing{};
+    NpRingBuf ring{};
+
+    errno = EACCES;
+    _ZN3sce2np7RingBuf4ctorEv(&ring);
+    Require(errno == EACCES && ring.buf == nullptr && ring.readPointer == nullptr &&
+            ring.writePointer == nullptr && ring.size == 0 && ring.bufSize == 0);
+
+    errno = EACCES;
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, backing.data(), backing.size()) == 0);
+    Require(errno == EACCES && ring.buf == backing.data() && ring.readPointer == backing.data() &&
+            ring.writePointer == backing.data() && ring.size == 0 && ring.bufSize == backing.size());
+
+    errno = EACCES;
+    _ZN3sce2np7RingBufD1Ev(&ring);
+    Require(errno == EACCES && ring.vtable != nullptr);
+
+    errno = EACCES;
+    _ZN3sce2np7RingBufD1Ev(nullptr);
+    Require(errno == EACCES);
+
+    errno = EACCES;
+    _ZN3sce2np7RingBuf4ctorEv(nullptr);
+    Require(errno == EACCES);
+
+    errno = EACCES;
+    Require(_ZN3sce2np7RingBuf4InitEPvm(nullptr, backing.data(), backing.size()) == invalidArgument);
+    Require(errno == EACCES);
+
+    auto* const unmapped = reinterpret_cast<NpRingBuf*>(std::uintptr_t{0x10});
+    errno = EACCES;
+    _ZN3sce2np7RingBufD1Ev(unmapped);
+    Require(errno == EACCES);
+
+    errno = EACCES;
+    _ZN3sce2np7RingBuf4ctorEv(unmapped);
+    Require(errno == EACCES);
+
+    errno = EACCES;
+    Require(_ZN3sce2np7RingBuf4InitEPvm(unmapped, backing.data(), backing.size()) == invalidArgument);
+    Require(errno == EACCES);
+}
+
 int main() {
     constexpr int tooSmall = static_cast<int>(0x80558008);
     const std::array<unsigned char, 4> input{0, 0x7f, 0x80, 0xff};
@@ -125,4 +171,5 @@ int main() {
     }
     CheckRingBufCheckoutNullBlockSize();
     CheckRingBufNullSelfLifecycle();
+    CheckRingBufPointerProbing();
 }
