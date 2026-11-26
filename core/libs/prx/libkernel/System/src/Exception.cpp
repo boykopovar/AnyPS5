@@ -217,7 +217,7 @@ const bool SaveVectors = [] {
     return __builtin_cpu_supports("avx") != 0;
 }();
 
-void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap = {}, bool siginfo = false) {
+void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const Trap& trap = {}, bool siginfo = false, std::int32_t hostCode = 0) {
     GuestUcontext ucontext{};
     auto& m = ucontext.mcontext;
     m.rdi = context.Rdi;
@@ -243,7 +243,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const 
     m.len = sizeof(GuestMcontext);
     static_assert(sizeof(context.FltSave) <= sizeof(m.fpstate));
     std::memcpy(m.fpstate, &context.FltSave, sizeof(context.FltSave));
-    CallHandler(handler, signum, ucontext, trap, siginfo);
+    CallHandler(handler, signum, ucontext, trap, siginfo, hostCode);
     context.Rdi = m.rdi;
     context.Rsi = m.rsi;
     context.Rdx = m.rdx;
@@ -935,11 +935,17 @@ struct PendingFault {
     GuestExceptionHandler handler;
     bool siginfo;
     int signum;
+    std::int32_t code;
     Trap trap;
     CONTEXT context;
 };
 
 thread_local PendingFault pendingFault;
+
+std::int32_t SegvCode(ULONG_PTR address) {
+    MEMORY_BASIC_INFORMATION info{};
+    return VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT ? 2 : 1;
+}
 
 bool Committed(ULONG_PTR address) {
     MEMORY_BASIC_INFORMATION info{};
@@ -1028,6 +1034,7 @@ bool DeliverHostFault(void* exceptionPointers) noexcept {
     pending.handler = handler;
     pending.siginfo = siginfo;
     pending.signum = fault.signum;
+    pending.code = siginfo && fault.signum == SignalSegmentation && fault.trap.number == TrapPage ? SegvCode(fault.trap.address) : 0;
     pending.trap = fault.trap;
     std::memcpy(&pending.context, &context, sizeof(CONTEXT));
     pending.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
@@ -1041,7 +1048,7 @@ bool DeliverHostFault(void* exceptionPointers) noexcept {
     pendingFault.handler = nullptr;
     pendingFault.siginfo = false;
     CONTEXT context = pending.context;
-    Deliver(pending.handler, pending.signum, context, pending.trap, pending.siginfo);
+    Deliver(pending.handler, pending.signum, context, pending.trap, pending.siginfo, pending.code);
     Aps5RedirectedExit(&context, SaveVectors ? vectors : nullptr, RtlRestoreContext);
 }
 

@@ -127,6 +127,17 @@ static void* ReadOnlyPage() {
     return page;
 }
 
+static void* NoAccessPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, PageBytes, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, PageBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return page;
+}
+
 static void APS5_VABI SiginfoHandler(int signum, void* info, void* context) {
     calls.fetch_add(1);
     Require(signum == GuestSigsegv);
@@ -186,6 +197,14 @@ static void TestWriteToUntouchedReadOnly() {
     Require(calls.load() == 1);
 }
 
+static void TestReadNoAccess() {
+    calls.store(0);
+    const auto address = reinterpret_cast<std::uintptr_t>(NoAccessPage());
+    expected = {SegvAccerr, address, reinterpret_cast<std::uintptr_t>(&SiginfoTestReadSite), reinterpret_cast<std::uintptr_t>(&SiginfoTestReadResume), AnyErr, false};
+    Require(SiginfoTestRead(address) == Resumed);
+    Require(calls.load() == 1);
+}
+
 static void TestContextMask() {
     std::uint32_t original[4]{};
     Require(sigprocmask_nid_postfix(GuestSigblock, nullptr, original) == 0);
@@ -204,6 +223,7 @@ int main() {
     TestUnmappedRead();
     TestWriteToReadOnly();
     TestWriteToUntouchedReadOnly();
+    TestReadNoAccess();
     TestContextMask();
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigsegv, &reset, nullptr) == 0);
