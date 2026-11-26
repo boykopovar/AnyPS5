@@ -1840,16 +1840,12 @@ constexpr std::size_t CONSOLE_WORDS_BYTES = 2 * sizeof(std::uint32_t);
 constexpr std::size_t CONSOLE_BUFFER_BYTES = CONSOLE_WORDS_BYTES + sizeof(const void*);
 
 void CopyBatchIn(void* destination, const void* source, std::size_t bytes, const char* message) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
 void CopyBatchOut(void* destination, const void* source, std::size_t bytes, const char* message) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = savedErrno;
     if (!copied) throw std::runtime_error(message);
 }
 
@@ -1983,9 +1979,7 @@ int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::lock_guard<std::mutex> lock(g_lock);
     const uint32_t id = g_nextContext.fetch_add(1, std::memory_order_relaxed);
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
-    errno = savedErrno;
     if (!copied) {
         g_nextContext.fetch_sub(1, std::memory_order_relaxed);
         return SCE_AJM_ERROR_INVALID_PARAMETER;
@@ -2041,9 +2035,7 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     for (std::uint32_t attempt = 0; attempt < 0x4000; ++attempt) {
         const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
         if (g_instances.contains(id)) continue;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(instance, &id, sizeof(id));
-        errno = savedErrno;
         if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
         g_instances.emplace(id, std::move(created));
         AJM_TRACE("[ajm] instance create: context %u, codec %u, flags 0x%llx -> instance %u\n", context, codec, static_cast<unsigned long long>(flags), id);
@@ -2104,9 +2096,7 @@ int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* inf
     local.p_buffer = buffer;
     local.offset = 0;
     local.size = size;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
-    errno = savedErrno;
     if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -2288,9 +2278,7 @@ int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* erro
     (void)info;
     if (error) {
         constexpr AjmBatchError localError{};
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError));
-        errno = savedErrno;
         if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     }
     return 0;

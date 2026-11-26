@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <ios>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -98,6 +99,8 @@ void TraceFile::ReplaceGzip(const std::filesystem::path& path, std::string_view 
 }
 
 void TraceFile::AppendLine(const std::filesystem::path& path, std::string_view line) {
+    static std::mutex appendMutex;
+    std::lock_guard lock(appendMutex);
     std::ofstream output(path, std::ios::binary | std::ios::app);
     RequireGood(output, "opening", path);
     output.write(line.data(), static_cast<std::streamsize>(line.size()));

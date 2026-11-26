@@ -255,6 +255,8 @@ public:
     bool htmlInputElementSpellcheckEnabled = true;
     bool htmlInputElementLastChangeWasUserEdit = false;
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
+    std::uint8_t htmlInputElementAutoFillButtonType = 0;
+    std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -447,6 +449,19 @@ public:
     const void* client = nullptr;
 };
 
+class UserMediaPermissionCheck final : public ObjectOf<ObjectType::UserMediaPermissionCheck> {
+public:
+    bool completed = false;
+    Retained<String> userMediaID;
+    bool allowed = false;
+
+    void SetUserMediaAccessInfo(Retained<String> id, bool isAllowed) {
+        completed = true;
+        userMediaID = std::move(id);
+        allowed = isAllowed;
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -584,6 +599,12 @@ public:
 
     Decision decision = Decision::None;
     Retained<Object> policies;
+};
+
+class FormSubmissionListener final : public ObjectOf<ObjectType::FormSubmissionListener> {
+public:
+    std::function<void()> completionHandler;
+    bool continued = false;
 };
 
 }  // namespace NKWebKit
