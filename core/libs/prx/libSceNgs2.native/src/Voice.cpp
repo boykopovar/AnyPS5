@@ -136,6 +136,16 @@ std::uint32_t Ngs2Voice::UserFxFlags(std::uint32_t flags) const {
 }
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
+    if (PS4_LIBRARY && eventId != 0 && (eventId & ~0x3fu) == 0 && (eventId & (eventId - 1u)) != 0) {
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PLAY) != 0 && channels == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PLAY) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_PLAY);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_STOP) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_STOP_IMM) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_KILL) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_KILL);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PAUSE) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_PAUSE);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_RESUME) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_RESUME);
+        return;
+    }
     if (state != Ngs2PlayState::Empty &&
         (eventId == SCE_NGS2_VOICE_EVENT_STOP || eventId == SCE_NGS2_VOICE_EVENT_STOP_IMM || eventId == SCE_NGS2_VOICE_EVENT_KILL)) {
         for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
@@ -207,6 +217,11 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 static std::uint32_t PendingChannels(const Ngs2Voice& voice);
 
 static void ValidateDeferredEvent(const Ngs2Voice& voice, std::uint32_t event) {
+    if (PS4_LIBRARY && event != 0 && (event & ~0x3fu) == 0) {
+        if ((event & SCE_NGS2_VOICE_EVENT_PLAY) != 0 && PendingChannels(voice) == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
+        if (!voice.IsSampler() && !voice.IsMixer()) throw std::runtime_error("NGS2: deferred events for this voice configuration are not implemented");
+        return;
+    }
     if (event == SCE_NGS2_VOICE_EVENT_PLAY && PendingChannels(voice) == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
     if (!voice.IsSampler() && !voice.IsMixer()) throw std::runtime_error("NGS2: deferred events for this voice configuration are not implemented");
     switch (event) {

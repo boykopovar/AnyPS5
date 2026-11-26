@@ -702,6 +702,27 @@ static void TestPs4ZeroVoiceEvent() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestPs4CombinedVoiceEvent() {
+    const auto system = CreateSystem();
+    const auto empty = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    const Ngs2VoiceEventParam combined{{sizeof(Ngs2VoiceEventParam), 0, SCE_NGS2_VOICE_PARAM_EVENT}, SCE_NGS2_VOICE_EVENT_PLAY | SCE_NGS2_VOICE_EVENT_STOP};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceControl(empty, &combined.header) == SCE_NGS2_ERROR_INVALID_VOICE_ACCESS);
+    Require(Flags(empty) == 0);
+    const auto master = Mastering(system, 2);
+    Require(sceNgs2VoiceControl(master, &combined.header) == SCE_NGS2_OK);
+    Require(Flags(master) == SCE_NGS2_VOICE_STATE_FLAG_INUSE);
+#else
+    for (const auto voice : {empty, Mastering(system, 2)}) {
+        bool rejected = false;
+        try { sceNgs2VoiceControl(voice, &combined.header); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        Require(rejected);
+    }
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestPs4SamplerOption() {
     const std::uint32_t specific[] {256, 32, 4, 4, 8, 256, 256, 0, 8, 0};
     TestPs4RackOption(SCE_NGS2_RACK_ID_SAMPLER, 168, 256, specific, 10);
@@ -735,6 +756,7 @@ int main() {
     TestPs4MasteringOption();
     TestPs4ReverbOption();
     TestPs4ZeroVoiceEvent();
+    TestPs4CombinedVoiceEvent();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
     TestSubmixerCompressor();

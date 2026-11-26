@@ -27,3 +27,5 @@
 ## add Functional
 
 - [PS4 voice event 0](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library ignores a voice event id of 0, which Heretic + Hexen (CUSA51664) sends to an empty mastering voice during setup; the native library still throws. Whether the console ignores 0 in other voice states, and whether it answers an error instead, is unmeasured. Closes when: measured on a console.
+
+- [PS4 combined voice events](../../../core/libs/prx/libSceNgs2.native/src/Voice.cpp) (libSceNgs2.native) - the PS4 library applies each known event bit in ascending numeric order, returning `0x804A8351` before any state change when the PLAY bit is present without channels, as Heretic + Hexen (CUSA51664) sends PLAY|STOP to an empty sampler voice; the native library still throws. Whether the console accepts combined bits, and the bit order, are unmeasured. Closes when: measured on a console.
