@@ -240,6 +240,25 @@ target_compile_options(fvad PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
 target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
 target_link_libraries(libwebrtc PRIVATE fvad)
+
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc)
+    message(FATAL_ERROR "libyuv: ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc is missing; initialize the submodule with git submodule update --init 3rdparty/libyuv")
+endif()
+add_library(webrtc_yuv STATIC EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/cpu_id.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/planar_functions.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_any.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_common.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/row_gcc.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_any.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_common.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_gcc.cc
+    ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/source/scale_uv.cc)
+target_include_directories(webrtc_yuv PUBLIC ${CMAKE_SOURCE_DIR}/3rdparty/libyuv/include)
+set_target_properties(webrtc_yuv PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+target_compile_options(webrtc_yuv PRIVATE -w)
+target_link_libraries(libwebrtc PRIVATE webrtc_yuv)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libwebrtc PRIVATE LINKER:--exclude-libs,ALL)
 endif()
@@ -381,6 +400,27 @@ if(BUILD_TESTING)
         guest_kernel_sys_paths_readlink_limits guest_kernel_sys_paths_readlink_limits_patched
         guest_kernel_sys_paths_readlinkat_limits guest_kernel_sys_paths_readlinkat_limits_patched PROPERTIES SKIP_RETURN_CODE 77)
 
+    add_test_executable(guest_kernel_mapper_export_parity_tests tests/GuestKernelMapperExportParity.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_kernel_mapper_export_parity_libraries DEPENDS
+        ${PATCHED_DIR}/libkernel_sys.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_mapper_export_parity_tests guest_kernel_mapper_export_parity_libraries)
+    configure_windows_unwind(guest_kernel_mapper_export_parity_tests)
+    if(MINGW)
+        target_compile_options(guest_kernel_mapper_export_parity_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_kernel_mapper_export_parity_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME guest_kernel_mapper_export_parity COMMAND guest_kernel_mapper_export_parity_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_mapper_export_parity_patched COMMAND guest_kernel_mapper_export_parity_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES TIMEOUT 20)
+    if(MINGW)
+        get_filename_component(kernelMapperExportParityRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelMapperExportParityRuntimeDirectory}")
+    endif()
+
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_scalar_io_tests PRIVATE libkernel libc)
@@ -467,6 +507,8 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_app_category PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+
+
     add_test_executable(guest_kernel_sys_constant_unknowns_tests tests/GuestKernelSysConstantUnknowns.cpp)
     target_include_directories(guest_kernel_sys_constant_unknowns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_constant_unknowns_tests PRIVATE libkernel_sys libkernel libc)
@@ -477,6 +519,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sys_constant_unknowns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
+    add_test_executable(guest_kernel_sys_process_property_tests tests/GuestKernelProcessProperty.cpp)
+    target_include_directories(guest_kernel_sys_process_property_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_process_property_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_process_property_tests)
+    add_test(NAME guest_kernel_sys_process_property COMMAND guest_kernel_sys_process_property_tests)
+    set_tests_properties(guest_kernel_sys_process_property PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_process_property PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_kernel_sys_named_object_tests tests/GuestKernelSysNamedObject.cpp)
     target_include_directories(guest_kernel_sys_named_object_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_named_object_tests PRIVATE libkernel_sys libkernel libc)
@@ -495,6 +548,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
+    add_test_executable(nid_compute_tests nid/tests/NidComputeTests.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(nid_compute_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_compile_features(nid_compute_tests PRIVATE cxx_std_20)
+    configure_host_test_executable(nid_compute_tests)
+    add_test(NAME nid_compute COMMAND nid_compute_tests)
+    set_tests_properties(nid_compute PROPERTIES TIMEOUT 10)
 
     add_test_executable(guest_dinkumware_fetch_tests NO_RUNTIME_DLL_STAGING
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
@@ -583,7 +643,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_macho_nids.py $<TARGET_FILE:nid_patcher>)
         add_test(NAME nid_patcher_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_native_paths.py $<TARGET_FILE:nid_patcher>)
-        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 20)
+        set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 30)
         if(CMAKE_GENERATOR MATCHES "^Ninja")
             add_test(NAME nid_patch_dependencies COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode graph
@@ -592,7 +652,11 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode helper
                 --cmake "${CMAKE_COMMAND}" --ninja "${CMAKE_MAKE_PROGRAM}"
                 --generator "${CMAKE_GENERATOR}" --config "$<CONFIG>")
+            add_test(NAME nid_patch_module_targets COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode aliases
+                --cmake "${CMAKE_COMMAND}" --ninja "${CMAKE_MAKE_PROGRAM}" --config "$<CONFIG>")
             set_tests_properties(nid_patch_dependencies nid_patch_dependencies_helper PROPERTIES TIMEOUT 20)
+            set_tests_properties(nid_patch_module_targets PROPERTIES TIMEOUT 30)
         endif()
     endif()
     add_test_executable(patched_libraries_tests tests/PatchedLibraries.cpp)
@@ -1069,6 +1133,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_abstract_storage_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractStorage>")
     endif()
+    add_test_executable(guest_abstract_youtube_trivial_returns_tests tests/GuestAbstractYoutubeTrivialReturns.cpp)
+    target_include_directories(guest_abstract_youtube_trivial_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_abstract_youtube_trivial_returns_tests PRIVATE libSceAbstractYoutube libc)
+    configure_windows_unwind(guest_abstract_youtube_trivial_returns_tests)
+    add_test(NAME guest_abstract_youtube_trivial_returns COMMAND guest_abstract_youtube_trivial_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_youtube_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
+    endif()
     add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
     target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_context_state_internal_tests PRIVATE libSceGnmDriverForNeoMode libc)
@@ -1143,7 +1216,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_np_common_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_np_common_tests PRIVATE libSceNpCommon libkernel libc)
     configure_windows_unwind(guest_np_common_tests)
-    foreach(testCase IN ITEMS ids sync clock wake)
+    foreach(testCase IN ITEMS ids sync clock wake utf8 alloc jws xml)
         add_test(NAME guest_np_common_${testCase} COMMAND guest_np_common_tests ${testCase})
         set_tests_properties(guest_np_common_${testCase} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -1538,9 +1611,17 @@ if(BUILD_TESTING)
         add_test(NAME prx_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
             -DMODULES=$<TARGET_FILE_DIR:libc> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(prx_thread_local_destructors PROPERTIES TIMEOUT 300)
-        add_test(NAME test_thread_local_destructors COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
-            -DPATTERN=*.exe -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
-        set_tests_properties(test_thread_local_destructors PROPERTIES TIMEOUT 300)
+        foreach(shard RANGE 0 3)
+            if(shard EQUAL 0)
+                set(thread_local_destructors_test_name test_thread_local_destructors)
+            else()
+                set(thread_local_destructors_test_name test_thread_local_destructors_shard_${shard})
+            endif()
+            add_test(NAME ${thread_local_destructors_test_name} COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJDUMP=${CMAKE_OBJDUMP}
+                -DPATTERN=*.exe -DSHARD=${shard} -DSHARDS=4 -DMODULES=$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
+            set_tests_properties(${thread_local_destructors_test_name} PROPERTIES TIMEOUT 300)
+        endforeach()
         add_test(NAME thread_local_destructors_unusable_nm COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_CURRENT_BINARY_DIR}/missing/nm
             -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
@@ -1863,6 +1944,53 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+    add_test_executable(guest_np_partner_subscription_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestNpPartnerSubscription.cpp)
+    target_include_directories(guest_np_partner_subscription_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_partner_subscription_tests PRIVATE libSceNpPartnerSubscription libc)
+    configure_windows_unwind(guest_np_partner_subscription_tests)
+    add_test(NAME guest_np_partner_subscription COMMAND guest_np_partner_subscription_tests)
+    set_tests_properties(guest_np_partner_subscription PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_partner_subscription PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpPartnerSubscription>")
+    endif()
+
+    add_test_executable(guest_front_panel_display_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestFrontPanelDisplay.cpp)
+    target_include_directories(guest_front_panel_display_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_front_panel_display_tests PRIVATE libSceFrontPanelDisplay libc)
+    configure_windows_unwind(guest_front_panel_display_tests)
+    add_test(NAME guest_front_panel_display COMMAND guest_front_panel_display_tests)
+    set_tests_properties(guest_front_panel_display PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_front_panel_display PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFrontPanelDisplay>")
+    endif()
+
+    add_test_executable(guest_app_checker_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestAppChecker.cpp)
+    target_include_directories(guest_app_checker_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_app_checker_tests PRIVATE libSceAppChecker libc)
+    configure_windows_unwind(guest_app_checker_tests)
+    add_test(NAME guest_app_checker COMMAND guest_app_checker_tests)
+    set_tests_properties(guest_app_checker PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_app_checker PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppChecker>")
+    endif()
+
+    add_test_executable(guest_hub_app_util_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestHubAppUtil.cpp)
+    target_include_directories(guest_hub_app_util_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_hub_app_util_tests PRIVATE libSceHubAppUtil libc)
+    configure_windows_unwind(guest_hub_app_util_tests)
+    add_test(NAME guest_hub_app_util COMMAND guest_hub_app_util_tests live)
+    set_tests_properties(guest_hub_app_util PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "\\[PPRBUG-22821\\] sceHubAppUtilDeeplinkToLiveDetailView\\(\\) is not available\\.")
+    add_test(NAME guest_hub_app_util_ps_subscriptions COMMAND guest_hub_app_util_tests subscriptions)
+    set_tests_properties(guest_hub_app_util_ps_subscriptions PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "\\[PPRBUG-22821\\] sceHubAppUtilDeeplinkToPSSubscriptions\\(\\) is not available\\.")
+    add_test(NAME guest_hub_app_util_installation_status COMMAND guest_hub_app_util_tests status)
+    set_tests_properties(guest_hub_app_util_installation_status PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "\\[PPRBUG-22821\\] sceHubAppUtilGetInstallationStatus\\(\\) is not available\\.")
+    if(WIN32)
+        set_tests_properties(guest_hub_app_util guest_hub_app_util_ps_subscriptions guest_hub_app_util_installation_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHubAppUtil>")
     endif()
 endif()
 

@@ -57,10 +57,14 @@ def main():
             "guest": convert(relinker, work / "guest", executable("bundled.prx", "shared", extra_dependencies=("available.sprx",)),
                              module_with_symbol(True)),
             "padebug": convert(relinker, work / "padebug", executable("libSceGnmDriver_padebug.prx", "shared")),
+            "ssl2": convert(relinker, work / "ssl2", executable("libSceSsl2.prx", "shared")),
         }
         image = cases["padebug"].read_bytes()
         assert imported_symbols(image) == {"shared"}, imported_symbols(image)
         assert needed_libraries(image) == ["libSceGnmDriver.prx"], needed_libraries(image)
+        image = cases["ssl2"].read_bytes()
+        assert imported_symbols(image) == {"shared"}, imported_symbols(image)
+        assert needed_libraries(image) == ["libSceSsl.prx"], needed_libraries(image)
         image = cases["sprx"].read_bytes()
         assert imported_symbols(image) == {nid("shared")}, imported_symbols(image)
         assert needed_libraries(image) == ["available.prx"], needed_libraries(image)

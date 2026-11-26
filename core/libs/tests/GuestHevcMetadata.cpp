@@ -796,6 +796,144 @@ void TransferAssociation() {
     }
 }
 
+void InvalidSeiAndSliceSyntax() {
+    struct SliceSpan {
+        std::size_t header;
+        std::size_t end;
+    };
+    const auto findSlice = [](const std::vector<std::uint8_t>& stream) -> SliceSpan {
+        std::vector<std::size_t> starts;
+        for (std::size_t index = 0; index + 2 < stream.size(); ++index)
+            if (stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1) starts.push_back(index + 3);
+        for (std::size_t index = 0; index < starts.size(); ++index) {
+            const auto header = starts[index];
+            if (((stream[header] >> 1) & 63) < 32) {
+                const auto end = index + 1 == starts.size() ? stream.size() : starts[index + 1] - 3;
+                return {header, end};
+            }
+        }
+        Require(false, "rich fixture VCL slice not found");
+        return {0, 0};
+    };
+    for (const std::uint8_t nalHeader : {std::uint8_t{0x50}, std::uint8_t{0x4e}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        bytes.insert(bytes.end(), {0, 0, 1, nalHeader, 1, 147, 1, 16, 0x80});
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "misplaced alternative-transfer SEI was accepted");
+        Require(!state.transferUnsupported.empty() && !state.preferredTransfer.has_value(), "misplaced alternative-transfer SEI poisoned CLVS transfer state");
+        const auto followUp = Videodec2Hevc::Parse_nid_no_patch(state, std::array<std::uint8_t, 6>{0, 0, 1, 0x02, 0x01, 0xc0});
+        Require(!followUp.unsupported.empty(), "CLVS transfer error must persist across non-IRAP picture");
+    }
+    for (const std::uint8_t payloadType : {std::uint8_t{0}, std::uint8_t{45}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        bytes.insert(bytes.end(), {0, 0, 1, 0x50, 1, payloadType, 1, 0, 0x80});
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "prefix-only SEI in suffix NAL after slices was accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        bytes.insert(bytes.end(), {0, 0, 1, 0x4e, 1, 4, 1, 0, 0x80});
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "prefix SEI after slices was accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        const std::array<std::uint8_t, 9> hashSei{0, 0, 1, 0x4e, 1, 132, 1, 0, 0x80};
+        bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header - 3), hashSei.begin(), hashSei.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "suffix-only decoded-picture-hash SEI in prefix NAL before slices was accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        const std::array<std::uint8_t, 9> suffixBefore{0, 0, 1, 0x50, 1, 4, 1, 0, 0x80};
+        bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header - 3), suffixBefore.begin(), suffixBefore.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "suffix SEI before slices was accepted");
+    }
+    for (const std::uint8_t reservedType : {std::uint8_t{10}, std::uint8_t{22}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        const std::array<std::uint8_t, 3> replacement{static_cast<std::uint8_t>(reservedType << 1), 1, 0xe0};
+        bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), bytes.begin() + static_cast<std::ptrdiff_t>(slice.end));
+        bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), replacement.begin(), replacement.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "reserved VCL NAL type was accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        Require(slice.end - slice.header >= 3, "rich fixture slice payload");
+        bytes[slice.header + 2] &= 0x7fu;
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "picture starting without first_slice_segment_in_pic_flag was accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        const unsigned sliceType = (bytes[slice.header] >> 1) & 63u;
+        const std::array<std::uint8_t, 6> pps1{0, 0, 1, 0x44, 1, 0x58};
+        bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header - 3), pps1.begin(), pps1.end());
+        const std::uint8_t secondSliceByte = (sliceType >= 16 && sliceType <= 21) ? 0x14 : 0x28;
+        bytes.insert(bytes.end(), {0, 0, 1, static_cast<std::uint8_t>(sliceType << 1), 1, secondSliceByte});
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(!metadata.unsupported.empty(), "different PPS IDs within one picture were accepted");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        const std::array<std::uint8_t, 9> transferSei{0, 0, 1, 0x4e, 1, 147, 1, 16, 0x80};
+        bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header - 3), transferSei.begin(), transferSei.end());
+        bytes.insert(bytes.end(), {0, 0, 1, 0x50, 1, 132, 1, 0, 0x80});
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(metadata.unsupported.empty() && metadata.info.alternativeTransferPresent == 1 && metadata.info.preferredTransfer == 16, "valid prefix 147 and suffix 132 SEI positive control");
+    }
+    for (const std::uint8_t payloadType : {std::uint8_t{4}, std::uint8_t{5}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        std::vector<std::uint8_t> secondSlice(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), bytes.begin() + static_cast<std::ptrdiff_t>(slice.end));
+        Require(secondSlice.size() >= 3, "second slice payload");
+        secondSlice[2] &= 0x7fu;
+        bytes.insert(bytes.end(), {0, 0, 1, 0x4e, 1, payloadType, 1, 0, 0x80});
+        bytes.insert(bytes.end(), {0, 0, 1});
+        bytes.insert(bytes.end(), secondSlice.begin(), secondSlice.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(metadata.unsupported.empty(), "prefix user-data SEI between two slices was rejected");
+    }
+    {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        const auto slice = findSlice(bytes);
+        std::vector<std::uint8_t> secondSlice(bytes.begin() + static_cast<std::ptrdiff_t>(slice.header), bytes.begin() + static_cast<std::ptrdiff_t>(slice.end));
+        Require(secondSlice.size() >= 3, "second slice payload for suffix check");
+        secondSlice[2] &= 0x7fu;
+        bytes.insert(bytes.end(), {0, 0, 1, 0x50, 1, 4, 1, 0, 0x80});
+        bytes.insert(bytes.end(), {0, 0, 1});
+        bytes.insert(bytes.end(), secondSlice.begin(), secondSlice.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(metadata.unsupported.empty(), "suffix SEI between two slices was rejected");
+    }
+    for (const std::uint8_t reservedType : {std::uint8_t{10}, std::uint8_t{22}}) {
+        Videodec2Hevc::State state;
+        const auto firstPicture = Videodec2Hevc::Parse_nid_no_patch(state, HevcMetadataFixture::Rich);
+        Require(firstPicture.unsupported.empty(), "rich fixture baseline picture failed");
+        const std::array<std::uint8_t, 6> reservedUnit{0, 0, 1, static_cast<std::uint8_t>(reservedType << 1), 1, 0xe0};
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, reservedUnit);
+        Require(metadata.unsupported.find("reserved") != std::string::npos, "reserved VCL NAL type after a picture was not rejected as reserved");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -816,4 +954,5 @@ int main(int argc, char** argv) {
     PictureTimingAssociation();
     MalformedParameterHistory();
     TransferAssociation();
+    InvalidSeiAndSliceSyntax();
 }
