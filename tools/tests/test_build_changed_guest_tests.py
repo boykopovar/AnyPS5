@@ -276,7 +276,7 @@ class Main(unittest.TestCase):
         def execute(cmd, **_):
             calls.append(cmd)
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/GuestNp.cpp", "core/libs/tests/Guest.cpp"])
@@ -309,7 +309,7 @@ class Main(unittest.TestCase):
             if cmd[0] == "cmake":
                 builds.append(cmd[cmd.index("--target") + 1:])
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/include/Changed.hpp"])
@@ -329,7 +329,7 @@ class Main(unittest.TestCase):
         selections = []
         def execute(cmd, **_):
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
@@ -357,7 +357,7 @@ class Main(unittest.TestCase):
 
         def execute(cmd, **_):
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
 
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
@@ -370,7 +370,7 @@ class Main(unittest.TestCase):
         selections = []
         def execute(cmd, **_):
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/src/Xml.cpp"]), 0)
@@ -395,7 +395,7 @@ class Main(unittest.TestCase):
         selections = []
         def execute(cmd, **_):
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 0)
@@ -512,7 +512,7 @@ add_test(NAME unrelated COMMAND "${wrapper_python}" -c "raise SystemExit(1)" $<T
         selections = []
         def execute(cmd, **_):
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/src/Xml.cpp"]), 0)
@@ -581,7 +581,7 @@ add_test(NAME unrelated COMMAND "${wrapper_python}" -c "raise SystemExit(1)" $<T
                 raise OSError(206, "Windows command line is too long")
             calls.append(cmd)
             if runs_selected_tests(cmd):
-                content = Path(cmd[cmd.index("-I") + 1]).read_text()
+                content = Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8")
                 seen_indices.extend(map(int, content.split(",")[3:]))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), \
@@ -739,7 +739,7 @@ int main(int argc, char **argv) {
         def execute(cmd, **_):
             calls.append(cmd)
             if runs_selected_tests(cmd):
-                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text(encoding="utf-8"))
             return run_result(listing if "--show-only=json-v1" in cmd else "")
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/Guest.cpp"])
