@@ -75,7 +75,6 @@ int APS5_VABI WKBundleNodeHandleCopyHTMLTableCellElementCellAbove();
 int APS5_VABI WKBundleNodeHandleCopySnapshotWithOptions();
 int APS5_VABI WKBundleNodeHandleCopyVisibleRange();
 int APS5_VABI WKBundleNodeHandleCreate();
-int APS5_VABI WKBundleNodeHandleGetElementBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled();

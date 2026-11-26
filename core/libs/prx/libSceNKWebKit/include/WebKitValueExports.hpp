@@ -148,6 +148,7 @@ bool APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(con
 void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(const void* nodeHandleRef, std::uint8_t autoFillButtonType);
 std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(const void* nodeHandleRef);
 std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef);
+NKWebKit::RectValue APS5_VABI WKBundleNodeHandleGetElementBounds(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
 double APS5_VABI WKBundlePageGetBackingScaleFactor(const void* pageRef);
