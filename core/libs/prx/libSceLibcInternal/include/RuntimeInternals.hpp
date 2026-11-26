@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+struct GuestTm;
+
 struct LibcCollationState {
     const std::uint16_t* tables[16];
 };
@@ -47,6 +49,7 @@ LibcCollationState* APS5_VABI _Getpwcostate_nid_postfix();
 size_t APS5_VABI _Strxfrmx_nid_postfix(char* destination, const char* source, size_t count, LibcCollationState* state);
 int APS5_VABI _Wcscollx_nid_postfix(const char16_t* first, const char16_t* second, LibcCollationState* state);
 size_t APS5_VABI _Wcsxfrmx_nid_postfix(char16_t* destination, const char16_t* source, size_t count, LibcCollationState* state);
+size_t APS5_VABI _Wcsftime_nid_postfix(char16_t* destination, size_t count, const char16_t* format, const GuestTm* time, void* locale);
 const void* APS5_VABI _Getpwctrtab_nid_postfix();
 const void* APS5_VABI _Getpwctytab_nid_postfix();
 int APS5_VABI _Getstr_nid_postfix();

@@ -155,11 +155,6 @@ int APS5_VABI _WScanf_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Wcsftime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalUnknown_yc_vi84_2aE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

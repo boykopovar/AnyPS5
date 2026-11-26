@@ -18,7 +18,6 @@ int APS5_VABI _WPutstr_nid_postfix();
 int APS5_VABI _Skip_nid_postfix();
 int APS5_VABI _WPuttxt_nid_postfix();
 int APS5_VABI _WGetfloat_nid_postfix();
-int APS5_VABI _Wcsftime_nid_postfix();
 int APS5_VABI _WFrprep_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE14do_curr_symbolEv_nid_postfix();
 int APS5_VABI _WLitob_nid_postfix();
