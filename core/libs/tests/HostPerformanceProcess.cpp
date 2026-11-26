@@ -49,7 +49,9 @@ int main(int argc, char** argv) {
         LibcExitWithoutHandlers_nid_no_patch(0);
     }
     if (name == "refused") {
-        if (StartProcessSession(Mode::Auto, std::make_unique<PrintingBackend>(Outcome::Refused)) == nullptr) return Fail("an auto session must exist");
+        int beginCalls = 0;
+        if (StartProcessSession(Mode::Auto, std::make_unique<PrintingBackend>(Outcome::Refused, &beginCalls)) == nullptr) return Fail("an auto session must exist");
+        if (beginCalls != 1) return Fail("a refused request must call Begin once");
         std::fflush(stdout);
         LibcExit_nid_no_patch(0);
     }

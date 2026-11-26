@@ -32,9 +32,7 @@ private:
         const auto at = address + index * sizeof(char16_t);
         const std::size_t pageUnits = std::max<std::size_t>((PageBytes - at % PageBytes) / sizeof(char16_t), 1);
         const std::size_t units = std::min(pageUnits, chunkUnits_);
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(buffer_.data(), reinterpret_cast<const void*>(at), units * sizeof(char16_t));
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument("ICU: unreadable string");
         start_ = index;
         count_ = units;

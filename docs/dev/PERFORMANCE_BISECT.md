@@ -58,3 +58,11 @@ Each tested revision runs `title_run.py` repeatedly with one measured run per in
 The command prints the first measured regression and its previous good commit. The optional JSON report records those commits, the supplied endpoints, the percentage threshold, the sample spread limit, the first-parent method, its monotonicity assumption, and every commit actually measured. `tested_commits` can be much smaller than `commits_between` because the search is logarithmic; it is not a claim that every commit was benchmarked.
 
 The output path must not already exist. Reports are written atomically so a failed write does not leave a partial JSON file. Keep the report with the recipe and the machine setup details when sharing or comparing results.
+
+## Resume an interrupted search
+
+Add `--checkpoint /path/to/bisect-checkpoint.json` to the search command to save completed measurements. Use a new checkpoint path. A search replaces the checkpoint atomically after all samples for a revision pass the spread and identity checks. If an interruption leaves a revision partly measured, its measurements start over on resume.
+
+Repeat the same command with `--resume` to reuse the checkpoint. The tool checks the endpoint commits, first-parent history, normalized recipe, title catalog and the contents of `performance_bisect.py` and `title_run.py`. It also builds the good endpoint and takes one fresh sample. The sample must match the saved machine, title and game content identity and keep the combined good-endpoint samples within `max_spread_pct`. The reported bracket uses the original good endpoint measurements. Keep the same game files, compiler, build settings and run conditions.
+
+The checkpoint is a local file holding measured samples and configuration hashes. Use a separate path for `--output`, which is written after the search completes. The neighboring `.lock` file prevents concurrent searches from writing the same checkpoint. The lock is released when the process exits.

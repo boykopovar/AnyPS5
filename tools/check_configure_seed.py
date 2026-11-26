@@ -15,6 +15,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         found = checks(args.cache)
+    except UnicodeError as error:
+        parser.error(f"{args.cache}: {error}")
+    except OSError as error:
+        parser.error(str(error))
+    try:
         expected = "".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
                            for name, (value, doc) in sorted(found.items())).encode("utf-8")
         try:
