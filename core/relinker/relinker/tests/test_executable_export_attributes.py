@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 import sys
 
-from test_executable_export_bounds import FUNC, LOCAL, NOTYPE, SYMBOL_OFFSET, TARGETS, fail_lines, relink
+from test_executable_export_bounds import LOCAL, NOTYPE, SYMBOL_OFFSET, TARGETS, fail_lines, relink
 from test_executable_export_bounds import image as single_symbol_image
 
 GLOBAL_FUNC, GLOBAL_OBJECT, WEAK_OBJECT = 0x12, 0x11, 0x21
