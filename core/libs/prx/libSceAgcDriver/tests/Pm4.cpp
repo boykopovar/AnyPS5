@@ -1577,9 +1577,11 @@ void testGcnReachedBufferLowering() {
     std::atomic_ref<std::uint32_t>(rewound[7]).store(0x80000000u);
     AgcDriverWaitIdle_nid_postfix();
     check(load(5) == 0x66, "the tail of a REWIND in a called buffer did not run once the title released it");
-    auto predicated = indirectBuffer(eop(labels[0], 0x11, 0, 1u));
+    const auto predicatedTarget = eop(labels[0], 0x11, 0, 1u);
+    auto predicated = indirectBuffer(predicatedTarget);
     expectFailure([&] { submitWords(predicated); }, "guest cache actions, GPU events and interrupt delivery are not implemented");
-    auto counter = indirectBuffer(makePacket(0x84, {0}));
+    const auto counterTarget = makePacket(0x84, {0});
+    auto counter = indirectBuffer(counterTarget);
     expectFailure([&] { submitWords(counter); }, "separate CE/DE execution and counter synchronization are not implemented");
     AgcDriverWaitIdle_nid_postfix();
 }
