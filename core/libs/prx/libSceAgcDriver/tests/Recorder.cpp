@@ -2059,6 +2059,8 @@ std::atomic<unsigned> failingBarriers{0};
 std::atomic<unsigned> failingFences{0};
 std::atomic<unsigned> lostIdles{0};
 std::atomic<bool> stalledTimeline{false};
+std::atomic<unsigned> countedSerialWaits{0};
+thread_local bool countingSerialWaits = false;
 PFN_vkWaitForFences passedWaitForFences = nullptr;
 VkDevice commandsDevice = VK_NULL_HANDLE;
 std::atomic<std::int64_t> liveCommandBuffers{0};
@@ -2133,6 +2135,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stallingCounterValue(VkDevice device, VkSemaphore
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stallingWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* info, std::uint64_t timeout) {
+    if (countingSerialWaits) countedSerialWaits.fetch_add(1);
     if (stalledTimeline.load()) return VK_TIMEOUT;
     return reinterpret_cast<PFN_vkWaitSemaphoresKHR>(passedDeviceProc(device, "vkWaitSemaphoresKHR"))(device, info, timeout);
 }
@@ -2194,6 +2197,21 @@ bool failedWith(const std::function<void()>& body, std::string_view reason) {
     return false;
 }
 
+std::future<bool> failedSerialWait(Recorder& recorder, std::uint64_t serial) {
+    const auto entered = countedSerialWaits.load();
+    auto waited = std::async(std::launch::async, [&recorder, serial] {
+        countingSerialWaits = true;
+        try {
+            recorder.WaitSerial(serial);
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    });
+    while (countedSerialWaits.load() == entered && waited.wait_for(std::chrono::seconds(0)) != std::future_status::ready) std::this_thread::yield();
+    return waited;
+}
+
 void finishAfterDeviceLossTests(const Device& device) {
     if (!device.TimelineSemaphores()) {
         std::cout << "skipped, no timeline semaphores: finishing a batch in flight after device loss not tested\n";
@@ -2217,6 +2235,9 @@ void finishAfterDeviceLossTests(const Device& device) {
         std::string next;
         {
             Recorder recorder(failing, true, deferred, context.queueFamily, WorkBudget::Limits{4, 1, 64u << 20});
+            struct Unstall {
+                ~Unstall() { stalledTimeline.store(false); }
+            } unstall;
             recordBarrierThrough(failing, recorder.Commands());
             stalledTimeline.store(true);
             recorder.Submit();
@@ -2235,9 +2256,6 @@ void finishAfterDeviceLossTests(const Device& device) {
                     const auto before = recorder.StreamCounts();
                     recorder.Commands();
                     const auto after = recorder.StreamCounts();
-            struct Unstall {
-                ~Unstall() { stalledTimeline.store(false); }
-            } unstall;
                     next = after.deferred > before.deferred ? "deferred" : after.direct > before.direct ? "direct" : "none";
                 } catch (const std::exception& error) {
                     next = error.what();
@@ -2604,18 +2622,7 @@ void deferredBatchTests(const Device& device) {
         RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
         Require(!recorder.Deferred(), "APS5_DIRECT_BATCHES opened a deferred batch");
         const auto serial = recorder.OpenBatchSerial();
-        std::atomic<bool> waiting{false};
-        auto waited = std::async(std::launch::async, [&] {
-            waiting.store(true);
-            try {
-                recorder.WaitSerial(serial);
-            } catch (const std::exception&) {
-                return true;
-            }
-            return false;
-        });
-        while (!waiting.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        auto waited = failedSerialWait(recorder, serial);
         refusedSubmits.store(true);
         bool failed = false;
         try {
@@ -2650,18 +2657,7 @@ void deferredBatchTests(const Device& device) {
         const auto second = recorder.Seal();
         RuntimeSwitches::Assign(RuntimeSwitch::DirectBatches, false);
         Require(recorder.SealedBatches() == 2 && second == first + 1, "two direct batches were not sealed in order");
-        std::atomic<bool> waiting{false};
-        auto waited = std::async(std::launch::async, [&] {
-            waiting.store(true);
-            try {
-                recorder.WaitSerial(first);
-            } catch (const std::exception&) {
-                return true;
-            }
-            return false;
-        });
-        while (!waiting.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        auto waited = failedSerialWait(recorder, first);
         refusedSubmits.store(true);
         bool failed = false;
         try {
@@ -2773,6 +2769,10 @@ void deferredBatchTests(const Device& device) {
         VkSemaphore gate = VK_NULL_HANDLE;
         Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &gate) == VK_SUCCESS, "no timeline semaphore to hold the GPU");
         std::uint64_t submitted = 0;
+        std::thread release;
+        {
+            Recorder recorder(failing, true, true, context.queueFamily);
+            Require(recorder.HasTimeline(), "the recorder made no timeline semaphore on a device that has them");
             struct OpenGate {
                 const Context& context;
                 VkSemaphore gate;
@@ -2785,10 +2785,6 @@ void deferredBatchTests(const Device& device) {
                     context.Function<PFN_vkSignalSemaphoreKHR>("vkSignalSemaphoreKHR")(context.device, &signal);
                 }
             } openGate{context, gate, release};
-        std::thread release;
-        {
-            Recorder recorder(failing, true, true, context.queueFamily);
-            Require(recorder.HasTimeline(), "the recorder made no timeline semaphore on a device that has them");
             recordBarrierThrough(failing, recorder.Commands());
             recorder.HoldNextSubmit(gate, 1);
             recorder.Submit();
@@ -2810,18 +2806,7 @@ void deferredBatchTests(const Device& device) {
         Recorder recorder(failing, true, true, context.queueFamily);
         recordBarrierThrough(failing, recorder.Commands());
         const auto serial = recorder.OpenBatchSerial();
-        std::atomic<bool> waiting{false};
-        auto waited = std::async(std::launch::async, [&] {
-            waiting.store(true);
-            try {
-                recorder.WaitSerial(serial);
-            } catch (const std::exception&) {
-                return true;
-            }
-            return false;
-        });
-        while (!waiting.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        auto waited = failedSerialWait(recorder, serial);
         failingEnds.store(1);
         bool failed = false;
         try {
