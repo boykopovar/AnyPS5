@@ -98,7 +98,7 @@ bool EndsWithIgnoringASCIICase(const StringView& string, const StringView& suffi
 }
 
 String Substring(const String& string, unsigned start, unsigned length) {
-    return NKWebKit::WtfAbi::SubstringSharingImpl(string, start, length);
+    return _ZN3WTF10StringImpl9substringEjj(string.impl, start, length);
 }
 
 bool Parse(UserContentURLPattern& self, const String& pattern) {
