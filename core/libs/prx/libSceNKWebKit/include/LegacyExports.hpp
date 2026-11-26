@@ -1854,7 +1854,6 @@ int APS5_VABI _ZNK7WebCore9FrameView28isEnclosedInCompositingLayerEv();
 int APS5_VABI _ZN7WebCore21UserContentController13addUserScriptERNS_15DOMWrapperWorldESt10unique_ptrINS_10UserScriptESt14default_deleteIS4_EE();
 int APS5_VABI _ZN7WebCore9FrameView20resetTrackedRepaintsEv();
 int APS5_VABI _ZN7WebCore16MIMETypeRegistry22systemPreviewMIMETypesEv();
-int APS5_VABI _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv();
 int APS5_VABI _ZN7WebCore11JSDOMWindowD2Ev();
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE();
 int APS5_VABI _ZN7WebCore22ScriptExecutionContext2vmEv();

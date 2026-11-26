@@ -3328,11 +3328,16 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
                     if (GuestMemory::StoredAllSince_nid_no_patch(address, bytes, plane.range.generation)) {
                         if (!std::equal(current[index].begin() + first, current[index].begin() + first + bytes, result[index].begin() + first)) tookGuest[index] = true;
                         std::copy_n(current[index].begin() + first, bytes, result[index].begin() + first);
-                    } else for (std::size_t offset = first; offset < first + bytes; ++offset) {
-                        if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
-                            if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
-                            result[index][offset] = current[index][offset];
-                        } else if (!GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
+                    } else {
+                        std::optional<bool> pageUnstored;
+                        for (std::size_t offset = first; offset < first + bytes; ++offset) {
+                            if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
+                                if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
+                                result[index][offset] = current[index][offset];
+                                continue;
+                            }
+                            if (!pageUnstored) pageUnstored = GuestMemory::StoreUnchangedSinceLastCollect(address, bytes, plane.range.generation);
+                            if (*pageUnstored || GuestMemory::StoreUnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) continue;
                             Require(cause != DepthReadCause::Access && cause != DepthReadCause::Write, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
                             tookGuest[index] = true;
                             result[index][offset] = current[index][offset];
@@ -5006,6 +5011,19 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
     return DepthFillValue(pattern, d16);
 }
 
+void settleImportsUnderFill(std::uint64_t address, std::size_t bytes) {
+    std::vector<Context> contexts;
+    {
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& surface : surfaces()) {
+            if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive) continue;
+            const bool covered = std::any_of(surface->sampling.initial.begin(), surface->sampling.initial.end(), [&](const auto& range) { return address < range.address + range.bytes && range.address < address + bytes; });
+            if (covered && std::none_of(contexts.begin(), contexts.end(), [&](const Context& context) { return context.device == surface->context.device; })) contexts.push_back(surface->context);
+        }
+    }
+    for (const auto& context : contexts) SettleOwnImports(context, address, bytes);
+}
+
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
@@ -5022,6 +5040,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     }
     for (const auto& plane : clearedPlanes) StorageTexture::FlushPending(plane.address, plane.bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    settleImportsUnderFill(address, bytes);
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
     for (const auto& surface : surfaces()) {

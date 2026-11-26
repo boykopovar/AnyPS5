@@ -1940,6 +1940,53 @@ void TestVideoSyncTolerance() {
     Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
+std::mutex bufferWaitMutex;
+std::vector<std::uint64_t> bufferWaitSamples;
+std::atomic<bool> wrongBufferWaitPeriod = false;
+
+void ObserveBufferWait(std::uint64_t period, std::uint64_t elapsed) {
+    if (period != 1000 / FrameRate) wrongBufferWaitPeriod.store(true, std::memory_order_relaxed);
+    std::lock_guard lock(bufferWaitMutex);
+    if (bufferWaitSamples.size() < 32) bufferWaitSamples.push_back(elapsed);
+}
+
+void TestBufferWaitAccuracy() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "wait accuracy init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "wait accuracy source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "wait accuracy ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "wait accuracy video failed");
+    AvPlayer::SetAvPlayerBufferWaitObserverForTest_nid_no_patch(ObserveBufferWait);
+    Check(sceAvPlayerStart(player) == 0, "wait accuracy start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "wait accuracy first frame missing");
+    AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(frame.timestamp));
+    const bool collected = WaitFor([] {
+        std::lock_guard lock(bufferWaitMutex);
+        return bufferWaitSamples.size() == 32;
+    }, 5000);
+    Check(sceAvPlayerClose(player) == 0, "wait accuracy close failed");
+    AvPlayer::SetAvPlayerBufferWaitObserverForTest_nid_no_patch(nullptr);
+    Check(collected, "wait accuracy did not collect 32 expired waits");
+    Check(!wrongBufferWaitPeriod.load(), "wait accuracy fixture did not request 33 ms");
+    std::lock_guard lock(bufferWaitMutex);
+    std::sort(bufferWaitSamples.begin(), bufferWaitSamples.end());
+    const auto median = bufferWaitSamples[bufferWaitSamples.size() / 2];
+    const auto requested = std::uint64_t{1000 / FrameRate} * 1000000;
+    std::printf("buffer wait: 32 expirations, requested %llu ns, min / median / max %llu / %llu / %llu ns\n",
+                static_cast<unsigned long long>(requested), static_cast<unsigned long long>(bufferWaitSamples.front()),
+                static_cast<unsigned long long>(median), static_cast<unsigned long long>(bufferWaitSamples.back()));
+    Check(bufferWaitSamples.front() >= requested, "buffer wait expired before its frame-duration deadline");
+#ifdef _WIN32
+    constexpr std::uint64_t tolerance = 5000000;
+#else
+    constexpr std::uint64_t tolerance = 10000000;
+#endif
+    Check(median <= requested + tolerance, "buffer wait median exceeded its frame-duration deadline tolerance");
+}
+
 void TestSyncedVideoFollowsClockWithSlowConsumer() {
     Events events;
     AvPlayerInitData init = InitData(&events);
@@ -2724,6 +2771,12 @@ int main(int argc, char** argv) {
             TestPausedPreparationAfterAudioStarts(0);
             TestPausedPreparationAfterAudioStarts(1);
             std::puts("AvPlayer paused first video tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--buffer-wait-accuracy") == 0) {
+            WriteMovie();
+            TestBufferWaitAccuracy();
+            std::puts("AvPlayer buffer wait accuracy tests passed");
             return 0;
         }
         Check(argc == 1, "unknown AvPlayer test arguments");

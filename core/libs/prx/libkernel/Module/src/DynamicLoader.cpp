@@ -532,7 +532,10 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
+void* APS5_VABI dlsym_nid_postfix(void* handle, const char* guestName) {
+    std::string copied;
+    if (guestName && CopyGuestString_nid_no_patch(guestName, 65536, copied) != 0) { Error("dlsym: unreadable symbol name"); return nullptr; }
+    const char* const name = guestName ? copied.c_str() : nullptr;
     if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
     try {
         std::vector<std::shared_ptr<Module>> search;
