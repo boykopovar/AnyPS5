@@ -282,13 +282,6 @@ std::filesystem::path WindowsNamedPath(const std::string& name) {
     return std::filesystem::path(WindowsNamedRoot()) / std::filesystem::path(name + ".dat");
 }
 
-// The process token's user SID. Named shared-memory directories and files are owned
-// by this SID instead of the token's default owner, because an elevated process's
-// default owner is the Administrators group, which the same user's filtered
-// unelevated token carries only as a deny-only SID. With the owner-rights ACE
-// (;;;OW) that denies the unelevated process every access to the object, including
-// WRITE_DAC, so securing an existing directory would fail with ERROR_ACCESS_DENIED.
-// Owning by the user SID keeps the elevated and unelevated tokens of one user equal.
 PSID CurrentUserSid() {
     static const PSID sid = [] {
         HANDLE token = nullptr;
@@ -332,9 +325,6 @@ std::wstring CurrentUserSidString() {
 }
 
 void EnsurePrivateWindowsDirectory(const std::filesystem::path& path, bool objectDirectory = false) {
-    // The owner-rights ACE needs WRITE_OWNER (0x80000) so the owner-setting call below
-    // passes: with an OWNER-RIGHTS ACE present the owner's implicit rights are limited
-    // to the mask, and 0x001701ff does not include WRITE_OWNER.
     const std::wstring ownerRights = objectDirectory ? L"0x001f01ff" : L"FA";
     const std::wstring policy = L"O:" + CurrentUserSidString() +
         L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;" + ownerRights + L";;;OW)";
@@ -365,8 +355,6 @@ void EnsurePrivateWindowsDirectory(const std::filesystem::path& path, bool objec
         ::LocalFree(descriptor);
         throw std::system_error(static_cast<int>(error), std::system_category(), "validating the named shared-memory directory");
     }
-    // Setting the owner and the DACL in one SetNamedSecurityInfoW call fails with
-    // ERROR_ACCESS_DENIED even when each half alone succeeds, so they are set apart.
     DWORD result = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
                                            OWNER_SECURITY_INFORMATION, CurrentUserSid(), nullptr, nullptr, nullptr);
     if (result == ERROR_SUCCESS)
@@ -397,10 +385,6 @@ DWORD SetWindowsNamedPermissions(HANDLE handle, int mode) {
         ::LocalFree(descriptor);
         return error == ERROR_SUCCESS ? ERROR_INVALID_SECURITY_DESCR : error;
     }
-    // Only the DACL is set here. The owner is set once at creation time by
-    // SetWindowsNamedOwner, because a descriptor's handle is not always opened
-    // with WRITE_OWNER (an O_RDONLY shm_open handle is not), and a handle-based
-    // SetSecurityInfo call needs that access in the handle.
     const DWORD result = ::SetSecurityInfo(handle, SE_FILE_OBJECT,
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl, nullptr);
     ::LocalFree(descriptor);
