@@ -11,6 +11,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -994,6 +995,22 @@ void CheckAmmMapperCalls() {
     Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, reinterpret_cast<KernelMapperSubmitResult*>(0x10), &id) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, &result, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCallIndirectBuffer3(0, commands.data(), bytes, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        auto* watchedPage = reinterpret_cast<void*>(first);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(watchedPage, page);
+        const auto noop = [](void*, std::uintptr_t, std::uintptr_t) {};
+        auto* watchedResult = reinterpret_cast<KernelMapperSubmitResult*>(first);
+        auto* watchedId = reinterpret_cast<std::uint32_t*>(first + sizeof(KernelMapperSubmitResult));
+        *watchedResult = {7, 7};
+        *watchedId = 0;
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(first, page, noop, nullptr));
+        Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, watchedResult, watchedId) == 0 && watchedResult->result == 0 && watchedResult->errorOffset == 0 && *watchedId != 0);
+        Require(sceKernelWaitCommandBufferCompletion(*watchedId) == 0);
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(first, page, noop, nullptr));
+        Require(sceKernelCallIndirectBuffer3(2, commands.data(), bytes, watchedId) == 0 && *watchedId > id);
+        Require(sceKernelWaitCommandBufferCompletion(*watchedId) == 0);
+        Require(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(watchedPage, page));
+    }
 }
 
 void CheckAmmWaitConcurrentSubmits() {
