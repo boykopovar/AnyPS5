@@ -1437,6 +1437,62 @@ void TestRsaPrivateFile() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReferencePkey);
 }
 
+void TestRsaPrivateFileSequential() {
+    constexpr int EvpLibrary = 6;
+    constexpr int EvpRExpectingAnRsaKey = 127;
+
+    auto* rsaReferencePkey = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    const auto* rsaReference = static_cast<const LibreSsl3Rsa*>(rsaReferencePkey->key);
+
+    ERR_clear_error_nid_postfix();
+    std::string payload = RsaTraditionalPem;
+    payload += Ec256Pkcs8Pem;
+    payload += RsaPkcs8Pem;
+    payload += "AFTER_SEQUENTIAL_MARKER\n";
+    GuestPemFileFixture file(payload);
+
+    LibreSsl3Rsa* slot = nullptr;
+    LibreSsl3Rsa* first = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+    Require(first != nullptr);
+    Require(slot == first);
+    Require(first->method == nullptr);
+    Require(first->references == 1);
+    CompareRsa(first, rsaReference, true);
+    Require(RSA_check_key_nid_postfix(first) == 1);
+    ExpectEmptyQueue();
+
+    Require(RSA_up_ref_nid_postfix(first) == 1);
+    Require(first->references == 2);
+
+    Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+    Require(slot == first);
+    Require(first->references == 2);
+    CompareRsa(first, rsaReference, true);
+    ExpectErrorCode(EvpLibrary, EvpRExpectingAnRsaKey);
+    ExpectEmptyQueue();
+
+    LibreSsl3Rsa* third = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
+    Require(third != nullptr);
+    Require(third != first);
+    Require(slot == third);
+    Require(third->method == nullptr);
+    Require(third->references == 1);
+    Require(first->references == 1);
+    CompareRsa(third, rsaReference, true);
+    Require(RSA_check_key_nid_postfix(third) == 1);
+    ExpectEmptyQueue();
+
+    char line[64] {};
+    Require(fgets_nid_postfix(line, static_cast<int>(sizeof(line)), file.Get()) != nullptr);
+    Require(std::strcmp(line, "AFTER_SEQUENTIAL_MARKER\n") == 0);
+    file.CloseAndVerify();
+
+    RSA_free_nid_disambig1_nid_postfix(first);
+    RSA_free_nid_disambig1_nid_postfix(third);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReferencePkey);
+    ExpectEmptyQueue();
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -1481,5 +1537,6 @@ int main() {
     TestNormalTraditionalCleanQueue();
     TestTraditionalDerValidationAndContext();
     TestRsaPrivateFile();
+    TestRsaPrivateFileSequential();
     return 0;
 }

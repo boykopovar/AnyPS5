@@ -45,10 +45,12 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +58,7 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -224,6 +227,22 @@ void Resample(WebRtcPushSincResampler* resampler, const float* source, std::size
     _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(resampler, source, sourceFrames, destination, destinationFrames);
 }
 
+void CopyGuestIn(void* destination, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied)
+        throw std::invalid_argument(message);
+}
+
+void CopyGuestOut(void* destination, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied)
+        throw std::invalid_argument(message);
+}
+
 void RestoreNumChannels(WebRtcAudioBuffer* buffer) {
     buffer->numChannels = buffer->bufferNumChannels;
     buffer->data->numChannels = buffer->bufferNumChannels;
@@ -305,8 +324,13 @@ void APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_post
     RequireConstructed(buffer, "AudioBuffer::CopyFrom");
     if (!interleaved || !config)
         throw std::invalid_argument("AudioBuffer::CopyFrom requires interleaved data and a stream config");
-    if (config->numChannels != buffer->inputNumChannels || config->numFrames != buffer->inputNumFrames)
+    WebRtcStreamConfig stream;
+    CopyGuestIn(&stream, config, sizeof(stream), "AudioBuffer::CopyFrom requires a readable stream config");
+    if (stream.numChannels != buffer->inputNumChannels || stream.numFrames != buffer->inputNumFrames)
         throw std::invalid_argument("AudioBuffer::CopyFrom stream config does not match the input format");
+    std::vector<std::int16_t> samples(buffer->inputNumFrames * buffer->inputNumChannels);
+    CopyGuestIn(samples.data(), interleaved, samples.size() * sizeof(std::int16_t), "AudioBuffer::CopyFrom requires readable interleaved data");
+    interleaved = samples.data();
     RestoreNumChannels(buffer);
     const std::size_t inputFrames = buffer->inputNumFrames;
     const std::size_t inputChannels = buffer->inputNumChannels;
@@ -354,10 +378,16 @@ void APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix
     RequireConstructed(buffer, "AudioBuffer::CopyTo");
     if (!interleaved || !config)
         throw std::invalid_argument("AudioBuffer::CopyTo requires a stream config and interleaved data");
-    const std::size_t configChannels = config->numChannels;
+    WebRtcStreamConfig stream;
+    CopyGuestIn(&stream, config, sizeof(stream), "AudioBuffer::CopyTo requires a readable stream config");
+    const std::size_t configChannels = stream.numChannels;
     const std::size_t numChannels = buffer->numChannels;
-    if ((configChannels != numChannels && numChannels != 1) || configChannels > MaxConcurrentChannels || config->numFrames != buffer->outputNumFrames)
+    if ((configChannels != numChannels && numChannels != 1) || configChannels > MaxConcurrentChannels || stream.numFrames != buffer->outputNumFrames)
         throw std::invalid_argument("AudioBuffer::CopyTo stream config does not match the output format");
+    std::int16_t* const guestInterleaved = interleaved;
+    std::vector<std::int16_t> samples(buffer->outputNumFrames * configChannels);
+    interleaved = samples.data();
+    const char* unwritable = "AudioBuffer::CopyTo requires writable interleaved data";
     const std::size_t bufferFrames = buffer->bufferNumFrames;
     const std::size_t outputFrames = buffer->outputNumFrames;
     const bool resampling = bufferFrames != outputFrames;
@@ -372,6 +402,7 @@ void APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix
             for (std::size_t j = 0; j < configChannels; ++j, ++k)
                 interleaved[k] = sample;
         }
+        CopyGuestOut(guestInterleaved, samples.data(), samples.size() * sizeof(std::int16_t), unwritable);
         return;
     }
     for (std::size_t channel = 0; channel < numChannels; ++channel) {
@@ -383,6 +414,7 @@ void APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix
         for (std::size_t k = 0, j = channel; k < outputFrames; ++k, j += configChannels)
             interleaved[j] = FloatS16ToS16(source[k]);
     }
+    CopyGuestOut(guestInterleaved, samples.data(), samples.size() * sizeof(std::int16_t), unwritable);
 }
 
 }

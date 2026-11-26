@@ -118,6 +118,10 @@ def validate_forms(forms):
         if key in keys:
             raise ValueError(f"duplicate ISA encoding: {keys[key]} and {row}")
         keys[key] = row
+    base = {(name, encoding) for name, encoding, form, _ in forms if form == "base"}
+    for row in forms:
+        if row[2] != "base" and (row[0], row[1]) not in base:
+            raise ValueError(f"modified ISA form without a base form: {row}")
     return forms
 
 

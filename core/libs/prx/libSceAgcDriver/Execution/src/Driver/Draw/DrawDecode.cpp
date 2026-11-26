@@ -32,7 +32,7 @@ void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, program.userDataBase + i);
         program.userData.push_back(staticAbi ? ReadGraphicsRegister(queue.shader, program.userDataBase + i) : readUserData(queue.shader, program.userDataBase + i));
     }
-    if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
+    if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment || program.binary.stage == ShaderRecompiler::ShaderStage::Mesh) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
 }
 
 ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<Graphics::DecodeRead>& reads, std::uint32_t hiddenUserWords) {
@@ -235,6 +235,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     if (product->pixel.ancillary) product->pixel.layerExported = product->state.layerExports != 0;
     product->pixel.ditheredAlphaToCoverage = product->state.ditheredAlphaToCoverage;
     product->pixel.ditheredAlphaSamples = product->state.ditheredAlphaSamples;
+    product->pixel.singleSampleDither = product->state.singleSampleDither;
     product->pixel.iteratesSamples = product->state.perSampleShading;
     product->pixel.sampleLocations = Graphics::PixelSampleLocations(product->state, product->pixel);
     return product;
