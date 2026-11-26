@@ -185,6 +185,7 @@ std::pair<IrF32, IrU1> TranslationContext::unaryFloatSpecials(IrOpcode opcode, I
     switch (opcode) {
     case IrOpcode::FPRecip32:
     case IrOpcode::FPRecipIFlag32:
+        value = pick(IrU1(ir.ULessThan(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x00800000u))), sign.Value(), value);
         value = pick(infinite, sign.Value(), value);
         value = pick(zero, signedInfinity.Value(), value);
         break;
