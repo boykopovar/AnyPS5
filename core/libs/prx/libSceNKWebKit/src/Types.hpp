@@ -517,6 +517,10 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
+    Retained<Object> page;
+    Retained<Data> mainResourceData;
+    Retained<Data> webArchive;
+    bool isStopped = false;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
