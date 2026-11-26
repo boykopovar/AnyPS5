@@ -62,12 +62,12 @@ public:
         for (const bool avoidSegment : {true, false}) {
             if (!avoidSegment && _keepSegmentAccesses)
                 break;
-            if (index + 1 < _matches.size() && (_pending.contains(index + 1) || _movable(index + 1, true, avoidSegment))) {
-                if (auto placement = _relocate(index, index, index + 1))
+            if (const auto last = _forwardEnd(index, avoidSegment)) {
+                if (auto placement = _relocate(index, index, *last))
                     return placement;
             }
-            if (index > 0 && _movable(index - 1, false, avoidSegment)) {
-                if (auto placement = _relocate(index, index - 1, index))
+            if (const auto first = _backwardStart(index, avoidSegment)) {
+                if (auto placement = _relocate(index, *first, index))
                     return placement;
             }
             if (!fallback && index + 1 < _matches.size() && _pending.contains(index + 1))
@@ -174,8 +174,33 @@ private:
         };
     }
 
+    [[nodiscard]] bool _spansJump(const std::size_t first, const std::size_t last) const {
+        return _end(last) - _address(first) >= Amd64OnlySubstitutionTable::kJmpRel32.Size;
+    }
+
+    [[nodiscard]] std::optional<std::size_t> _forwardEnd(const std::size_t index, const bool avoidSegment) const {
+        for (auto last = index + 1; last < _matches.size(); ++last) {
+            const bool spans = _spansJump(index, last);
+            if (!_pending.contains(last) && !_movable(last, spans, avoidSegment))
+                return std::nullopt;
+            if (spans)
+                return last;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::size_t> _backwardStart(const std::size_t index, const bool avoidSegment) const {
+        for (auto first = index; first > 0; --first) {
+            if (!_movable(first - 1, false, avoidSegment))
+                return std::nullopt;
+            if (_spansJump(first - 1, index))
+                return first - 1;
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] std::optional<Placement> _relocate(const std::size_t index, const std::size_t first, const std::size_t last, const bool allowInPlace = false) const {
-        if (_enteredWithin(first, last))
+        if (!_spansJump(first, last) || _enteredWithin(first, last))
             return std::nullopt;
         StubBodyBuilder body;
         Placement placement;
