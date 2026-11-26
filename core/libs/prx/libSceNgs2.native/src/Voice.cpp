@@ -141,6 +141,9 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
         for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     }
     switch (eventId) {
+        case 0:
+            if (!PS4_LIBRARY) throw std::invalid_argument("NGS2: unknown voice event " + Ngs2Hex(eventId));
+            break;
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (IsSampler() && (state == Ngs2PlayState::Playing || state == Ngs2PlayState::Paused) &&
                 std::any_of(filters.begin(), filters.end(), [](const Ngs2Filter& filter) { return filter.enabled; })) {

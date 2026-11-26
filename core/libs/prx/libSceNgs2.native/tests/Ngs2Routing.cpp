@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -685,6 +686,22 @@ static void TestPs4RackOption(std::uint32_t rackId, std::size_t optionSize, std:
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestPs4ZeroVoiceEvent() {
+    const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_MASTERING));
+    const Ngs2VoiceEventParam event{{sizeof(Ngs2VoiceEventParam), 0, SCE_NGS2_VOICE_PARAM_EVENT}, 0};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceControl(voice, &event.header) == SCE_NGS2_OK);
+    Require(Flags(voice) == 0);
+#else
+    bool rejected = false;
+    try { sceNgs2VoiceControl(voice, &event.header); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestPs4SamplerOption() {
     const std::uint32_t specific[] {256, 32, 4, 4, 8, 256, 256, 0, 8, 0};
     TestPs4RackOption(SCE_NGS2_RACK_ID_SAMPLER, 168, 256, specific, 10);
@@ -711,6 +728,7 @@ int main() {
     TestGainRouting();
     TestPs4SamplerOption();
     TestPs4MasteringOption();
+    TestPs4ZeroVoiceEvent();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
     TestSubmixerCompressor();
