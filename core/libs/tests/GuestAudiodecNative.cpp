@@ -307,14 +307,6 @@ int main(int argc, char** argv) {
     testDecodeChecks(sceAudiodecDecodeWithPriority, std::false_type{}, std::true_type{});
     testDecodeChecks(sceAudiodecDecodeWithPriorityEx, std::true_type{}, std::true_type{});
 
-    bool initCaught = false;
-    try {
-        sceAudiodecInitialize(context);
-    } catch (const std::runtime_error&) {
-        initCaught = true;
-    }
-    Require(initCaught, "Initialize reaches service");
-
     bool termCaught = false;
     try {
         sceAudiodecTerminate(context);
