@@ -539,9 +539,11 @@ public:
         call.thread = 1;
         call.accepted = submitted;
         call.completed = submitted - inFlight;
+        std::vector<std::uint64_t> addresses;
+        for (const auto index : parked) addresses.push_back(address(index));
+        std::sort(addresses.begin(), addresses.end());
         call.values = {group, parked.size()};
-        for (const auto index : parked) call.values.push_back(address(index));
-        std::sort(call.values.begin() + 2, call.values.end());
+        for (const auto parkedAt : addresses) call.values.insert(call.values.end(), {parkedAt, 0, 0, 0});
         writer.WriteCall(call);
     }
 
