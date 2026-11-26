@@ -110,6 +110,38 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckScanIgnoredLengths() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        for (const char* format : {"%Ld", "%Li", "%Lu", "%Lx", "%Lo", "%LX"}) {
+            std::array<unsigned char, 8> stored;
+            stored.fill(0x55);
+            Require(scan("17", format, stored.data()) == 1 && stored[4] == 0x55 && stored[7] == 0x55);
+        }
+        for (const char* format : {"%llf", "%jf", "%zf", "%tf", "%lla", "%hhe", "%hg"}) {
+            std::array<unsigned char, 16> stored;
+            stored.fill(0x55);
+            float value = 0.0f;
+            Require(scan("1.5", format, stored.data()) == 1 && stored[4] == 0x55);
+            std::memcpy(&value, stored.data(), sizeof(value));
+            Require(value == 1.5f);
+        }
+        int value = 0;
+        std::array<unsigned char, 8> count;
+        count.fill(0x55);
+        Require(scan("12345", "%d%Ln", &value, count.data()) == 1 && value == 12345 && count[0] == 5 && count[3] == 0 && count[4] == 0x55);
+    }
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, expected] : {std::tuple{"12z", "%Ld%c%n", 0x555555550000000cull}, std::tuple{"1.5z", "%llf%c%n", 0x555555553fc00000ull},
+                 std::tuple{"1.5z", "%jf%c%n", 0x555555553fc00000ull}}) {
+            std::uint64_t stored = 0x5555555555555555ull;
+            char next = '?';
+            int count = -7;
+            Require(scan(input, format, &stored, &next, &count) == 2 && stored == expected && next == 'z');
+        }
+    }
+}
+
 static void CheckPlainScanResults() {
 #ifndef _WIN32
     using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
@@ -845,6 +877,120 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         }
     }
 #ifdef _WIN32
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            int result;
+        } prefixes[] = {
+            {"0x", "%x", EOF}, {" 0X", "%X", EOF}, {"0x1", "%2x", EOF}, {"0x", "%i", EOF}, {"0x", "%p", EOF},
+            {"0xg", "%x", 0}, {"-0x", "%x", 0}, {"+0xz", "%x", 0}, {"-0x1", "%3x", 0}, {"0xg", "%i", 0}, {"0xg", "%p", 0},
+            {"0x", "%lx", EOF}, {"0x1", "%2llX", EOF}, {"0x", "%lli", EOF},
+            {"0xg", "%lx", 0}, {"-0x1", "%3llX", 0}, {"0xg", "%lli", 0},
+        };
+        for (const auto scan : {sscanf_nid_postfix, ScanList}) {
+            for (const auto& item : prefixes) {
+                alignas(std::uint64_t) std::array<unsigned char, 16> stored;
+                stored.fill(0x55);
+                int count = -7;
+                const std::string format = std::string(item.format) + "%n";
+                const int result = scan(item.input, format.c_str(), stored.data(), &count);
+                if (result != item.result || count != -7 || !std::all_of(stored.begin(), stored.end(), [](unsigned char value) { return value == 0x55; })) {
+                    std::fprintf(stderr, "Plain scan of \"%s\" with \"%s\": result %d, expected %d, count %d\n", item.input, format.c_str(), result, item.result, count);
+                    Require(false);
+                }
+            }
+            for (const char* format : {"%x%n", "%X%n"}) {
+                unsigned int hex = 0x55555555u;
+                int count = -7;
+                Require(scan("0X1f", format, &hex, &count) == 1 && hex == 0x1f && count == 4);
+            }
+            for (const char* format : {"%lx%n", "%llX%n"}) {
+                std::uint64_t hex = 0x5555555555555555ull;
+                int count = -7;
+                Require(scan("0x123456789abcdef0", format, &hex, &count) == 1 && hex == 0x123456789abcdef0ull && count == 18);
+            }
+            unsigned int hex = 0x55555555u;
+            int count = -7;
+            Require(scan("0x1", "%1x%n", &hex, &count) == 1 && hex == 0 && count == 1);
+            int integer = -7;
+            count = -7;
+            Require(scan("0x1f", "%i%n", &integer, &count) == 1 && integer == 31 && count == 4);
+            void* pointer = reinterpret_cast<void*>(0x55);
+            count = -7;
+            Require(scan("0x1f", "%p%n", &pointer, &count) == 1 && reinterpret_cast<std::uintptr_t>(pointer) == 0x1f && count == 4);
+            integer = -7;
+            hex = 0x55555555u;
+            count = -7;
+            Require(scan("5 0x", "%d %x%n", &integer, &hex, &count) == 1 && integer == 5 && hex == 0x55555555u && count == -7);
+            integer = -7;
+            Require(scan("0x 7", "%*x %d%n", &integer, &count) == 0 && integer == -7 && count == -7);
+            Require(scan("0x1f 7", "%*x %d%n", &integer, &count) == 1 && integer == 7 && count == 6);
+        }
+    }
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            std::size_t bytes;
+            int classification;
+            int error;
+        } ranges[] = {
+            {"1e39", "%f", sizeof(float), FP_INFINITE, 7},
+            {"1e-50", "%e", sizeof(float), FP_ZERO, 7},
+            {"1e5000", "%e", sizeof(float), FP_INFINITE, 34},
+            {"1e-5000", "%f", sizeof(float), FP_ZERO, 34},
+            {"1e400", "%lf", sizeof(double), FP_INFINITE, 7},
+            {"1e-400", "%le", sizeof(double), FP_ZERO, 7},
+            {"1e5000", "%Lf", 10, FP_INFINITE, 34},
+            {"1e-5000", "%Le", 10, FP_ZERO, 34},
+            {"0x1p200", "%a", sizeof(float), FP_INFINITE, 7},
+            {"1.25", "%g", sizeof(float), FP_NORMAL, 7},
+            {"1.25", "%lG", sizeof(double), FP_NORMAL, 7},
+            {"1.25", "%Lf", 10, FP_NORMAL, 7},
+            {"1e-4950", "%Lf", 10, FP_SUBNORMAL, 7},
+        };
+        const int previousError = *__error_nid_postfix();
+        for (const auto scan : {sscanf_nid_postfix, ScanList}) {
+            for (const auto& item : ranges) {
+                alignas(long double) std::array<unsigned char, 16> stored;
+                stored.fill(0x55);
+                int count = -7;
+                const std::string format = std::string(item.format) + "%n";
+                *__error_nid_postfix() = 7;
+                const int result = scan(item.input, format.c_str(), stored.data(), &count);
+                const int error = *__error_nid_postfix();
+                long double value = 0;
+                if (result == 1) {
+                    if (item.bytes == sizeof(float)) {
+                        float single = 0;
+                        std::memcpy(&single, stored.data(), sizeof(single));
+                        value = single;
+                    } else if (item.bytes == sizeof(double)) {
+                        double wide = 0;
+                        std::memcpy(&wide, stored.data(), sizeof(wide));
+                        value = wide;
+                    } else {
+                        std::memcpy(&value, stored.data(), item.bytes);
+                    }
+                }
+                const bool correctValue = std::fpclassify(value) == item.classification && !std::signbit(value) &&
+                    (item.classification != FP_NORMAL || value == 1.25L);
+                const bool guard = std::all_of(stored.begin() + item.bytes, stored.end(), [](unsigned char byte) { return byte == 0x55; });
+                if (result != 1 || error != item.error || count != static_cast<int>(std::strlen(item.input)) || !correctValue || !guard) {
+                    std::fprintf(stderr, "Plain float scan of \"%s\" with \"%s\": result %d, errno %d expected %d, count %d\n", item.input, format.c_str(), result, error, item.error, count);
+                    Require(false);
+                }
+            }
+            long long integer = 0;
+            float value = -1;
+            int count = -7;
+            *__error_nid_postfix() = 7;
+            Require(scan("9223372036854775808 1.0", "%lld %f%n", &integer, &value, &count) == 2 && integer == LLONG_MAX &&
+                value == 1.0f && count == 23 && *__error_nid_postfix() == 34);
+        }
+        *__error_nid_postfix() = previousError;
+    }
     int scanned = -1;
     int position = -1;
     {
@@ -1101,10 +1247,18 @@ static void CheckLargeWidths() {
     char small[16];
     for (const std::size_t capacity : {std::size_t{0}, std::size_t{1}, sizeof(small)}) {
         std::memset(small, 'Z', sizeof(small));
-        Require(snprintf_nid_postfix(capacity ? small : nullptr, capacity, "%2147483647d", 1) == 2147483647);
-        if (capacity > 1) Require(small[capacity - 2] == ' ' && small[capacity - 1] == 0);
+        errno = EDOM;
+        const int length = capacity == sizeof(small) ? FormatList(small, capacity, "X%*d", INT_MAX - 1, 1)
+                                                    : snprintf_nid_postfix(capacity ? small : nullptr, capacity, "%2147483647d", 1);
+        Require(length == INT_MAX && errno == EDOM);
+        if (capacity == 1) Require(small[0] == 0 && small[1] == 'Z');
+        if (capacity > 1) Require(small[0] == 'X' && small[capacity - 2] == ' ' && small[capacity - 1] == 0);
     }
     Require(snprintf_nid_postfix(nullptr, 0, "%.2147483646d", 1) == 2147483646);
+#ifndef _WIN32
+    errno = 0;
+    Require(FormatList(nullptr, 0, "%*dX", INT_MAX, 1) == -1 && errno == EOVERFLOW);
+#endif
 #ifdef _WIN32
     for (const char* text : {"%2147483648d", "%99999999999d", "%.99999999999d", "%4294967296s", "%.4294967296s", "%-9999999999d"}) {
         bool rejected = false;
@@ -1199,6 +1353,7 @@ int main(int argc, char** argv) {
     CheckDanglingExponentScan();
     CheckSecureCountBeforeInputFailure();
     CheckFloatingScanRange();
+    CheckScanIgnoredLengths();
     CheckPlainScanResults();
     CheckSizeLimits();
     CheckLargeWidths();

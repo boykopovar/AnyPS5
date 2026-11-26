@@ -35,16 +35,4 @@ int APS5_VABI unum_setTextAttribute_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unumsys_getName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumsys_isAlgorithmic_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unumsys_openAvailableNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
