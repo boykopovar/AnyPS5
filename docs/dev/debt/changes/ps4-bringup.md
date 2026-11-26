@@ -16,6 +16,8 @@
 
 - [SET_CONFIG_REG](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - config register writes validate like the other register packets and are recorded in a config bank without interpretation; reads of config registers still throw as outside the modeled banks. Heretic + Hexen (CUSA51664) writes 0 to config register 0x8102 twice per submission and never reads it back; what that register selects is unmeasured, as is whether config writes may appear on compute queues (they are refused there). Closes when: the written registers' effects are measured.
 
+- [INDEX_TYPE modifiers](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - the packet's low two bits select the index type, as the uconfig index-type path and shadPS4's decode do; the other bits are ignored. Heretic + Hexen (CUSA51664) sends 0x400 (16-bit with bit 10 set); what that bit selects is unmeasured. Closes when: the modifier bits are measured.
+
 # libSceNgs2.native
 
 ## change [NGS2 rack block limit]

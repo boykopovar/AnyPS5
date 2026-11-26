@@ -407,7 +407,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet[4] <= packet[1], "index count exceeds maximum index size");
             require((packet[5] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
-        case 0x2a: graphics(); size(2); require(packet[1] <= 3, "unsupported index-type modifiers"); break;
+        case 0x2a: graphics(); size(2); break;
         case 0x91:
             graphics();
             size(4);
@@ -1218,7 +1218,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         }
         case 0x3f: throw std::runtime_error(std::string(UnsupportedReason(packet[0])));
         case 0x26: queue.indexBase = address(packet[1], packet[2]); return;
-        case 0x2a: queue.indexType = packet[1]; return;
+        case 0x2a: queue.indexType = packet[1] & 3u; return;
         case 0x91: executeIndexAttributes(readIndexAttributes(packet), queue); return;
         case 0x2f: queue.instanceCount = packet[1]; return;
         case 0x46:

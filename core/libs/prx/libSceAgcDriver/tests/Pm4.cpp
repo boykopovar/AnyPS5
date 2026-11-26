@@ -326,6 +326,8 @@ void testContextAndBases() {
     execute(state, makePacket(0x2a, {1}));
     execute(state, makePacket(0x2f, {3}));
     check(state.indexBufferSize == 32 && state.indexBase == 0x100001000ull && state.indexType == 1 && state.instanceCount == 3, "draw setup state lost");
+    execute(state, makePacket(0x2a, {0x400}));
+    check(state.indexType == 0, "index type modifiers were not masked");
     execute(state, makePacket(0x10, {0x00636261}, 0x2c));
     check(state.markers.back() == "abc", "marker text lost");
     execute(state, makePacket(0x10, {0}, 0x30));
