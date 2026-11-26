@@ -2235,6 +2235,9 @@ void finishAfterDeviceLossTests(const Device& device) {
                     const auto before = recorder.StreamCounts();
                     recorder.Commands();
                     const auto after = recorder.StreamCounts();
+            struct Unstall {
+                ~Unstall() { stalledTimeline.store(false); }
+            } unstall;
                     next = after.deferred > before.deferred ? "deferred" : after.direct > before.direct ? "direct" : "none";
                 } catch (const std::exception& error) {
                     next = error.what();
