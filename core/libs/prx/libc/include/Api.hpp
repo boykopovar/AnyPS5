@@ -1207,6 +1207,7 @@ int APS5_VABI wctob_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI _Btowc_nid_postfix(int c);
 int APS5_VABI _Wctob_nid_postfix(std::uint32_t c);
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property);
+void APS5_VABI _ZNKSt3__123__match_any_but_newlineIcE6__execERNS_7__stateIcEE_nid_postfix(const void* matcher, void* state);
 std::uint32_t APS5_VABI towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc);
 std::uint32_t APS5_VABI _Towlower_nid_postfix(std::uint32_t c, const void*);
 std::uint32_t APS5_VABI _Towupper_nid_postfix(std::uint32_t c, const void*);
