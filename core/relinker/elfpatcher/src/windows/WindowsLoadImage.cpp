@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
@@ -153,6 +154,20 @@ void WindowsLoadImage::RequireWritable(const std::uint64_t address, const std::u
         if ((pageFlags[page] & SectionWrite) == 0)
             throw Domain::RelinkerException("Runtime import target is not writable", address);
     }
+}
+
+std::vector<Domain::RvaRange> WindowsLoadImage::GetRelroRanges(const std::vector<Domain::ProgramHeader>& headers) const {
+    const auto header = std::find_if(headers.rbegin(), headers.rend(), [](const Domain::ProgramHeader& candidate) { return candidate.Type == PT_GNU_RELRO; });
+    if (header == headers.rend() || header->MemorySize == 0 || header->MappedAddress < firstAddress || header->MappedAddress - firstAddress >= size)
+        return {};
+    const auto first = static_cast<std::size_t>((header->MappedAddress - firstAddress) / SectionAlignment);
+    const auto pages = header->MemorySize / SectionAlignment + (header->MemorySize % SectionAlignment != 0 ? 1 : 0);
+    if (pages > pageFlags.size() - first)
+        return {};
+    const auto begin = pageFlags.begin() + static_cast<std::ptrdiff_t>(first);
+    if (!std::all_of(begin, begin + static_cast<std::ptrdiff_t>(pages), [](const std::uint32_t flags) { return (flags & SectionWrite) != 0; }))
+        return {};
+    return {{CheckedRva(LoadRva + first * static_cast<std::uint64_t>(SectionAlignment)), CheckedRva(pages * SectionAlignment)}};
 }
 
 std::vector<PeSection> WindowsLoadImage::BuildSections() const {

@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from test_guest_module_directories import module_with_symbol
+from test_guest_needed_modules import executable_with_needed
 from test_linux_dynamic_strings import dynamic_strings, file_offset
 from test_linux_load_alignment import loads
 
@@ -15,6 +17,9 @@ PT_SCE_RELRO = 0x61000010
 PT_GNU_RELRO = 0x6474E552
 DEFAULT_BASE = 0x400000
 PT_SCE_VERSION = 0x6FFFFF01
+ACCESS_VIOLATION = 0xC0000005
+STANDALONE = [(PT_SCE_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)]
+COVERED = [(PT_LOAD, 6, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000), (PT_SCE_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)]
 
 
 def gnu_relro_headers(elf):
@@ -74,13 +79,63 @@ def filtered_fixture(extra, lifecycle):
     return image
 
 
+def storing_fixture(extra, address):
+    image = fixture(extra)
+    image[0x200:0x207] = b"\xc6\x05" + struct.pack("<i", address - 0x207) + b"\x01"
+    image[0x207:0x20d] = b"\xff\x25" + struct.pack("<i", 0x1000 - 0x20d)
+    return image
+
+
+def storing_guest(kind):
+    image = module_with_symbol(True)
+    image.extend(bytes(0xC00 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, 232, kind, 4 if kind == PT_SCE_RELRO else 6, 0, 0x3000, 0x3000, 0, 0x1000, 0x1000)
+    struct.pack_into("<H", image, 56, 4)
+    image[0x480:0x488] = b"\xc6\x05" + struct.pack("<i", 0x3008 - 0x1087) + b"\x01\xc3"
+    tags = []
+    for offset in range(0x600, 0x700, 16):
+        tag, value = struct.unpack_from("<qQ", image, offset)
+        if tag == 0:
+            break
+        tags.append((tag, value))
+    tags += [(12, 0x1080), (0, 0)]
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x600 + index * 16, *tag)
+    struct.pack_into("<QQ", image, 176 + 32, len(tags) * 16, len(tags) * 16)
+    return image
+
+
+def check_windows_stores(relinker, work):
+    writable = (PT_LOAD, 6, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000)
+    for name, extra, address, expected in (("relro", [writable, *COVERED], 0x1008, ACCESS_VIOLATION),
+                                           ("writable", [writable, *COVERED], 0x2008, 42),
+                                           ("standalone", STANDALONE, 0x1008, ACCESS_VIOLATION),
+                                           ("earlier", [writable, (PT_SCE_RELRO, 4, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000), *COVERED], 0x2008, 42),
+                                           ("last", [writable, (PT_SCE_RELRO, 4, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000), *COVERED], 0x1008, ACCESS_VIOLATION)):
+        result, output = relink(relinker, work, f"store-{name}", storing_fixture(extra, address), ["--windows"])
+        assert result.returncode == 0, (name, result.stdout, result.stderr)
+        run = subprocess.run([str(output)], capture_output=True, timeout=20)
+        assert run.returncode == expected, (name, hex(run.returncode), run.stderr)
+    for kind, expected in ((PT_SCE_RELRO, ACCESS_VIOLATION), (PT_LOAD, 42)):
+        case = work / f"guest-store-{kind:x}"
+        (case / "sce_module").mkdir(parents=True)
+        (case / "sce_module" / "needed.prx").write_bytes(storing_guest(kind))
+        source = case / "input.elf"
+        source.write_bytes(executable_with_needed())
+        output = case / "output.exe"
+        result = subprocess.run([str(relinker), "--windows", str(source), str(output)], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (kind, result.stdout, result.stderr)
+        run = subprocess.run([str(output)], capture_output=True, timeout=20)
+        assert run.returncode == expected, (kind, hex(run.returncode), run.stderr)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
-    standalone = [(PT_SCE_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)]
-    covered = [(PT_LOAD, 6, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000), (PT_SCE_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)]
     with tempfile.TemporaryDirectory(prefix="anyps5-sce-relro-") as directory:
         work = Path(directory)
-        for name, extra in (("standalone", standalone), ("covered", covered)):
+        if os.name == "nt":
+            check_windows_stores(relinker, work)
+        for name, extra in (("standalone", STANDALONE), ("covered", COVERED)):
             for target, options in (("linux", []), ("windows", ["--windows"]), ("macos", ["--macos"])):
                 result, output = relink(relinker, work, f"{name}-{target}", fixture(extra), options)
                 assert result.returncode == 0, (name, target, result.stdout, result.stderr)
@@ -107,7 +162,7 @@ def main():
         for name, load in (("tail", (PT_LOAD, 6, 0x1000, 0x1000, 0x800, 0x800, 0x1000)),
                            ("head", (PT_LOAD, 6, 0x1800, 0x1800, 0x800, 0x800, 0x1000))):
             for options in ([], ["--windows"]):
-                result, output = relink(relinker, work, f"partial-{name}", fixture([load, standalone[0]]), options)
+                result, output = relink(relinker, work, f"partial-{name}", fixture([load, STANDALONE[0]]), options)
                 assert result.returncode == 2 and "PT_SCE_RELRO partially overlaps a PT_LOAD segment" in result.stderr, (name, result.stderr)
                 assert not output.exists()
     print("PT_SCE_RELRO tests passed")
