@@ -4284,7 +4284,7 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
     if (verified) checks.fetch_add(1, std::memory_order_relaxed);
     if (failed) failures.fetch_add(1, std::memory_order_relaxed);
     const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!report) return;
     if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
 }
