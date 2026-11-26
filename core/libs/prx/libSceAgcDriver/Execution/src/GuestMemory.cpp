@@ -55,12 +55,10 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <fcntl.h>
-#include <fstream>
 #ifndef __APPLE__
 #include <link.h>
 #endif
 #include <pthread.h>
-#include <sstream>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -539,7 +537,13 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
 #endif
 }
 
+bool MemoryProfiled() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return profile;
+}
+
 void CountReadCaller(const void* returnAddress) {
+    if (!MemoryProfiled()) return;
     thread_local std::uint32_t sampled = 0;
     // Sampled at the same rate as the callers, in step with them (CountCaller advances the counter).
     if ((sampled + 1) % 256 == 0) readSiteSamples[static_cast<std::size_t>(CurrentReadSite())].fetch_add(256, std::memory_order_relaxed);
@@ -547,13 +551,9 @@ void CountReadCaller(const void* returnAddress) {
 }
 
 void CountWriteCaller(const void* returnAddress) {
+    if (!MemoryProfiled()) return;
     thread_local std::uint32_t sampled = 0;
     CountCaller(Profile().writeCallers, sampled, 16, returnAddress);
-}
-
-bool MemoryProfiled() {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    return profile;
 }
 
 class TimedAccess {
@@ -921,6 +921,76 @@ struct PageRun {
 };
 
 
+#ifndef _WIN32
+struct HostRun {
+    std::uintptr_t first = 0;
+    std::uintptr_t last = 0;
+    bool readable = false;
+    bool writable = false;
+};
+
+enum class MapsScan { Failed, Missing, Found };
+
+MapsScan mappingAbove(std::uintptr_t cursor, HostRun& run) {
+    const TimedAccess timed(CounterQuery, 0);
+    const int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return MapsScan::Failed;
+    struct Slot {};
+    auto& text = ThreadScratch<std::array<char, 16384>, Slot>();
+    enum class Field { First, Last, Permissions, Rest };
+    auto field = Field::First;
+    std::uintptr_t first = 0;
+    std::uintptr_t last = 0;
+    unsigned digits = 0;
+    char permissions[2] = {};
+    const auto finish = [&](MapsScan result) {
+        close(fd);
+        return result;
+    };
+    const auto digit = [](char character) {
+        if (character >= '0' && character <= '9') return character - '0';
+        if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+        return -1;
+    };
+    std::size_t wanted = 256;
+    for (;;) {
+        const auto got = read(fd, text.data(), wanted);
+        wanted = text.size();
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) return finish(MapsScan::Failed);
+        if (got == 0) return finish(field == Field::First && digits == 0 ? MapsScan::Missing : MapsScan::Failed);
+        for (ssize_t index = 0; index < got; ++index) {
+            const char character = text[static_cast<std::size_t>(index)];
+            if (field == Field::Rest) {
+                if (character != '\n') continue;
+                field = Field::First;
+                first = 0;
+                last = 0;
+                digits = 0;
+            } else if (field == Field::Permissions) {
+                if (character == ' ' || character == '\n') return finish(MapsScan::Failed);
+                permissions[digits++] = character;
+                if (digits < 2) continue;
+                if (last > cursor) {
+                    run = HostRun{first, last, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'};
+                    return finish(MapsScan::Found);
+                }
+                field = Field::Rest;
+            } else if (character == (field == Field::First ? '-' : ' ')) {
+                if (digits == 0 || (field == Field::Last && first >= last)) return finish(MapsScan::Failed);
+                field = field == Field::First ? Field::Last : Field::Permissions;
+                digits = 0;
+            } else {
+                const int value = digit(character);
+                if (value < 0 || ++digits > 2 * sizeof(std::uintptr_t)) return finish(MapsScan::Failed);
+                auto& target = field == Field::First ? first : last;
+                target = (target << 4) | static_cast<std::uintptr_t>(value);
+            }
+        }
+    }
+}
+#endif
+
 // Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
 // order, stopping early when it returns false. Returns false when the address space cannot be queried.
 template <class Emit>
@@ -1045,39 +1115,24 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             continue;
         }
 #endif
-        std::ifstream maps("/proc/self/maps");
-        if (!maps.is_open()) return false;
-        std::string line;
-        bool found = false;
-        while (std::getline(maps, line)) {
-            std::istringstream fields(line);
-            std::uintptr_t first = 0;
-            std::uintptr_t last = 0;
-            char separator = 0;
-            std::string permissions;
-            if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return false;
-            if (last <= cursor) continue;
-            if (first > cursor) {
-                const auto gapEnd = std::min(end, first);
-                recordRun(gapEnd, false, false);
-                if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
-                cursor = gapEnd;
-                found = true;
-                break;
-            }
-            const bool readable = permissions[0] == 'r';
-            const bool writable = readable && permissions[1] == 'w';
-            const auto next = std::min(end, last);
-            recordRun(next, readable, writable);
-            if (!emit(PageRun{cursor, next, readable, writable})) return true;
-            cursor = next;
-            found = true;
-            break;
-        }
-        if (!found) {
+        HostRun run;
+        const auto scanned = mappingAbove(cursor, run);
+        if (scanned == MapsScan::Failed) return false;
+        if (scanned == MapsScan::Missing) {
             static_cast<void>(emit(PageRun{cursor, end, false, false}));
             return true;
         }
+        if (run.first > cursor) {
+            const auto gapEnd = std::min(end, run.first);
+            recordRun(gapEnd, false, false);
+            if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
+            cursor = gapEnd;
+            continue;
+        }
+        const auto next = std::min(end, run.last);
+        recordRun(next, run.readable, run.writable);
+        if (!emit(PageRun{cursor, next, run.readable, run.writable})) return true;
+        cursor = next;
 #endif
     }
     return true;
@@ -1292,7 +1347,7 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
 
 std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
     std::vector<std::uint8_t> trapped(pages.size(), 0);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
     for (std::size_t from = 0; from < pages.size();) {
         auto to = from + 1;
@@ -2631,12 +2686,11 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const auto stop = (address + bytes + page - 1) & ~(page - 1);
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
-#ifdef __APPLE__
+#if defined(__APPLE__)
         const OwnHostWrite own;
         std::optional<GuestArena::HostWrite> open;
         if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
-#endif
-#ifndef __APPLE__
+#else
         static_cast<void>(importMayWriteGuest);
 #endif
         return import();
@@ -3917,22 +3971,55 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 namespace {
 
 thread_local void (*compareMappedHook)(std::uint64_t, std::size_t) = nullptr;
+std::atomic<bool> compareMappedHookInstalled{false};
+
+bool compareMappedHookArmed() {
+    return compareMappedHookInstalled.load(std::memory_order_relaxed) && compareMappedHook != nullptr;
+}
 
 }
 
 void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    if (hook != nullptr) compareMappedHookInstalled.store(true, std::memory_order_relaxed);
     compareMappedHook = hook;
 }
+
+#ifdef __linux__
+std::optional<Compare> compareWithoutQuery(std::uintptr_t address, std::span<const std::byte> bytes) {
+    static const bool enabled = std::getenv("APS5_NO_COPY_COMPARE") == nullptr;
+    if (!enabled || HostMapping::QueryFd() >= 0 || compareMappedHookArmed()) return std::nullopt;
+    auto& pages = Pages();
+    pages.initialize();
+    for (const PageSpan* span : {&pages.arena, &pages.image}) {
+        if (span->size != 0 && address < span->base + span->size && address + bytes.size() > span->base) return std::nullopt;
+    }
+    struct Slot {};
+    auto& scratch = ThreadScratch<std::array<std::byte, 16384>, Slot>();
+    const int savedErrno = errno;
+    for (std::size_t offset = 0; offset < bytes.size();) {
+        const auto count = std::min(scratch.size(), bytes.size() - offset);
+        const bool copied = GuestCopyInUnsynced_nid_no_patch(scratch.data(), reinterpret_cast<const void*>(address + offset), count);
+        errno = savedErrno;
+        if (!copied) return std::nullopt;
+        if (std::memcmp(scratch.data(), bytes.data() + offset, count) != 0) return Compare::Differs;
+        offset += count;
+    }
+    return Compare::Equal;
+}
+#endif
 
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
+#ifdef __linux__
+    if (const auto compared = compareWithoutQuery(static_cast<std::uintptr_t>(address), bytes)) return *compared;
+#endif
     auto outcome = Compare::Equal;
     // Each run's page state is consulted right before its bytes are compared.
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
         else {
-            if (compareMappedHook != nullptr) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
+            if (compareMappedHookArmed()) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
             if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
         }
         return outcome == Compare::Equal;

@@ -538,7 +538,16 @@ static void CheckRejectedZone() {
 }
 #endif
 
-int main() {
+int main(int argc, char** argv) {
+    const int startupErrno = errno;
+    if (argc == 2 && std::strcmp(argv[1], "--startup-errno") == 0) {
+        if (startupErrno != 0) {
+            std::fprintf(stderr, "Expected zero errno at startup, got %d\n", startupErrno);
+            return 1;
+        }
+        return 0;
+    }
+
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
     CheckNullArguments();

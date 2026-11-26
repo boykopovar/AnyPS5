@@ -159,6 +159,7 @@ export class Archive {
       if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(translate(locale, "unsupportedSpecialFile", { name: entry.filename }));
       paths.set(key, entry.directory);
       total = safeSize(total + safeSize(entry.uncompressedSize, locale), locale);
+      if (entry.directory && !entry.filename.endsWith("/")) entry.filename += "/";
       this.entries.push(entry);
     }
     if (!this.entries.some(entry => !entry.directory)) throw new Error(translate(locale, "noFilesSelected"));
@@ -190,8 +191,19 @@ export class Archive {
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
       const first = files[0].filename.slice(prefix.length).split("/")[0];
-      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first) || !this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(prefix + first + "/"))) break;
-      prefix += first + "/";
+      const wrapper = prefix + first + "/";
+      if (!files.every(entry => entry.filename.startsWith(wrapper))) break;
+      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first)) {
+        if (!files.some(entry => entry.filename.startsWith(wrapper + "sce_sys/"))) break;
+        let executableCount = 0;
+        for (const entry of files) {
+          if (!entry.filename.slice(wrapper.length).includes("/") && isElf(await headerBytes(entry))) {
+            if (++executableCount > 1) break;
+          }
+        }
+        if (executableCount !== 1) break;
+      }
+      prefix = wrapper;
     }
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
@@ -205,7 +217,7 @@ export class Archive {
     const selfModules = [];
     for (let index = 0; index < this.files.length; index++) {
       const item = this.files[index];
-      report({ phase: translate(locale, "inspectingFiles"), input: item.name, completed: index, total: this.files.length });
+      report({ phase: translate(locale, "inspectingFiles"), phaseKey: "inspectingFiles", input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
       const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
       const unityDir = unityDirs.find(directory => item.name.startsWith(directory + "/")
@@ -258,7 +270,7 @@ export class Archive {
     const selectedBytes = this.selectedBytesForTarget(target);
     if (selectedBytes > CONVERSION_LIMIT) throw new Error(translate(locale, "selectedTooLarge", { target }));
     const read = async item => {
-      report({ phase: translate(locale, "phaseReadingInput"), input: item.name });
+      report({ phase: translate(locale, "phaseReadingInput"), phaseKey: "phaseReadingInput", input: item.name });
       const bytes = await boundedBytes(item.entry, remaining, locale);
       remaining -= bytes.length;
       return bytes;
@@ -293,7 +305,7 @@ async function appendEntry(writer, name, entry, report, locale) {
     entry.getData(stream.writable, { checkSignature: true }),
     writer.add(name, stream.readable.pipeThrough(limit), {
       versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes >>> 16 ? entry.externalFileAttributes : ((0o100644 << 16) | (entry.externalFileAttributes & 0xffff)) >>> 0,
-      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? translate(locale, "phaseWritingFiles") : translate(locale, "phaseCompressingZip"), input: name, completed, total: entry.uncompressedSize })
+      onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? translate(locale, "phaseWritingFiles") : translate(locale, "phaseCompressingZip"), phaseKey: writer instanceof DirectoryWriter ? "phaseWritingFiles" : "phaseCompressingZip", input: name, completed, total: entry.uncompressedSize })
     })
   ]);
 }
@@ -308,13 +320,13 @@ export class DirectoryWriter {
       await this.destination.directory(name);
       return;
     }
-    if (!(source instanceof ReadableStream)) await source.init();
-    const output = await this.destination.file(name);
     if (source instanceof ReadableStream) {
       let completed = 0;
       const reader = source.getReader();
-      const writer = output.getWriter();
+      let writer;
       try {
+        const output = await this.destination.file(name);
+        writer = output.getWriter();
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -327,13 +339,15 @@ export class DirectoryWriter {
         }
         await writer.close();
       } catch (error) {
-        await Promise.allSettled([reader.cancel(error), writer.abort(error)]);
+        await Promise.allSettled([reader.cancel(error), writer?.abort(error)]);
         throw error;
       } finally {
         reader.releaseLock();
-        writer.releaseLock();
+        writer?.releaseLock();
       }
     } else {
+      await source.init();
+      const output = await this.destination.file(name);
       const writer = output.getWriter();
       try {
         for (let offset = 0; offset < source.size; offset += 65536) {
@@ -382,6 +396,8 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     const originalFiles = archive.files.filter(item => !replaced.has("app0/" + item.name));
     for (const item of originalFiles) claim("app0/" + item.name);
     claim(outputName);
+    const receiptName = "anyps5-conversion.json";
+    if (options.receipt) claim(receiptName);
     if (converted.diagnostics) claim("windows-diagnostics-imports.txt");
     for (const module of converted.modules) {
       if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error(translate(locale, "invalidModulePath"));
@@ -391,6 +407,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
       ...libraryEntries.map(entry => ({ name: entry.filename, directory: entry.directory })),
       ...originalFiles.map(item => ({ name: "app0/" + item.name, directory: item.entry.directory })),
       { name: outputName },
+      ...(options.receipt ? [{ name: receiptName }] : []),
       ...(converted.diagnostics ? [{ name: "windows-diagnostics-imports.txt" }] : []),
       ...converted.modules.map(module => ({ name: module.name }))
     ];
@@ -404,6 +421,10 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     }
     const binary = { versionMadeBy: 0x31e, externalFileAttributes: (0o100755 << 16) >>> 0 };
     await writer.add(outputPath(outputName), new Uint8ArrayReader(converted.executable), binary);
+    if (options.receipt) {
+      const receipt = new TextEncoder().encode(JSON.stringify(options.receipt, null, 2) + "\n");
+      await writer.add(outputPath(receiptName), new Uint8ArrayReader(receipt));
+    }
     if (converted.diagnostics) await writer.add(outputPath("windows-diagnostics-imports.txt"), new Uint8ArrayReader(new TextEncoder().encode(converted.diagnostics)));
     for (const module of converted.modules) await writer.add(outputPath(module.name), new Uint8ArrayReader(module.bytes), binary);
     for (const entry of libraryEntries) {
