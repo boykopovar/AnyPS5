@@ -3,7 +3,8 @@
 The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetting`, `MaskFromEnvironment`, `EnvInt`, `GetEnvironmentVariableA`, `GetEnvironmentVariableW` and `_wgetenv` with a wide literal, `configured`, `PipelineSwitch`, `environmentCount`, `EnvironmentNumber`, `MebibytesFromEnvironment` and `addWideString` (the wide names the Windows entry stub reads). This table lists every `APS5_*` and `ANYPS5_*` name it reads, its kind, the value used when it is unset and what it does, one table per library. Regenerate the names with `python3 tools/env_reference.py --table`; the Conventions check fails when a name the code reads has no row here, or a row's name is no longer read.
 
 Run `python3 tools/env_reference.py --check` from the repository root to check this table locally.
-It reports missing rows, stale rows and computed names the scanner cannot resolve. `--table` prints suggested rows.
+It reports missing rows, stale rows and wildcard names found in recognized computed reads. Reads through identifiers
+with no unique known value may be skipped. `--table` prints rows for the reads the scanner found.
 
 ### core/libs
 
