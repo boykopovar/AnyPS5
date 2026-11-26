@@ -699,7 +699,7 @@ def heading_anchors(text):
     fenced = fenced_lines(text)
     seen, anchors = {}, set()
     for number, line in enumerate(text.split("\n"), 1):
-        match = HEADING.match(line)
+        match = HEADING.match(line.removesuffix("\r"))
         if number in fenced or not match:
             continue
         title = MARKDOWN_LINK.sub(r"\1", match.group(2)).lower()
