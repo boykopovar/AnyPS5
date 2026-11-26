@@ -2569,6 +2569,13 @@ void verifyPlanRoundTrip() {
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
     require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
+    for (const bool lodQueried : {false, true}) {
+        auto queried = handBuiltPlan();
+        queried.info.images.at(0).lodQueried = lodQueried;
+        IrResourcePlan decoded;
+        require(ShaderDiskCache::DecodePlan(encodedPlan(queried), decoded), "the LOD-query plan does not decode");
+        require(decoded.info.images.size() == 1 && decoded.info.images[0].lodQueried == lodQueried, "the LOD-query flag changed in a disk-cache round trip");
+    }
     auto bufferTable = handBuiltPlan();
     bufferTable.descriptorSources[1].tableColumn->buffer = true;
     bufferTable.descriptorSources[1].tableColumn->dwordCount = 4u;
