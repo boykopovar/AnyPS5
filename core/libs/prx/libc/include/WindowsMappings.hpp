@@ -35,6 +35,14 @@ public:
     static std::uint64_t MemoryQueries() {
         return queries.load(std::memory_order_relaxed);
     }
+
+    bool ResidentRunHasNoAccess(std::uintptr_t address) {
+        std::lock_guard lock(mutex);
+        const auto next = residentRuns.upper_bound(address);
+        if (next == residentRuns.begin()) return false;
+        const auto run = std::prev(next);
+        return address < run->second.end && run->second.hasNoAccess;
+    }
 #endif
 
     void* Reserve(void* address, std::size_t bytes) {
@@ -96,7 +104,7 @@ public:
                     mapped->second.armed = 0;
                     invalidate(mapped->first, mapped->second);
                 }
-                if (protection == PAGE_NOACCESS) markResidentNoAccess(cursor, stop);
+                updateResidentNoAccess(cursor & ~(pageBytes - 1), stop, protection);
                 DWORD previous;
                 if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) fail("protect guest memory");
                 cursor = stop;
@@ -247,7 +255,7 @@ public:
             it->second.armed = 0;
             invalidate(it->first, it->second);
         }
-        if (protection == PAGE_NOACCESS) markResidentNoAccess(address, address + bytes);
+        updateResidentNoAccess(address, address + bytes, protection);
     }
 
     void Pin(std::uintptr_t address, std::size_t bytes) {
@@ -1088,10 +1096,28 @@ private:
         return result;
     }
 
-    void markResidentNoAccess(std::uintptr_t start, std::uintptr_t end) {
+    void updateResidentNoAccess(std::uintptr_t start, std::uintptr_t end, DWORD protection) {
+        if (end <= start) return;
         auto run = residentRuns.upper_bound(start);
         if (run != residentRuns.begin() && std::prev(run)->second.end > start) --run;
-        for (; run != residentRuns.end() && run->first < end; ++run) run->second.hasNoAccess = true;
+        for (; run != residentRuns.end() && run->first < end; ++run) {
+            if (protection == PAGE_NOACCESS) {
+                run->second.hasNoAccess = true;
+            } else if (run->second.hasNoAccess) {
+                if (start <= run->first && end >= run->second.end) {
+                    run->second.hasNoAccess = false;
+                } else {
+                    bool anyNoAccess = false;
+                    for (auto it = views.lower_bound(run->first); it != views.end() && it->first < run->second.end; ++it) {
+                        if (it->second.protection == PAGE_NOACCESS) {
+                            anyNoAccess = true;
+                            break;
+                        }
+                    }
+                    run->second.hasNoAccess = anyNoAccess;
+                }
+            }
+        }
     }
 
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
