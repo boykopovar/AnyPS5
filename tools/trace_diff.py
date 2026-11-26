@@ -49,8 +49,8 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
             if not digest["frames"]:
                 raise FrameWindowError(f"{path}: windowed comparison needs at least one complete frame in each capture")
 
-    a_threads = {row["thread"]: row for row in a["threads"]}
-    b_threads = {row["thread"]: row for row in b["threads"]}
+    a_threads = thread_timings(a["threads"])
+    b_threads = thread_timings(b["threads"])
     threads = []
     for name in sorted(a_threads.keys() | b_threads.keys()):
         left = a_threads.get(name, {})
@@ -79,6 +79,15 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
         result["windows"] = {"a": a_window, "b": b_window}
         result["event_loss"] = {"a": a.get("event_loss", []), "b": b.get("event_loss", [])}
     return result
+
+
+def thread_timings(rows):
+    timings = {}
+    for row in rows:
+        totals = timings.setdefault(row["thread"], {"busy_ms_per_frame": 0.0, "wait_ms_per_frame": 0.0})
+        totals["busy_ms_per_frame"] += row["busy_ms_per_frame"]
+        totals["wait_ms_per_frame"] += row["wait_ms_per_frame"]
+    return timings
 
 
 def markdown(result):

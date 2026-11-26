@@ -45,6 +45,7 @@ GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle);
 int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int flags);
 std::uint32_t APS5_VABI ualarm_nid_postfix(std::uint32_t usecs, std::uint32_t reload);
+int APS5_VABI ftw_nid_postfix(const char* path, int (APS5_VABI *fn)(const char*, const void*, int), int nfds);
 int APS5_VABI lockf_nid_postfix(int descriptor, int function, std::int64_t size);
 int APS5_VABI nftw_nid_postfix(const char* path, int (APS5_VABI *fn)(const char*, const void*, int, void*), int nopenfd, int flags);
 char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle);
