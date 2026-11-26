@@ -8,7 +8,7 @@
 
 ## change [sceHttp2WaitAsync]
 
-- [sceHttp2WaitAsync](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - reads `result->reserved` and `*timeout`, and writes `*timeout` and the completion to `result`, through `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` while preserving `errno`, returning `0x817B1225` (`ERROR_NULL_POINTER`) when a copy fails; a completion leaves the queue only after it is stored. Whether the console returns an error or faults on unmapped memory is unmeasured.
+- [sceHttp2WaitAsync](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - Whether the console returns an error or faults on unmapped memory is unmeasured. Host reads of `result->reserved` and `*timeout`, and writes of `*timeout` and the result, use `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` while preserving `errno`. Copy failure returns `0x817B1225` (`ERROR_NULL_POINTER`). If storing a successful completion fails, that completion stays queued. A queued exception is removed and rethrown without storing a result.
 
 ## add Functional
 
