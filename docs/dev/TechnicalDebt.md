@@ -3,8 +3,9 @@
 Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry is limited to 1000 characters; a longer one is reported as a `debt-length` warning ([CONTRIBUTING](../../CONTRIBUTING.md#documentation)). An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
 
 Pass `--label` more than once to find entries with all the requested labels. For example,
-`python3 tools/debt_report.py libkernel --label windows --label no-test --json` lists Windows gaps without a matching test.
-The report infers test coverage from names in source and tests.
+`python3 tools/debt_report.py libkernel --label windows --label no-test --json` selects entries labeled `windows` and
+`no-test`. A `Labels:` trailer can override an inferred label. Name matches include tokens in test comments,
+so the output alone cannot establish whether a test exercises the behavior.
 
 #### Fragments
 
