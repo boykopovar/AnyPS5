@@ -6,8 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -97,6 +99,79 @@ void ReusesTheExistingPoint() {
     EC_KEY_free_nid_postfix(key);
 }
 
+void LeavesAKeyWithoutAPointUnchangedOnFailure() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
+    Require(key != nullptr);
+    const std::vector<unsigned char> offCurve = [] {
+        std::vector<unsigned char> bytes = P256Uncompressed;
+        bytes.back() ^= 1;
+        return bytes;
+    }();
+    const std::vector<unsigned char> large(5000, 0x04);
+    const std::pair<const std::vector<unsigned char>*, std::int64_t> inputs[] = {
+        {&P256Uncompressed, 0}, {&P256Uncompressed, -1}, {&P256Uncompressed, 64}, {&offCurve, 65}, {&large, 4097},
+        {&P256Uncompressed, std::numeric_limits<std::int64_t>::max()}};
+    for (const auto& [input, length] : inputs) {
+        const unsigned char* cursor = input->data();
+        Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, length) == nullptr);
+        Require(key->publicKey == nullptr && cursor == input->data());
+    }
+    const unsigned char* top = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 8);
+    bool threw = false;
+    try {
+        o2i_ECPublicKey_nid_postfix(&key, &top, 65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && key->publicKey == nullptr);
+    EC_KEY_free_nid_postfix(key);
+}
+
+void KeepsTheCurveOfThePointAfterTheGroupChanges() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
+    Require(key != nullptr);
+    const unsigned char* cursor = P384Uncompressed.data();
+    Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, static_cast<std::int64_t>(P384Uncompressed.size())) == key);
+    const std::vector<unsigned char> parameters = Hex("06082a8648ce3d030107");
+    cursor = parameters.data();
+    Require(d2i_ECParameters_nid_postfix(&key, &cursor, static_cast<std::int64_t>(parameters.size())) == key);
+    cursor = P256Uncompressed.data();
+    Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, static_cast<std::int64_t>(P256Uncompressed.size())) == key);
+    Require(key->publicKey->curve.nid == Secp256r1 && Encoded(key) == P256Uncompressed);
+    EC_KEY_free_nid_postfix(key);
+}
+
+void LeavesTheKeyUnchangedWhenTheInputCannotBeRead() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
+    Require(key != nullptr);
+    const unsigned char* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
+    const unsigned char* cursor = unreadable;
+    bool threw = false;
+    try {
+        o2i_ECPublicKey_nid_postfix(&key, &cursor, 65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && key->publicKey == nullptr && cursor == unreadable);
+    EC_KEY_free_nid_postfix(key);
+}
+
+void RejectsACompressedPointThatIsNotOnTheCurve() {
+    constexpr int Secp224r1 = 713;
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp224r1);
+    Require(key != nullptr);
+    std::vector<unsigned char> compressed(29, 0);
+    compressed[0] = 0x02;
+    compressed[28] = 0x01;
+    const unsigned char* cursor = compressed.data();
+    ERR_clear_error_nid_postfix();
+    Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, 29) == nullptr);
+    Require(ERR_get_error_nid_postfix() == EcLibraryFailure);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(key->publicKey == nullptr && cursor == compressed.data());
+    EC_KEY_free_nid_postfix(key);
+}
+
 void RejectsAMissingKeyOrGroup() {
     ERR_clear_error_nid_postfix();
     const unsigned char* cursor = P256Uncompressed.data();
@@ -145,23 +220,47 @@ void RejectsBadEncodings() {
     Rejects(key, xAboveField, 65, P256Uncompressed);
     Rejects(key, compressedOffCurve, 33, P256Uncompressed);
     Rejects(key, P256Uncompressed, 64, P256Uncompressed);
+    for (const std::int64_t length : {std::int64_t{66}, std::int64_t{200}, std::int64_t{4096}}) {
+        std::vector<unsigned char> padded = P256Uncompressed;
+        padded.resize(4096, 0);
+        Rejects(key, padded, length, P256Uncompressed);
+    }
     Rejects(key, P256Uncompressed, 0, P256Uncompressed);
+    Rejects(key, P256Uncompressed, -1, P256Uncompressed);
+    Rejects(key, std::vector<unsigned char>(5000, 0x04), 4097, P256Uncompressed);
+    Rejects(key, P256Uncompressed, std::int64_t{std::numeric_limits<std::int32_t>::max()} + 1, P256Uncompressed);
+    Rejects(key, P256Uncompressed, std::numeric_limits<std::int64_t>::max(), P256Uncompressed);
     Rejects(key, P384Uncompressed, static_cast<std::int64_t>(P384Uncompressed.size()), P256Uncompressed);
     std::vector<unsigned char> offCurve = P256Uncompressed;
     offCurve.back() ^= 1;
-    Rejects(key, offCurve, 65, offCurve);
+    Rejects(key, offCurve, 65, P256Uncompressed);
     std::vector<unsigned char> hybridOffCurve = P256Uncompressed;
     hybridOffCurve[0] = 0x07;
     hybridOffCurve.back() ^= 2;
-    std::vector<unsigned char> storedHybrid = hybridOffCurve;
-    storedHybrid[0] = 0x04;
-    Rejects(key, hybridOffCurve, 65, storedHybrid);
+    Rejects(key, hybridOffCurve, 65, P256Uncompressed);
     Require(key->publicKey == point);
     EC_KEY_free_nid_postfix(key);
     key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
     Require(key != nullptr);
     key->conversionForm = 2;
-    Rejects(key, offCurve, 65, offCurve);
+    cursor = offCurve.data();
+    Require(o2i_ECPublicKey_nid_postfix(&key, &cursor, 65) == nullptr);
+    Require(key->publicKey == nullptr && key->conversionForm == 2 && cursor == offCurve.data());
+    EC_KEY_free_nid_postfix(key);
+}
+
+void RejectsARangeThatWrapsTheAddressSpace() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp256r1);
+    Require(key != nullptr);
+    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 8);
+    bool threw = false;
+    try {
+        o2i_ECPublicKey_nid_postfix(&key, &cursor, 65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(cursor == reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 8));
     EC_KEY_free_nid_postfix(key);
 }
 
@@ -184,8 +283,13 @@ void RejectsANullInput() {
 int main() {
     DecodesEachForm();
     ReusesTheExistingPoint();
+    LeavesAKeyWithoutAPointUnchangedOnFailure();
+    KeepsTheCurveOfThePointAfterTheGroupChanges();
+    RejectsACompressedPointThatIsNotOnTheCurve();
+    LeavesTheKeyUnchangedWhenTheInputCannotBeRead();
     RejectsAMissingKeyOrGroup();
     RejectsBadEncodings();
+    RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
     std::puts("libSceLibreSsl3 o2i_ECPublicKey tests passed");
 }

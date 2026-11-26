@@ -16,11 +16,19 @@ namespace AgcDriver::Graphics {
 
 using GuestRangeList = std::span<const std::pair<std::uint64_t, std::uint64_t>>;
 
+struct PassAttachment {
+    VkImage image = VK_NULL_HANDLE;
+    bool written = false;
+    std::uint32_t mip = 0;
+    std::uint32_t firstSlice = 0;
+    std::uint32_t sliceCount = 0;
+};
+
 struct PassAccess {
     GuestRangeList reads;
     GuestRangeList writes;
     std::span<const std::pair<VkImage, bool>> images;
-    std::span<const std::pair<VkImage, bool>> attachments;
+    std::span<const PassAttachment> attachments;
     bool anyReads = false;
     bool anyWrites = false;
     GuestRangeList writeOnly = {};
@@ -73,6 +81,9 @@ private:
         VkImage image;
         bool written;
         std::uint64_t pass;
+        std::uint32_t mip = 0;
+        std::uint32_t firstSlice = 0;
+        std::uint32_t sliceCount = 0;
     };
     bool overlapsAny(const GuestRangeSet& set, GuestRangeList ranges) const;
     GuestRangeSet reads;

@@ -19,6 +19,7 @@ constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
 constexpr int ErrorNotConnected = 57;
+constexpr int DirectoryFlag = 0x00020000;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -404,6 +405,25 @@ void AuditEmptyPipeReadableQuery() {
     Require(close_nid_postfix(pipeFds[1]) == 0, "close pipe write-end failed");
 }
 
+void AuditDirectoryReadableQuery() {
+    constexpr char Path[] = "anyps5-ioctl-fionread-directory";
+    rmdir_nid_postfix(Path);
+    Require(mkdir_nid_postfix(Path, 0755) == 0, "directory creation failed");
+
+    const int directory = open_nid_postfix(Path, DirectoryFlag, 0);
+    Require(directory >= 0, "directory open failed");
+
+    int readable = -1;
+    Require(ioctl_nid_postfix(directory, ReadableRequest, &readable) == 0 && readable == 65536,
+        "directory FIONREAD must return the console's 65536-byte value");
+    readable = -1;
+    Require(_ioctl_nid_postfix(directory, ReadableRequest, &readable) == 0 && readable == 65536,
+        "directory _ioctl FIONREAD must return the console's 65536-byte value");
+
+    Require(close_nid_postfix(directory) == 0, "directory close failed");
+    Require(rmdir_nid_postfix(Path) == 0, "directory cleanup failed");
+}
+
 void AuditNonblockingModeQueries() {
     int listener = -1;
     const auto address = CreateBoundListener(&listener);
@@ -498,6 +518,7 @@ int main() {
     AuditInvalidRequestCodes();
     AuditEmptySocketReadableQuery();
     AuditEmptyPipeReadableQuery();
+    AuditDirectoryReadableQuery();
     AuditNonblockingModeQueries();
     return 0;
 }

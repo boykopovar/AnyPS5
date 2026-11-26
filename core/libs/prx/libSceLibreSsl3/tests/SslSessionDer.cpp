@@ -26,6 +26,8 @@ constexpr std::int64_t SessionTime = 1700000000;
 constexpr std::int64_t SessionTimeout = 7200;
 constexpr std::int64_t SessionVerifyResult = 20;
 constexpr std::int64_t DefaultTimeout = 3;
+constexpr std::uint16_t MinimalCipher = 0x1301;
+constexpr std::uint16_t SessionCipher = 0xc02f;
 
 std::unordered_map<void*, std::size_t> allocations;
 int allocationsUntilFailure = -1;
@@ -165,7 +167,7 @@ Bytes Range(unsigned char first, std::size_t count) {
 }
 
 Bytes MinimalEncoding() {
-    return Hex("3013020101020203030402000004000400a4020400");
+    return Hex("3013020101020203030402130104000400a4020400");
 }
 
 Bytes MinimalContent() {
@@ -182,6 +184,7 @@ Bytes MinimalContent() {
 LibreSsl3SslSession MinimalSession() {
     LibreSsl3SslSession session{};
     session.sslVersion = Tls12Version;
+    session.cipherValue = MinimalCipher;
     return session;
 }
 
@@ -202,6 +205,7 @@ LibreSsl3SslSession FullSession() {
     session.time = SessionTime;
     session.references = 3;
     session.peerCertType = 4;
+    session.cipherValue = SessionCipher;
     return session;
 }
 
@@ -209,7 +213,7 @@ Bytes ExpectedFullEncoding() {
     return Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
-        Tlv(0x04, Bytes{0x00, 0x00}),
+        Tlv(0x04, Bytes{0xc0, 0x2f}),
         Tlv(0x04, Range(0xa0, 32)),
         Tlv(0x04, Range(0x00, 48)),
         Tlv(0xa1, Integer(SessionTime)),
@@ -234,13 +238,13 @@ LibreSsl3SslSession* Decode(const Bytes& der, const unsigned char*& cursor) {
     return d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
 }
 
-void RequireRejected(const Bytes& der, int reason, std::source_location location = std::source_location::current()) {
+void RequireRejected(const Bytes& der, std::source_location location = std::source_location::current()) {
     DrainErrors();
     const unsigned char* cursor = der.data();
     LibreSsl3SslSession* session = d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
     Require(session == nullptr, location);
     Require(cursor == der.data(), location);
-    RequireQueue({reason}, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
     Require(allocations.empty(), location);
 }
 
@@ -255,7 +259,7 @@ void TestIntegerBoundaries() {
     const Bytes expected = Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
-        Tlv(0x04, Bytes{0x00, 0x00}),
+        Tlv(0x04, Bytes{0x13, 0x01}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa1, Join({Bytes{0x02, 0x08}, Hex("00ff000000000000")})),
@@ -283,6 +287,7 @@ void TestFullRoundTrip() {
     Require(decoded != nullptr);
     Require(cursor == expected.data() + expected.size());
     Require(decoded->sslVersion == Tls12Version);
+    Require(decoded->cipherValue == SessionCipher);
     Require(decoded->masterKeyLength == sizeof(session.masterKey));
     Require(std::memcmp(decoded->masterKey, session.masterKey, sizeof(session.masterKey)) == 0);
     Require(decoded->sessionIdLength == sizeof(session.sessionId));
@@ -340,6 +345,7 @@ void TestDecodeIntoExisting() {
     existing.references = 7;
     existing.peerCertType = 4;
     existing.peerCert = reinterpret_cast<void*>(0x1234);
+    existing.cipherValue = 0x0a0a;
     LibreSsl3SslSession* slot = &existing;
     const unsigned char* cursor = der.data();
     LibreSsl3SslSession* decoded =
@@ -351,6 +357,7 @@ void TestDecodeIntoExisting() {
     Require(existing.peerCertType == 4);
     Require(existing.peerCert == nullptr);
     Require(existing.sslVersion == Tls12Version);
+    Require(existing.cipherValue == SessionCipher);
     Require(existing.masterKeyLength == 48);
     Require(existing.sessionIdLength == 32);
     Require(existing.sidCtxLength == 32);
@@ -392,7 +399,7 @@ void TestPeerCertificate() {
     const Bytes expected = Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
-        Tlv(0x04, Bytes{0x00, 0x00}),
+        Tlv(0x04, Bytes{0x13, 0x01}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa3, certificate),
@@ -418,6 +425,7 @@ void TestOptionalDefaults() {
     Require(session != nullptr);
     Require(cursor == minimal.data() + minimal.size());
     Require(session->sslVersion == Tls12Version);
+    Require(session->cipherValue == MinimalCipher);
     Require(session->masterKeyLength == 0);
     Require(session->sessionIdLength == 0);
     Require(session->sidCtxLength == 0);
@@ -492,13 +500,13 @@ void TestTruncatedInput() {
             d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(length));
         Require(session == nullptr);
         Require(cursor == der.data());
+        Require(ERR_get_error_nid_postfix() == 0);
         Require(allocations.empty());
     }
-    DrainErrors();
 }
 
 void TestMalformed() {
-    RequireRejected(Tlv(0x31, MinimalContent()), 168);
+    RequireRejected(Tlv(0x31, MinimalContent()));
     RequireRejected(Sequence(Join({
         Tlv(0x04, Bytes{0x01}),
         Integer(Tls12Version),
@@ -506,17 +514,17 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x04, Bytes{})),
-    })), 168);
+    })));
 
     Bytes overlongOuter = MinimalEncoding();
     overlongOuter[1] = 0x14;
-    RequireRejected(overlongOuter, 155);
+    RequireRejected(overlongOuter);
 
-    RequireRejected(Bytes{0x30, 0x80, 0x00, 0x00}, 102);
-    RequireRejected(Bytes{0x30, 0x84, 0x00, 0x00, 0x00, 0x00}, 102);
-    RequireRejected(Bytes{0x30, 0x82, 0x00, 0x80}, 102);
-    RequireRejected(Bytes{0x30}, 102);
-    RequireRejected(Bytes{0x1f, 0x00}, 102);
+    RequireRejected(Bytes{0x30, 0x80, 0x00, 0x00});
+    RequireRejected(Bytes{0x30, 0x84, 0x00, 0x00, 0x00, 0x00});
+    RequireRejected(Bytes{0x30, 0x82, 0x00, 0x80});
+    RequireRejected(Bytes{0x30});
+    RequireRejected(Bytes{0x1f, 0x00});
 
     RequireRejected(Sequence(Join({
         Integer(2),
@@ -524,35 +532,35 @@ void TestMalformed() {
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{0x00, 0x01}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{0x81}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(0x80000000u),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 155);
+    })));
 
     RequireRejected(Sequence(Join({
         Integer(1),
@@ -560,28 +568,28 @@ void TestMalformed() {
         Tlv(0x04, Bytes{0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Range(0x00, 33)),
         Tlv(0x04, Bytes{}),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Range(0x00, 49)),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -589,7 +597,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x04, Range(0x00, 33))),
-    })), 155);
+    })));
 
     RequireRejected(Sequence(Join({
         Integer(1),
@@ -598,7 +606,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa1, Tlv(0x04, Bytes{0x01})),
-    })), 168);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -606,7 +614,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x02, Bytes{0x01})),
-    })), 168);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -614,7 +622,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Join({Tlv(0x04, Bytes{}), Bytes{0x05, 0x00}})),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -622,7 +630,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa1, Tlv(0x02, Bytes{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})),
-    })), 155);
+    })));
 }
 
 void TestUnrepresentableFields() {
@@ -720,6 +728,53 @@ void TestAllocationFailures() {
     Require(allocations.empty());
 }
 
+void TestCipherValue() {
+    DrainErrors();
+    LibreSsl3SslSession unset = MinimalSession();
+    unset.cipherValue = 0;
+    Require(i2d_SSL_SESSION_nid_postfix(&unset, nullptr) == 0);
+    unsigned char* untouched = nullptr;
+    Require(i2d_SSL_SESSION_nid_postfix(&unset, &untouched) == 0);
+    Require(untouched == nullptr);
+    std::array<unsigned char, 32> buffer{};
+    buffer.fill(0xcc);
+    unsigned char* writePointer = buffer.data();
+    Require(i2d_SSL_SESSION_nid_postfix(&unset, &writePointer) == 0);
+    Require(writePointer == buffer.data());
+    Require(std::all_of(buffer.begin(), buffer.end(), [](unsigned char byte) { return byte == 0xcc; }));
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(allocations.empty());
+
+    for (const std::uint16_t value : std::initializer_list<std::uint16_t>{0x0001, 0x00ff, 0x0100, 0x1303, 0xc02f, 0xff00, 0xffff}) {
+        LibreSsl3SslSession session = MinimalSession();
+        session.cipherValue = value;
+        const Bytes encoded = Encode(session);
+        const Bytes suite = Tlv(0x04, Bytes{static_cast<unsigned char>(value >> 8), static_cast<unsigned char>(value)});
+        Require(encoded.size() == MinimalEncoding().size());
+        Require(std::equal(suite.begin(), suite.end(), encoded.begin() + 9));
+        const unsigned char* cursor = nullptr;
+        LibreSsl3SslSession* decoded = Decode(encoded, cursor);
+        Require(decoded != nullptr);
+        Require(cursor == encoded.data() + encoded.size());
+        Require(decoded->cipherValue == value);
+        const Bytes again = Encode(*decoded);
+        Require(again.size() > 9 + suite.size());
+        Require(std::equal(suite.begin(), suite.end(), again.begin() + 9));
+        free_nid_postfix(decoded);
+        Require(allocations.empty());
+    }
+
+    const Bytes zeroSuite = Sequence(MinimalContent());
+    const unsigned char* cursor = nullptr;
+    LibreSsl3SslSession* decoded = Decode(zeroSuite, cursor);
+    Require(decoded != nullptr);
+    Require(decoded->cipherValue == 0);
+    Require(i2d_SSL_SESSION_nid_postfix(decoded, nullptr) == 0);
+    free_nid_postfix(decoded);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(allocations.empty());
+}
+
 void TestExactBytesNegativeControl() {
     LibreSsl3SslSession session = MinimalSession();
     const Bytes expected = MinimalEncoding();
@@ -779,6 +834,7 @@ int main() {
     TestUnrepresentableFields();
     TestArgumentErrors();
     TestAllocationFailures();
+    TestCipherValue();
     TestExactBytesNegativeControl();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 SSL_SESSION DER tests passed");
