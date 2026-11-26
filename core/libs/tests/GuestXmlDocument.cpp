@@ -214,7 +214,8 @@ void TestStatusAndAttributes() {
     Require(Attribute(&document, root, "a", 1) == "1" && Attribute(&document, root, "ab", 2) == "2" && Attribute(&document, root, "b", 1) == "&amp;", "attribute values");
     Require(Attribute(&document, root, "A", 1) == "<null>" && Attribute(&document, root, "", 0) == "<null>" && Attribute(&document, root, nullptr, 0) == "<null>", "attributes that are not there");
     Require(Attribute(&document, root, "a\0x", 3) == "1", "the name is compared up to its first zero byte");
-    Require(Attribute(&document, root, "a", 0) == "<null>", "a name with size 0 finds nothing");
+    Require(Attribute(&document, root, "a", 0) == "1", "a name with size 0 is compared up to its zero byte");
+    Require(Attribute(&document, root, "z", 0) == "<null>", "a name with size 0 that differs finds nothing");
     XmlString value{};
     const XmlString noBuffer{nullptr, 1};
     _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE(&value, &document, root, &noBuffer);

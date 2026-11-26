@@ -835,7 +835,7 @@ XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQu
 
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name) {
     if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
-    if (document->impl == nullptr || name == nullptr || name->buffer == nullptr || name->size == 0) {
+    if (document->impl == nullptr || name == nullptr || name->buffer == nullptr) {
         SetString(result, nullptr);
         return result;
     }
