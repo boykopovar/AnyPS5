@@ -632,11 +632,18 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     if (param == nullptr || num == 0) {
         return -2144993276;
     }
+    std::vector<AudioOutOutputParam> outputs(num);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(outputs.data(), param, num * sizeof(AudioOutOutputParam));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
 
     std::array<bool, PORTS_MAX> selected{};
     for (std::uint32_t i = 0; i < num; ++i) {
-        if (param[i].handle <= 0 || param[i].handle > PORTS_MAX) return -2144993277;
-        selected[param[i].handle - 1] = true;
+        if (outputs[i].handle <= 0 || outputs[i].handle > PORTS_MAX) return -2144993277;
+        selected[outputs[i].handle - 1] = true;
     }
     std::array<std::unique_lock<std::mutex>, PORTS_MAX> outputLocks;
     for (int index = 0; index < PORTS_MAX; ++index) {
@@ -645,26 +652,26 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     std::unique_lock<std::mutex> lock(g_mutex);
 
     for (std::uint32_t i = 0; i < num; i++) {
-        if (getPort(param[i].handle) == nullptr) {
+        if (getPort(outputs[i].handle) == nullptr) {
             return -2144993277;
         }
     }
 
-    Port& first = *getPort(param[0].handle);
+    Port& first = *getPort(outputs[0].handle);
     std::chrono::steady_clock::time_point reopenDeadline{};
     for (std::uint32_t i = 0; i < num; i++) {
-        Port& port = *getPort(param[i].handle);
+        Port& port = *getPort(outputs[i].handle);
         reopenStoppedDevice(port, lock, reopenDeadline);
         if (port.device == 0) {
-            outputVirtualPort(port, param[i].ptr, lock);
+            outputVirtualPort(port, outputs[i].ptr, lock);
         } else {
-            queueAudio(port, param[i].ptr, lock);
+            queueAudio(port, outputs[i].ptr, lock);
         }
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        if (param[i].ptr != nullptr) getPort(param[i].handle)->lastDataOutputTime = done;
+        if (outputs[i].ptr != nullptr) getPort(outputs[i].handle)->lastDataOutputTime = done;
     }
 
     return static_cast<int>(first.samplesNum);
@@ -682,18 +689,35 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
         return -2144993277;
     }
     const bool isStd = formatIsStd(port->format);
+    const auto sourceIndex = [isStd](int channel) {
+        if (!isStd) return channel;
+        if (channel == 4) return 6;
+        if (channel == 5) return 7;
+        if (channel == 6) return 4;
+        if (channel == 7) return 5;
+        return channel;
+    };
+    std::size_t volumeCount = 0;
+    for (int i = 0, bits = static_cast<int>(flag); i < port->channels; i++, bits >>= 1) {
+        if ((bits & 1) == 0) {
+            continue;
+        }
+        volumeCount = std::max(volumeCount, static_cast<std::size_t>(sourceIndex(i)) + 1);
+    }
+    std::vector<int> volumes(volumeCount);
+    if (volumeCount != 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(volumes.data(), vol, volumeCount * sizeof(int));
+        errno = savedErrno;
+        if (!copied) {
+            return -2144993276;
+        }
+    }
     for (int i = 0; i < port->channels; i++, flag >>= 1u) {
         if ((flag & 1u) == 0) {
             continue;
         }
-        int srcIdx = i;
-        if (isStd) {
-            if (i == 4) srcIdx = 6;
-            else if (i == 5) srcIdx = 7;
-            else if (i == 6) srcIdx = 4;
-            else if (i == 7) srcIdx = 5;
-        }
-        port->volume[i] = vol[srcIdx];
+        port->volume[i] = volumes[sourceIndex(i)];
     }
     return 0;
 }
@@ -805,7 +829,11 @@ int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int type, void* info, std::uint32
     if (size != HDMI_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
     if (type != MONITOR_TYPE_HDMI && type != 0x10) return static_cast<int>(0x8026000C);
     if (type == 0x10) throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported");
-    std::memset(info, 0, HDMI_MONITOR_INFO_SIZE);
+    std::vector<std::uint8_t> zeros(HDMI_MONITOR_INFO_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, zeros.data(), zeros.size());
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80260004);
     return 0;
 }
 
