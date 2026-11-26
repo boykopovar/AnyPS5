@@ -887,6 +887,56 @@ void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS
 }
 }
 
+namespace LibcException::Libcxx {
+static const char* APS5_VABI IostreamName_nid_no_patch(const CategoryObject*) { return "iostream"; }
+static String* APS5_VABI IostreamMessage_nid_no_patch(String* result, const CategoryObject*, int value) {
+    return FillString(result, value == 1 || BeyondLast(value) ? "unspecified iostream_category error" : StrerrorMessage(value));
+}
+const TypeRecord IostreamCategoryType {SingleTypeVtable + 2, "NSt3__119__iostream_categoryE", &DoMessageType};
+const void* const IostreamCategoryVtable[] {
+    nullptr, &IostreamCategoryType,
+    reinterpret_cast<const void*>(CategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(CategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(IostreamName_nid_no_patch), reinterpret_cast<const void*>(Condition_nid_no_patch),
+    reinterpret_cast<const void*>(EquivalentCondition_nid_no_patch), reinterpret_cast<const void*>(EquivalentCode_nid_no_patch),
+    reinterpret_cast<const void*>(IostreamMessage_nid_no_patch)
+};
+const CategoryObject IostreamCategory {IostreamCategoryVtable + 2};
+
+static void ConstructFailure(LibcxxSystemErrorObject* self, std::string what, const LibcxxErrorCode* code) {
+    if (!code) throw std::invalid_argument("std::__1::ios_base::failure: null error code");
+    ConstructSystemError(self, *code, std::move(what));
+    self->base.vtable = &_ZTVNSt3__18ios_base7failureE_nid_postfix.destroy;
+}
+}
+
+extern "C" {
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__117iostream_categoryEv_nid_postfix() noexcept {
+    return &LibcException::Libcxx::IostreamCategory;
+}
+constinit const LibcException::TypeRecord _ZTINSt3__18ios_base7failureE_nid_postfix {
+    LibcException::SingleTypeVtable + 2, "NSt3__18ios_base7failureE", &_ZTINSt3__112system_errorE_nid_postfix,
+};
+constinit const LibcException::ExceptionVtable _ZTVNSt3__18ios_base7failureE_nid_postfix {
+    0, &_ZTINSt3__18ios_base7failureE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch,
+    LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch,
+};
+void APS5_VABI _ZNSt3__18ios_base7failureC1EPKcRKNS_10error_codeE_nid_postfix(
+    LibcException::LibcxxSystemErrorObject* self, const char* what, const LibcException::LibcxxErrorCode* code) {
+    LibcException::Libcxx::ConstructFailure(self, LibcException::Libcxx::WhatArgument(what), code);
+}
+void APS5_VABI _ZNSt3__18ios_base7failureC1ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEERKNS_10error_codeE_nid_postfix(
+    LibcException::LibcxxSystemErrorObject* self, const void* what, const LibcException::LibcxxErrorCode* code) {
+    LibcException::Libcxx::ConstructFailure(self,
+        LibcException::Libcxx::ReadString(static_cast<const LibcException::Libcxx::String*>(what)), code);
+}
+void APS5_VABI _ZNSt3__18ios_base7failureD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
+void APS5_VABI _ZNSt3__18ios_base7failureD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept {
+    LibcException::DestroyMessage(&self->base);
+}
+}
+
 namespace LibcException::SceV2 {
 static const char* APS5_VABI BadOptionalAccessWhat_nid_no_patch(const ExceptionObject*) { return "Bad optional access"; }
 static const char* APS5_VABI BadWeakPtrWhat_nid_no_patch(const ExceptionObject*) { return "bad_weak_ptr"; }

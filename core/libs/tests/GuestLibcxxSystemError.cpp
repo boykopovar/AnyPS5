@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/exceptions/Runtime.hpp"
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -237,6 +238,159 @@ static const LibcException::CategoryObject* CheckThrow(int code, const char* wha
     return category;
 }
 
+static void CheckIostreamCategory(const LibcException::CategoryObject* iostream, const LibcException::CategoryObject* generic) {
+    REQUIRE(iostream && iostream == _ZNSt3__117iostream_categoryEv_nid_postfix() && iostream != generic);
+    const auto* type = TypeOf(iostream->vtable);
+    REQUIRE(std::strcmp(type->name, "NSt3__119__iostream_categoryE") == 0);
+    REQUIRE(std::strcmp(KindOf(type), "N10__cxxabiv120__si_class_type_infoE") == 0);
+    REQUIRE(type->base == TypeOf(generic->vtable)->base);
+    REQUIRE(std::strcmp(std::bit_cast<Name>(Slot(iostream, 2))(iostream), "iostream") == 0);
+    CheckMessage(iostream, 1, "unspecified iostream_category error");
+    CheckMessage(iostream, 5, Strerror(5));
+    CheckMessage(iostream, 2, "No such file or directory");
+    CheckMessage(iostream, sys_nerr_nid_postfix - 1, Strerror(sys_nerr_nid_postfix - 1));
+    CheckMessage(iostream, -1, Strerror(-1));
+    CheckMessage(iostream, sys_nerr_nid_postfix, "unspecified iostream_category error");
+    CheckMessage(iostream, sys_nerr_nid_postfix + 1, "unspecified iostream_category error");
+    const LibcException::LibcxxErrorCode mapped = std::bit_cast<Condition>(Slot(iostream, 3))(iostream, 5);
+    REQUIRE(mapped.value == 5 && mapped.category == iostream);
+    const auto equivalentCondition = std::bit_cast<EquivalentCondition>(Slot(iostream, 4));
+    const auto equivalentCode = std::bit_cast<EquivalentCode>(Slot(iostream, 5));
+    const LibcException::LibcxxErrorCode inSelf {5, 0, iostream};
+    const LibcException::LibcxxErrorCode inGeneric {5, 0, generic};
+    REQUIRE(equivalentCondition(iostream, 5, &inSelf) && !equivalentCondition(iostream, 6, &inSelf));
+    REQUIRE(!equivalentCondition(iostream, 5, &inGeneric));
+    REQUIRE(equivalentCode(iostream, &inSelf, 5) && !equivalentCode(iostream, &inSelf, 6));
+    REQUIRE(!equivalentCode(iostream, &inGeneric, 5));
+    bool rejected = false;
+    try { std::bit_cast<Delete>(Slot(iostream, 1))(iostream); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+}
+
+static std::string FailureWhat(const LibcException::LibcxxSystemErrorObject& object) {
+    REQUIRE(object.base.vtable == &_ZTVNSt3__18ios_base7failureE_nid_postfix.destroy);
+    return std::bit_cast<What>(static_cast<const void* const*>(object.base.vtable)[2])(&object.base);
+}
+
+static void ConstructFailure(LibcException::LibcxxSystemErrorObject& object, const char* what, const LibcException::LibcxxErrorCode* code) {
+    std::memset(&object, 0xcd, sizeof(object));
+    _ZNSt3__18ios_base7failureC1EPKcRKNS_10error_codeE_nid_postfix(&object, what, code);
+}
+
+static void ConstructFailure(LibcException::LibcxxSystemErrorObject& object, const LibcxxString* what, const LibcException::LibcxxErrorCode* code) {
+    std::memset(&object, 0xcd, sizeof(object));
+    _ZNSt3__18ios_base7failureC1ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEERKNS_10error_codeE_nid_postfix(&object, what, code);
+}
+
+static void CheckFailure(const LibcException::CategoryObject* iostream, const LibcException::CategoryObject* generic) {
+    const auto& type = _ZTINSt3__18ios_base7failureE_nid_postfix;
+    REQUIRE(std::strcmp(type.name, "NSt3__18ios_base7failureE") == 0);
+    REQUIRE(std::strcmp(KindOf(&type), "N10__cxxabiv120__si_class_type_infoE") == 0);
+    REQUIRE(type.base == &_ZTINSt3__112system_errorE_nid_postfix);
+    const auto& table = _ZTVNSt3__18ios_base7failureE_nid_postfix;
+    const auto& base = _ZTVNSt3__112system_errorE_nid_postfix;
+    REQUIRE(table.offset == 0 && table.type == &type);
+    REQUIRE(table.destroy == base.destroy && table.deleteObject == base.deleteObject && table.what == base.what);
+
+    const LibcException::LibcxxErrorCode stream {1, 0, iostream};
+    LibcException::LibcxxSystemErrorObject object;
+    ConstructFailure(object, "stream", &stream);
+    REQUIRE(FailureWhat(object) == "stream: unspecified iostream_category error");
+    REQUIRE(object.code.value == 1 && object.code.category == iostream);
+    _ZNSt3__18ios_base7failureD1Ev_nid_postfix(&object);
+    REQUIRE(object.base.message == nullptr && object.code.value == 1);
+
+    ConstructFailure(object, "", &stream);
+    REQUIRE(FailureWhat(object) == "unspecified iostream_category error");
+    _ZNSt3__18ios_base7failureD2Ev_nid_postfix(&object);
+    REQUIRE(object.base.message == nullptr);
+
+    const LibcException::LibcxxErrorCode exists {17, 0, generic};
+    ConstructFailure(object, "open", &exists);
+    REQUIRE(FailureWhat(object) == "open: File exists" && object.code.category == generic);
+    _ZNSt3__18ios_base7failureD1Ev_nid_postfix(&object);
+
+    const LibcException::LibcxxErrorCode none {0, 0, iostream};
+    ConstructFailure(object, "nothing failed", &none);
+    REQUIRE(FailureWhat(object) == "nothing failed" && object.code.value == 0 && object.code.category == iostream);
+    _ZNSt3__18ios_base7failureD1Ev_nid_postfix(&object);
+
+    const LibcxxString shortWhat = MakeString("read");
+    ConstructFailure(object, &shortWhat, &stream);
+    REQUIRE(FailureWhat(object) == "read: unspecified iostream_category error");
+    REQUIRE(object.code.value == 1 && object.code.category == iostream);
+    _ZNSt3__18ios_base7failureD1Ev_nid_postfix(&object);
+
+    const char* longText = "a stream message that does not fit inline";
+    const LibcxxString longWhat = MakeString(longText);
+    const LibcException::LibcxxErrorCode invalid {22, 0, iostream};
+    ConstructFailure(object, &longWhat, &invalid);
+    REQUIRE(FailureWhat(object) == std::string(longText) + ": Invalid argument" && object.code.value == 22);
+    _ZNSt3__18ios_base7failureD2Ev_nid_postfix(&object);
+    REQUIRE(object.base.message == nullptr);
+
+    const LibcxxString emptyWhat = MakeString("");
+    ConstructFailure(object, &emptyWhat, &stream);
+    REQUIRE(FailureWhat(object) == "unspecified iostream_category error");
+    _ZNSt3__18ios_base7failureD1Ev_nid_postfix(&object);
+
+    const LibcException::LibcxxErrorCode noCategory {1, 0, nullptr};
+    bool rejected = false;
+    try { ConstructFailure(object, static_cast<const char*>(nullptr), &stream); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+    rejected = false;
+    try { ConstructFailure(object, "x", nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+    rejected = false;
+    try { ConstructFailure(object, "x", &noCategory); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+    rejected = false;
+    try { ConstructFailure(object, static_cast<const LibcxxString*>(nullptr), &stream); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+    rejected = false;
+    try { ConstructFailure(object, &shortWhat, nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+}
+
+[[noreturn]] static void ThrowFailure(const LibcException::LibcxxErrorCode& code, const char* what) {
+    auto* object = static_cast<LibcException::LibcxxSystemErrorObject*>(
+        __cxa_allocate_exception_nid_postfix(sizeof(LibcException::LibcxxSystemErrorObject)));
+    _ZNSt3__18ios_base7failureC1EPKcRKNS_10error_codeE_nid_postfix(object, what, &code);
+    __cxa_throw_nid_postfix(object,
+        reinterpret_cast<std::type_info*>(const_cast<LibcException::TypeRecord*>(&_ZTINSt3__18ios_base7failureE_nid_postfix)),
+        reinterpret_cast<void (*)(void*)>(&_ZNSt3__18ios_base7failureD1Ev_nid_postfix));
+}
+
+static void CheckFailureThrow(const LibcException::CategoryObject* iostream) {
+    const LibcException::LibcxxErrorCode stream {1, 0, iostream};
+    bool caught = false;
+    try { ThrowFailure(stream, "badbit"); }
+    catch (const std::runtime_error& error) {
+        REQUIRE(__cxa_current_exception_type_nid_postfix() ==
+            reinterpret_cast<const std::type_info*>(&_ZTINSt3__18ios_base7failureE_nid_postfix));
+        const auto* object = reinterpret_cast<const LibcException::LibcxxSystemErrorObject*>(&error);
+        REQUIRE(FailureWhat(*object) == "badbit: unspecified iostream_category error");
+        REQUIRE(object->code.value == 1 && object->code.category == iostream);
+        REQUIRE(TypeOf(object->base.vtable)->base == &_ZTINSt3__112system_errorE_nid_postfix);
+        caught = true;
+    }
+    REQUIRE(caught);
+    caught = false;
+    try { ThrowFailure(stream, ""); }
+    catch (const std::exception& error) {
+        const auto* object = reinterpret_cast<const LibcException::LibcxxSystemErrorObject*>(&error);
+        REQUIRE(FailureWhat(*object) == "unspecified iostream_category error");
+        caught = true;
+    }
+    REQUIRE(caught);
+}
+
 int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
@@ -249,6 +403,10 @@ int main() {
     REQUIRE(CheckThrow(0, "no error", "no error") == system);
     REQUIRE(CheckThrow(97, "", "unspecified system_category error") == system);
     CheckSystemCategory(system, generic);
+    const LibcException::CategoryObject* iostream = _ZNSt3__117iostream_categoryEv_nid_postfix();
+    CheckIostreamCategory(iostream, generic);
+    CheckFailure(iostream, generic);
+    CheckFailureThrow(iostream);
     bool rejected = false;
     try { _ZNSt3__120__throw_system_errorEiPKc_nid_postfix(5, nullptr); }
     catch (const std::invalid_argument&) { rejected = true; }

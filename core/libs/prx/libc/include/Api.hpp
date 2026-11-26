@@ -1830,6 +1830,13 @@ void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS
 void APS5_VABI _ZNSt3__112system_errorD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
 void APS5_VABI _ZNSt3__112system_errorD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
 [[noreturn]] void APS5_VABI _ZNSt3__120__throw_system_errorEiPKc_nid_postfix(int value, const char* what);
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__117iostream_categoryEv_nid_postfix() noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__18ios_base7failureE_nid_postfix;
+extern const LibcException::ExceptionVtable _ZTVNSt3__18ios_base7failureE_nid_postfix;
+void APS5_VABI _ZNSt3__18ios_base7failureC1EPKcRKNS_10error_codeE_nid_postfix(LibcException::LibcxxSystemErrorObject* self, const char* what, const LibcException::LibcxxErrorCode* code);
+void APS5_VABI _ZNSt3__18ios_base7failureC1ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEERKNS_10error_codeE_nid_postfix(LibcException::LibcxxSystemErrorObject* self, const void* what, const LibcException::LibcxxErrorCode* code);
+void APS5_VABI _ZNSt3__18ios_base7failureD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
+void APS5_VABI _ZNSt3__18ios_base7failureD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self);
