@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import os
 import re
@@ -307,7 +308,9 @@ def main(argv=None):
         counts = Counter(label for row in rows for label in row["labels"])
         print(f"{len(rows)} entries: " + ", ".join(f"{count} {label}" for label, count in counts.most_common()))
         sys.stdout.flush()
-    except BrokenPipeError:
+    except OSError as exc:
+        if not (isinstance(exc, BrokenPipeError) or (sys.platform == "win32" and exc.errno == errno.EINVAL)):
+            raise
         devnull = os.open(os.devnull, os.O_WRONLY)
         try:
             os.dup2(devnull, sys.stdout.fileno())
