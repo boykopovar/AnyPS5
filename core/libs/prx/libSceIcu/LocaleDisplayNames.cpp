@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/LocaleDisplayNamesBackend.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -144,7 +145,7 @@ ULocaleDisplayNames* APS5_VABI uldn_openForContext_nid_postfix(const char* local
         return nullptr;
     }
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     std::vector<std::int32_t> hostContexts;
     if (contexts && length > 0) {
         hostContexts.resize(static_cast<std::size_t>(length));
