@@ -1,0 +1,9 @@
+# relinker
+
+## change [MULX lowering]
+
+- Execution of a title using [MULX lowering](../../../core/relinker/codegen/src/x86/MulxLowering.cpp) under Rosetta and fault delivery in a converted title have not been verified. The lowering test passes under Rosetta on an M5 with macOS 26.2. The Rosetta host observations below predate this lowering for MULX. The stub uses 192 bytes below RSP, leaving the 128-byte red zone intact; direct RSP references to its spill slots throw, while aliases through other registers are not detected. A 64-bit stack-relative displacement that exceeds signed disp32 after reserving the spill frame throws. A fault probe covers a `PROT_NONE` memory source: exactly one `SIGSEGV` or `SIGBUS`, `si_addr` inside that page, every general register except RSP unchanged, and RSP 192 bytes below the guest RSP with the faulting RIP inside the stub, so the delivery is not guest-precise.
+
+## change [ANDN lowering]
+
+- [ANDN lowering](../../../core/relinker/codegen/src/x86/AndnLowering.cpp) uses scalar NOT and AND for 32- and 64-bit register and memory operands under `--to-rosetta`, following the ANDN entry in [Intel SDM volume 2A](https://cdrdv2-public.intel.com/812383/253666-sdm-vol-2a.pdf). SF and ZF follow the result, CF and OF clear, and AF and PF are undefined. The scratch register is saved below the 128-byte red zone. A 64-bit stack-relative displacement that exceeds signed disp32 after reserving the spill frame throws. The M1 test covers register overlap, RSP operands, memory addressing, RIP relocation, flags and red-zone preservation. A fault probe covers a `PROT_NONE` memory source: exactly one `SIGSEGV` or `SIGBUS`, `si_addr` in that page, no general register changed except RSP and the scratch, and RSP 144 bytes below the guest RSP with the faulting RIP inside the stub, so the delivery is not guest-precise; a converted title is unverified.

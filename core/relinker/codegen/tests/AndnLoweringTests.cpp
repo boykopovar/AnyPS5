@@ -1,6 +1,7 @@
 #include "LoweringExecution.hpp"
 #include <codegen/x86/AndnLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/ScalarLowering.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <array>
@@ -171,8 +172,43 @@ void execution() {
         }
     }
 }
+
+#if LOWERING_FAULT_AVAILABLE
+void fault() {
+    constexpr std::uint8_t kBase = 1;
+    constexpr std::uint8_t kDestination = 9;
+    constexpr std::uint8_t kInvertedSource = 10;
+    constexpr std::uint64_t kStackShift = 144;
+    int delivered = 0;
+    for (const bool wide : {false, true}) {
+        auto site = instruction(wide, kDestination, kInvertedSource, kBase);
+        site[4] = static_cast<std::uint8_t>(((kDestination & 7) << 3) | (kBase & 7));
+        const auto operands = *Codegen::DecodeAndn(site.data(), site.size());
+        const auto run = executable(site, 0);
+        auto state = LoweringExecution::InitialState();
+        const auto observed = LoweringExecution::RunFault(run, state, kBase, LoweringExecution::FaultAccess::Load);
+        require(observed.Faults == 1 && !observed.Returned, "ANDN memory source did not fault exactly once inside its spill sequence");
+        require(observed.Signal == SIGSEGV || observed.Signal == SIGBUS, "ANDN fault delivery raised an unexpected signal");
+        require(observed.Address >= observed.Page && observed.Address < observed.Page + observed.PageLength, "ANDN fault address left the protected page");
+        require(observed.Stack + kStackShift == run.StackPointer(), "ANDN fault delivery changed the spill frame depth");
+        auto used = Codegen::ScalarLowering::UsedRegisters({operands.Destination, operands.InvertedSource}, operands.Memory);
+        const auto scratch = Codegen::ScalarLowering::Scratch(used, "ANDN");
+        for (std::size_t reg = 0; reg < 16; ++reg) {
+            if (reg == 4 || reg == scratch) continue;
+            require(observed.Registers[reg] == state.Input[reg], "ANDN fault delivery changed a register outside its scratch");
+        }
+        const auto mask = operands.Wide ? ~std::uint64_t{0} : 0xFFFFFFFFull;
+        require(observed.Registers[scratch] == (~state.Input[operands.InvertedSource] & mask), "ANDN fault delivery did not hold the inverted source in its scratch");
+        delivered = observed.Signal;
+    }
+    std::cout << "ANDN fault delivery checks passed with signal " << delivered << '\n';
+}
+#else
+void fault() { std::cout << "ANDN fault delivery checks require a Linux or macOS x86-64 build\n"; }
+#endif
 #else
 void execution() { std::cout << "ANDN execution checks require an x86-64 Linux, macOS or Windows build\n"; }
+void fault() { std::cout << "ANDN fault delivery checks require an x86-64 Linux or macOS build\n"; }
 #endif
 
 }
@@ -182,6 +218,7 @@ int main() {
         decoding();
         matching();
         execution();
+        fault();
         std::cout << "ANDN lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -3,6 +3,7 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/CodegenException.hpp>
+#include "LoweringExecution.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -373,8 +374,40 @@ void execution() {
     }
     std::cout << "Executed 73,868 MULX cases with register, flag and red-zone checks\n";
 }
+
+#if LOWERING_FAULT_AVAILABLE
+void fault() {
+    constexpr std::uint8_t kBase = 1;
+    constexpr std::uint8_t kHighDestination = 9;
+    constexpr std::uint8_t kLowDestination = 10;
+    constexpr std::uint64_t kStackShift = 192;
+    int delivered = 0;
+    for (const bool wide : {false, true}) {
+        auto site = instruction(wide, kHighDestination, kLowDestination, kBase);
+        site[4] = static_cast<std::uint8_t>(((kHighDestination & 7) << 3) | (kBase & 7));
+        const LoweringExecution::Execution run(site, 0, false, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
+            Codegen::EmitMulx(body, *Codegen::DecodeMulx(relocated.data(), relocated.size()));
+        });
+        auto state = LoweringExecution::InitialState();
+        const auto observed = LoweringExecution::RunFault(run, state, kBase, LoweringExecution::FaultAccess::Load);
+        require(observed.Faults == 1 && !observed.Returned, "MULX memory source did not fault exactly once inside its spill sequence");
+        require(observed.Signal == SIGSEGV || observed.Signal == SIGBUS, "MULX fault delivery raised an unexpected signal");
+        require(observed.Address >= observed.Page && observed.Address < observed.Page + observed.PageLength, "MULX fault address left the protected page");
+        require(observed.Stack + kStackShift == run.StackPointer(), "MULX fault delivery changed the spill frame depth");
+        for (std::size_t reg = 0; reg < 16; ++reg) {
+            if (reg == 4) continue;
+            require(observed.Registers[reg] == state.Input[reg], "MULX fault delivery left a spill temporary modified");
+        }
+        delivered = observed.Signal;
+    }
+    std::cout << "MULX fault delivery checks passed with signal " << delivered << '\n';
+}
+#else
+void fault() { std::cout << "MULX fault delivery checks require a Linux or macOS x86-64 build\n"; }
+#endif
 #else
 void execution() { std::cout << "MULX execution checks require an x86-64 build\n"; }
+void fault() { std::cout << "MULX fault delivery checks require an x86-64 build\n"; }
 #endif
 
 }
@@ -384,6 +417,7 @@ int main() {
         decoding();
         matching();
         execution();
+        fault();
         std::cout << "MULX lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -14,6 +14,9 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#if !defined(__APPLE__)
+#include <ucontext.h>
+#endif
 #define LOWERING_EXECUTION_AVAILABLE 1
 #elif defined(_WIN32) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <windows.h>
@@ -22,6 +25,12 @@
 #define LOWERING_EXECUTION_AVAILABLE 1
 #else
 #define LOWERING_EXECUTION_AVAILABLE 0
+#endif
+
+#if LOWERING_EXECUTION_AVAILABLE && !defined(_WIN32)
+#define LOWERING_FAULT_AVAILABLE 1
+#else
+#define LOWERING_FAULT_AVAILABLE 0
 #endif
 
 namespace LoweringExecution {
@@ -285,6 +294,12 @@ public:
 
     void Run(State& state) const { Call(code, entry, &state); }
     const void* Memory() const { return code + 4096 + 24; }
+    const std::uint8_t* Code() const { return code; }
+    std::uint64_t StackPointer() const {
+        std::uint64_t value = 0;
+        std::memcpy(&value, code + 4096 + 8, sizeof(value));
+        return value;
+    }
 
 private:
     Bytes bytes;
@@ -316,6 +331,132 @@ private:
         append32(displacement);
     }
 };
+
+#if LOWERING_FAULT_AVAILABLE
+
+enum class FaultAccess { Load, Store };
+
+struct FaultObservation {
+    std::array<std::uint64_t, 16> Registers{};
+    std::uint64_t Address = 0;
+    std::uint64_t Instruction = 0;
+    std::uint64_t Stack = 0;
+    std::uint64_t Page = 0;
+    std::uint64_t PageLength = 0;
+    std::size_t Faults = 0;
+    int Signal = 0;
+    bool Returned = false;
+};
+
+struct FaultProbe {
+    sigjmp_buf Jump{};
+    FaultObservation Observation{};
+    std::uint64_t Code = 0;
+    std::uint64_t Length = 0;
+};
+
+inline FaultProbe& FaultProbeState() {
+    static FaultProbe probe;
+    return probe;
+}
+
+inline FaultObservation FaultContext(const int number, const siginfo_t& info, const ucontext_t& context) {
+    FaultObservation observation;
+    observation.Signal = number;
+    observation.Address = reinterpret_cast<std::uint64_t>(info.si_addr);
+#if defined(__APPLE__)
+    const auto& state = context.uc_mcontext->__ss;
+    observation.Registers = {state.__rax, state.__rcx, state.__rdx, state.__rbx, state.__rsp, state.__rbp,
+        state.__rsi, state.__rdi, state.__r8, state.__r9, state.__r10, state.__r11, state.__r12, state.__r13,
+        state.__r14, state.__r15};
+    observation.Instruction = static_cast<std::uint64_t>(state.__rip);
+    observation.Stack = static_cast<std::uint64_t>(state.__rsp);
+#else
+    const auto* const state = context.uc_mcontext.gregs;
+    observation.Registers = {static_cast<std::uint64_t>(state[REG_RAX]), static_cast<std::uint64_t>(state[REG_RCX]),
+        static_cast<std::uint64_t>(state[REG_RDX]), static_cast<std::uint64_t>(state[REG_RBX]),
+        static_cast<std::uint64_t>(state[REG_RSP]), static_cast<std::uint64_t>(state[REG_RBP]),
+        static_cast<std::uint64_t>(state[REG_RSI]), static_cast<std::uint64_t>(state[REG_RDI]),
+        static_cast<std::uint64_t>(state[REG_R8]), static_cast<std::uint64_t>(state[REG_R9]),
+        static_cast<std::uint64_t>(state[REG_R10]), static_cast<std::uint64_t>(state[REG_R11]),
+        static_cast<std::uint64_t>(state[REG_R12]), static_cast<std::uint64_t>(state[REG_R13]),
+        static_cast<std::uint64_t>(state[REG_R14]), static_cast<std::uint64_t>(state[REG_R15])};
+    observation.Instruction = static_cast<std::uint64_t>(state[REG_RIP]);
+    observation.Stack = static_cast<std::uint64_t>(state[REG_RSP]);
+#endif
+    return observation;
+}
+
+inline void FaultHandler(const int number, siginfo_t* info, void* context) {
+    auto& probe = FaultProbeState();
+    auto observation = FaultContext(number, *info, *static_cast<const ucontext_t*>(context));
+    if (observation.Instruction < probe.Code || observation.Instruction >= probe.Code + probe.Length) {
+        signal(number, SIG_DFL);
+        return;
+    }
+    observation.Faults = 1;
+    probe.Observation = observation;
+    siglongjmp(probe.Jump, 1);
+}
+
+inline FaultObservation RunFault(const Execution& execution, State& state, const std::uint8_t base, const FaultAccess access) {
+    if (base >= state.Input.size() || base == 4 || base == 7) throw std::runtime_error("The fault probe base register is not loaded by the execution wrapper");
+    std::vector<std::uint8_t> signalStack(64 * 1024);
+    const auto page = PageSize();
+    auto* const guarded = AllocatePages(page);
+    if (!guarded) throw std::runtime_error("Cannot allocate the fault probe page");
+    if (mprotect(guarded, page, access == FaultAccess::Store ? PROT_READ : PROT_NONE) != 0) {
+        FreePages(guarded, page);
+        throw std::runtime_error("Cannot protect the fault probe page");
+    }
+    stack_t alternate{};
+    alternate.ss_sp = signalStack.data();
+    alternate.ss_size = signalStack.size();
+    alternate.ss_flags = 0;
+    stack_t previousStack{};
+    if (sigaltstack(&alternate, &previousStack) != 0) {
+        FreePages(guarded, page);
+        throw std::runtime_error("Cannot install the fault probe signal stack");
+    }
+    struct sigaction action {};
+    action.sa_sigaction = FaultHandler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    struct sigaction previousSegv {};
+    struct sigaction previousBus {};
+    if (sigaction(SIGSEGV, &action, &previousSegv) != 0) {
+        sigaltstack(&previousStack, nullptr);
+        FreePages(guarded, page);
+        throw std::runtime_error("Cannot install the fault probe handler");
+    }
+    if (sigaction(SIGBUS, &action, &previousBus) != 0) {
+        sigaction(SIGSEGV, &previousSegv, nullptr);
+        sigaltstack(&previousStack, nullptr);
+        FreePages(guarded, page);
+        throw std::runtime_error("Cannot install the fault probe handler");
+    }
+    auto& probe = FaultProbeState();
+    probe.Observation = FaultObservation{};
+    probe.Code = reinterpret_cast<std::uint64_t>(execution.Code());
+    probe.Length = 4096;
+    state.Input[base] = reinterpret_cast<std::uint64_t>(guarded);
+    volatile bool returned = false;
+    if (sigsetjmp(probe.Jump, 1) == 0) {
+        execution.Run(state);
+        returned = true;
+    }
+    sigaction(SIGSEGV, &previousSegv, nullptr);
+    sigaction(SIGBUS, &previousBus, nullptr);
+    sigaltstack(&previousStack, nullptr);
+    FreePages(guarded, page);
+    auto observation = probe.Observation;
+    observation.Page = reinterpret_cast<std::uint64_t>(guarded);
+    observation.PageLength = page;
+    observation.Returned = returned;
+    return observation;
+}
+
+#endif
 
 #endif
 
