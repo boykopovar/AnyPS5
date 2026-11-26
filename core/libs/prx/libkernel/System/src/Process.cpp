@@ -1465,7 +1465,8 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
-    std::int64_t tableSize = limit.rlim_cur;
+    constexpr std::int64_t ConsoleMaxFilesPerProc = 12555;
+    std::int64_t tableSize = std::min(limit.rlim_cur, ConsoleMaxFilesPerProc);
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
