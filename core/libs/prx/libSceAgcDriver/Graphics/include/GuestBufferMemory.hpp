@@ -139,6 +139,7 @@ std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
+void SettleOwnImports(const Context& context, std::uint64_t address, std::size_t bytes);
 std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).

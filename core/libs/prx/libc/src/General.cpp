@@ -176,8 +176,11 @@ bool CaseInsensitiveDirectoryWindows(const std::filesystem::path& directory) {
     const std::unique_ptr<void, decltype(&CloseHandle)> owner(handle, &CloseHandle);
     struct { ULONG flags; } information{};
     constexpr auto caseSensitiveInfo = static_cast<FILE_INFO_BY_HANDLE_CLASS>(23);
-    return GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)) &&
-        (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    if (GetFileInformationByHandleEx(handle, caseSensitiveInfo, &information, sizeof(information)))
+        return (information.flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR) == 0;
+    const auto error = GetLastError();
+    return error == ERROR_CALL_NOT_IMPLEMENTED || error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED ||
+        error == ERROR_INVALID_FUNCTION;
 }
 
 std::error_code MatchNamesWindows(const std::filesystem::path& directory, std::span<NameMatch> names) {

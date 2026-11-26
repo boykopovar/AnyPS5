@@ -293,8 +293,10 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
         if (!stream->SwitchToReading()) { errno = errno != 0 ? GuestErrnoFromHost_nid_no_patch(errno) : previousError; return -1; }
         errno = previousError;
     }
+    const bool wasLive = stream->PushbackLive();
     const int result = stream->PushBack(value);
     stream->SyncStatus();
+    if (result != EOF && stream->IsRegularFile()) stream->NotePushedBackByte(static_cast<char>(result), wasLive);
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
