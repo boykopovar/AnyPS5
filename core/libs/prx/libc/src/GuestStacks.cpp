@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <iterator>
@@ -100,6 +101,7 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
     if (entry == nullptr) throw std::invalid_argument("Guest main stack requires an entry point");
     const auto host = CurrentBounds();
     constexpr std::size_t guardBytes = 0x10000;
+    constexpr std::uint16_t initialFpuControl = 0x037f;
     if (host.base <= host.deallocation || host.base - host.deallocation > std::numeric_limits<std::size_t>::max() - guardBytes)
         throw std::runtime_error("Cannot obtain the host main stack capacity");
     const auto capacity = host.base - host.deallocation;
@@ -122,6 +124,8 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
         entered.clear();
         throw;
     }
+    GuestCpu::X87ClearExceptions();
+    GuestCpu::SetX87Control(initialFpuControl);
     CONTEXT context{};
     RtlCaptureContext(&context);
     context.Rsp = low + capacity - 40;
