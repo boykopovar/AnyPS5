@@ -1071,51 +1071,14 @@ struct LibContextState {
     void* mapping;
     std::uint64_t mappingSize;
     void* context;
+    std::uint32_t operations;
+    bool terminated;
+    bool released;
 };
 
 static constexpr std::uint64_t LibContextMagic = 0x4e50434c49424354ULL;
 static std::mutex g_libContextGuard;
 static std::vector<LibContextState*> g_libContextStates;
-
-static LibContextState* FindLibContextLocked(void* libContext) {
-    if (libContext == nullptr) return nullptr;
-    void* stored = nullptr;
-    std::memcpy(&stored, libContext, sizeof(stored));
-    if (stored == nullptr) return nullptr;
-    for (LibContextState* state : g_libContextStates) {
-        if (state == stored && state->magic == LibContextMagic) return state;
-    }
-    return nullptr;
-}
-
-static LibContextState* LibContextStateFor(void* libContext) {
-    std::lock_guard<std::mutex> lock(g_libContextGuard);
-    return FindLibContextLocked(libContext);
-}
-
-static void* LibContextAllocate(void* libContext, const std::size_t size) {
-    if (libContext == nullptr) return std::malloc(size);
-    LibContextState* state = LibContextStateFor(libContext);
-    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
-    return sceLibcMspaceMalloc_nid_postfix(state->mspace, size);
-}
-
-static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
-    if (libContext == nullptr) return std::realloc(object, size);
-    LibContextState* state = LibContextStateFor(libContext);
-    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
-    return sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size);
-}
-
-static void LibContextDeallocate(void* libContext, void* object) {
-    if (object == nullptr) return;
-    if (libContext == nullptr) {
-        std::free(object);
-        return;
-    }
-    LibContextState* state = LibContextStateFor(libContext);
-    if (state != nullptr) sceLibcMspaceFree_nid_postfix(state->mspace, object);
-}
 
 static void ReleaseLibContextArena(LibContextState* state) {
     if (state == nullptr) return;
@@ -1131,6 +1094,90 @@ static void ReleaseLibContextArena(LibContextState* state) {
     }
 }
 
+static LibContextState* FindLibContextLocked(void* libContext) {
+    if (libContext == nullptr) return nullptr;
+    void* stored = nullptr;
+    std::memcpy(&stored, libContext, sizeof(stored));
+    for (LibContextState* state : g_libContextStates) {
+        if (state->magic != LibContextMagic || state->context != libContext) continue;
+        if (state->terminated || state == stored) return state;
+    }
+    return nullptr;
+}
+
+static LibContextState* AcquireLibContextLocked(void* libContext) {
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state != nullptr) ++state->operations;
+    return state;
+}
+
+static LibContextState* AcquireLibContext(void* libContext) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    return AcquireLibContextLocked(libContext);
+}
+
+static void ReleaseLibContext(LibContextState* state) {
+    bool release = false;
+    {
+        std::lock_guard<std::mutex> lock(g_libContextGuard);
+        release = --state->operations == 0 && state->released;
+    }
+    if (release) ReleaseLibContextArena(state);
+}
+
+static void DetachLibContextLocked(LibContextState* state) {
+    for (auto it = g_libContextStates.begin(); it != g_libContextStates.end(); ++it) {
+        if (*it == state) {
+            g_libContextStates.erase(it);
+            return;
+        }
+    }
+}
+
+static void* LibContextAllocate(void* libContext, const std::size_t size) {
+    if (libContext == nullptr) return std::malloc(size);
+    LibContextState* state = AcquireLibContext(libContext);
+    if (state == nullptr || state->terminated) {
+        if (state != nullptr) ReleaseLibContext(state);
+        throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
+    }
+    void* block = sceLibcMspaceMalloc_nid_postfix(state->mspace, size);
+    ReleaseLibContext(state);
+    return block;
+}
+
+static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
+    if (libContext == nullptr) return std::realloc(object, size);
+    LibContextState* state = AcquireLibContext(libContext);
+    if (state == nullptr || state->terminated) {
+        if (state != nullptr) ReleaseLibContext(state);
+        throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
+    }
+    void* block = sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size);
+    ReleaseLibContext(state);
+    return block;
+}
+
+static void LibContextDeallocate(void* libContext, void* object) {
+    if (object == nullptr) return;
+    if (libContext == nullptr) {
+        std::free(object);
+        return;
+    }
+    LibContextState* state = AcquireLibContext(libContext);
+    if (state == nullptr) return;
+    sceLibcMspaceFree_nid_postfix(state->mspace, object);
+    ReleaseLibContext(state);
+}
+
+static bool LibContextMspace(void* libContext, void** mspace) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state == nullptr) return false;
+    *mspace = state->mspace;
+    return true;
+}
+
 void* NpCppWebApiContextAllocate(void* libContext, std::size_t size) {
     return LibContextAllocate(libContext, size);
 }
@@ -1140,8 +1187,8 @@ void NpCppWebApiContextDeallocate(void* libContext, void* object) {
 }
 
 void* NpCppWebApiContextMspace(void* libContext) {
-    LibContextState* state = LibContextStateFor(libContext);
-    return state != nullptr ? state->mspace : nullptr;
+    void* mspace = nullptr;
+    return LibContextMspace(libContext, &mspace) ? mspace : nullptr;
 }
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V129SetDataInfoRequestBodyFactory6createEPNS1_6Common10LibContextEPvmPNS5_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self) {
     (void)self;
@@ -1330,11 +1377,31 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(uint64_t* self) {
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(const void* params, uint64_t* context) {
     if (context == nullptr) return LibContextInvalidArgument;
+    LibContextState* previous = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_libContextGuard);
-        if (FindLibContextLocked(context) != nullptr) return LibContextAlreadyInitialized;
+        LibContextState* existing = FindLibContextLocked(context);
+        if (existing != nullptr && !existing->terminated) return LibContextAlreadyInitialized;
     }
     if (params == nullptr) return LibContextInvalidArgument;
+    {
+        std::lock_guard<std::mutex> lock(g_libContextGuard);
+        LibContextState* existing = FindLibContextLocked(context);
+        if (existing != nullptr) {
+            if (!existing->terminated) return LibContextAlreadyInitialized;
+            DetachLibContextLocked(existing);
+            existing->released = true;
+            previous = existing;
+        }
+    }
+    if (previous != nullptr) {
+        bool release = false;
+        {
+            std::lock_guard<std::mutex> lock(g_libContextGuard);
+            release = previous->operations == 0;
+        }
+        if (release) ReleaseLibContextArena(previous);
+    }
 
     std::uint64_t mode = 0;
     std::int32_t arenaSize = 0x80000;
@@ -1505,10 +1572,11 @@ static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceC
     if (self->deleter != nullptr) {
         self->deleter(self->object);
     } else {
-        LibContextState* state = LibContextStateFor(self->libContext);
+        LibContextState* state = AcquireLibContext(self->libContext);
         if (state != nullptr) {
             if (destroy != nullptr) destroy(self->object);
             sceLibcMspaceFree_nid_postfix(state->mspace, self->object);
+            ReleaseLibContext(state);
         }
     }
     self->object = nullptr;
@@ -1793,20 +1861,13 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(uint64_t* context) {
     if (context == nullptr) return LibContextNotInitialized;
-    LibContextState* state = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_libContextGuard);
-        state = FindLibContextLocked(context);
-        if (state == nullptr) return LibContextNotInitialized;
-        for (auto it = g_libContextStates.begin(); it != g_libContextStates.end(); ++it) {
-            if (*it == state) {
-                g_libContextStates.erase(it);
-                break;
-            }
-        }
+        LibContextState* state = FindLibContextLocked(context);
+        if (state == nullptr || state->terminated) return LibContextNotInitialized;
+        state->terminated = true;
     }
     *context = 0;
-    ReleaseLibContextArena(state);
     return 0;
 }
 

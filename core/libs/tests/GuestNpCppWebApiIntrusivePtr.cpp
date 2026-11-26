@@ -661,6 +661,52 @@ static void TestLibContextLifecycle() {
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(nullptr) == ExpectedNotInitialized);
 }
 
+static void TestObjectsOutlivingContext() {
+    alignas(8) unsigned char params[0x28];
+    std::memset(params, 0, sizeof(params));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
+    std::uint64_t context = 0;
+    _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(&context);
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0);
+
+    MallocManagedSize baseline{};
+    baseline.size = sizeof(baseline);
+    Require(sceLibcMspaceMallocStats_nid_postfix(NpCppWebApiContextMspace(&context), &baseline) == 0);
+
+    auto* string = static_cast<CommonString*>(NpCppWebApiContextAllocate(&context, sizeof(CommonString)));
+    Require(string != nullptr);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(string, &context);
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(string, "terminate") == 0);
+    WriteCount(reinterpret_cast<unsigned char*>(string), 0, 1);
+    IntrusivePtr stringPointer{string, nullptr, &context};
+
+    auto* body = static_cast<unsigned char*>(NpCppWebApiContextAllocate(&context, ObjectSize));
+    Require(body != nullptr);
+    std::memset(body, 0, ObjectSize);
+    IntrusivePtr vectorPointer;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PNS2_10LibContextE(&vectorPointer, body, &context);
+
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
+    Require(context == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == ExpectedNotInitialized);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEED1Ev(&stringPointer);
+    Require(stringPointer.object == nullptr);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&vectorPointer);
+    Require(vectorPointer.object == nullptr);
+
+    MallocManagedSize after{};
+    after.size = sizeof(after);
+    Require(sceLibcMspaceMallocStats_nid_postfix(NpCppWebApiContextMspace(&context), &after) == 0);
+    Require(after.currentInuseSize == baseline.currentInuseSize);
+
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0);
+    auto* reused = static_cast<unsigned char*>(NpCppWebApiContextAllocate(&context, ObjectSize));
+    Require(reused != nullptr);
+    NpCppWebApiContextDeallocate(&context, reused);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
+}
+
 static void TestUserProfileModelAndTransaction() {
     std::uint8_t profile[0xd0];
     std::memset(profile, 0xa5, sizeof(profile));
@@ -1156,6 +1202,7 @@ int main(int argc, char** argv) {
     TestDeleterlessStringDestroysAndFrees();
     TestDeleterlessStringVector();
     TestLibContextLifecycle();
+    TestObjectsOutlivingContext();
     TestUserProfilePublicProfileRequest();
     TestUserProfileBoolAndSize();
     TestResidualAccessors();
