@@ -116,10 +116,7 @@ def read_records(data):
     return records
 
 
-def parse_elf(data):
-    inner = data.find(b"\x7fELF")
-    if inner < 0:
-        raise Refused("no inner ELF header")
+def parse_elf_at(data, inner):
     if inner + 0x40 > len(data):
         raise Refused("inner ELF header is truncated")
     header = bytearray(data[inner:inner + 0x40])
@@ -166,6 +163,22 @@ def parse_elf(data):
             "align": alignment, "source": file_offset, "host": None, "container": None,
         })
     return inner, header, headers
+
+
+
+def parse_elf(data):
+    inner = data.find(b"\x7fELF")
+    if inner < 0:
+        raise Refused("no inner ELF header")
+    first_error = None
+    while inner >= 0:
+        try:
+            return parse_elf_at(data, inner)
+        except Refused as error:
+            if first_error is None:
+                first_error = error
+        inner = data.find(b"\x7fELF", inner + 1)
+    raise first_error
 
 
 def place_segments(data, headers, records):

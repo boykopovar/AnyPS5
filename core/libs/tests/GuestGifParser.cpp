@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cerrno>
 #include <cstddef>
@@ -15,6 +16,12 @@
 #include <variant>
 #include <vector>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -249,9 +256,189 @@ void TestRead() {
     Require(_ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() == 0);
 }
 
+struct Given {
+    const std::array<std::uintptr_t, 11>* vtable;
+    std::vector<std::pair<std::string, std::string>> texts;
+    std::vector<std::string> asked;
+    int missing = 1;
+};
+
+int APS5_VABI GetKey(Given* meta, const String* name, Value* value) {
+    Require(sceSysmoduleIsLoadedInternal(0x80000020u) == 0);
+    Require(value->type == 2);
+    const std::string key(name->capacity < 16 ? name->bytes : name->pointer, name->size);
+    meta->asked.push_back(key);
+    for (const auto& [given, text] : meta->texts) {
+        if (given != key) continue;
+        value->size = static_cast<std::int64_t>(text.size());
+        value->text = text.c_str();
+        return 0;
+    }
+    return meta->missing;
+}
+
+std::string Block(const char* id, const std::string& text) {
+    std::string block;
+    Append(block, {0x21, 0xff, 11});
+    block.append(id, 8);
+    block.append(3, '\0');
+    for (std::size_t pos = 0; pos < text.size(); pos += 255) {
+        const auto count = std::min<std::size_t>(255, text.size() - pos);
+        block.push_back(static_cast<char>(count));
+        block.append(text, pos, count);
+    }
+    block.push_back(0);
+    return block;
+}
+
+std::string Contents(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+}
+
+void TestWrite() {
+    const std::string path = "/a.b.GIF";
+    const auto guestPath = MakeString(path);
+    const std::filesystem::path host = "a.b.GIF";
+    const std::filesystem::path temporary = "user/av_contents/content_tmp/DFC73C9C-72CB-4609-AC4C-82D98752290C.gif";
+    std::array<std::uintptr_t, 11> slots{};
+    slots[2] = reinterpret_cast<std::uintptr_t>(GetKey);
+    slots[3] = reinterpret_cast<std::uintptr_t>(SetKey);
+    slots[10] = reinterpret_cast<std::uintptr_t>(KeyCount);
+    std::array<std::uintptr_t, 11> config{};
+    config[0] = reinterpret_cast<std::uintptr_t>(Allocate);
+    config[3] = reinterpret_cast<std::uintptr_t>(Release);
+    Require(libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(config.data()) == 0);
+    const auto initiallyLoaded = sceSysmoduleIsLoadedInternal(0x80000020u);
+    auto write = [&](const std::string& source, std::vector<std::pair<std::string, std::string>> texts) {
+        if (!source.empty() || std::filesystem::exists(host)) {
+            std::ofstream stream(host, std::ios::binary | std::ios::trunc);
+            stream.write(source.data(), static_cast<std::streamsize>(source.size()));
+            stream.close();
+            Require(stream.good());
+        }
+        Given meta{&slots, std::move(texts)};
+        const int result = libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(&guestPath, &meta);
+        Require(meta.asked == std::vector<std::string>({"title", "comment"}));
+        Require(sceSysmoduleIsLoadedInternal(0x80000020u) == initiallyLoaded);
+        Require(!std::filesystem::exists(temporary));
+        return result;
+    };
+    std::string header = "GIF89a";
+    Append(header, {10, 0, 6, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255});
+    std::string frame;
+    Frame(frame, 10);
+    const std::string plain = header + frame + "\x3b";
+    const std::string title = "New title";
+    const std::string comment = "New comment";
+
+    Require(write(plain, {{"title", title}, {"comment", comment}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_CM", comment) + Block("PSGIF_TI", title) + frame + "\x3b");
+    Require(write(plain, {{"title", title}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_TI", title) + frame + "\x3b");
+
+    {
+        const auto writeFile = [](const std::filesystem::path& name, const std::string& bytes) {
+            std::ofstream stream(name, std::ios::binary);
+            stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            stream.close();
+            Require(stream.good());
+        };
+        writeFile(host, plain);
+        writeFile(temporary, plain);
+        const std::string temporaryGuestPath = "/" + temporary.generic_string();
+        for (const auto& target : {path, temporaryGuestPath}) {
+            const auto input = MakeString(target);
+            Given meta{&slots, {{"title", title}}};
+            bool rejected = false;
+            try {
+                libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(&input, &meta);
+            } catch (const std::runtime_error&) {
+                rejected = true;
+            }
+            Require(rejected && Contents(host) == plain && Contents(temporary) == plain);
+        }
+        Require(std::filesystem::remove(temporary));
+#ifdef _WIN32
+        const auto locked = CreateFileW(host.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Require(locked != INVALID_HANDLE_VALUE);
+        bool renameFailed = false;
+        try {
+            Given meta{&slots, {{"title", title}}};
+            libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(&guestPath, &meta);
+        } catch (const std::runtime_error&) {
+            renameFailed = true;
+        }
+        CloseHandle(locked);
+        Require(renameFailed && Contents(host) == plain && !std::filesystem::exists(temporary));
+#endif
+    }
+    const std::string oldTitle = Block("PSGIF_TI", "Old title");
+    const std::string oldComment = Block("PSGIF_CM", "Old comment");
+    Require(write(header + oldTitle + frame + "\x3b", {{"title", title}, {"comment", comment}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_CM", comment) + Block("PSGIF_TI", title) + frame + "\x3b");
+    Require(write(header + oldComment + frame + "\x3b", {{"title", title}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_TI", title) + oldComment + frame + "\x3b");
+    Require(write(header + oldTitle + frame + "\x3b", {{"comment", comment}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_CM", comment) + oldTitle + frame + "\x3b");
+
+    std::string animation;
+    Frame(animation, 10);
+    Frame(animation, 20);
+    Frame(animation, 30);
+    Require(write(header + animation + "\x3b", {{"title", title}}) == 0);
+    Require(Contents(host) == header + Block("PSGIF_TI", title) + animation + "\x3b");
+    const std::string longTitle(300, 'L');
+    Require(write(plain, {{"title", longTitle}}) == 0);
+    const auto split = Contents(host);
+    Require(split == header + Block("PSGIF_TI", longTitle) + frame + "\x3b");
+    Require(static_cast<unsigned char>(split[header.size() + 14]) == 255 && static_cast<unsigned char>(split[header.size() + 14 + 256]) == 45);
+
+    const std::string tail = plain + "TAIL";
+    Require(write(tail, {}) == 0 && Contents(host) == tail);
+    Require(write(tail, {{"title", ""}, {"comment", ""}}) == 0 && Contents(host) == tail);
+
+    Require(write(header + oldTitle + frame + "\x3b", {{"title", title}, {"comment", comment}}) == 0);
+    std::array<std::uintptr_t, 11> readSlots{};
+    readSlots[3] = reinterpret_cast<std::uintptr_t>(SetKey);
+    readSlots[10] = reinterpret_cast<std::uintptr_t>(KeyCount);
+    Metadata request{&readSlots};
+    Metadata output{&readSlots};
+    Require(libSceGifParserUnknown_T8p1TeFElWo_nid_no_patch(&guestPath, &request, &output) == 0);
+    Require(output.fields[0] == Field("title", title) && output.fields[2] == Field("comment", comment));
+    Require(output.fields.back() == Field("total_frame", 1L));
+
+    std::string direct = header;
+    Image(direct);
+    direct.push_back(0x3b);
+    Require(write(direct, {{"title", title}}) == static_cast<int>(0x809D4038u) && Contents(host) == direct);
+    direct[4] = '7';
+    Require(write(direct, {{"title", title}}) == 0);
+    Require(Contents(host) == header.substr(0, 4) + "7" + header.substr(5) + Block("PSGIF_TI", title) + "\x3b");
+    Require(write("not a gif image file", {{"title", title}}) == static_cast<int>(0x809D4053u));
+    Require(Contents(host) == "not a gif image file");
+    std::filesystem::remove(host);
+    Require(write("", {{"title", title}}) == static_cast<int>(0x809D4038u) && !std::filesystem::exists(host));
+
+    bool refused = false;
+    try {
+        Given meta{&slots, {}, {}, 2};
+        static_cast<void>(libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(&guestPath, &meta));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused && sceSysmoduleIsLoadedInternal(0x80000020u) == initiallyLoaded);
+    Require(g_releases == g_allocations);
+    Require(_ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv() == 0);
+}
+
 }
 
 int main() {
+    const auto previous = std::filesystem::current_path();
+    const auto dir = std::filesystem::temp_directory_path() / ("anyps5-gif-write-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(dir));
+    std::filesystem::current_path(dir);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int unsupported = static_cast<int>(0x809D4054u);
@@ -290,5 +477,8 @@ int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     TestRead();
+    TestWrite();
+    std::filesystem::current_path(previous);
+    std::filesystem::remove_all(dir);
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
@@ -284,6 +285,118 @@ MIIB
     Require(remove_nid_postfix(notACertificate.c_str()) == 0);
 }
 
+constexpr const char* RevocationList = R"(-----BEGIN X509 CRL-----
+MIGuMFUCAQEwCgYIKoZIzj0EAwIwFjEUMBIGA1UEAwwLVGVzdCBDUkwgQ0EXDTI2
+MTEyMTE1MjI1NVoXDTM2MTExODE1MjI1NVqgDjAMMAoGA1UdFAQDAgEBMAoGCCqG
+SM49BAMCA0kAMEYCIQCP12Sr5s2pjAdUMvd6yUFCtgwdJWwkFWmJscniYJWVXAIh
+ANO8Nc/Po/a1Gxr3TdbTUv0sRf/cj173cilVRS8CHN2l
+-----END X509 CRL-----
+)";
+
+using Codes = std::vector<std::uint64_t>;
+
+constexpr std::uint64_t Error(std::uint64_t library, std::uint64_t reason) {
+    return library << 24 | 0xfffull << 12 | reason;
+}
+
+constexpr std::uint64_t EarlierError = Error(20, 67);
+constexpr std::uint64_t PemNoStartLine = Error(9, 108);
+constexpr std::uint64_t PemBadEndLine = Error(9, 102);
+constexpr std::uint64_t PemBadBase64 = Error(9, 100);
+constexpr std::uint64_t PemAsn1 = Error(9, 13);
+constexpr std::uint64_t X509Pem = Error(11, 9);
+constexpr std::uint64_t X509System = Error(11, 2);
+constexpr std::uint64_t X509NothingFound = Error(11, 136);
+constexpr std::uint64_t SystemNoEntry = Error(2, 2);
+constexpr std::uint64_t SystemNotDirectory = Error(2, 20);
+constexpr std::uint64_t BioNoSuchFile = Error(32, 128);
+constexpr std::uint64_t BioSystem = Error(32, 2);
+
+Codes Drain() {
+    Codes codes;
+    while (const std::uint64_t code = ERR_get_error_nid_postfix()) codes.push_back(code);
+    return codes;
+}
+
+Codes ErrorsOf(const std::string& path, std::uint64_t earlier, int expectedResult, int expectedObjects) {
+    LibreSslX509Store* store = NewStore();
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(static_cast<int>(earlier >> 24), 0xfff, static_cast<int>(earlier & 0xfff));
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == expectedResult);
+    const Codes codes = Drain();
+    Require(ObjectCount(store) == expectedObjects);
+    Throws([store] { X509_STORE_free_nid_postfix(store); });
+    return codes;
+}
+
+Codes ErrorsAfter(const std::string& contents, std::uint64_t earlier, int expectedResult, int expectedObjects) {
+    const std::string path = WriteFile("libressl3-load-locations-errors.pem", contents);
+    const Codes codes = ErrorsOf(path, earlier, expectedResult, expectedObjects);
+    Require(remove_nid_postfix(path.c_str()) == 0);
+    return codes;
+}
+
+void TestFileErrorQueue() {
+    const std::string unclosed = "-----BEGIN CERTIFICATE-----\nMIIB\n";
+    const std::string badBase64 = "-----BEGIN CERTIFICATE-----\nMIIB!!!\n-----END CERTIFICATE-----\n";
+    const std::string badDer = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    const std::string emptyRecord = "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n";
+    const std::string otherRecord = "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n";
+
+    Require(ErrorsAfter(std::string(CertificateA) + CertificateB, EarlierError, 1, 2).empty());
+    Require(ErrorsAfter(std::string(CertificateA) + CertificateA, EarlierError, 1, 1).empty());
+    Require(ErrorsAfter(std::string(CertificateA) + otherRecord + RevocationList, EarlierError, 1, 1).empty());
+
+    Require(ErrorsAfter("", EarlierError, 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter("no certificates here\n", EarlierError, 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter(otherRecord, EarlierError, 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter(RevocationList, EarlierError, 0, 0).empty());
+
+    Require(ErrorsAfter(unclosed, EarlierError, 0, 0) == (Codes{EarlierError, PemBadEndLine, X509Pem}));
+    Require(ErrorsAfter(std::string(CertificateA) + unclosed, EarlierError, 0, 0)
+        == (Codes{EarlierError, PemBadEndLine, X509Pem}));
+    Require(ErrorsAfter(badBase64, EarlierError, 0, 0) == (Codes{EarlierError, PemBadBase64, X509Pem}));
+    Require(ErrorsAfter(std::string(CertificateA) + badBase64 + CertificateB, EarlierError, 0, 0)
+        == (Codes{EarlierError, PemBadBase64, X509Pem}));
+
+    const Codes decode = ErrorsAfter(std::string(CertificateA) + badDer, EarlierError, 0, 0);
+    Require(decode.size() >= 4 && decode.front() == EarlierError);
+    Require(decode[decode.size() - 2] == PemAsn1 && decode.back() == X509Pem);
+    for (std::size_t index = 1; index + 2 < decode.size(); ++index) Require(decode[index] >> 24 == 13);
+
+    Require(ErrorsAfter(emptyRecord, EarlierError, 0, 0) == (Codes{EarlierError, X509Pem}));
+    Require(ErrorsAfter(std::string(CertificateA) + emptyRecord + CertificateB, EarlierError, 0, 0)
+        == (Codes{EarlierError, X509Pem}));
+    Require(ErrorsAfter(emptyRecord, PemNoStartLine, 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter(emptyRecord, Error(20, 108), 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter(emptyRecord, PemBadEndLine, 0, 0) == (Codes{PemBadEndLine, X509Pem}));
+    Require(ErrorsAfter(std::string(CertificateA) + emptyRecord + CertificateB, PemNoStartLine, 1, 1).empty());
+    Require(ErrorsAfter(emptyRecord + RevocationList, PemNoStartLine, 0, 0) == Codes{X509NothingFound});
+    Require(ErrorsAfter(unclosed, PemNoStartLine, 0, 0) == (Codes{PemNoStartLine, PemBadEndLine, X509Pem}));
+
+    Require(ErrorsOf("libressl3-load-locations-absent.pem", EarlierError, 0, 0)
+        == (Codes{EarlierError, SystemNoEntry, BioNoSuchFile, X509System}));
+    const std::filesystem::path plain = std::filesystem::temp_directory_path() / "anyps5-libressl3-load-locations-plain";
+    std::FILE* hostFile = std::fopen(plain.string().c_str(), "wb");
+    Require(hostFile != nullptr);
+    Require(std::fclose(hostFile) == 0);
+    AddPathAlias_nid_no_patch("/load-locations-plain", plain.string().c_str());
+    Require(ErrorsOf("/load-locations-plain/inner.pem", EarlierError, 0, 0)
+        == (Codes{EarlierError, SystemNotDirectory, BioSystem, X509System}));
+    RemovePathAlias_nid_no_patch("/load-locations-plain");
+    std::error_code ignored;
+    std::filesystem::remove(plain, ignored);
+
+    LibreSslX509Store* store = NewStore();
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(20, 0xfff, 67);
+    Require(X509_STORE_load_locations_nid_postfix(store, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(1)), nullptr) == 0);
+    Require(Drain() == Codes{EarlierError});
+    Require(X509_STORE_load_locations_nid_postfix(store, nullptr, nullptr) == 0);
+    Require(Drain().empty());
+    X509_STORE_free_nid_postfix(store);
+}
+
 std::string WithLineEnding(const char* pem, const std::string& ending) {
     std::string result;
     for (const char* p = pem; *p; ++p) {
@@ -316,9 +429,9 @@ void TestPemLines() {
     Require(LoadedFrom("libressl3-load-locations-short-begin.pem", std::string("-----BEGIN ----\n-----BEGIN CERTIFICATE---\n") + CertificateA, 1) == 1);
     Require(LoadedFrom("libressl3-load-locations-only-open.pem", "-----BEGIN CERTIFICATE\nMIIB\n", 0) == 0);
     const std::string broken = "-----BEGIN CERTIFICATE-----\nMIIB!!!\n-----END CERTIFICATE-----\n";
-    Require(LoadedFrom("libressl3-load-locations-kept.pem", std::string(CertificateA) + broken, 0) == 1);
-    Require(LoadedFrom("libressl3-load-locations-kept-two.pem", std::string(CertificateA) + CertificateB + broken + CertificateA, 0) == 2);
-    Require(LoadedFrom("libressl3-load-locations-unclosed.pem", std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n", 0) == 1);
+    Require(LoadedFrom("libressl3-load-locations-dropped.pem", std::string(CertificateA) + broken, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-dropped-two.pem", std::string(CertificateA) + CertificateB + broken + CertificateA, 0) == 0);
+    Require(LoadedFrom("libressl3-load-locations-unclosed.pem", std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n", 0) == 0);
     Require(LoadedFrom("libressl3-load-locations-first-broken.pem", broken + CertificateA, 0) == 0);
     Require(LoadedFrom("libressl3-load-locations-end-label.pem", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END X509 CRL-----\n", 0) == 0);
 }
@@ -383,11 +496,29 @@ void TestHashedDirectory() {
     LibreSslX509Object result{};
     const auto bySubject = reinterpret_cast<int (APS5_VABI*)(LibreSslX509Lookup*, int, LibreSslX509Name*, LibreSslX509Object*)>(
         lookup->method->getBySubject);
+    ERR_clear_error_nid_postfix();
     Require(bySubject(lookup, LibreSslX509LookupX509, &name, &result) == 1);
+    Require(Drain().empty());
     Require(result.type == LibreSslX509LookupX509 && result.data != nullptr);
     Require(ObjectCount(store) == 1);
     Require(result.data == StoredObject(store, 0)->data);
     Require(bySubject(lookup, LibreSslX509LookupX509, nullptr, &result) == 0);
+
+    const std::filesystem::path partialDirectory = std::filesystem::temp_directory_path() / "anyps5-libressl3-hashed-ca-partial";
+    std::filesystem::remove_all(partialDirectory, ignored);
+    Require(std::filesystem::create_directories(partialDirectory));
+    AddPathAlias_nid_no_patch("/ca-partial", partialDirectory.string().c_str());
+    WriteFile(std::string("/ca-partial/") + HashedNameA, std::string(CertificateA) + "-----BEGIN CERTIFICATE-----\nMIIB\n");
+    LibreSslX509Store* partial = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(partial, nullptr, "/ca-partial") == 1);
+    auto* partialLookup = reinterpret_cast<LibreSslX509Lookup*>(static_cast<const LibreSslStack*>(partial->lookupMethods)->data[0]);
+    LibreSslX509Object kept{};
+    Require(bySubject(partialLookup, LibreSslX509LookupX509, &name, &kept) == 1);
+    Require(ObjectCount(partial) == 1 && kept.data == StoredObject(partial, 0)->data);
+    Require(Throws([partial] { X509_STORE_free_nid_postfix(partial); }));
+    RemovePathAlias_nid_no_patch("/ca-partial");
+    std::filesystem::remove_all(partialDirectory, ignored);
+
     unsigned char bmpSubject[] = {0x00, 'T', 0x00, 'E', 0x00, 'S', 0x00, 'T', 0x00, ' ', 0x00, '\t', 0x00, 'C', 0x00, 'a',
         0x00, ' ', 0x00, 'A', 0x00, ' '};
     value = {static_cast<int>(sizeof(bmpSubject)), 30, bmpSubject};
@@ -619,6 +750,7 @@ int main() {
     TestNullArguments();
     TestMissingFile();
     TestEmptyAndMalformedFiles();
+    TestFileErrorQueue();
     TestPemLines();
     TestAddCertificate();
     TestUnreadablePath();

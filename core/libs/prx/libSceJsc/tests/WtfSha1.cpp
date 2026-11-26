@@ -155,7 +155,7 @@ PersistenceDecoder Decoder(const std::vector<std::uint8_t>& bytes) {
 
 bool Hashed(const PersistenceDecoder& decoder, const std::vector<std::uint8_t>& bytes) {
     return decoder.sha1.cursor == bytes.size() && decoder.sha1.totalBytes == bytes.size() &&
-        std::memcmp(decoder.sha1.buffer, bytes.data(), bytes.size()) == 0;
+        (bytes.empty() || std::memcmp(decoder.sha1.buffer, bytes.data(), bytes.size()) == 0);
 }
 
 OptionalCString DecodeCString(PersistenceDecoder& decoder) {
@@ -267,7 +267,7 @@ void DecodeStrings() {
         auto decoder = Decoder(latin1);
         const auto result = DecodeString(decoder);
         Check(result.hasValue && result.value, __LINE__);
-        Check(state.allocateCalls == 1 && state.lastAllocateSize == charactersOffset + 2, __LINE__);
+        Check(state.allocateCalls == 1 && state.lastAllocateSize == std::max<std::size_t>(sizeof(StringImpl), charactersOffset + 2), __LINE__);
         const StringImpl& string = *result.value;
         Check(string.refCount == 2 && string.length == 2 && string.hashAndFlags == Jsc::WtfAbi::StringImplFlag8Bit, __LINE__);
         Check(string.data == reinterpret_cast<const std::uint8_t*>(result.value) + charactersOffset, __LINE__);

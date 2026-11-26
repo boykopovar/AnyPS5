@@ -21,7 +21,7 @@ int CheckAudioDataBuffer(const void* data) {
 extern "C" {
 
 int APS5_VABI sceCameraIsAttached(int32_t index) {
-    if (index != 0) return SCE_CAMERA_ERROR_PARAM;
+    if (index < 0 || index > 1) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 
@@ -31,8 +31,7 @@ int APS5_VABI sceCameraGetDeviceIDWithoutOpen(void) {
 }
 
 int APS5_VABI sceCameraInitializeRegistryCalibData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_NOT_INIT;
 }
 
 int APS5_VABI sceCameraGetConnectedDeviceAndDriverMode(void) {
@@ -41,8 +40,7 @@ int APS5_VABI sceCameraGetConnectedDeviceAndDriverMode(void) {
 }
 
 int APS5_VABI sceCameraSetTrackerMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraGetCalibDataForEve(void) {
@@ -56,13 +54,11 @@ int APS5_VABI sceCameraIsConnectedForSystem(void) {
 }
 
 int APS5_VABI sceCameraSetRegister(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraSetVideoSyncInternal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraSetAttributeInternal(void) {
@@ -80,17 +76,14 @@ int APS5_VABI sceCameraGetVrCaptureInfo(void) {
 }
 
 int APS5_VABI sceCameraSetCalibDataForEve(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraSetCalibData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_NOT_INIT;
 }
 
-int APS5_VABI sceCameraSetProcessFocusByHandle(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCameraSetProcessFocusByHandle(std::int32_t) {
     return 0;
 }
 
@@ -103,14 +96,13 @@ int APS5_VABI sceCameraAudioClose(void) {
     return 0;
 }
 
-int APS5_VABI sceCameraChangeAppModuleState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraChangeAppModuleState(std::int32_t appModuleId) {
+    if (appModuleId == 0) return SCE_CAMERA_ERROR_MBIS_ACCESS_DENIED;
+    return SCE_CAMERA_ERROR_MBIS_FATAL;
 }
 
-int APS5_VABI sceCameraOpenByModuleId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraOpenByModuleId(std::int32_t) {
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCamera2GetCalibrationData(void) {
@@ -128,7 +120,6 @@ int APS5_VABI sceCameraGetCalibData(void) {
 }
 
 int APS5_VABI sceCameraWaitForEveReady(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -136,9 +127,8 @@ int APS5_VABI sceCameraAudioGetData2(void* data) {
     return CheckAudioDataBuffer(data);
 }
 
-int APS5_VABI sceCameraSetAppModuleFocus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraSetAppModuleFocus(std::int32_t, void*) {
+    return SCE_CAMERA_ERROR_MBIS_ACCESS_DENIED;
 }
 
 int APS5_VABI sceCameraGetDeviceID(void) {
@@ -146,13 +136,13 @@ int APS5_VABI sceCameraGetDeviceID(void) {
     return 0;
 }
 
-int APS5_VABI sceCameraSetForceActivate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraSetForceActivate(std::int32_t handle) {
+    if (handle == 0 || handle < 0) return SCE_CAMERA_ERROR_PARAM;
+    if (Camera::IsOpen(handle)) throw std::runtime_error("sceCameraSetForceActivate open handle");
+    return SCE_CAMERA_ERROR_NOT_OPEN;
 }
 
-int APS5_VABI sceCameraSetProcessFocus(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCameraSetProcessFocus(std::int32_t, void*) {
     return 0;
 }
 
@@ -161,7 +151,6 @@ int APS5_VABI sceCameraDeviceOpen(void) {
 }
 
 int APS5_VABI sceCameraSetUacModeInternal(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -181,8 +170,7 @@ int APS5_VABI sceCameraWaitForLukeReady(void) {
 }
 
 int APS5_VABI sceCameraSetDebugStop(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraIsConfigChangeDone(void) {
@@ -191,8 +179,7 @@ int APS5_VABI sceCameraIsConfigChangeDone(void) {
 }
 
 int APS5_VABI sceCameraSetVideoSync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraAudioReset(void) {

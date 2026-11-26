@@ -261,8 +261,7 @@ int APS5_VABI sceRegMgrGetStrInitVal(void) {
 }
 
 int APS5_VABI sceRegMgrGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x01140001);
 }
 
 int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
