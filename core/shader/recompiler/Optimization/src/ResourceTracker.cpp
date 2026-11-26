@@ -215,7 +215,10 @@ public:
             IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
             if (column.laneKey && plan.loaded == nullptr) fail("lane image table lacks its descriptor-load predicate");
             for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                const auto value = column.laneKey && argument == 1u ? plan.loaded : plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
+                const auto value = column.laneKey && argument == 1u ? plan.loaded
+                    : column.laneKey && argument == 2u ? (plan.observed != nullptr ? plan.observed : &m_builder.Constant(1u))
+                    : plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u)
+                    : offset;
                 plan.handle->ReplaceArgument(argument, value);
             }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
@@ -257,6 +260,7 @@ private:
         IrValue* offset = nullptr;
         IrValue* parentPointer = nullptr;
         IrValue* loaded = nullptr;
+        IrValue* observed = nullptr;
         std::vector<std::uint32_t> memory;
         std::vector<const IrValue*> reads;
         std::vector<std::uint32_t> hopMemory;
@@ -1400,8 +1404,8 @@ private:
             key = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
         }
         if (observed != nullptr) {
-            const std::array<IrValue*, 3> arguments {observed, plan.loaded, &m_builder.Constant(0u)};
-            plan.loaded = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
+            const std::array<IrValue*, 3> arguments {observed, &m_builder.Constant(1u), &m_builder.Constant(0u)};
+            plan.observed = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
         }
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
@@ -1410,6 +1414,7 @@ private:
         plan.offset = key;
         m_tableColumnRoots.push_back(plan.loaded);
         m_tableColumnRoots.push_back(plan.offset);
+        if (plan.observed != nullptr) m_tableColumnRoots.push_back(plan.observed);
         auto& shared = *m_sources[plan.source].tableColumn;
         shared.maxKey = std::max(shared.maxKey, column.maxKey);
         return true;
