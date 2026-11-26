@@ -350,7 +350,7 @@ namespace {
 void ChainMinLod(const Context& context, const GuestTextureResource& descriptor, VkImageViewCreateInfo& viewInfo, VkImageViewMinLodCreateInfoEXT& minLod) {
     const auto clamp = EffectiveMinLod(descriptor);
     if (clamp == 0.0f) return;
-    Require(context.imageViewMinLod || context.shaderImageMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod, or shaderResourceMinLod without graphics pipeline libraries");
+    Require(context.imageViewMinLod || context.shaderImageMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod or shaderResourceMinLod");
     if (!context.imageViewMinLod) return;
     minLod.minLod = clamp;
     minLod.pNext = viewInfo.pNext;

@@ -19,6 +19,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ImageViewMinLodProbe.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -647,6 +648,7 @@ struct VulkanDevice::State {
     bool dynamicColorWriteMask = false;
     bool dynamicDepthBiasEnable = false;
     bool imageViewMinLod = false;
+    bool imageViewMinLodExtension = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
@@ -2048,8 +2050,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (hasExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLodFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
-        state->imageViewMinLod = minLodFeatures.minLod == VK_TRUE && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
-        if (state->imageViewMinLod) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
+        state->imageViewMinLodExtension = minLodFeatures.minLod == VK_TRUE;
+        state->imageViewMinLod = state->imageViewMinLodExtension && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
+        if (state->imageViewMinLodExtension) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     }
     minLodFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
     minLodFeatures.minLod = VK_TRUE;
@@ -2296,7 +2299,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
     if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
     state->shaderResourceMinLod = enabled.shaderResourceMinLod == VK_TRUE;
-    state->shaderImageMinLod = state->shaderResourceMinLod && !state->imageViewMinLod && !state->graphicsPipelineLibrary;
+    state->shaderImageMinLod = state->shaderResourceMinLod && !state->imageViewMinLod;
     enabled.sampleRateShading = available.sampleRateShading;
     enabled.geometryShader = available.geometryShader;
     state->geometryShader = enabled.geometryShader == VK_TRUE;
@@ -2383,7 +2386,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         provokingFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &provokingFeatures;
     }
-    if (state->imageViewMinLod) {
+    if (state->imageViewMinLodExtension) {
         minLodFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &minLodFeatures;
     }
@@ -2920,6 +2923,31 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->probingFloatControls = false;
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
+    if (state->imageViewMinLod && state->shaderResourceMinLod && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD_PROBE") == nullptr) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        ImageViewMinLodProbeResult probe;
+        std::string failure;
+        try {
+            probe = ProbeImageViewMinLod(*this, Target());
+        } catch (const std::exception& error) {
+            failure = error.what();
+        }
+        state->probingFloatControls = false;
+        Graphics::ClearCachedTextures(state->device);
+        const bool conclusive = failure.empty() && probe.controlCompared != 0u && probe.controlMismatches == 0u;
+        const bool shaderLane = conclusive && probe.mismatches != 0u;
+        if (shaderLane) {
+            state->imageViewMinLod = false;
+            state->shaderImageMinLod = true;
+            state->textureCache.reset();
+            state->textureCache = std::make_unique<Graphics::TextureCache>(buildContext());
+            state->context = buildContext();
+        }
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count();
+        if (!conclusive) std::fprintf(stderr, "[image-lod] T# MIN_LOD in the image view, the probe is inconclusive: %s (%.0f ms)\n", failure.empty() ? "its control without a clamp differs from the Vulkan levels" : failure.c_str(), elapsed);
+        else std::fprintf(stderr, "[image-lod] T# MIN_LOD in the %s (%u of %u image_sample_d_cl probe results through the image view clamp differ from the Vulkan levels, %.0f ms)\n", shaderLane ? "shader" : "image view", probe.mismatches, probe.compared, elapsed);
     }
     rdnaProbeShaders.reset();
     // A device without a window is usually replaced by the window's device before the title draws
@@ -4898,6 +4926,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
+    target.shaderImageMinLod = state->shaderImageMinLod;
     return target;
 }
 
@@ -5119,6 +5148,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.fmaFloat16 = state->fmaFloat16;
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
+    context.imageViewMinLodExtension = state->imageViewMinLodExtension;
     context.shaderResourceMinLod = state->shaderResourceMinLod;
     context.shaderImageMinLod = state->shaderImageMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;

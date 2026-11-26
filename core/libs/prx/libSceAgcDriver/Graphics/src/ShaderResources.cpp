@@ -145,6 +145,7 @@ struct TextureKey {
     std::array<std::uint32_t, 8> words;
     std::array<std::uint32_t, 4> components;
     bool depthCompare = false;
+    bool tableViewClamp = false;
     AllocationIdentity allocation;
     bool operator==(const TextureKey&) const = default;
 };
@@ -157,15 +158,16 @@ std::uint64_t hashWords(std::uint64_t hash, const std::uint32_t* words, std::siz
 struct TextureKeyHash {
     std::size_t operator()(const TextureKey& key) const noexcept {
         auto hash = 14695981039346656037ull ^ reinterpret_cast<std::uintptr_t>(key.device);
-        hash = hashWords(hash, key.words.data(), key.words.size()) ^ static_cast<std::uint64_t>(key.depthCompare);
+        hash = hashWords(hash, key.words.data(), key.words.size()) ^ static_cast<std::uint64_t>(key.depthCompare) ^ (static_cast<std::uint64_t>(key.tableViewClamp) << 1u);
         for (const auto value : {key.allocation.rangeAddress, key.allocation.rangeBytes, key.allocation.allocationAddress, key.allocation.allocationBytes, key.allocation.backingSerial, static_cast<std::uint64_t>(key.allocation.flags)}) hash = (hash ^ value) * 1099511628211ull;
         return static_cast<std::size_t>(hashWords(hash, key.components.data(), key.components.size()));
     }
 };
 
-TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words, VkComponentMapping components, bool depthCompare = false) {
+TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words, VkComponentMapping components, bool depthCompare = false, bool tableViewClamp = false) {
     TextureKey key{device, {}, {static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)}};
     key.depthCompare = depthCompare;
+    key.tableViewClamp = tableViewClamp;
     key.allocation = ImageAllocationIdentity(words);
     std::copy(words.begin(), words.end(), key.words.begin());
     key.words[5] &= ~((0xfffu << 8u) | (1u << 25u));
@@ -1005,7 +1007,7 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
-std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false) {
+std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false, bool tableViewClamp = false) {
     Require(!layerRows || (requested.dimension == TextureDimension::k1DArray && !depthCompare), "only a sampled 1D array is laid out as rows of a 2D image");
     const auto resource = layerRows ? requested : ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (resource.baseAddress != requested.baseAddress) guestBytes = 0;
@@ -1040,13 +1042,13 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (depthBitsWidth == 32u && resource.format != float32) {
         auto bits = resource;
         bits.format = float32;
-        return cachedTexture(context, words, bits, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, bits, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, tableViewClamp);
     }
     constexpr auto unorm16 = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format16UNorm);
     if (depthBitsWidth == 16u && resource.format != unorm16) {
         auto normalized = resource;
         normalized.format = unorm16;
-        return cachedTexture(context, words, normalized, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, normalized, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, tableViewClamp);
     }
     const auto viewedWindow = [&] {
         const auto window = ViewedArrayWindow(resource, false);
@@ -1059,7 +1061,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         static std::atomic<std::uint64_t> windows{0};
         const auto count = windows.fetch_add(1) + 1;
         if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] sampled array view 0x%llx (%ux%u format %u, dimension %d, slices %u..%u) served from its viewed slices at 0x%llx; %llu such views\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), resource.baseArray, resource.depthOrLastArray, static_cast<unsigned long long>(window.baseAddress), static_cast<unsigned long long>(count));
-        return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, tableViewClamp);
     }
     if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
     const auto residency = depthCompare || layerRows || SrgbExpandsToRgba8(context, resource.format) ? std::nullopt : MinLodResidentLevels(resource);
@@ -1238,7 +1240,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     auto slabs = slabbed ? committedSlabs(resource, guestBytes, committed) : std::nullopt;
     const auto snapshotSize = snapshotBytes(slabs, bytes);
     auto& cache = Textures();
-    const auto key = MakeTextureKey(context.device, words, components, depthCompare);
+    const auto key = MakeTextureKey(context.device, words, components, depthCompare, tableViewClamp);
     std::lock_guard lock(cache.mutex);
     const CacheHold held(sampledCacheHeld);
     dropUncachedViews(cache);
@@ -1818,6 +1820,24 @@ std::uint64_t SampledTextureCacheBudget(const Context& context) {
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType) {
     const auto resource = DecodeTextureResource(words);
     return cachedTexture(context, words, resource, ViewComponents(resource), 0, false, multisampleViewType);
+}
+
+bool TableEntryTakesViewClamp(const Context& context, const GuestTextureResource& resource) {
+    return !context.imageViewMinLod && context.imageViewMinLodExtension && EffectiveMinLod(resource) != 0.0f;
+}
+
+std::shared_ptr<Texture> cachedTableTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, std::uint64_t guestBytes, bool depthCompare, VkImageViewType multisampleViewType) {
+    if (EffectiveMinLod(resource) == 0.0f) return cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType);
+    Require(context.imageViewMinLod || context.imageViewMinLodExtension, "a sampled image table entry has a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
+    if (!TableEntryTakesViewClamp(context, resource)) return cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType);
+    auto viewContext = context;
+    viewContext.imageViewMinLod = true;
+    return cachedTexture(viewContext, words, resource, components, guestBytes, depthCompare, multisampleViewType, false, true);
+}
+
+std::shared_ptr<Texture> CachedSampledTableTexture(const Context& context, std::span<const std::uint32_t> words) {
+    const auto resource = DecodeTextureResource(words);
+    return cachedTableTexture(context, words, resource, ViewComponents(resource), 0, false, VK_IMAGE_VIEW_TYPE_2D);
 }
 
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second) {
@@ -4373,6 +4393,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
                     entry.count = static_cast<std::uint32_t>(words.size());
                     entry.shape = binding.imageShape;
                     entry.depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
+                    entry.table = false;
                     entry.known = true;
                 }
                 ++textureIndex;
@@ -4390,6 +4411,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
             entry.count = 8;
             entry.shape = element < table.images->imageShapes.size() ? std::optional(table.images->imageShapes[element]) : std::nullopt;
             entry.depthCompare = element < table.images->imageDepthCompare.size() && table.images->imageDepthCompare[element];
+            entry.table = true;
             entry.known = true;
         }
     }
@@ -4460,7 +4482,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
         const auto words = firstLayerWords(std::span<const std::uint32_t>(element.words.data(), element.count), element.shape, narrowed, false);
         const auto resource = DecodeTextureResource(words);
         const VkImageViewType multisampleViewType = element.shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-        auto texture = cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType);
+        auto texture = element.table ? cachedTableTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType) : cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType);
         if (texture == nullptr) return false;
         if (texture != textures[i]) replaced.emplace_back(i, std::move(texture));
     }
@@ -4731,7 +4753,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             const auto words = firstLayerWords(raw, images.imageShapes.at(element), narrowed, false);
             const auto resource = DecodeTextureResource(words);
             const VkImageViewType multisampleViewType = images.imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-            return cachedTexture(context, words, resource, ViewComponents(resource), 0, images.imageDepthCompare.at(element), multisampleViewType) == textures[textureIndex];
+            return cachedTableTexture(context, words, resource, ViewComponents(resource), 0, images.imageDepthCompare.at(element), multisampleViewType) == textures[textureIndex];
         };
         for (const auto& table : tableStages) {
             if (table.elementTextures.empty()) continue;
@@ -6630,8 +6652,7 @@ void ShaderResources::resolveImageTables() {
         };
         const auto lookupSampled = [&](std::uint32_t element, const SampledEntry& sampled) {
             const VkImageViewType multisampleViewType = binding.imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-            Require(context.imageViewMinLod || EffectiveMinLod(sampled.resource) == 0.0f, "a sampled image table entry has a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
-            return cachedTexture(context, sampled.words, sampled.resource, sampled.components, sampled.guestBytes, sampled.depthCompare, multisampleViewType);
+            return cachedTableTexture(context, sampled.words, sampled.resource, sampled.components, sampled.guestBytes, sampled.depthCompare, multisampleViewType);
         };
         const auto resolveLive = [&](std::uint32_t element, std::span<const std::uint32_t> words) -> std::string {
             DecodedEntry decoded;
@@ -6847,7 +6868,7 @@ void ShaderResources::resolveImageTables() {
                 const auto& log = lookupLog();
                 const auto* looked = log.empty() ? nullptr : &log.back();
                 if (looked != nullptr && looked->object == texture.get() && looked->source == nullptr && looked->generation != 0 && looked->keys == DccKeys::Uncompressed && sampled.resource.dccAddress == 0) {
-                    fresh.elements.push_back({MakeTextureKey(context.device, sampled.words, sampled.components, sampled.depthCompare), texture, sampled.resource, sampled.guestBytes, firstLayer, false, {}});
+                    fresh.elements.push_back({MakeTextureKey(context.device, sampled.words, sampled.components, sampled.depthCompare, TableEntryTakesViewClamp(context, sampled.resource)), texture, sampled.resource, sampled.guestBytes, firstLayer, false, {}});
                     fresh.queries.push_back({sampled.resource.baseAddress, static_cast<std::size_t>(sampled.guestBytes), looked->generation});
                     fresh.ranges.emplace_back(sampled.resource.baseAddress, sampled.resource.baseAddress + sampled.guestBytes);
                 } else {

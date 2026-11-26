@@ -324,6 +324,7 @@ struct Context {
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool imageViewMinLodExtension = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
