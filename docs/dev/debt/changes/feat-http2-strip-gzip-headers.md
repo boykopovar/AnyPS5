@@ -8,7 +8,7 @@
 
 ## add Functional
 
-- [sceHttp2SetStripGZIPHeadersEnabled](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - differs from a retail PS5 on firmware 13.60, measured over HTTP/1.x in a homebrew payload against the system `libSceHttp2.sprx` (log in the pull request): setting it on a request after `sceHttp2SendRequest` returns 0 there and throws here, `sceHttp2GetAllResponseHeaders` before a send returns `0x817B1065` there and throws here, and the console's header size counts the terminating NUL, stripped or not. Stripping HTTP/2 headers is unmeasured; the module's `sceHttp2GetAllResponseHeaders` (`0x1d930`) has no version check. The `0x817B1076` stack check below 0x1FD0 bytes of stack is not reproduced. Closes when: measured on a PS5 over HTTP/2
+- [sceHttp2SetStripGZIPHeadersEnabled](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - follows a retail PS5 on firmware 13.60, measured over HTTP/1.x in a homebrew payload against the system `libSceHttp2.sprx` ([log](https://github.com/boykopovar/AnyPS5/pull/23118#issuecomment-6988415062)): on a request after `sceHttp2SendRequest` it returns 0 and changes nothing, `sceHttp2GetAllResponseHeaders` before a send returns `0x817B1065`, and the HTTP/1.x header size counts the terminating NUL, stripped or not. Over HTTP/2 the size leaves the NUL out and stripping is unmeasured, though the module's `sceHttp2GetAllResponseHeaders` (`0x1d930`) has no version check. The `0x817B1076` stack check below 0x1FD0 bytes of stack is not reproduced. Closes when: measured on a PS5 over HTTP/2
 
 ## add Functional
 
