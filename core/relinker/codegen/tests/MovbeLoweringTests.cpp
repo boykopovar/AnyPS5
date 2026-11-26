@@ -121,9 +121,10 @@ void execution() {
                             }
                             if ((trial.Flags & (LoweringExecution::kFlagMask | 0x14u)) != (flags & (LoweringExecution::kFlagMask | 0x14u)))
                                 throw std::runtime_error(describe + ": flags changed");
-                            if (store && !stackMemory) {
+                            if (store) {
                                 std::uint64_t memory = 0;
-                                std::memcpy(&memory, execution.Memory(), sizeof(memory));
+                                if (stackMemory) memory = trial.StackSlot;
+                                else std::memcpy(&memory, execution.Memory(), sizeof(memory));
                                 const auto mask = width == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1;
                                 const auto wanted = (initial & ~mask) | swapped(value, width);
                                 if (memory != wanted)
