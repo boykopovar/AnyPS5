@@ -80,9 +80,9 @@ Every text value in the report goes through the same filter for user names, host
 
 ## Run recipe
 
-Next to `anyps5-report.json` the runtime writes `anyps5-recipe.json`, a small JSON file that records how the run was started, so a report can be reproduced. It holds `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), `environment` (only the `ANYPS5_*` variables that are set), and `configFiles` (the file names of configuration files the run was given, for example the input mapping, without their folders).
+After writing `anyps5-report.json`, the runtime tries to write `anyps5-recipe.json` beside it. The recipe records `run.id`, `anyps5.commit` (the build commit, or null), `argv` (the process arguments), and `environment` (set `ANYPS5_*` variables that pass the name filter). `configFiles` records the filename from `ANYPS5_INPUT_CONFIG` when supplied. The runtime does not discover default input mappings or per-title profiles for this list.
 
-Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. The recipe is written only when the report is written; the same rules about killed and crashed runs apply.
+Values pass through the same text filter as the report, so a path or a user name shows as `[redacted]`. A variable whose name contains `TOKEN`, `KEY`, `PASSWORD` or `SECRET` is never written, whatever its value. If writing the recipe fails, the report is still available.
 
 ## Stop
 
