@@ -5,7 +5,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 
-#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -55,18 +54,14 @@ std::uint64_t currentNetworkTick() {
 bool fitsName(const char* name, std::size_t limit) {
     if (!name) return false;
     std::string text;
-    const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(name, limit + 1, text);
-    errno = savedErrno;
     return result == 0 && text.size() <= limit;
 }
 
 bool validClockSource(const char* source) {
     if (!source) return false;
     char clock[sizeof("networkClock")];
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(clock, source, sizeof(clock));
-    errno = savedErrno;
     return copied && (std::memcmp(clock, "networkClock", sizeof("networkClock")) == 0
         || std::memcmp(clock, "secureClock", sizeof("secureClock")) == 0
         || std::memcmp(clock, "NONE", sizeof("NONE")) == 0);
@@ -82,10 +77,7 @@ template <typename T>
 bool load(const std::uint8_t* record, std::size_t offset, T& value) {
     const void* const address = field(record, offset);
     if (!address) return false;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
 }
 
 int validateEvent(const std::uint8_t* record) {
@@ -155,11 +147,9 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     SceSystemLogger2Timestamp value{};
     value.tick = currentNetworkTick() / 1000000ull * 1000000ull;
     std::memcpy(value.clockSource, "secureClock", sizeof("secureClock"));
-    const int savedErrno = errno;
     const GuestArena::HostWrite guard(timestamp, sizeof(value));
     const bool copied = guard.Open() && GuestWritable_nid_no_patch(timestamp, sizeof(value)) &&
         GuestCopyOut_nid_no_patch(timestamp, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return INVALID_ARGUMENT;
     return 0;
 }
@@ -177,9 +167,7 @@ int APS5_VABI sceSystemLogger2GetEventStatus(const char* eventName, std::uint64_
         return INVALID_ARGUMENT;
     }
     const std::uint64_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
@@ -191,9 +179,7 @@ int APS5_VABI sceSystemLogger2SetEventAsyncInternal(const void* event, std::uint
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));
     if (result != 0) return result;
     const std::uint32_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }

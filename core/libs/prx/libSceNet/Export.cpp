@@ -159,6 +159,8 @@ constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
 constexpr std::uint32_t NET_IF_LO0 = 0;
+constexpr std::uint32_t NET_IFF_LO0_DEFAULT =
+    NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
 constexpr std::array<const char*, 10> NET_INTERFACE_NAMES = {
     "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
 
@@ -470,6 +472,7 @@ bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
 std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
+std::atomic<std::uint32_t> g_lo0_flags{NET_IFF_LO0_DEFAULT};
 
 int* errno_slot() {
     static thread_local int e = 0;
@@ -1205,6 +1208,11 @@ const KernelSocketPoll::Forwards g_socketForwards{
     [](int descriptor, void* address, std::uint32_t* length) {
         return ErrorOf(sceNetGetsockname(descriptor, address, length));
     },
+    [](int descriptor, void* address, std::uint32_t* length, int* error) {
+        const int accepted = sceNetAccept(descriptor, address, length);
+        *error = ErrorOf(accepted);
+        return accepted;
+    },
     [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
         const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
         *error = ErrorOf(result);
@@ -1860,6 +1868,24 @@ int64_t APS5_VABI GuestNetSend_nid_no_patch(int s, const void* buf, size_t len, 
     return sceNetSend(s, buf, len, flags);
 }
 
+static bool GuestBufferReadable(const void* buffer, std::size_t length) {
+    if (length == 0) return true;
+    constexpr std::size_t page = 4096;
+    const auto* bytes = static_cast<const unsigned char*>(buffer);
+    unsigned char value;
+    for (std::size_t done = 0; done < length; done += page)
+        if (!GuestCopyIn_nid_no_patch(&value, bytes + done, 1)) return false;
+    return GuestCopyIn_nid_no_patch(&value, bytes + (length - 1), 1);
+}
+
+static bool ConnectedDatagramDestination(const Sock& socket, const sockaddr_storage& destination) {
+    if (socket.type != NET_SOCK_DGRAM) return false;
+    if (destination.ss_family == AF_INET6 && reinterpret_cast<const sockaddr_in6&>(destination).sin6_port == 0) return false;
+    sockaddr_storage peer{};
+    NativeLength length = sizeof(peer);
+    return ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) == 0;
+}
+
 int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
     if (!message_flags_supported(flags, NET_MSG_DONTWAIT | NET_MSG_NOSIGNAL)) return fail(NET_EOPNOTSUPP);
     if (!buf && len) return fail(NET_EINVAL);
@@ -1896,6 +1922,7 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         NativeLength destination_length = 0;
         if (!guest_to_native_address(address.data(), address_length, destination, destination_length)) return fail(NET_EINVAL);
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
+        if (ConnectedDatagramDestination(socket, destination)) return fail(GuestBufferReadable(buf, len) ? NET_EISCONN : NET_EFAULT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
             return ::sendto(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags),
@@ -3935,8 +3962,13 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
     if (!parameter) return fail(NET_EINVAL);
     if (thread && !GuestWritable_nid_no_patch(thread, sizeof(*thread))) return fail(NET_EFAULT);
+    constexpr int DetachDetached = 1;
+    PthreadAttr attribute = nullptr;
+    int result = thread ? 0 : scePthreadAttrInit(&attribute);
+    if (result == 0 && !thread) result = scePthreadAttrSetdetachstate(&attribute, DetachDetached);
     Pthread created = nullptr;
-    const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (result == 0) result = scePthreadCreate(&created, thread ? nullptr : &attribute, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
+    if (attribute) scePthreadAttrDestroy(&attribute);
     if (result != 0) return result;
     if (thread && !GuestCopyOut_nid_no_patch(thread, &created, sizeof(created))) return fail(NET_EFAULT);
     return 0;
@@ -4085,7 +4117,7 @@ int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* f
     if (flags == nullptr) return NET_CONFIG_ERROR_INVALID_ADDRESS;
     if (interfaceId >= 10) return -1;
     if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
-    constexpr std::uint32_t result = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    const std::uint32_t result = g_lo0_flags.load(std::memory_order_relaxed);
     return GuestCopyOut_nid_no_patch(flags, &result, sizeof(result)) ? 0 : NET_CONFIG_ERROR_INVALID_ADDRESS;
 }
 
@@ -4105,7 +4137,8 @@ int APS5_VABI sceNetConfigDelIfaddr(int interfaceId) {
 }
 
 int APS5_VABI sceNetConfigDownInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (interfaceId != static_cast<int>(NET_IF_LO0)) NotImplemented_nid_no_patch(__func__);
+    g_lo0_flags.fetch_and(~NET_IFF_UP, std::memory_order_relaxed);
     return 0;
 }
 
@@ -4130,7 +4163,8 @@ int APS5_VABI sceNetConfigSetIfLinkLocalAddr6(std::uint32_t interfaceId) {
 }
 
 int APS5_VABI sceNetConfigUpInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (interfaceId != static_cast<int>(NET_IF_LO0)) NotImplemented_nid_no_patch(__func__);
+    g_lo0_flags.fetch_or(NET_IFF_UP, std::memory_order_relaxed);
     return 0;
 }
 
