@@ -99,8 +99,11 @@ int main(int argc, char** argv) {
     Require(first > 0 && second > 0 && first != second, "port creation failed");
     std::array<std::int16_t, Grain> firstSamples;
     std::array<std::int16_t, Grain> secondSamples;
-    firstSamples.fill(1000);
-    secondSamples.fill(2000);
+    firstSamples.fill(2000);
+    secondSamples.fill(4000);
+    int volume = 16384;
+    Require(sceAudioOutSetVolume(first, 1, &volume) == 0, "first port volume change failed");
+    Require(sceAudioOutSetVolume(second, 1, &volume) == 0, "second port volume change failed");
     int firstResult = -1;
     int secondResult = -1;
     std::atomic<bool> secondStarted{false};
