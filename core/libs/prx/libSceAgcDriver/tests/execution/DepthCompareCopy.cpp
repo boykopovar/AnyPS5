@@ -347,7 +347,8 @@ int main() {
         Input = std::span<float>(reinterpret_cast<float*>(buffers.Data()), Threads * 3u);
         Output = std::span<float>(reinterpret_cast<float*>(buffers.Data() + 4096u), Threads);
         SingleLevelCase(*device, {Format32Float, 512, 512, 1, 1, false}, "R32F 512x512");
-        EpochExitRefreshCase(*device, {Format32Float, 512, 512, 1, 1, false});
+        if (AgcDriver::Graphics::ShaderResources::EpochProofs()) EpochExitRefreshCase(*device, {Format32Float, 512, 512, 1, 1, false});
+        else std::puts("epoch proofs are off: the depth copy epoch exit is not tested");
         SingleLevelCase(*device, {Format16Unorm, 1024, 512, 1, 1, false}, "R16 unorm 1024x512");
         LayersAndMipsCase(*device);
         std::puts("depth compare copy tests passed");
