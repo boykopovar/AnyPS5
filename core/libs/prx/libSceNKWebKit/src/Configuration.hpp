@@ -198,6 +198,7 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
 mutable Retained<IconDatabase> iconDatabase;
+    mutable Retained<CookieManager> cookieManager;
     std::optional<std::u16string> iconDatabasePath;
 };
 

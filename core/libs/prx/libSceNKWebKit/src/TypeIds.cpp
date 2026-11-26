@@ -103,7 +103,7 @@ std::uint32_t APS5_VABI WKContextMenuItemGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKCookieManagerGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::CookieManager);
 }
 
 std::uint32_t APS5_VABI WKCredentialGetTypeID() {

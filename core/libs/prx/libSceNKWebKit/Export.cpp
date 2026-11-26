@@ -1630,9 +1630,6 @@ int APS5_VABI _ZN7WebCore16FrameLoadRequestC2ERNS_5FrameERKNS_15ResourceRequestE
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextGetCookieManager() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore7Element14scrollIntoViewEON3WTF8OptionalINS1_7VariantIJbNS_21ScrollIntoViewOptionsEEEEEE() {
     NotImplemented_nid_no_patch(__func__);

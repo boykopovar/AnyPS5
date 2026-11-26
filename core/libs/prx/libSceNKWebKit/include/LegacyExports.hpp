@@ -412,7 +412,6 @@ int APS5_VABI _ZN3JSC8Bindings13RuntimeObjectC1ERNS_2VMEPNS_9StructureEON3WTF6Re
 int APS5_VABI _ZN7WebCore12newTextCodecERKNS_12TextEncodingE();
 int APS5_VABI _ZN7WebCore16FrameLoadRequestC2ERNS_5FrameERKNS_15ResourceRequestERKNS_14SubstituteDataE();
 void APS5_VABI _ZN7WebCore17FrameLoaderClient15didDisownOpenerEv();
-int APS5_VABI WKContextGetCookieManager();
 int APS5_VABI _ZN7WebCore7Element14scrollIntoViewEON3WTF8OptionalINS1_7VariantIJbNS_21ScrollIntoViewOptionsEEEEEE();
 int APS5_VABI _ZN7WebCore23AuthenticationChallengeD1Ev();
 int APS5_VABI _ZNK7WebCore5Range19boundaryPointsValidEv();

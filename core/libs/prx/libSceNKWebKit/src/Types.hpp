@@ -440,6 +440,9 @@ public:
     }
 };
 
+class CookieManager final : public ObjectOf<ObjectType::CookieManager> {
+};
+
 class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
 public:
     std::map<std::string, std::string> pageURLToIconURL;
