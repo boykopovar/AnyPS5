@@ -525,6 +525,13 @@ void TestSysctlNameToOid() {
     SetError(0);
     Require(sysctl_nid_postfix(mib, 2, oid, &length, reinterpret_cast<const void*>(0x10), 11) == -1);
     Require(Error() == PosixEfault);
+
+    std::string padded(1024, '\0');
+    padded.replace(0, 11, "kern.ostype");
+    length = sizeof(oid);
+    SetError(0);
+    Require(NameToOid(padded, oid, &length) == -1);
+    Require(Error() == PosixEnametoolong);
 }
 
 void TestSysctlNameToMibCapacityBounds() {
