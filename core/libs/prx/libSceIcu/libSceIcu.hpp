@@ -1,5 +1,6 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "prx/libSceIcu/include/StringPiece.hpp"
 #include "ConstrainedFieldPosition.hpp"
 #include "TerminateBuffer.hpp"
 #include "Mutex.hpp"

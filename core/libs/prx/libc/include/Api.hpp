@@ -371,6 +371,13 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
+struct HsearchEntry {
+    char* key;
+    void* data;
+};
+int APS5_VABI hcreate_nid_postfix(size_t nel);
+HsearchEntry* APS5_VABI hsearch_nid_postfix(HsearchEntry item, int action);
+void APS5_VABI hdestroy_nid_postfix(void);
 void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 void* APS5_VABI tsearch_nid_postfix(const void* key, void** rootp, int (APS5_VABI *compare)(const void*, const void*));
 void* APS5_VABI tfind_nid_postfix(const void* key, void* const* rootp, int (APS5_VABI *compare)(const void*, const void*));
@@ -1202,6 +1209,8 @@ int APS5_VABI iswascii_nid_postfix(std::uint32_t c);
 int APS5_VABI iswctype_nid_postfix(std::uint32_t c, std::uint64_t mask);
 int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type);
 std::uint64_t APS5_VABI wctype_nid_postfix(const char* property);
+std::uint64_t APS5_VABI _ZNSt3__115__get_classnameEPKcb_nid_postfix(const char* property, bool caseInsensitive);
+void* APS5_VABI _ZNSt3__120__get_collation_nameEPKc_nid_postfix(void* result, const char* name);
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t c);
 std::uint32_t APS5_VABI btowc_nid_postfix(int c);
@@ -1878,6 +1887,10 @@ LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandle
 [[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI LibcThrowBadException_nid_no_patch();
 std::uint64_t APS5_VABI _ZNSt3__112__next_primeEm_nid_postfix(std::uint64_t minimum);
+void* APS5_VABI _ZNSt3__19to_stringEi_nid_postfix(void* string, std::int32_t value);
+void* APS5_VABI _ZNSt3__19to_stringEj_nid_postfix(void* string, std::uint32_t value);
+void* APS5_VABI _ZNSt3__19to_stringEm_nid_postfix(void* string, std::uint64_t value);
+void* APS5_VABI _ZNSt3__19to_stringEx_nid_postfix(void* string, std::int64_t value);
 std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds);

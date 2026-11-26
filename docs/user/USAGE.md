@@ -155,6 +155,8 @@ The executable, registry, Windows import diagnostics, icon and desktop entry out
 
 On Linux and macOS, replacing a regular output file requires write access to its directory. If creating the temporary file or replacing the old file fails, you get an error. The previous file is never overwritten in place.
 
+On Windows, the relinker writes regular, unencrypted outputs to a temporary file before replacing the destination. A write, flush or close failure preserves the previous output. Replacing a regular file requires write access to the destination and permission to create and replace files in its directory. If a replacement error prevents restoring the original name, the error reports the path where the previous output is retained. If the process is terminated during a write, temporary files or recovery directories beginning with `.anyps5-` can remain beside the destination. Check them for a recoverable previous output before removing them.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
@@ -221,6 +223,10 @@ python3 tools/validate_patch_catalog.py --catalog <directory>
 ```
 
 The validator checks the index format, duplicate JSON keys, required and optional fields, relative patch and target paths, patch-file presence, TOML structure, target-hash coverage, and duplicate `id` entries that could match the same title build. Entries with the same `id` and content version may coexist when a shared target has different hashes, making their matches mutually exclusive. To publish a new `revision` for the same build, remove the old entry. An empty `entries` array is valid and reports `0 entries valid`.
+
+Use `--json` to get the per-entry results on stdout with `entries`, `total` and `invalid`. Each entry includes its
+one-based index, patch path when available, validation status and error. If the index cannot be read or validated,
+the JSON instead contains a top-level `error`.
 
 The validator reports each invalid entry and exits `2` if any entry is invalid; a valid catalog exits `0`. This is a structural check: the relinker accepts a stricter subset of TOML, and only `relinker --verify-patches` with the title files can establish whether the patch parses and matches those files. The validator does not read target files, download anything, or apply patches.
 
@@ -762,7 +768,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | Line | Meaning |
 |------|---------|
 | `FPS`, `FRAME` | As on page 1. |
-| `BUSY %` | The share of the last second each queue's packet worker (`Q0` for queue 0, `Q1` for queue 1, and so on) spent on packets, suspends, ends of submissions, rewinds and completions, as `worker_busy_pct` of the trace summary counts it. From the trace totals. |
+| `BUSY %` | The share of the last second each queue's packet worker (`Q0` for queue 0, `Q1` for queue 1, and so on) spent on packets, suspends, ends of submissions, rewinds, completions and waits for the draw finisher, as `worker_busy_pct` of the trace summary counts it. From the trace totals. |
 | phases | The 5 phases with the most CPU time per frame over the last second, in ms, summed over the driver's threads and named as in the trace summary's `top_phases_ms_per_frame`: a timed scope, or a scope and one of its stages. A scope's time includes the scopes and stages within it, and threads that work at once each count, so the phases can add up to more than `FRAME`. From the trace totals. |
 | `Q0 WAIT MS/FRAME` | Time per frame that queue 0's packet worker waited, in ms: `MEM` in packets that wait for guest memory or for rendering to finish, `LOCK` for the GPU lock, `GPU` in the recorder's syncs and serial waits and in command batches' fence waits. A memory wait that syncs the GPU counts in `MEM` and in `GPU`. From the trace totals. |
 | `RENDER PASSES/FRAME` | Render passes begun per frame; a draw that continues the open pass begins none. From the trace totals; not shown while an `APS5_TRACE_*` variable is set. |

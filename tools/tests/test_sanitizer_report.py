@@ -41,6 +41,15 @@ class SanitizerReportTests(unittest.TestCase):
             code = sanitizer_report.main([str(arg) for arg in args])
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_main_uses_one_junit_parse_for_outcomes_and_diagnostics(self):
+        path = self.write(suite(case("broken", "fail", '<system-err>ERROR: AddressSanitizer: sample</system-err>')))
+        original_parse = sanitizer_report.ET.parse
+        with unittest.mock.patch.object(sanitizer_report.ET, "parse", wraps=original_parse) as parse:
+            code, stdout, stderr = self.run_main(path, "--json")
+        self.assertEqual((code, stderr), (1, ""))
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], "ERROR: AddressSanitizer: sample")
+        parse.assert_called_once_with(path)
+
     def test_classifies_passed_skipped_failed_and_not_run_tests(self):
         path = self.write(suite(
             case("passes"),
