@@ -36,7 +36,8 @@ FT_Vector HostVector(const GuestVector& vector, const char* function) {
 extern "C" {
 
 std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y) {
-    return FT_Atan2(HostValue(x, __func__), HostValue(y, __func__));
+    const FT_Angle angle = FT_Atan2(HostValue(x, __func__), HostValue(y, __func__));
+    return x < 0 && y == 0 ? FT_ANGLE_PI : angle;
 }
 
 std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector* vector) {

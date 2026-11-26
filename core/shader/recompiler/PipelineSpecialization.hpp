@@ -23,6 +23,7 @@ inline constexpr std::uint32_t ImageWords = 5u;
 inline constexpr std::uint32_t ImageComponentBase = 65536u;
 inline constexpr std::uint32_t ImageComponentBits = 2u;
 inline constexpr std::uint32_t NormalizedImageBase = 65664u;
+inline constexpr std::uint32_t D16TowardZeroBase = 65792u;
 inline constexpr std::uint32_t ImageNormalizedValues = 1u << (4u * ImageComponentBits);
 enum class ImageComponentConstant : std::uint32_t { None, Zero, IntegerOne, FloatOne };
 inline constexpr std::uint32_t VertexBase = 4096u;
@@ -37,6 +38,7 @@ inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
 inline constexpr std::uint32_t MeshLayerBase = 8237u;
 inline constexpr std::uint32_t MeshLayerCount = 8238u;
+inline constexpr std::uint32_t StorePages = 8239u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
@@ -69,6 +71,10 @@ inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint3
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {
     return id >= WorkgroupOffsetBase && id < WorkgroupOffsetBase + WorkgroupOffsetWords;
+}
+
+inline constexpr bool IsDispatchSupplied(std::uint32_t id) {
+    return IsWorkgroupOffset(id) || id == StorePages;
 }
 
 inline constexpr bool IsAtomicLockTable(std::uint32_t id) {

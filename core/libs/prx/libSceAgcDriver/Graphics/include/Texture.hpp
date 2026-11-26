@@ -54,6 +54,8 @@ bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes);
 VkFormat StorageFormatForGuest(const Context& context, std::uint32_t guestFormat);
 // Whether StorageFormatForGuest would succeed, without throwing (unknown guest formats included).
 bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
+bool StorageSegmentsServe(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes);
+bool StorageSegmentsServe(const Context& context, const StorageTexture& image);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
@@ -573,6 +575,7 @@ public:
     // False, naming why in `refusal`, when the fill must be stored as before.
     static constexpr std::uint32_t WholeImage = ~0u;
     bool FillClear(std::span<const std::uint32_t, 4> pattern, std::uint32_t layer, const char*& refusal, bool allowRegisterClear = false);
+    bool ClearMip(const std::array<std::byte, 16>& texel, std::uint32_t level, bool verifiedCodeClear, const char*& refusal);
     // The cached, live image whose surface is exactly [address, address + bytes), if any (the newest
     // of several: see ClassifyFill).
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
@@ -624,6 +627,7 @@ public:
     static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     const char* RefreshObligation(std::uint32_t first = 0, std::uint32_t count = 0) const;
+    bool OtherPendingOverlaps() const;
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
@@ -926,6 +930,7 @@ private:
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
+    bool holdsClearFill = false;
     mutable DccKeyProof keyProof;
     mutable DccRangeProof targetKeyProof;
     DccSingleProof singleProof;

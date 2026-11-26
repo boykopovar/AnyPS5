@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
@@ -964,6 +965,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 }
 
 struct UserDataCallSites {
+    std::shared_ptr<const std::vector<std::uint32_t>> code;
     ShaderRecompiler::RdnaProgram program;
     std::vector<ShaderRecompiler::UserDataCall> calls;
     std::vector<ShaderRecompiler::TableCall> tableCalls;
@@ -975,7 +977,7 @@ constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
+    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment && request.shader.stage != Stage::Mesh) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
     const auto tail = ShaderRecompiler::FindUserDataTail(program, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()));
     if (!tail) return {};
@@ -1141,6 +1143,24 @@ void ReportTableCallSplit(std::uint64_t address, const ShaderRecompiler::RdnaPro
     std::fprintf(stderr, "[gpu] compute shader 0x%llx: its table call at program counter 0x%x cannot run its callees as their own pipelines: %s\n", static_cast<unsigned long long>(address), call.programCounter, refusal.c_str());
 }
 
+#ifdef __APPLE__
+std::optional<std::vector<std::uint32_t>> RetargetDriverBlockPointers(std::span<const std::uint32_t> code, const ShaderRecompiler::RdnaProgram& program, const std::vector<ShaderRecompiler::TableCall>& calls) {
+    std::vector<std::uint32_t> words(code.begin(), code.end());
+    bool retargeted = false;
+    for (const auto& call : calls) {
+        if (!call.constantPointer) continue;
+        const auto address = DriverDetail::RetargetPs5DriverMemory(*call.constantPointer);
+        if (address == *call.constantPointer) continue;
+        const auto rewritten = ShaderRecompiler::RetargetTableCallPointer(words, program, call, address);
+        if (!rewritten) continue;
+        words = std::move(*rewritten);
+        retargeted = true;
+    }
+    if (!retargeted) return std::nullopt;
+    return words;
+}
+#endif
+
 std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
     if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
@@ -1186,6 +1206,15 @@ std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(con
         found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
         found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
         found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+#ifdef __APPLE__
+        const auto patched = RetargetDriverBlockPointers(code, found->program, found->tableCalls);
+        if (patched) {
+            found->code = std::make_shared<const std::vector<std::uint32_t>>(std::move(*patched));
+            found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(*found->code);
+            found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+            found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        }
+#endif
         sites = std::move(found);
     }
     const auto& program = sites->program;

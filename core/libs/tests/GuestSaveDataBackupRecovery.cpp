@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -162,15 +163,20 @@ int Child(int argc, char** argv) {
     return 0;
 }
 
-int Run(const std::string& executable, std::initializer_list<const char*> arguments) {
+int Run(const std::filesystem::path& executable, std::initializer_list<const char*> arguments) {
     std::vector<const char*> values{"savedata-backup-recovery", "--child"};
     values.insert(values.end(), arguments.begin(), arguments.end());
-    values.push_back(nullptr);
 #ifdef _WIN32
-    const auto result = _spawnv(_P_WAIT, executable.c_str(), values.data());
+    std::vector<std::wstring> wide;
+    for (const auto value : values) wide.emplace_back(value, value + std::strlen(value));
+    std::vector<const wchar_t*> pointers;
+    for (const auto& value : wide) pointers.push_back(value.c_str());
+    pointers.push_back(nullptr);
+    const auto result = _wspawnv(_P_WAIT, executable.c_str(), pointers.data());
     Require(result != -1);
     return static_cast<int>(result);
 #else
+    values.push_back(nullptr);
     std::vector<char*> writable;
     for (const auto value : values) writable.push_back(const_cast<char*>(value));
     pid_t child = 0;
@@ -188,7 +194,7 @@ void Clean() {
     }
 }
 
-Snapshot Start(const std::string& executable) {
+Snapshot Start(const std::filesystem::path& executable) {
     Clean();
     Require(Run(executable, {"backup", "old"}) == 0);
     return Tree(Backup);
@@ -202,7 +208,7 @@ void NoLiveSave() {
     for (const char* path : {"_sd/kept", "_sd/kept.param", "_sd/kept.blocks"}) Require(!std::filesystem::exists(path));
 }
 
-void InterruptedReplacement(const std::string& executable) {
+void InterruptedReplacement(const std::filesystem::path& executable) {
     for (const char* step : {"backup.copy", "backup.aside", "backup.place"}) {
         const auto original = Start(executable);
         Require(Run(executable, {"backup", "new", step}) == Interrupted);
@@ -213,7 +219,7 @@ void InterruptedReplacement(const std::string& executable) {
     }
 }
 
-void InterruptedRecovery(const std::string& executable) {
+void InterruptedRecovery(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     Require(!std::filesystem::exists(Backup) && Tree(Old) == original);
@@ -228,7 +234,7 @@ void InterruptedRecovery(const std::string& executable) {
     NoCopies();
 }
 
-void RecoveryFailure(const std::string& executable) {
+void RecoveryFailure(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     const auto staged = Tree(Staged);
@@ -277,7 +283,7 @@ void RecoveryFailure(const std::string& executable) {
 #endif
 }
 
-void Retry(const std::string& executable) {
+void Retry(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     Require(Run(executable, {"backup", "new", "backup.copy", "fail"}) == 0);
@@ -289,7 +295,7 @@ void Retry(const std::string& executable) {
     NoCopies();
 }
 
-void Restore(const std::string& executable) {
+void Restore(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     Require(Run(executable, {"restore", "old"}) == 0);
@@ -300,7 +306,7 @@ void Restore(const std::string& executable) {
     NoCopies();
 }
 
-void Delete(const std::string& executable) {
+void Delete(const std::filesystem::path& executable) {
     Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     Require(Run(executable, {"delete", "unused"}) == 0);
@@ -344,7 +350,7 @@ void Delete(const std::string& executable) {
 }
 
 #ifndef _WIN32
-void DeleteFailure(const std::string& executable) {
+void DeleteFailure(const std::filesystem::path& executable) {
     for (const bool interrupted : {false, true}) {
         const auto original = Start(executable);
         if (interrupted) Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
@@ -377,7 +383,7 @@ void DeleteFailure(const std::string& executable) {
 }
 #endif
 
-void Rollback(const std::string& executable) {
+void Rollback(const std::filesystem::path& executable) {
     for (const char* count : {"1", "2"}) {
         const auto original = Start(executable);
         Require(Run(executable, {"backup", "new", "backup.flush", "fail", "2", count}) == 0);
@@ -390,7 +396,7 @@ void Rollback(const std::string& executable) {
     }
 }
 
-void DeleteSidecarFailure(const std::string& executable) {
+void DeleteSidecarFailure(const std::filesystem::path& executable) {
     for (const char* sidecar : {"_sd/kept.param", "_sd/kept.blocks"}) {
         const auto original = Start(executable);
         Require(std::filesystem::remove(sidecar));
@@ -409,7 +415,7 @@ void DeleteSidecarFailure(const std::string& executable) {
     }
 }
 
-void Invalid(const std::string& executable) {
+void Invalid(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     const auto staged = Tree(Staged);
@@ -429,7 +435,7 @@ void Invalid(const std::string& executable) {
     NoCopies();
 }
 
-void Published(const std::string& executable) {
+void Published(const std::filesystem::path& executable) {
     Start(executable);
     Require(Run(executable, {"backup", "new"}) == 0);
     const auto complete = Tree(Backup);
@@ -455,7 +461,7 @@ void Published(const std::string& executable) {
     NoCopies();
 }
 
-void Unpublished(const std::string& executable) {
+void Unpublished(const std::filesystem::path& executable) {
     Clean();
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     Require(!std::filesystem::exists(Backup) && !std::filesystem::exists(Old) && std::filesystem::exists(Staged));
@@ -465,7 +471,7 @@ void Unpublished(const std::string& executable) {
     Require(Run(executable, {"check", "new"}) == 0);
 }
 
-bool Links(const std::string& executable) {
+bool Links(const std::filesystem::path& executable) {
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
     const auto victim = std::filesystem::absolute("victim");
@@ -494,7 +500,7 @@ int main(int argc, char** argv) {
     try {
         if (argc >= 4 && std::strcmp(argv[1], "--child") == 0) return Child(argc, argv);
         Require(argc == 2);
-        const auto executable = std::filesystem::absolute(argv[0]).string();
+        const auto executable = std::filesystem::absolute(ArgumentPath(argv, 0));
         const auto previous = std::filesystem::current_path();
         std::random_device random;
         const auto root = std::filesystem::temp_directory_path() / ("anyps5-backup-recovery-" + std::to_string(random()) + "-" + std::to_string(random()));

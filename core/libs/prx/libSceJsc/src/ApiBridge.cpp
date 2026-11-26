@@ -59,4 +59,14 @@ Jsc::WtfAbi::TextStream* APS5_VABI _ZN3WTF10TextStreamlsERKNS0_30FormatNumberRes
     return self;
 }
 
+void APS5_VABI _ZN3WTF3URLC1ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(Jsc::WtfAbi::URL* self, const Jsc::WtfAbi::URL* base, const Jsc::WtfAbi::String* relative, const void* encoding) {
+    if (!self || !base || !relative) throw std::invalid_argument(__func__);
+    Bridged(&Jsc::ApiBridge::constructUrl, __func__)(self, base, relative, encoding);
+}
+
+void APS5_VABI _ZN3WTF3URL11setPasswordENS_10StringViewE(Jsc::WtfAbi::URL* self, Jsc::WtfAbi::StringView password) {
+    if (!self) throw std::invalid_argument(__func__);
+    Bridged(&Jsc::ApiBridge::setUrlPassword, __func__)(self, password);
+}
+
 }
