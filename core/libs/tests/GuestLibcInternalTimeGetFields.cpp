@@ -687,6 +687,16 @@ void CheckGroup3Typed(const GuestLocale::Facet* facet, TGetTimeFn getTime, TGetY
             getTime(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
             Require(state == 3 && tm.tm_sec == 55, "do_get_time truncated at second separator sets eofbit|failbit");
         }
+        {
+            sb.Setup(Ascii<TChar>("12:34:56"), buffered);
+            GuestTm tm{};
+            tm.tm_hour = 5;
+            tm.tm_min = 44;
+            tm.tm_sec = 33;
+            std::int32_t state = 2;
+            getTime(facet, sb.Begin(), EndIter(), &ios, &state, &tm);
+            Require(state == 2 && tm.tm_hour == 12 && tm.tm_min == 44 && tm.tm_sec == 33 && sb.RemainingFirst() == ':', "do_get_time with incoming failbit stores the hour and stops at the first separator");
+        }
 
         const struct {
             const char* text;
