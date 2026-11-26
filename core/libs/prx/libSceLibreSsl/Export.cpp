@@ -230,16 +230,6 @@ void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key) {
     mbedtls_des_key_set_parity(key);
 }
 
-int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_set_private_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;

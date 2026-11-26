@@ -299,6 +299,7 @@ EcPrivateKey::~EcPrivateKey() {
 }
 
 EcKey::~EcKey() {
+    if (privateKeyNumber) BN_free_nid_postfix(static_cast<Bignum*>(privateKeyNumber));
     delete group;
     delete publicKey;
     delete privateKey;
@@ -665,6 +666,46 @@ void APS5_VABI EC_KEY_free_nid_postfix(EcKey* key) {
 const EcGroup* APS5_VABI EC_KEY_get0_group_nid_postfix(const EcKey* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
     return key->group;
+}
+
+Bignum* APS5_VABI EC_KEY_get0_private_key_nid_postfix(const EcKey* key) {
+    if (key == nullptr) APS5_INVALID_ARG_EX;
+    auto* mutableKey = const_cast<EcKey*>(key);
+    if (!mutableKey->privateKey) return nullptr;
+    if (mutableKey->privateKeyNumber) return static_cast<Bignum*>(mutableKey->privateKeyNumber);
+    const std::size_t size = mbedtls_mpi_size(&mutableKey->privateKey->value);
+    std::vector<unsigned char> bytes(size);
+    if (size != 0 && mbedtls_mpi_write_binary(&mutableKey->privateKey->value, bytes.data(), size) != 0) return nullptr;
+    Bignum* number = BN_bin2bn_nid_postfix(bytes.data(), static_cast<int>(bytes.size()), nullptr);
+    mutableKey->privateKeyNumber = number;
+    return number;
+}
+
+int APS5_VABI EC_KEY_set_private_key_nid_postfix(EcKey* key, const Bignum* privateKey) {
+    if (key == nullptr) APS5_INVALID_ARG_EX;
+    if (key->privateKeyNumber) {
+        BN_free_nid_postfix(static_cast<Bignum*>(key->privateKeyNumber));
+        key->privateKeyNumber = nullptr;
+    }
+    if (!privateKey) {
+        delete key->privateKey;
+        key->privateKey = nullptr;
+        return 1;
+    }
+    if (!key->group) NotImplemented_nid_no_patch("EC_KEY_set_private_key: a key without a group");
+    const int bits = BN_num_bits_nid_postfix(privateKey);
+    if (bits < 0) return 0;
+    const int length = (bits + 7) / 8;
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(length));
+    if (length != 0 && BN_bn2bin_nid_postfix(privateKey, bytes.data()) != length) return 0;
+    auto* replacement = new EcPrivateKey(key->group->curve);
+    if (mbedtls_mpi_read_binary(&replacement->value, bytes.data(), bytes.size()) != 0) {
+        delete replacement;
+        return 0;
+    }
+    delete key->privateKey;
+    key->privateKey = replacement;
+    return 1;
 }
 
 int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {

@@ -62,11 +62,12 @@ struct EcKey {
     std::int32_t references = 1;
     std::int32_t flags = 0;
     void* extraData = nullptr;
+    void* privateKeyNumber = nullptr;
 };
 
 static_assert(std::is_standard_layout_v<EcGroup>);
 static_assert(offsetof(EcGroup, curve) == 0);
 static_assert(offsetof(NamedCurve, nid) == 0);
 static_assert(std::is_standard_layout_v<EcKey>);
-static_assert(sizeof(EcKey) == 64);
+static_assert(sizeof(EcKey) == 72);
 static_assert(offsetof(EcKey, references) == 48);
