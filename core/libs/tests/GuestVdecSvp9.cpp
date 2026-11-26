@@ -283,6 +283,17 @@ void TestMemoryQuery() {
         Require(ReadU32(outMem.data(), 0x40) == 0x100u, "BFFONbbPMXw block2 align");
         Require(AllBytesEqual(outMem.data(), 0x44, 0x48, 0xA5), "BFFONbbPMXw tail untouched");
     }
+
+    cfg.Init(2u, 40, 0u, 8, 0x80, 0x44);
+    rec.Init(1ULL, 11, 7u, 1u);
+    outMem.fill(0xA5);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == 0, "BFFONbbPMXw max dims");
+    Require(ReadU64(outMem.data(), 0x08) > 0ULL && ReadU64(outMem.data(), 0x08) <= 0xFFFFFFFFULL, "BFFONbbPMXw max dims block0 range");
+    Require(ReadU32(outMem.data(), 0x10) == 0x20u, "BFFONbbPMXw max dims block0 align");
+    Require(ReadU64(outMem.data(), 0x20) > 0ULL && ReadU64(outMem.data(), 0x20) <= 0xFFFFFFFFULL, "BFFONbbPMXw max dims block1 range");
+    Require(ReadU32(outMem.data(), 0x28) == 0x100u, "BFFONbbPMXw max dims block1 align");
+    Require(ReadU64(outMem.data(), 0x38) > 0ULL && ReadU64(outMem.data(), 0x38) <= 0xFFFFFFFFULL, "BFFONbbPMXw max dims block2 range");
+    Require(ReadU32(outMem.data(), 0x40) == 0x100u, "BFFONbbPMXw max dims block2 align");
 }
 
 void TestPreDecoderValidation() {
@@ -336,13 +347,14 @@ void TestPreDecoderValidation() {
     }
     {
         auto reqAlignMem = memInfo;
+        WriteU64(reqAlignMem.data(), 0x00, 0x13ULL);
         WriteU32(reqAlignMem.data(), 0x28, 0x200u);
         WriteU64(reqAlignMem.data(), 0x18, 0x20100ULL);
         WriteU32(reqAlignMem.data(), 0x40, 0x200u);
         WriteU64(reqAlignMem.data(), 0x30, 0x30100ULL);
         RequireNotImplemented([&] {
             libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), reqAlignMem.data(), &dummyA4, handle.data());
-        }, "JawAvxR7M+k base1/base2 checked against req align");
+        }, "JawAvxR7M+k base0 unchecked while base1/base2 checked against req align");
     }
     RequireNotImplemented([&] {
         libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), memInfo.data(), &dummyA4, handle.data());
