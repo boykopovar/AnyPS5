@@ -233,8 +233,8 @@ def split_report(lines, programs, classes):
     for arm in arms:
         for name in names:
             values = [row.get(name) for row in table]
-            a = [value for phase, value in zip(phases, values) if phase["kind"] == "A" and value is not None]
-            b = [value for phase, value in zip(phases, values) if phase["kind"] == arm and value is not None]
+            a = [value for phase, value in zip(phases, values, strict=True) if phase["kind"] == "A" and value is not None]
+            b = [value for phase, value in zip(phases, values, strict=True) if phase["kind"] == arm and value is not None]
             if a and b:
                 mean_a, mean_b = finite_sum(a) / len(a), finite_sum(b) / len(b)
                 row = {"metric": name, "a": mean_a, "b": mean_b, "change": mean_b - mean_a,
@@ -247,7 +247,7 @@ def split_report(lines, programs, classes):
                         "settled_present": phase["settled"][0] if phase["settled"] else None,
                         "end_present": phase["end"][0] if phase["end"] else None,
                         "clean_reports": {name: len(reports) for name, reports in phase["reports"].items()},
-                        "metrics": row} for phase, row in zip(phases, table)],
+                        "metrics": row} for phase, row in zip(phases, table, strict=True)],
             "metrics": rows}
 
 
