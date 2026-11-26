@@ -34,7 +34,7 @@ struct CallbackState {
     int callCount = 0;
 };
 
-void OnResult(const void* result, const void* error, void* context) {
+void APS5_VABI OnResult(const void* result, const void* error, void* context) {
     auto* state = static_cast<CallbackState*>(context);
     state->result = result;
     state->error = error;

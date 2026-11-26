@@ -12,6 +12,9 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
 #include "ProcessParametersFixture.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
@@ -93,6 +96,12 @@ int main() {
     AppContentBootParam boot{};
     Require(sceAppContentInitialize(nullptr, &boot) == ErrorParameter);
     Require(sceAppContentInitialize(&init, nullptr) == ErrorParameter);
+    errno = 71;
+    Require(sceAppContentInitialize(reinterpret_cast<const AppContentInitParam*>(std::uintptr_t{0x10}), &boot) == ErrorParameter);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAppContentInitialize(&init, reinterpret_cast<AppContentBootParam*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == 71);
     init.reserved[31] = 1;
     Require(sceAppContentInitialize(&init, &boot) == ErrorParameter);
     init.reserved[31] = 0;
@@ -109,6 +118,17 @@ int main() {
     sdkVersion = 0x01400000;
     std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
     Require(sceAppContentInitialize(nullptr, &boot) == 0);
+    Require(sceAppContentInitialize(reinterpret_cast<const AppContentInitParam*>(std::uintptr_t{0x10}), &boot) == 0);
+#ifndef _WIN32
+    void* legacyWriteOnlyPage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(legacyWriteOnlyPage != MAP_FAILED);
+    Require(mprotect(legacyWriteOnlyPage, 4096, PROT_WRITE) == 0);
+    auto* const legacyWriteOnlyBoot = static_cast<AppContentBootParam*>(legacyWriteOnlyPage);
+    Require(sceAppContentInitialize(nullptr, legacyWriteOnlyBoot) == 0);
+    Require(mprotect(legacyWriteOnlyPage, 4096, PROT_READ | PROT_WRITE) == 0);
+    Require(legacyWriteOnlyBoot->attr == 0);
+    munmap(legacyWriteOnlyPage, 4096);
+#endif
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
     const auto reachesService = [](auto call) {
@@ -334,6 +354,12 @@ int main() {
     Require(sceAppContentTemporaryDataFormat(&mountPoint) == ErrorNotMounted);
     Require(sceAppContentTemporaryDataMount2(0, &mountPoint) == 0);
     Require(access_nid_postfix("/temp0/keep.txt", 0) == 0);
+    errno = 71;
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(reinterpret_cast<const AppContentMountPoint*>(std::uintptr_t{0x10}), &available) == ErrorParameter);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, reinterpret_cast<size_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == 71);
     Require(sceAppContentTemporaryDataFormat(nullptr) == ErrorParameter);
     errno = EBUSY;
     Require(sceAppContentTemporaryDataFormat(reinterpret_cast<const AppContentMountPoint*>(std::uintptr_t{0x10})) == ErrorParameter);
@@ -396,6 +422,9 @@ int main() {
     Require(sceAppContentGetPftFlag(&pftFlag) == 0);
     Require(pftFlag == 0);
     Require(sceAppContentGetPftFlag(nullptr) == ErrorParameter);
+    errno = 71;
+    Require(sceAppContentGetPftFlag(reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == 71);
     AppContentEntitlementKey key;
     std::memset(&key, 0x5a, sizeof(key));
     const AppContentEntitlementKey untouchedKey = key;
@@ -493,6 +522,9 @@ int main() {
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 1, nullptr) == ErrorParameter);
+    errno = 71;
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == 71);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
 }

@@ -11,10 +11,38 @@
 
 namespace NKWebKit {
 
+class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
+public:
+    Retained<Object> context;
+    Retained<Object> pageGroup;
+    Retained<Object> userContentController;
+    Retained<Object> preferences;
+    Retained<Object> relatedPage;
+    Retained<Object> websiteDataStore;
+    bool initialCapitalizationEnabled = false;
+    double cpuLimit = 0.0;
+
+    Retained<PageConfiguration> Duplicate() const {
+        auto copy = Make<PageConfiguration>();
+        copy->context = context;
+        copy->pageGroup = pageGroup;
+        copy->userContentController = userContentController;
+        copy->preferences = preferences;
+        copy->relatedPage = relatedPage;
+        copy->websiteDataStore = websiteDataStore;
+        copy->initialCapitalizationEnabled = initialCapitalizationEnabled;
+        copy->cpuLimit = cpuLimit;
+        return copy;
+    }
+};
+
 class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    bool navigatedBack = false;
+    bool navigatedForward = false;
+    Retained<Object> currentBackForwardListItem;
     mutable Retained<Inspector> inspector;
     bool suppressScrollbarAnimations = false;
     bool hasHorizontalScrollbar = false;
@@ -25,7 +53,6 @@ public:
     SizeValue fixedLayoutSize{ 0.0, 0.0 };
     std::uint32_t paginationMode = 0;
     bool paginationBehavesLikeColumns = false;
-    bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
     bool isPinnedToLeftSide = true;
@@ -43,6 +70,7 @@ public:
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
     bool isClosed = false;
+    bool activeDOMObjectsAndAnimationsSuspended = false;
     std::optional<std::u16string> title;
     Retained<URL> activeURL;
     Retained<URL> provisionalURL;
@@ -66,6 +94,9 @@ public:
     std::uint32_t mutedState = 0;
     bool mayStartMediaWhenInWindow = true;
     std::uint32_t mediaState = 0;
+    bool allowsRemoteInspection = false;
+    Retained<URL> pendingAPIRequestURL;
+    Retained<PageConfiguration> configuration;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
@@ -146,25 +177,15 @@ public:
     bool initialProcessWarmed = false;
     bool useSeparateServiceWorkerProcess = false;
     bool currentModifierStateCleared = false;
-    std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t processModel = 0;
     bool usesNetworkProcess = true;
     bool diskCacheSpeculativeValidationEnabled = false;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
-};
-
-class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
-public:
-    Retained<Object> context;
-    Retained<Object> pageGroup;
-    Retained<Object> userContentController;
-    Retained<Object> preferences;
-    Retained<Object> relatedPage;
-    Retained<Object> websiteDataStore;
-    bool initialCapitalizationEnabled = false;
-    double cpuLimit = 0.0;
+mutable Retained<IconDatabase> iconDatabase;
+    std::optional<std::u16string> iconDatabasePath;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
@@ -205,6 +226,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserStyleSheet final : public ObjectOf<ObjectType::UserStyleSheet> {
@@ -216,6 +238,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserContentController final : public ObjectOf<ObjectType::UserContentController> {
@@ -276,6 +299,7 @@ public:
     Retained<Object> preferences;
     Retained<UserContentController> userContentController;
     std::vector<Retained<Object>> userStyleSheets;
+    std::u16string userStyleSheetLocation;
 };
 
 }  // namespace NKWebKit

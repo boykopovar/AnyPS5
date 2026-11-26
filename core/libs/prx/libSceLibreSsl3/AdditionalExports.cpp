@@ -63,10 +63,6 @@ void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useL
     (void)useLegacy;
 }
 
-int APS5_VABI X509_print_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -115,10 +111,6 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix() {
 }
 
 int APS5_VABI EC_POINT_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

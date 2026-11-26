@@ -43,6 +43,16 @@ int Fail(int error) {
 
 } // namespace
 
+GuestCpusetTarget FindGuestCpuset(std::int64_t id) {
+    if (id == -1) return GuestCpusetTarget::Process;
+    const int setId = static_cast<int>(id);
+    std::lock_guard lock(setMutex);
+    if (validSets.find(setId) == validSets.end()) return GuestCpusetTarget::Missing;
+    if (setId == RootSetId) return GuestCpusetTarget::Root;
+    if (setId == currentProcessSetId) return GuestCpusetTarget::Process;
+    return GuestCpusetTarget::Other;
+}
+
 extern "C" {
 
 int APS5_VABI cpuset_nid_postfix(int* setid) {
