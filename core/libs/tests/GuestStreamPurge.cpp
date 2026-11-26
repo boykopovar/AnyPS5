@@ -110,6 +110,19 @@ void CheckRepeatedPurge() {
     Require(fgetc_nid_postfix(&file.stream) == 'c', "a consumed byte does not return after repeated purges");
 }
 
+void CheckRepeatedPurgeWithMultipleBytes() {
+    BufferedStream file;
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare multi-byte repeated-purge input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind multi-byte repeated-purge input");
+    for (const char expected : {'a', 'b', 'c'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read before multi-byte pushback");
+    Require(ungetc_nid_postfix('X', &file.stream) == 'X' && ungetc_nid_postfix('Y', &file.stream) == 'Y', "push back two bytes");
+    for (int count = 0; count < 3; ++count) Require(fpurge_nid_postfix(&file.stream) == 0, "purge multi-byte pushback repeatedly");
+    char bytes[2]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &file.stream) == sizeof(bytes) && std::memcmp(bytes, "YX", sizeof(bytes)) == 0, "repeated purges preserve pushback order");
+    Require(fgetc_nid_postfix(&file.stream) == 'd', "resume after multi-byte pushback");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fgetc_nid_postfix(&file.stream) == 'e', "consumed multi-byte pushback does not return");
+}
+
 void CheckUnbuffered() {
     BufferedStream file;
     Require(std::setvbuf(file.native, nullptr, _IONBF, 0) == 0, "disable buffering");
@@ -178,6 +191,7 @@ int main() {
     CheckInput();
     CheckPushbackReadByFread();
     CheckRepeatedPurge();
+    CheckRepeatedPurgeWithMultipleBytes();
     CheckUnbuffered();
     CheckLineBuffered();
     CheckPipe();
