@@ -134,13 +134,19 @@ int APS5_VABI sceAudioOut2LoPortGetState(AudioOut2PortHandle port, AudioOut2Port
 }
 
 int APS5_VABI sceAudioOut2LoPortGetStateEx(AudioOut2PortHandle port, AudioOut2PortState* state, uint8_t* extra) {
+    if (state == nullptr) {
+        return static_cast<int>(0x80268001);
+    }
     const int result = sceAudioOut2PortGetState(port, state);
     if (result != 0) {
         return result;
     }
     if (extra != nullptr) {
         uint8_t zero = 0;
-        if (!GuestCopyOut_nid_no_patch(extra, &zero, sizeof(zero))) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(extra, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!copied) {
             return static_cast<int>(0x80268001);
         }
     }
