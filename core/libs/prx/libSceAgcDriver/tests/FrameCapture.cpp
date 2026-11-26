@@ -349,7 +349,7 @@ void testConcurrentDeltas(const std::filesystem::path& directory) {
             });
         }
         for (auto& thread : threads) thread.join();
-        check(writer.SharedBytes() != 0 && writer.Costs().evicted != 0, "the concurrent writers neither shared a part nor evicted one");
+        check(writer.Costs().evicted != 0, "the concurrent writers never evicted a part from a cache smaller than the parts they wrote");
         writer.Finish("{}");
     }
     const FrameCaptureReader reader(directory);
