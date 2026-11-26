@@ -1269,7 +1269,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         record = records.setdefault((nid, library), {"nid": nid, "library": library, "references": 0, "weak": weak})
         record["references"] += 1
         record["weak"] = record["weak"] and weak
-    for module, (symbols, needed) in (module_imports or {}).items():
+    for module, (symbols, _needed) in (module_imports or {}).items():
         for nid, weak in symbols:
             record = records.setdefault((nid, None, module), {"nid": nid, "library": None, "module": module, "references": 0, "weak": weak})
             record["references"] += 1
