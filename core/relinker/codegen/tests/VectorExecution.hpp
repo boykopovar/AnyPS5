@@ -22,7 +22,7 @@ struct Machine {
 class Runner {
 public:
     explicit Runner(const Bytes& body) {
-        Bytes code{0x48, 0x8B, 0x4F, 0x08, 0x48, 0x8B, 0x3F, 0x48, 0x89, 0xE2, 0x48, 0x89, 0xCC, 0x52};
+        Bytes code{0x48, 0x8B, 0x4F, 0x08, 0x48, 0x8B, 0x3F, 0x48, 0x89, 0xE2, 0x48, 0x89, 0xCC, 0x52, 0x57};
         code.insert(code.end(), {0x48, 0x8D, 0x87});
         append32(code, 512);
         for (std::uint8_t reg = 0; reg < 16; ++reg) {
@@ -36,6 +36,7 @@ public:
             append32(code, -128 + slot * 8);
         }
         code.insert(code.end(), body.begin(), body.end());
+        code.insert(code.end(), {0x48, 0x8B, 0x3C, 0x24});
         for (std::uint8_t reg = 0; reg < 16; ++reg) {
             code.insert(code.end(), {0xC4, static_cast<std::uint8_t>((reg & 8 ? 0x60 : 0xE0) | 1), 0x7E, 0x7F, static_cast<std::uint8_t>(0x87 | ((reg & 7) << 3))});
             append32(code, reg * 32);
@@ -46,7 +47,7 @@ public:
             code.insert(code.end(), {0x48, 0x89, 0x8F});
             append32(code, 544 + slot * 8);
         }
-        code.insert(code.end(), {0x5C, 0xC5, 0xF8, 0x77, 0xC3});
+        code.insert(code.end(), {0x5F, 0x5C, 0xC5, 0xF8, 0x77, 0xC3});
         entry = LoweringExecution::AppendHostEntry(code);
         if (code.size() > kPage) throw std::runtime_error("Vector execution code is too large");
         page = LoweringExecution::AllocatePages(kPage);

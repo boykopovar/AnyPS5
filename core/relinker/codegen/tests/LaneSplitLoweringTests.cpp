@@ -79,6 +79,15 @@ Bytes site(const Form& form, bool wide256, std::uint8_t dst, std::uint8_t first,
     }
 }
 
+Bytes memorySite(const Form& form, std::uint8_t dst, std::uint8_t first, int imm) {
+    const bool unary = form.Shape == LaneSplitShape::Unary || form.Shape == LaneSplitShape::UnaryImmediate;
+    Bytes bytes{0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x60 | form.Map),
+        static_cast<std::uint8_t>(((~(unary ? 0 : first) & 15) << 3) | 4 | form.Prefix), form.Opcode,
+        static_cast<std::uint8_t>(0x80 | ((dst & 7) << 3) | 7), 0, 2, 0, 0};
+    if (immediate(form.Shape)) bytes.push_back(static_cast<std::uint8_t>(imm));
+    return bytes;
+}
+
 void decoding() {
     for (const auto& form : forms()) {
         const auto bytes = site(form, true, 9, 3, 12, 0x21);
@@ -250,9 +259,20 @@ void checkMask(std::uint8_t dst, std::uint8_t source, const Value& input, std::u
     code.push_back(0x9D);
     code.insert(code.end(), above.begin(), above.end());
     code.insert(code.end(), stub.begin(), stub.end());
-    machineSlot(code, 0x89, dst, 0);
-    machineSlot(code, 0x89, 0, 3);
-    machineSlot(code, 0x8B, dst, 1);
+    if (dst == 4) {
+        machineSlot(code, 0x89, dst, 0);
+        machineSlot(code, 0x89, 0, 3);
+        machineSlot(code, 0x8B, dst, 1);
+    } else {
+        code.insert(code.end(), below.begin(), below.end());
+        if (dst & 8) code.push_back(0x41);
+        code.push_back(static_cast<std::uint8_t>(0x50 | (dst & 7)));
+        code.insert(code.end(), {0x41, 0x5B, 0x48, 0x8B, 0xBC, 0x24, 0x80, 0, 0, 0});
+        machineSlot(code, 0x89, 11, 0);
+        machineSlot(code, 0x89, 0, 3);
+        machineSlot(code, 0x8B, dst, 1);
+        code.insert(code.end(), above.begin(), above.end());
+    }
     code.insert(code.end(), below.begin(), below.end());
     code.push_back(0x9C);
     machineSlot(code, 0x8F, 0, 2);
@@ -289,12 +309,36 @@ void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t 
     for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split overwrote the red zone");
 }
 
+void checkMemory(const Form& form, std::uint8_t dst, std::uint8_t first, int imm) {
+    const Runner runner(lowered(memorySite(form, dst, first, imm)));
+    auto machine = VectorExecution::Initial();
+    const auto start = machine;
+    runner.Run(machine);
+    const bool unary = form.Shape == LaneSplitShape::Unary || form.Shape == LaneSplitShape::UnaryImmediate;
+    const auto wanted = described(form.Shape) ? wantedResult(form, start, first, start.Memory, imm) : perHalf(form, start, unary ? 0 : first, 0, imm, true);
+    for (std::uint8_t reg = 0; reg < 16; ++reg) {
+        const auto expected = reg == dst ? wanted : start.Ymm[reg];
+        require(machine.Ymm[reg] == expected, "a lane split with a memory source left ymm" + std::to_string(reg) + " wrong");
+    }
+    require(machine.Memory == start.Memory, "a lane split changed its memory source");
+    for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split with a memory source overwrote the red zone");
+}
+
 void execution() {
     for (const auto& form : forms()) {
         for (const auto& registers : std::array<std::array<std::uint8_t, 3>, 7>{{{0, 1, 2}, {3, 3, 4}, {5, 6, 5}, {7, 7, 7}, {15, 14, 13}, {8, 12, 9}, {13, 15, 14}}}) {
             for (const int imm : {0x00, 0x1B, 0x05, 0x88}) {
                 if (!immediate(form.Shape) && imm != 0x00) continue;
                 check(form, registers[0], registers[1], registers[2], imm);
+            }
+        }
+    }
+    for (const auto& form : forms()) {
+        if (form.Shape == LaneSplitShape::ShiftImmediate) continue;
+        for (const auto& registers : std::array<std::array<std::uint8_t, 3>, 7>{{{0, 1, 2}, {3, 3, 4}, {5, 6, 5}, {7, 7, 7}, {15, 14, 13}, {8, 12, 9}, {13, 15, 14}}}) {
+            for (const int imm : {0x00, 0x1B, 0x05, 0x88}) {
+                if (!immediate(form.Shape) && imm != 0x00) continue;
+                checkMemory(form, registers[0], registers[1], imm);
             }
         }
     }
@@ -314,7 +358,7 @@ void execution() {
     const std::array<Value, 6> inputs{{initial.Ymm[3], initial.Ymm[11],
         {0x8080808080808080ull, 0x8080808080808080ull, 0, 0}, {0, 0, 0x8080808080808080ull, 0x8080808080808080ull},
         {0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full}, {0x80ull, 0, 0, 0x8000000000000000ull}}};
-    for (const int dst : {0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15})
+    for (const int dst : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
         for (const int source : {0, 7, 14, 15})
             for (const auto& input : inputs)
                 for (const std::uint32_t flags : {0x202u, 0xAD7u})
