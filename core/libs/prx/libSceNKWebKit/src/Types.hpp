@@ -193,6 +193,17 @@ public:
     bool historyClearedForTesting = false;
     bool resourceLoadStatisticsCleared = false;
     std::uint32_t resourceLoadStatisticsNotifyCount = 0;
+
+    struct OriginAccessEntry {
+        std::string sourceOrigin;
+        std::string destinationProtocol;
+        std::string destinationHost;
+        bool allowDestinationSubdomains = false;
+
+        bool operator==(const OriginAccessEntry&) const = default;
+    };
+
+    std::vector<OriginAccessEntry> originAccessAllowList;
 };
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
@@ -238,15 +249,29 @@ public:
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
     Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFillAvailable = false;
     bool htmlInputElementAutoFilled = false;
     bool htmlInputElementAutoFilledAndViewable = false;
     bool htmlInputElementSpellcheckEnabled = true;
     bool htmlInputElementLastChangeWasUserEdit = false;
     bool htmlTextAreaElementLastChangeWasUserEdit = false;
+    std::uint8_t htmlInputElementAutoFillButtonType = 0;
+    std::uint8_t htmlInputElementLastAutoFillButtonType = 0;
+};
+
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width = 0, int height = 0) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
+    Retained<BundleFrame> frame;
+    Retained<BundleFrame> targetFrame;
+    Retained<Image> image;
     Retained<URL> absoluteImageURL;
     Retained<URL> absoluteLinkURL;
     Retained<URL> absoluteMediaURL;
@@ -413,6 +438,30 @@ public:
     }
 };
 
+class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
+public:
+    std::map<std::string, std::string> pageURLToIconURL;
+    std::map<std::string, std::vector<std::uint8_t>> iconURLToData;
+    std::map<std::string, std::uint32_t> iconRetainCounts;
+    bool checkIntegrityBeforeOpening = false;
+    bool closed = false;
+    bool cleanupEnabled = false;
+    const void* client = nullptr;
+};
+
+class UserMediaPermissionCheck final : public ObjectOf<ObjectType::UserMediaPermissionCheck> {
+public:
+    bool completed = false;
+    Retained<String> userMediaID;
+    bool allowed = false;
+
+    void SetUserMediaAccessInfo(Retained<String> id, bool isAllowed) {
+        completed = true;
+        userMediaID = std::move(id);
+        allowed = isAllowed;
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
@@ -457,14 +506,6 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
-};
-
-class Image final : public ObjectOf<ObjectType::Image> {
-public:
-    explicit Image(int width, int height) : width(width), height(height) {}
-
-    int width = 0;
-    int height = 0;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {

@@ -129,6 +129,8 @@ def package(platform, build, output, version):
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/LICENSE", "libs/licenses/libyuv.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/PATENTS", "libs/licenses/libyuv-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
