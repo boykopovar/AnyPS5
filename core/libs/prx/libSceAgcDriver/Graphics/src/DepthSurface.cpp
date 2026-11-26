@@ -287,6 +287,7 @@ struct DepthSamplingState {
     std::optional<std::uint8_t> overwriteStencil;
     std::optional<MultisampleColorAlias> stencilAlias;
     std::shared_ptr<Buffer> importedSamples;
+    std::shared_ptr<Buffer> importedStencil;
     bool importedPerSample = false;
     bool importedByCopy = false;
 
@@ -403,9 +404,17 @@ std::optional<Element> uniformPlaneValue(std::uint64_t address, std::size_t byte
     return value;
 }
 
+const char* readDepthPlane(const Context& context, const DepthTarget& target, const MultisampleTextureLayout& layout, DepthSamplingState& state);
+const char* readStencilPlane(const Context& context, const DepthTarget& target, const MultisampleTextureLayout& layout, DepthSamplingState& state);
+
 DepthSamplingState prepareUniformPlaneSampling(const Context& context, const DepthTarget& target, DepthSamplingState state) {
     const auto refuse = [&](const char* reason) {
         state.refusal = reason;
+        state.importedSamples.reset();
+        if (state.importedStencil != nullptr) state.initialStencil.reset();
+        state.importedStencil.reset();
+        state.importedPerSample = false;
+        state.importedByCopy = false;
         return state;
     };
     if (target.depthSwizzle != 24u || target.firstSlice != 0u || target.lastSlice != 0u) return refuse("native multisample depth arrays or non-Z_X layout are not implemented");
@@ -441,20 +450,25 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
     state.unevenPlanes = true;
+    const auto imports = [&](const GuestMemory::UnchangedQuery& plane, std::uint32_t elementBytes, const auto& read) {
+        if (HostDepthFormat(context, target.format) != target.format) return false;
+        const MultisampleTextureLayout layout(TextureTileMode::kZ64KBX, elementBytes, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
+        return layout.Bytes() == plane.bytes && read(context, target, layout, state) == nullptr;
+    };
     if (state.aliasDepth) {
         state.initialDepth = *state.aliasDepth;
     } else {
         const auto depthWord = uniformPlaneValue<std::uint32_t>(depth.address, depth.bytes);
         const auto depthValue = depthWord ? std::bit_cast<float>(*depthWord) : 0.0f;
-        if (!depthWord || !(depthValue >= 0.0f && depthValue <= 1.0f)) return refuse("native multisample depth plane without HTILE does not hold one depth value in [0, 1]");
-        state.initialDepth = depthValue;
+        if (depthWord && depthValue >= 0.0f && depthValue <= 1.0f) state.initialDepth = depthValue;
+        else if (!imports(depth, 4u, readDepthPlane)) return refuse("native multisample depth plane without HTILE does not hold one depth value in [0, 1]");
     }
     const auto stencilByte = uniformPlaneValue<std::uint8_t>(stencil.address, stencil.bytes);
-    if (!stencilByte) return refuse("native multisample stencil plane without HTILE does not hold one stencil value");
+    if (!stencilByte && !imports(stencil, 1u, readStencilPlane)) return refuse("native multisample stencil plane without HTILE does not hold one stencil value");
     state.unevenPlanes = false;
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
     if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
-    state.initialStencil = *stencilByte;
+    if (stencilByte) state.initialStencil = *stencilByte;
     return state;
 }
 
@@ -480,7 +494,26 @@ bool importsDepthSamples(const Context& context, const DepthTarget& target) {
 }
 
 bool copiesDepthSamples(const Context& context, const DepthTarget& target) {
-    return context.depthRangeUnrestricted && DirectDepthCopy(context, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, VK_FORMAT_R32_SFLOAT) && detilesDepthSamples(context, target, copiedSampleUsage);
+    return context.depthRangeUnrestricted && DirectDepthCopy(context, target.format, VK_IMAGE_ASPECT_DEPTH_BIT, VK_FORMAT_R32_SFLOAT) && detilesDepthSamples(context, target, copiedSampleUsage);
+}
+
+bool importsStencilSamples(const Context& context, const DepthTarget& target) {
+    if (!context.sampleRateShading || context.detiler == nullptr || context.imageFormatProperties == nullptr || !context.storageImageMultisample || !context.storageImageWriteWithoutFormat) return false;
+    VkImageFormatProperties properties{};
+    return context.imageFormatProperties(context.physical, TextureDetiler::ImageElementFormat(1u), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, importedSampleUsage, 0u, &properties) == VK_SUCCESS && (properties.sampleCounts & target.samples) != 0u && target.extent.width <= properties.maxExtent.width && target.extent.height <= properties.maxExtent.height;
+}
+
+const char* readStencilPlane(const Context& context, const DepthTarget& target, const MultisampleTextureLayout& layout, DepthSamplingState& state) {
+    if (!importsStencilSamples(context, target)) return "importing an uneven native multisample stencil plane requires multisampled storage image writes without format, sample-rate shading and a sampled multisampled R8 unsigned integer image";
+    const auto& plane = state.initial[1];
+    std::vector<std::byte> tiled(plane.bytes);
+    GuestMemory::Read(plane.address, std::span(tiled));
+    const auto linearBytes = static_cast<std::size_t>(layout.LinearBytes());
+    auto samples = std::make_shared<Buffer>(context, (linearBytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    layout.Detile(tiled, samples->Bytes().first(linearBytes));
+    state.importedStencil = std::move(samples);
+    state.initialStencil = std::uint8_t{0};
+    return nullptr;
 }
 
 const char* readDepthPlane(const Context& context, const DepthTarget& target, const MultisampleTextureLayout& layout, DepthSamplingState& state) {
@@ -1018,6 +1051,7 @@ public:
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
             std::vector<std::shared_ptr<void>> imported;
             if (this->sampling.importedSamples != nullptr) importSamples(commands, recorder, imported);
+            if (this->sampling.importedStencil != nullptr) importStencil(commands, recorder, imported);
             if (batch) batch->SubmitAndWait();
             else {
                 Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
@@ -2261,22 +2295,19 @@ private:
         return VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (HasStencil(hostFormat) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u);
     }
 
-    void importSamples(VkCommandBuffer commands, Recorder* recorder, std::vector<std::shared_ptr<void>>& kept) {
-        constexpr std::uint32_t sampleBytes = sizeof(float);
-        const auto staged = std::move(sampling.importedSamples);
-        Require(context.detiler != nullptr && hostFormat == VK_FORMAT_D32_SFLOAT, "importing native multisample depth samples requires a texture detiler and a D32 float host image");
+    std::shared_ptr<OwnedImage> uploadSamples(VkCommandBuffer commands, std::shared_ptr<Buffer> staged, std::uint32_t sampleBytes, VkFormat format, VkImageCreateFlags flags, VkImageUsageFlags usage, std::vector<std::shared_ptr<void>>& kept) {
+        Require(context.detiler != nullptr && hostFormat == target.format, "importing native multisample depth samples requires a texture detiler and a host image of the guest format");
         kept.push_back(staged);
         VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        info.flags = importedSampleFlags;
+        info.flags = flags;
         info.imageType = VK_IMAGE_TYPE_2D;
-        info.format = VK_FORMAT_R32_SFLOAT;
+        info.format = format;
         info.extent = {target.extent.width, target.extent.height, 1};
         info.mipLevels = 1;
         info.arrayLayers = 1;
         info.samples = static_cast<VkSampleCountFlagBits>(target.samples);
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        const bool copied = sampling.importedByCopy;
-        info.usage = copied ? copiedSampleUsage : importedSampleUsage;
+        info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImage created = VK_NULL_HANDLE;
@@ -2285,7 +2316,7 @@ private:
         kept.push_back(source);
         source->Allocate(context, info, "vkAllocateMemory native depth samples");
         Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, source->image, source->allocation.Memory(), source->allocation.Offset()), "vkBindImageMemory native depth samples");
-        const auto storage = std::make_shared<Texture>(context, source->image, TextureDetiler::ImageElementFormat(4u), VK_IMAGE_ASPECT_COLOR_BIT, VkComponentMapping{}, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0u, source, VK_IMAGE_USAGE_STORAGE_BIT);
+        const auto storage = std::make_shared<Texture>(context, source->image, TextureDetiler::ImageElementFormat(sampleBytes), VK_IMAGE_ASPECT_COLOR_BIT, VkComponentMapping{}, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0u, source, VK_IMAGE_USAGE_STORAGE_BIT);
         kept.push_back(storage);
         VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -2304,11 +2335,30 @@ private:
         Require(staged->Bytes().size() >= bytes, "the staged native multisample depth samples do not cover the target");
         for (std::uint64_t offset = 0u; offset < bytes; offset += stride) {
             const auto count = std::min<std::uint64_t>(stride, bytes - offset);
-            context.detiler->DispatchMultisampleImage(commands, sampleBytes, staged->Handle(), offset, count, storage->View(), target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / sampleBytes), static_cast<std::uint32_t>(count / sampleBytes));
+            context.detiler->DispatchMultisampleImage(commands, sampleBytes, staged->Handle(), offset, (count + 3u) & ~std::uint64_t{3}, storage->View(), target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / sampleBytes), static_cast<std::uint32_t>(count / sampleBytes));
         }
+        return source;
+    }
+
+    void importSamples(VkCommandBuffer commands, Recorder* recorder, std::vector<std::shared_ptr<void>>& kept) {
+        const bool copied = sampling.importedByCopy;
+        const auto source = uploadSamples(commands, std::move(sampling.importedSamples), sizeof(float), VK_FORMAT_R32_SFLOAT, importedSampleFlags, copied ? copiedSampleUsage : importedSampleUsage, kept);
         if (copied) copySamples(commands, source->image);
         else drawSamples(commands, recorder, source, kept);
         if (recorder != nullptr) Recorder::CountBarriers(copied ? Recorder::CommandClass::Copy : Recorder::CommandClass::Draw, 4);
+    }
+
+    void importStencil(VkCommandBuffer commands, Recorder* recorder, std::vector<std::shared_ptr<void>>& kept) {
+        const auto format = TextureDetiler::ImageElementFormat(1u);
+        const auto source = uploadSamples(commands, std::move(sampling.importedStencil), 1u, format, 0u, importedSampleUsage, kept);
+        const auto sampled = std::make_shared<Texture>(context, source->image, format, VK_IMAGE_ASPECT_COLOR_BIT, VkComponentMapping{}, VK_IMAGE_VIEW_TYPE_2D, 0u, source, VK_IMAGE_USAGE_SAMPLED_BIT);
+        kept.push_back(sampled);
+        CommandState batchState;
+        if (recorder == nullptr) batchState.Begin(commands);
+        auto& recording = recorder != nullptr ? recorder->GraphicsState() : batchState;
+        Require(recording.Commands() == commands, "the native multisample stencil sample import draws outside the command buffer that imports it");
+        RecordStencilSampleImport(context, recording, {image, view, hostFormat, target.extent, target.samples, SampleOrderMethod::DepthStencilBits, owned}, sampled->View(), kept);
+        if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 4);
     }
 
     void drawSamples(VkCommandBuffer commands, Recorder* recorder, const std::shared_ptr<OwnedImage>& samples, std::vector<std::shared_ptr<void>>& kept) {

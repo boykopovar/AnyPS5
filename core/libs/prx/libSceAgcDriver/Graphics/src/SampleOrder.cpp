@@ -224,6 +224,12 @@ public:
         drawDepth(recording, target, map, target.extent, SampleOrderPass{}, samples, samples, kept);
     }
 
+    void ImportStencil(CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
+        constexpr std::uint32_t sameSamplesDrawn = KeptSampleOrder | 0x88888888u;
+        constexpr std::array<std::uint32_t, 4> map{sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn};
+        drawDepth(recording, target, map, target.extent, SampleOrderPass{}, VK_NULL_HANDLE, samples, kept);
+    }
+
     Context context;
 
 private:
@@ -245,7 +251,8 @@ private:
             writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             writes[binding].pImageInfo = &images[binding];
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
+        const std::uint32_t firstWrite = depthSource == VK_NULL_HANDLE ? 1u : 0u;
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, (stencil ? 2u : 1u) - firstWrite, writes.data() + firstWrite, 0, nullptr);
         const std::array<VkImageView, 1> views{target.view};
         auto framebuffer = std::make_shared<Framebuffer>(context, pass.renderPass, views, region);
         kept.push_back(framebuffer);
@@ -276,7 +283,7 @@ private:
             context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
         };
-        draw(pass.depth, 0u, 0xffu, 0u);
+        if (depthSource != VK_NULL_HANDLE) draw(pass.depth, 0u, 0xffu, 0u);
         if (target.method == SampleOrderMethod::DepthStencilBits) {
             for (std::uint32_t bit = 0; bit < 8u; ++bit) draw(pass.stencilBits, bit, 1u << bit, 0xffu);
         }
@@ -682,6 +689,16 @@ void RecordDepthSampleImport(const Context& context, CommandState& recording, co
     const auto commands = recording.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
     ordersFor(context).Import(recording, target, samples, kept);
+    if (target.keep != nullptr) kept.push_back(target.keep);
+    RecordMemoryBarrier(context, commands, reorderStages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, anyAccess);
+}
+
+void RecordStencilSampleImport(const Context& context, CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
+    Require(target.image != VK_NULL_HANDLE && target.view != VK_NULL_HANDLE && samples != VK_NULL_HANDLE && target.samples > 1u, "a stencil sample import needs a multisampled depth and stencil attachment and a sampled source");
+    Require(target.method == SampleOrderMethod::DepthStencilBits && HasStencil(target.format), "a stencil sample import sets the bits of a stencil plane that holds zero");
+    const auto commands = recording.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    ordersFor(context).ImportStencil(recording, target, samples, kept);
     if (target.keep != nullptr) kept.push_back(target.keep);
     RecordMemoryBarrier(context, commands, reorderStages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, anyAccess);
 }

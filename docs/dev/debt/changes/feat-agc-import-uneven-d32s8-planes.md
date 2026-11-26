@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Native multisampled D32S8 depth without HTILE]
+
+- [Native multisampled D32S8 depth without HTILE](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) is imported when no multisampled colour target covers either plane; the sampled descriptor must name no metadata, and its pipe-aligned and ITERATE_256 bits are not compared. A plane whose samples hold one value (a float in [0, 1], a stencil byte) starts the host image at it, padding not compared; that every sample holds it is inferred from the uncompressed layout, not measured. Other depth planes import as the two D32 entries below state. Other stencil planes import sample by sample (host sample i from guest fragment i, inferred): eight draws set one bit each from a multisampled R8_UINT image, needing formatless multisampled storage writes and sample-rate shading. Without them a plane imports only once a stencil readback shows the first draw (depth ALWAYS with writes, stencil ALWAYS/REPLACE, mask 0xff) reached every sample; else it throws, as D16 without HTILE does.
