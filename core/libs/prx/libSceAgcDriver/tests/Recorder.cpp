@@ -5146,8 +5146,25 @@ bool stagedEpochReuseTests(const Device& device, Recorder& recorder) {
     const auto reads = resources->InPlaceReads();
     const bool inPlace = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= element && range.second >= element + elementBytes; });
     Require(resources->Reusable() && !resources->HasCopiedWrites() && !inPlace, "the read and written 1 MiB element was not staged in a reusable build");
-    VkPipelineLayout layout = VK_NULL_HANDLE;
-    VkPipeline pipeline = VK_NULL_HANDLE;
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        void Destroy() {
+            recorder.Sync();
+            if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+            if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            pipeline = VK_NULL_HANDLE;
+            layout = VK_NULL_HANDLE;
+            module = VK_NULL_HANDLE;
+        }
+        ~Release() { Destroy(); }
+    } release{context, recorder};
+    auto& layout = release.layout;
+    auto& pipeline = release.pipeline;
     const auto setLayout = resources->Layout();
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -5156,7 +5173,8 @@ bool stagedEpochReuseTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "staged epoch reuse pipeline layout");
-    const auto module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "staged epoch reuse shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "staged epoch reuse shader module");
+    const auto module = release.module;
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
     pipelineInfo.layout = layout;
@@ -5188,9 +5206,7 @@ bool stagedEpochReuseTests(const Device& device, Recorder& recorder) {
     Require(!exited && broke, "a staged build's use did not break the proof, so its next use could skip its staging copy-in and copy-back through the epoch exit");
     Require(value == 7u, "a reused staged build lost a use's writes");
     resources.reset();
-    context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
-    context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
-    context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+    release.Destroy();
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
