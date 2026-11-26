@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <new>
@@ -67,6 +68,9 @@ VkImage lastImage = VK_NULL_HANDLE;
 std::vector<VkImage> clearedImages;
 VkImageUsageFlags lastImageUsage = 0;
 std::uint32_t imagesDestroyed = 0;
+std::uint32_t dispatches = 0;
+bool failDepthConvertValidation = false;
+std::array<std::uint8_t, 1u << 20u> mappedMemory{};
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageReads;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageWrites;
 std::vector<VkImage> destroyedImages;
@@ -171,8 +175,7 @@ VKAPI_ATTR VkResult VKAPI_CALL bindBufferMemory(VkDevice, VkBuffer, VkDeviceMemo
 
 VKAPI_ATTR void VKAPI_CALL destroyBuffer(VkDevice, VkBuffer, const VkAllocationCallbacks*) {}
 VKAPI_ATTR VkResult VKAPI_CALL mapMemory(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void** data) {
-    static std::array<std::uint8_t, 1u << 20u> mapped{};
-    *data = mapped.data();
+    *data = mappedMemory.data();
     return VK_SUCCESS;
 }
 VKAPI_ATTR VkResult VKAPI_CALL invalidateMappedMemoryRanges(VkDevice, std::uint32_t, const VkMappedMemoryRange*) { return VK_SUCCESS; }
@@ -211,7 +214,13 @@ VKAPI_ATTR void VKAPI_CALL updateDescriptorSets(VkDevice, std::uint32_t, const V
 VKAPI_ATTR void VKAPI_CALL cmdBindPipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline) {}
 VKAPI_ATTR void VKAPI_CALL cmdBindDescriptorSets(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, std::uint32_t, std::uint32_t, const VkDescriptorSet*, std::uint32_t, const std::uint32_t*) {}
 VKAPI_ATTR void VKAPI_CALL cmdPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {}
-VKAPI_ATTR void VKAPI_CALL cmdDispatch(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t) {}
+VKAPI_ATTR void VKAPI_CALL cmdDispatch(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t) {
+    ++dispatches;
+    if (failDepthConvertValidation) {
+        const std::uint32_t fault = 1u;
+        std::memcpy(mappedMemory.data(), &fault, sizeof(fault));
+    }
+}
 VKAPI_ATTR void VKAPI_CALL destroyDescriptorSetLayout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL destroyPipelineLayout(VkDevice, VkPipelineLayout, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL destroyShaderModule(VkDevice, VkShaderModule, const VkAllocationCallbacks*) {}
@@ -419,8 +428,6 @@ void TestD16StencilFallback(const Context& context) {
     constexpr std::uint64_t d16s8Stencil = 0x70800000;
     Require(HostDepthFormat(without, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D24_UNORM_S8_UINT, "a device without D16_UNORM_S8_UINT must store it as D24_UNORM_S8_UINT");
     Require(HostDepthFormat(without, VK_FORMAT_D32_SFLOAT_S8_UINT) == VK_FORMAT_D32_SFLOAT_S8_UINT && HostDepthFormat(without, VK_FORMAT_D16_UNORM) == VK_FORMAT_D16_UNORM, "only D16_UNORM_S8_UINT is replaced");
-    TextureDetiler detiler(without);
-    without.detiler = &detiler;
     DepthSurfaceView(without, {d16s8, d16s8Stencil, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
     Require(lastImageFormat == VK_FORMAT_D24_UNORM_S8_UINT, "a D16_UNORM_S8_UINT surface was not created as D24_UNORM_S8_UINT on a device without it");
     Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface stored as D24 must still sample its depth plane");
@@ -442,8 +449,26 @@ void TestD16StencilFallback(const Context& context) {
     Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
+    TextureDetiler detiler(without);
+    without.detiler = &detiler;
+    dispatches = 0;
     Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr, "two slices of a D16 surface stored as D24 must be converted");
+    Require(dispatches == 2u, "two slices of a D16 surface stored as D24 must each dispatch a depth conversion");
+    dispatches = 0;
     Require(lookup(without, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr, "an R16_UINT view of a D16 surface stored as D24 must be converted");
+    Require(dispatches == 1u, "an R16_UINT view of a D16 surface stored as D24 must dispatch a depth conversion");
+    ClearDepthSurfaces(without.device);
+
+    without.imageFormatProperties = sampledDepthProperties;
+    DepthSurfaceView(without, {d16s8, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto singleSliceImage = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x20000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto displacedSingleImage = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x20000, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0, 0, false, 2});
+    const auto multisampledSliceImage = lastImage;
+    imageReads.clear();
+    Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr, "a layered depth lookup over a multisampled second slice must fall back instead of copying the multisampled image");
+    Require(imageReads.size() == 1u && imageReads[0].first == singleSliceImage && imageReads[0].first != multisampledSliceImage && imageReads[0].first != displacedSingleImage, "depthSlice must reject multisampled and displaced owners for image-to-buffer copies");
     ClearDepthSurfaces(without.device);
 
     static int onlyTag = 0;
@@ -459,6 +484,27 @@ void TestD16StencilFallback(const Context& context) {
         threw = true;
     }
     Require(threw, "a constant 16-bit depth bias on D32_SFLOAT_S8_UINT storage must throw");
+    TextureDetiler onlyDetiler(only);
+    only.detiler = &onlyDetiler;
+    DepthSurfaceView(only, {d16s8, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    DepthSurfaceView(only, {d16s8 + 0x80000, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    failDepthConvertValidation = true;
+    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
+        dispatches = 0;
+        bool validationFailed = false;
+        try {
+            static_cast<void>(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}));
+        } catch (const std::runtime_error& error) {
+            validationFailed = std::string_view(error.what()).find("nonfinite D32 depth value") != std::string_view::npos;
+        }
+        Require(validationFailed && dispatches == 1u, "a failed DepthPlaneCopy conversion must roll back its cached layer so the next lookup retries validation");
+    }
+    failDepthConvertValidation = false;
+    dispatches = 0;
+    Require(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr && dispatches == 1u, "a retry after a rolled-back DepthPlaneCopy conversion must succeed once validation passes");
+    dispatches = 0;
+    Require(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr && dispatches == 0u, "a subsequent lookup after a valid DepthPlaneCopy conversion must reuse the cached layer");
+    ClearDepthSurfaces(only.device);
 }
 
 void TestMultisampleDepthOwnership(Context context) {

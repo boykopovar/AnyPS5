@@ -314,6 +314,63 @@ void RequireOddWidth(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics:
     }
 }
 
+void RequireTightPitchedBounds(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context) {
+    Buffer r16Source(context, 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    Buffer d32Staging(context, 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    Buffer r16Destination(context, 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const std::array<std::uint32_t, 3> pitched{0x1234u, 0xaaaaaaaau, 0x5678u};
+    std::memcpy(r16Source.Bytes().data(), pitched.data(), sizeof(pitched));
+    std::memset(d32Staging.Bytes().data(), 0, 12);
+    std::memset(r16Destination.Bytes().data(), 0, 12);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        context.detiler->BeginBatch();
+        CommandBatch batch(context);
+        const auto registerValidation = [&](std::function<void()> validation) { batch.OnValidated(std::move(validation)); };
+        context.detiler->DispatchDepthConvert(batch.Handle(), r16Source.Handle(), 0, d32Staging.Handle(), 0, 1, 2, 8, 8, VK_FORMAT_D32_SFLOAT_S8_UINT, true, registerValidation);
+        context.detiler->DispatchDepthConvert(batch.Handle(), d32Staging.Handle(), 0, r16Destination.Handle(), 0, 1, 2, 8, 8, VK_FORMAT_D32_SFLOAT_S8_UINT, false, registerValidation);
+        batch.SubmitAndWait();
+    }
+    device.WaitIdle();
+    r16Destination.Invalidate();
+    std::array<std::uint32_t, 3> words{};
+    std::memcpy(words.data(), r16Destination.Bytes().data(), sizeof(words));
+    Require((words[0] & 0xffffu) == 0x1234u && (words[2] & 0xffffu) == 0x5678u, "tight pitched depth conversion did not preserve both rows");
+}
+
+void RequireNestedValidationStopsLaterBatches(const AgcDriver::Graphics::Context& context) {
+    bool completionA = false;
+    bool completionB = false;
+    bool completionC = false;
+    std::string failure;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::Recorder nested(context);
+        std::uint64_t serialB = 0u;
+        nested.OpenBatch();
+        nested.OnComplete([&] {
+            completionA = true;
+            nested.FinishUpTo(serialB);
+        });
+        nested.Submit();
+        nested.OpenBatch();
+        serialB = nested.OpenSerial();
+        nested.OnValidated([] { throw std::runtime_error("AGC graphics: simulated nested validation failure"); });
+        nested.OnComplete([&] { completionB = true; });
+        nested.Submit();
+        nested.OpenBatch();
+        nested.OnComplete([&] { completionC = true; });
+        nested.Submit();
+        try {
+            nested.Sync();
+        } catch (const std::exception& error) {
+            failure = error.what();
+        }
+    }
+    Require(failure.find("simulated nested validation failure") != std::string::npos, "nested FinishUpTo validation failure was not reported by Sync: " + failure);
+    Require(completionA && !completionB && !completionC, "a nested FinishUpTo validation failure allowed a later batch to publish completions");
+}
+
 void RequireNonfiniteFault(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context) {
     const std::array<std::uint32_t, 6> nonfinite{FloatBits(std::numeric_limits<float>::infinity()), FloatBits(-std::numeric_limits<float>::infinity()), FloatBits(std::numeric_limits<float>::quiet_NaN()), FloatBits(-std::numeric_limits<float>::quiet_NaN()), FloatBits(std::numeric_limits<float>::signaling_NaN()), FloatBits(-std::numeric_limits<float>::signaling_NaN())};
     for (const auto value : nonfinite) {
@@ -437,6 +494,8 @@ int main() {
         RequireOddWidth(*device, context, VK_FORMAT_D32_SFLOAT_S8_UINT);
         RequireOffsetRectangles(*device, context, VK_FORMAT_D24_UNORM_S8_UINT);
         RequireOffsetRectangles(*device, context, VK_FORMAT_D32_SFLOAT_S8_UINT);
+        RequireTightPitchedBounds(*device, context);
+        RequireNestedValidationStopsLaterBatches(context);
         RequireNonfiniteFault(*device, context);
         device->WaitIdle();
         RequireRecorderFaultDrain(*device, context);

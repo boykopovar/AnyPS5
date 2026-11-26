@@ -1383,15 +1383,32 @@ void RunDepthStorageTableTests(AgcDriver::VulkanDevice& device) {
             Require(bits == 0u, "depth storage table: record " + std::to_string(record) + " left depth bits " + Hex(bits) + " at texel " + std::to_string(lane) + " after a zero store");
         }
     }
+    const std::array<std::uint16_t, 5> mixedCodes{0x2000u, 0x4000u, 0x6000u, 0x8000u, 0xa000u};
+    for (std::uint32_t record = 0; record < formats.size(); ++record) {
+        std::vector<std::uint16_t> restored(static_cast<std::size_t>(Width) * Height, mixedCodes[record]);
+        std::memcpy(reinterpret_cast<void*>(plane(record)), restored.data(), restored.size() * sizeof(std::uint16_t));
+        AgcDriver::GuestMemory::CollectWrites(plane(record), restored.size() * sizeof(std::uint16_t));
+        const float depth = static_cast<float>(mixedCodes[record]) / 65535.0f;
+        Require(DepthFastClearHarness::Draw(device, shaders, {plane(record), stencil(record), 0u, false, VK_FORMAT_D16_UNORM_S8_UINT}, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .minDepth = depth, .maxDepth = depth}, {Width, Height}, DepthTablePixels) == Width * Height, "depth storage table: restoring resident D16S8 surface " + std::to_string(record) + " did not cover it");
+    }
     Keys[0] = 0x7u;
     const auto mixed = Run(device, StorageSetBitLoopCode, 1, Lanes, 64);
     AgcDriver::Graphics::StorageTexture::FlushAllPending("depth storage table mixed test");
+    device.WaitIdle();
     Require(!Faulted(mixed), "depth storage table: the mixed-kind loop faulted:\n" + mixed.log);
     Require(mixed.storageTableBinding == ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding && mixed.storageTableKind == static_cast<std::uint32_t>(ShaderRecompiler::DescriptorKind::StorageImage), "depth storage table: the mixed-kind loop did not compile the image storage table");
     Require(mixed.imageTableCount == formats.size(), "depth storage table: the mixed-kind storage table holds " + std::to_string(mixed.imageTableCount) + " elements, expected " + std::to_string(formats.size()));
     Require(mixed.tableUintStorage.size() == formats.size(), "depth storage table: the mixed-kind storage binding carries " + std::to_string(mixed.tableUintStorage.size()) + " element classes, expected " + std::to_string(formats.size()));
     const auto mixedUint = static_cast<std::size_t>(std::count(mixed.tableUintStorage.begin(), mixed.tableUintStorage.end(), true));
     Require(mixedUint == 3u, "depth storage table: the mixed-kind storage binding carries " + std::to_string(mixedUint) + " UINT elements, expected the three write-only UINT, SINT and SFLOAT records");
+    for (std::uint32_t record = 0; record < formats.size(); ++record) {
+        const std::uint16_t expected = record < 3u ? 0u : mixedCodes[record];
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            std::uint16_t bits = 0xdeadu;
+            std::memcpy(&bits, reinterpret_cast<const void*>(plane(record) + lane * sizeof(std::uint16_t)), sizeof(bits));
+            Require(bits == expected, "depth storage table: mixed-kind record " + std::to_string(record) + " holds " + Hex(bits) + " at texel " + std::to_string(lane) + ", expected " + Hex(expected));
+        }
+    }
     static std::uintptr_t maskedSerial = 0x9000u;
     auto masked = context;
     masked.physical = reinterpret_cast<VkPhysicalDevice>(maskedSerial);

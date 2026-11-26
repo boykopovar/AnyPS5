@@ -24,18 +24,19 @@ namespace AgcDriver::DriverDetail {
 
 struct DriverTestAccess {
     static std::shared_ptr<VulkanDevice> Device() {
+        std::shared_ptr<VulkanDevice> created;
         try {
-            std::shared_ptr<VulkanDevice> created = OpenVulkanTestDevice();
-            if (!created) return nullptr;
-            auto& driver = Driver::Get();
-            std::lock_guard gpuLock(GuestMemory::GpuMutex());
-            if (driver.device == nullptr) driver.device = std::move(created);
-            return driver.device.Load();
+            created = OpenVulkanTestDevice();
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return nullptr;
         }
+        if (!created) return nullptr;
+        auto& driver = Driver::Get();
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (driver.device == nullptr) driver.device = std::move(created);
+        return driver.device.Load();
     }
 };
 

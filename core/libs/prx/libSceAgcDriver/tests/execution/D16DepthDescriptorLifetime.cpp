@@ -48,25 +48,41 @@ int main() {
         Require(context.detiler != nullptr, "the test device has no texture detiler");
         auto* recorder = AgcDriver::Graphics::Recorder::Active();
         Require(recorder != nullptr, "the test device has no active recorder");
+        const auto batchCodes = [](std::uint32_t index) {
+            return std::array<std::uint16_t, 2>{static_cast<std::uint16_t>(0x1000u + index * 0x100u), static_cast<std::uint16_t>(0x8000u + index * 0x100u)};
+        };
+        const auto checkD24Pair = [](Buffer& output, const std::array<std::uint16_t, 2>& expected, const char* what) {
+            output.Invalidate();
+            std::array<std::uint32_t, 2> values{};
+            std::memcpy(values.data(), output.Bytes().data(), sizeof(values));
+            Require((values[0] & 0xffffffu) == D16ToD24(expected[0]) && (values[1] & 0xffffffu) == D16ToD24(expected[1]), what);
+        };
         Buffer input(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        const std::uint16_t code = 0x8000u;
-        const std::array<std::uint16_t, 2> codes{code, code};
-        std::memcpy(input.Bytes().data(), codes.data(), sizeof(codes));
+        const std::array<std::uint16_t, 2> defaultCodes{0x8000u, 0x4000u};
+        std::memcpy(input.Bytes().data(), defaultCodes.data(), sizeof(defaultCodes));
+        Buffer recorderInput(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const std::array<std::uint16_t, 2> recorderCodes{0x5555u, 0xaaaau};
+        std::memcpy(recorderInput.Bytes().data(), recorderCodes.data(), sizeof(recorderCodes));
+        std::vector<std::unique_ptr<Buffer>> inputs;
         std::vector<std::unique_ptr<Buffer>> outputs;
         std::vector<std::unique_ptr<CommandBatch>> batches;
         Buffer recorderOutput(context, 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             context.detiler->BeginBatch();
+            inputs.reserve(65);
             outputs.reserve(65);
             batches.reserve(65);
             for (std::uint32_t index = 0; index < 65u; ++index) {
+                inputs.push_back(std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
+                const auto codes = batchCodes(index);
+                std::memcpy(inputs.back()->Bytes().data(), codes.data(), sizeof(codes));
                 outputs.push_back(std::make_unique<Buffer>(context, 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
                 batches.push_back(std::make_unique<CommandBatch>(context));
-                Record(*batches.back(), context, input, *outputs.back(), 2, 1, true, VK_FORMAT_D24_UNORM_S8_UINT);
+                Record(*batches.back(), context, *inputs.back(), *outputs.back(), 2, 1, true, VK_FORMAT_D24_UNORM_S8_UINT);
             }
             recorder->OpenBatch();
-            context.detiler->DispatchDepthConvert(recorder->Commands(), input.Handle(), 0, recorderOutput.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, [&](std::function<void()> validation) { recorder->OnValidated(std::move(validation)); });
+            context.detiler->DispatchDepthConvert(recorder->Commands(), recorderInput.Handle(), 0, recorderOutput.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, [&](std::function<void()> validation) { recorder->OnValidated(std::move(validation)); });
             recorder->Submit();
         }
         for (auto& batch : batches) batch->Submit();
@@ -75,12 +91,10 @@ int main() {
             for (auto& batch : batches) batch->Wait();
         }
         device->WaitIdle();
-        for (auto& output : outputs) {
-            output->Invalidate();
-            std::uint32_t value = 0;
-            std::memcpy(&value, output->Bytes().data(), 3);
-            Require((value & 0xffffffu) == D16ToD24(code), "a converted output does not hold the D24 code");
+        for (std::uint32_t index = 0; index < outputs.size(); ++index) {
+            checkD24Pair(*outputs[index], batchCodes(index), "a converted output does not hold both expected D24 codes");
         }
+        checkD24Pair(recorderOutput, recorderCodes, "the recorder output does not hold both expected D24 codes");
         auto retained = std::move(batches.back());
         batches.pop_back();
         {
@@ -90,24 +104,26 @@ int main() {
             Buffer output(context, 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             Record(afterReset, context, input, output, 2, 1, true, VK_FORMAT_D24_UNORM_S8_UINT);
             afterReset.SubmitAndWait();
+            checkD24Pair(output, defaultCodes, "the post-reset output does not hold both expected D24 codes");
         }
         device->WaitIdle();
         Buffer faulty(context, 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const std::uint32_t nan = 0x7fc00000u;
         std::memcpy(faulty.Bytes().data(), &nan, sizeof(nan));
         Buffer failedOutput(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        bool failed = false;
+        std::string failure;
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             CommandBatch bad(context);
             Record(bad, context, faulty, failedOutput, 2, 1, false, VK_FORMAT_D32_SFLOAT_S8_UINT);
             try {
                 bad.SubmitAndWait();
-            } catch (const std::exception&) {
-                failed = true;
+            } catch (const std::exception& error) {
+                failure = error.what();
+                if (failure.find("nonfinite D32 depth value") == std::string::npos) throw;
             }
         }
-        Require(failed, "a faulted standalone wait did not report its conversion failure");
+        Require(!failure.empty(), "a faulted standalone wait did not report its conversion failure");
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             CommandBatch afterFault(context);

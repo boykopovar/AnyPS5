@@ -680,22 +680,6 @@ void RequireRefusals(AgcDriver::VulkanDevice& device, const Context& context, co
         threw = true;
     }
     Require(threw, std::string(name) + ": a cube view with eleven layers was served");
-    const auto multisampled = DepthTarget{depth, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u, 0u, false, 2u};
-    static_cast<void>(DepthSurfaceView(context, multisampled));
-    threw = false;
-    try {
-        static_cast<void>(DepthSurfaceStorage(context, words, resource, 0));
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw, std::string(name) + ": multisampled depth storage was served");
-    threw = false;
-    try {
-        static_cast<void>(AgcDriver::Graphics::HostDepthBiasConstant(context, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f));
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw == (HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D32_SFLOAT_S8_UINT), std::string(name) + ": the constant depth bias refusal differs from the host format");
     for (const std::uint32_t format : {8u, 12u, 13u}) {
         const auto sampledWords = StorageView(depth, format, Type2D);
         const auto sampledResource = AgcDriver::Graphics::DecodeTextureResource(sampledWords);
@@ -708,6 +692,41 @@ void RequireRefusals(AgcDriver::VulkanDevice& device, const Context& context, co
         }
         Require(threw || !served, std::string(name) + ": a numeric R16 alias was served as a raw depth sample");
     }
+    std::uint32_t msaaSamples = 0u;
+    if (context.imageFormatProperties != nullptr) {
+        VkImageFormatProperties msaaProperties{};
+        const auto hostFormat = HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT);
+        const auto msaaUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (context.imageFormatProperties(context.physical, hostFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, msaaUsage, 0u, &msaaProperties) == VK_SUCCESS && msaaProperties.maxExtent.width >= Width && msaaProperties.maxExtent.height >= Height) {
+            for (const std::uint32_t candidate : {2u, 4u, 8u}) {
+                if ((msaaProperties.sampleCounts & candidate) != 0u) {
+                    msaaSamples = candidate;
+                    break;
+                }
+            }
+        }
+    }
+    if (msaaSamples != 0u) {
+        const auto msaaDepth = Address(block.Plane(1));
+        const auto msaaWords = StorageView(msaaDepth, Format16Unorm, Type2D, 0u, 0u);
+        const auto msaaResource = AgcDriver::Graphics::DecodeTextureResource(msaaWords);
+        const auto multisampled = DepthTarget{msaaDepth, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u, 0u, false, msaaSamples};
+        static_cast<void>(DepthSurfaceView(context, multisampled));
+        threw = false;
+        try {
+            static_cast<void>(DepthSurfaceStorage(context, msaaWords, msaaResource, 0));
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw, std::string(name) + ": multisampled depth storage was served");
+    }
+    threw = false;
+    try {
+        static_cast<void>(AgcDriver::Graphics::HostDepthBiasConstant(context, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw == (HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D32_SFLOAT_S8_UINT), std::string(name) + ": the constant depth bias refusal differs from the host format");
     ClearDepthSurfaces(context.device);
 }
 
@@ -1074,7 +1093,8 @@ void RequireNativeControl(AgcDriver::VulkanDevice& device, const Context& contex
 void RunMode(AgcDriver::VulkanDevice& device, const Context& base, const Shaders& shaders, VkFormat expectedHost, VkFormat hiddenA, VkFormat hiddenB, const char* name) {
     VkFormatProperties properties{};
     base.formatProperties(base.physical, expectedHost, &properties);
-    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0u) {
+    constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((properties.optimalTilingFeatures & required) != required) {
         std::printf("%s: host format %d is not supported on this device: the mode is skipped\n", name, static_cast<int>(expectedHost));
         return;
     }

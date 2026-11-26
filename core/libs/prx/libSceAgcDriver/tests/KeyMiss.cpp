@@ -162,7 +162,15 @@ void testRealContentKey() {
 
     const Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
     const auto base = ShaderResources::ContentKey(shader, true, false);
-    check(base.capacity() == base.size(), "real content key reserved a different word count than it serialized");
+    const auto packedWords = [](std::size_t bits) { return (bits + 31u) / 32u; };
+    std::size_t expectedWords = 5u;
+    for (const auto& binding : program.bindings) {
+        expectedWords += 8u + binding.guestDescriptor.size() + 11u + 1u + binding.imageSamplers.size() * 2u + 1u + binding.imageShapes.size();
+        for (const auto* flags : {&binding.imageWritten, &binding.imageUintStorage, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) {
+            expectedWords += packedWords(flags->size());
+        }
+    }
+    check(base.size() == expectedWords, "real content key serialized a different word count than expected");
     std::vector<std::uint32_t> appended;
     ShaderResources::AppendContentKey(shader, true, false, appended);
     check(appended == base, "AppendContentKey disagreed with ContentKey");
