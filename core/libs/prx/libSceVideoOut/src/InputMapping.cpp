@@ -174,7 +174,7 @@ std::uint32_t parseToggleActions(std::string_view value) {
     return mask;
 }
 
-Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+Pad::InputBinding parseSource(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
     const auto type = upper(trim(source.substr(0, separator)));
@@ -233,6 +233,16 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
 }
 
+Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+    const auto space = source.find_first_of(" \t");
+    if (space == std::string_view::npos || upper(source.substr(0, space)) != "TURBO") return parseSource(action, source);
+    if (action.control != Pad::InputControl::Button) throw std::runtime_error("Turbo can only be used on a pad button");
+    auto binding = parseSource(action, trim(source.substr(space + 1)));
+    if (binding.wheelDirection != 0 || binding.wheelTilt != 0) throw std::runtime_error("Turbo cannot use the mouse wheel");
+    binding.mode = Pad::InputMode::Turbo;
+    return binding;
+}
+
 enum class InputSetting {
     LeftStickDeadzone,
     RightStickDeadzone,
@@ -246,6 +256,7 @@ enum class InputSetting {
     StickModifierScale,
     KeyboardRampMs,
     TriggerRampMs,
+    TurboRateHz,
     MouseControlsRightStick
 };
 
@@ -267,6 +278,7 @@ constexpr auto settingNames = std::array{
     InputSettingName{"StickModifierScale", InputSetting::StickModifierScale},
     InputSettingName{"KeyboardRampMs", InputSetting::KeyboardRampMs},
     InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs},
+    InputSettingName{"TurboRateHz", InputSetting::TurboRateHz},
     InputSettingName{"MouseStickTarget", InputSetting::MouseControlsRightStick}
 };
 
@@ -284,6 +296,16 @@ int parseDeadzonePercent(std::string_view value) {
     const auto result = std::from_chars(value.data(), end, parsed);
     if (result.ec != std::errc{} || result.ptr != end || parsed < 0 || parsed > Pad::MaxStickDeadzonePercent) {
         throw std::runtime_error("deadzone must be a whole percentage from 0 to " + std::to_string(Pad::MaxStickDeadzonePercent));
+    }
+    return parsed;
+}
+
+int parseTurboRate(std::string_view value) {
+    int parsed = 0;
+    const auto end = value.data() + value.size();
+    const auto result = std::from_chars(value.data(), end, parsed);
+    if (result.ec != std::errc{} || result.ptr != end || parsed < 1 || parsed > Pad::MaxTurboRateHz) {
+        throw std::runtime_error("turbo rate must be a whole number from 1 to " + std::to_string(Pad::MaxTurboRateHz));
     }
     return parsed;
 }
@@ -335,6 +357,7 @@ void applySetting(Pad::InputSettings& settings, InputSetting setting, std::strin
         case InputSetting::StickModifierScale: settings.stickModifierScale = parseNumber(value, "stick modifier scale", 0.05, 1.0); break;
         case InputSetting::KeyboardRampMs: settings.keyboardRampMs = parseNumber(value, "keyboard ramp", 0.0, 2000.0); break;
         case InputSetting::TriggerRampMs: settings.triggerRampMs = parseNumber(value, "trigger ramp", 0.0, 2000.0); break;
+        case InputSetting::TurboRateHz: settings.turboRateHz = parseTurboRate(value); break;
         case InputSetting::MouseControlsRightStick: settings.mouseControlsRightStick = (parseStickId(value) == 1); break;
     }
 }
@@ -441,7 +464,7 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
                     existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt &&
-                    existing.padButtons == binding.padButtons;
+                    existing.padButtons == binding.padButtons && existing.mode == binding.mode;
             });
             if (!duplicate) bindings.push_back(binding);
         } catch (const std::runtime_error& error) {

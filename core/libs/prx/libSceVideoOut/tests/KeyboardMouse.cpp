@@ -477,6 +477,45 @@ void testToggleLatch() {
     check(!latch.Held(cross) && !latch.Held(square), "clearing releases every toggled button");
 }
 
+void testTurboBindings() {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    const auto start = Pad::KeyboardMouse::Clock::now();
+    const auto turboKey = Pad::InputBinding{SDL_SCANCODE_J, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Cross, 0, 0, 0, Pad::InputMode::Turbo};
+    auto turbo = defaults();
+    turbo.bindings.push_back(turboKey);
+    Pad::KeyboardMouse keyboardMouse(turbo);
+    const auto buttonsAt = [&keyboardMouse](Pad::KeyboardMouse::Clock::time_point when) {
+        keyboardMouse.Advance(when);
+        return keyboardMouse.Compose(PadInputState{}).buttons;
+    };
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_J, true), start);
+    check((buttonsAt(start + std::chrono::milliseconds(10)) & cross) != 0, "a turbo key holds the button on in the first half of the period");
+    check((buttonsAt(start + std::chrono::milliseconds(60)) & cross) == 0, "a turbo key lets the button off in the second half");
+    check((buttonsAt(start + std::chrono::milliseconds(110)) & cross) != 0, "a turbo key pulses again at 10 Hz by default");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_J, false), start + std::chrono::milliseconds(120));
+    check((buttonsAt(start + std::chrono::milliseconds(130)) & cross) == 0, "releasing a turbo key stops the pulse");
+
+    auto slow = defaults();
+    slow.settings.turboRateHz = 2;
+    slow.bindings.push_back(turboKey);
+    Pad::KeyboardMouse slowMouse(slow);
+    slowMouse.HandleEvent(KeyEvent(SDL_SCANCODE_J, true), start);
+    slowMouse.Advance(start + std::chrono::milliseconds(200));
+    check((slowMouse.Compose(PadInputState{}).buttons & cross) != 0, "TurboRateHz 2 keeps the button on for the first 250 ms");
+    slowMouse.Advance(start + std::chrono::milliseconds(300));
+    check((slowMouse.Compose(PadInputState{}).buttons & cross) == 0, "TurboRateHz 2 lets the button off for the next 250 ms");
+
+    auto mixed = defaults();
+    mixed.toggleButtons = cross;
+    mixed.bindings.push_back(turboKey);
+    Pad::KeyboardMouse mixedMouse(mixed);
+    mixedMouse.HandleEvent(KeyEvent(SDL_SCANCODE_J, true), start);
+    mixedMouse.HandleEvent(KeyEvent(SDL_SCANCODE_J, false), start + std::chrono::milliseconds(10));
+    mixedMouse.Advance(start + std::chrono::milliseconds(200));
+    check((mixedMouse.Compose(PadInputState{}).buttons & cross) == 0, "a turbo key does not toggle the latch of a listed action");
+}
+
 void testToggleActions() {
     const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
     const auto circle = static_cast<std::uint32_t>(Pad::PadButton::Circle);
@@ -900,6 +939,7 @@ int main() {
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
             {"toggle latch", testToggleLatch},
             {"toggle actions", testToggleActions},
+            {"turbo bindings", testTurboBindings},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
             {"show pad status", testShowPadStatus},

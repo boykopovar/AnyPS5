@@ -53,6 +53,11 @@ enum class PadButton : std::uint32_t {
     TouchPad = 0x100000
 };
 
+enum class InputMode : std::uint8_t {
+    Hold,
+    Turbo
+};
+
 enum class MouseButton : std::uint8_t {
     None = 0,
     Left = SDL_BUTTON_LEFT,
@@ -70,6 +75,7 @@ struct InputBinding {
     int wheelDirection = 0;
     int wheelTilt = 0;
     std::uint32_t padButtons = 0;
+    InputMode mode = InputMode::Hold;
 };
 
 }

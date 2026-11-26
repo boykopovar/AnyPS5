@@ -14,6 +14,7 @@ export const settings = [
     {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
     {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
     {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
+    {name: 'TurboRateHz', kind: 'turboRate'},
     {name: 'MouseStickTarget', kind: 'stickTarget'},
     {name: 'ToggleActions', kind: 'padButtons'}
 ];
@@ -42,6 +43,10 @@ export function settingValue(setting, value) {
     const text = typeof value === 'string' ? asciiTrim(value) : '';
     if (setting.kind === 'percent') {
         if (!/^-?\d+$/u.test(text) || Number(text) < 0 || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
+        return '';
+    }
+    if (setting.kind === 'turboRate') {
+        if (!/^\d+$/u.test(text) || Number(text) < 1 || Number(text) > 30) return `${setting.name} must be a whole number from 1 to 30.`;
         return '';
     }
     const parsed = numberPattern.test(text) ? Number(text) : undefined;
@@ -99,6 +104,13 @@ export function validateSettings(configuration) {
     return {errors, settings: accepted};
 }
 
+export function splitMode(source) {
+    const text = asciiTrim(source);
+    const space = text.search(/[ \t]/u);
+    if (space === -1 || asciiUpper(text.slice(0, space)) !== 'TURBO') return {rest: text};
+    return {mode: 'TURBO', rest: asciiTrim(text.slice(space + 1))};
+}
+
 export function validate(entries) {
     const errors = [];
     const warnings = [];
@@ -116,12 +128,15 @@ export function validate(entries) {
         const value = type === 'PAD' ? canonicalChord(entry?.value) : canonicalValue(entry?.value, choices);
         if (!message && !value) message = `Unknown or empty ${type} value.`;
         if (!message && /[#;\r\n]/u.test(value)) message = 'This SDL key name cannot be represented in the current INI comment syntax.';
+        if (!message && entry?.mode !== undefined && entry.mode !== 'TURBO') message = 'Mode must be TURBO.';
+        if (!message && entry?.mode && !padButtons.has(action)) message = 'Turbo can only be used on a pad button.';
+        if (!message && entry?.mode && type === 'WHEEL') message = 'Turbo cannot use the mouse wheel.';
         if (message) {
             errors.push({index, message: `${entry?.action || 'Binding'}: ${message}`});
             return;
         }
-        const binding = {action, type, value};
-        const identity = `${action}:${type}:${value}`;
+        const binding = entry?.mode ? {action, type, value, mode: entry.mode} : {action, type, value};
+        const identity = `${entry?.mode ? `${entry.mode}:` : ''}${action}:${type}:${value}`;
         if (seen.has(identity)) warnings.push({index, message: `${action}: duplicate ${type}:${value} will be omitted.`});
         else bindings.push(binding);
         seen.add(identity);
@@ -156,7 +171,7 @@ export function serialize(entries, configuration = [], controllerRemaps = []) {
     const lines = [];
     for (const action of actions) {
         for (const binding of result.bindings.filter(binding => binding.action === action)) {
-            lines.push(`${action} = ${binding.type}:${binding.value}`);
+            lines.push(`${action} = ${binding.mode ? `${binding.mode} ` : ''}${binding.type}:${binding.value}`);
         }
     }
     for (const setting of settings) {
@@ -206,12 +221,13 @@ export function parseIni(text) {
             }
             return;
         }
-        const colon = source.indexOf(':');
+        const {mode, rest} = splitMode(source);
+        const colon = rest.indexOf(':');
         if (separator === -1 || colon === -1) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
             return;
         }
-        const entry = {action: asciiTrim(name), type: source.slice(0, colon), value: source.slice(colon + 1)};
+        const entry = {action: asciiTrim(name), type: rest.slice(0, colon), value: rest.slice(colon + 1), ...(mode ? {mode} : {})};
         const result = validate([entry]);
         if (result.errors.length) {
             errors.push(...result.errors.map(error => ({line: index + 1, message: error.message})));

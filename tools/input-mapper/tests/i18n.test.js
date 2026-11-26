@@ -72,6 +72,19 @@ test('Egyptian diagnostics translate setting refusals with their names and range
     assert.equal(diagnostic('ar-EG', 'MadeUp: unknown input setting.'), 'الإعداد MadeUp مش معروف.');
 });
 
+test('TURBO and TurboRateHz diagnostics are translated in each locale that translates the native messages', () => {
+    assert.equal(diagnostic('pt-BR', 'Cross: Turbo can only be used on a pad button.'), 'Cross: Turbo só pode ser usado em um botão do controle.');
+    assert.equal(diagnostic('pt-BR', 'TurboRateHz must be a whole number from 1 to 30.'), 'TurboRateHz deve ser um número inteiro de 1 a 30.');
+    assert.equal(diagnostic('es', 'Cross: Turbo cannot use the mouse wheel.'), 'Cross: Turbo no puede usar la rueda del ratón.');
+    assert.equal(diagnostic('es', 'TurboRateHz must be a whole number from 1 to 30.'), 'TurboRateHz debe ser un número entero de 1 a 30.');
+    assert.equal(diagnostic('fr', 'Cross: Turbo cannot use the mouse wheel.'), 'Cross : Turbo ne peut pas utiliser la molette de la souris.');
+    assert.equal(diagnostic('fr', 'TurboRateHz must be a whole number from 1 to 30.'), 'TurboRateHz doit être un nombre entier de 1 à 30.');
+    assert.equal(diagnostic('sv', 'Cross: Turbo can only be used on a pad button.'), 'Cross: Turbo kan bara användas på en pad-knapp.');
+    assert.equal(diagnostic('sv', 'TurboRateHz must be a whole number from 1 to 30.'), 'TurboRateHz måste vara ett heltal från 1 till 30.');
+    assert.equal(diagnostic('ar-EG', 'Cross: Turbo cannot use the mouse wheel.'), 'Cross: Turbo مينفعش يستخدم عجلة الماوس.');
+    assert.equal(diagnostic('ar-EG', 'TurboRateHz must be a whole number from 1 to 30.'), 'TurboRateHz لازم يكون رقم صحيح من 1 لـ 30.');
+});
+
 test('Portuguese diagnostics keep action and type tokens', () => {
     assert.equal(diagnostic('pt-BR', 'Cross: Unknown or empty KEY value.'), 'Cross: Valor KEY desconhecido ou vazio.');
     assert.equal(diagnostic('pt-BR', 'Cross: duplicate KEY:F will be omitted.'), 'Cross: duplicado KEY:F será omitido.');

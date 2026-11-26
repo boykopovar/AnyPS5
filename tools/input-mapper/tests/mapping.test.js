@@ -325,6 +325,37 @@ test('invalid and incomplete bindings block export', () => {
     assert.ok(validate({}).errors.length);
 });
 
+test('TURBO bindings import on pad buttons, round trip and are refused elsewhere like the native parser', () => {
+    const result = parseIni('Cross = TURBO KEY:F\nCircle = turbo MOUSE:Right\nSquare = TURBO KEY:Left Alt\nTurboRateHz = 4\n');
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.entries, [{action: 'Cross', type: 'KEY', value: 'F', mode: 'TURBO'}, {action: 'Circle', type: 'MOUSE', value: 'Right', mode: 'TURBO'}, {action: 'Square', type: 'KEY', value: 'Left Alt', mode: 'TURBO'}]);
+    assert.deepEqual(result.settings, [{name: 'TurboRateHz', value: '4'}]);
+    assert.equal(serialize(result.entries, result.settings), 'Cross = TURBO KEY:F\nCircle = TURBO MOUSE:Right\nSquare = TURBO KEY:Left Alt\nTurboRateHz = 4\n');
+    assert.deepEqual(parseIni(serialize(result.entries, result.settings)).entries, result.entries);
+    const refused = parseIni('Shake=TURBO KEY:X\nToggleMouse=TURBO MOUSE:Middle\nCross=TURBO WHEEL:Up\nCross=TURBO PAD:Triangle+Circle\nCross=TOGGLE KEY:F\nCross=TURBO KEY:NoSuchKey\nCross=TURBO\n');
+    assert.deepEqual(refused.errors.map(error => error.line), [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(refused.errors[0].message, 'Shake: Turbo can only be used on a pad button.');
+    assert.equal(refused.errors[1].message, 'ToggleMouse: Turbo can only be used on a pad button.');
+    assert.equal(refused.errors[2].message, 'Cross: Turbo cannot use the mouse wheel.');
+    assert.equal(refused.errors[3].message, 'Cross: Cross cannot use PAD.');
+    assert.equal(refused.errors[5].message, 'Cross: Unknown or empty KEY value.');
+    assert.deepEqual(refused.entries, []);
+});
+
+test('TURBO and held bindings of the same key are separate bindings', () => {
+    const result = parseIni('Cross = KEY:F\nCross = TURBO KEY:F\nCross = TURBO KEY:F\n');
+    assert.deepEqual(result.entries, [binding('Cross', 'KEY', 'F'), {action: 'Cross', type: 'KEY', value: 'F', mode: 'TURBO'}]);
+    assert.equal(result.warnings.length, 1);
+});
+
+test('TurboRateHz accepts whole numbers from 1 to 30 only', () => {
+    assert.deepEqual(validateSettings([{name: 'TurboRateHz', value: '1'}, {name: 'TurboRateHz', value: '30'}]).errors, [{index: 1, message: 'TurboRateHz is set more than once.'}]);
+    for (const value of ['0', '31', '2.5', 'fast', '', '-1']) {
+        assert.equal(validateSettings([{name: 'TurboRateHz', value}]).errors.length, 1, value);
+    }
+    assert.equal(validateSettings([{name: 'TurboRateHz', value: '12'}]).settings[0].value, '12');
+});
+
 test('all exportable SDL names validate and unsafe comment names are rejected', () => {
     for (const key of exportableKeys) assert.equal(validate([binding('Cross', 'KEY', key)]).errors.length, 0, key);
     for (const key of [';', '#', 'Keypad #']) assert.ok(validate([binding('Cross', 'KEY', key)]).errors.length, key);

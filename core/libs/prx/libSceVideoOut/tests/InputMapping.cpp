@@ -382,6 +382,43 @@ void toggleActionsReject() {
     require(rejects("ToggleActions = R2\nToggleActions = L1\n"), "ToggleActions given twice is rejected");
 }
 
+bool hasBinding(const Pad::InputConfiguration& configuration, SDL_Scancode key, Pad::PadButton button, Pad::InputMode mode) {
+    return std::any_of(configuration.bindings.begin(), configuration.bindings.end(), [&](const Pad::InputBinding& binding) {
+        return binding.key == key && binding.button == button && binding.mode == mode;
+    });
+}
+
+void turboParse() {
+    useConfig("Cross = TURBO KEY:F\nCircle = turbo MOUSE:Right\n");
+    const auto configuration = Pad::LoadInputMapping();
+    require(hasBinding(configuration, SDL_SCANCODE_F, Pad::PadButton::Cross, Pad::InputMode::Turbo), "a TURBO key binds the pad button in turbo mode");
+    require(std::any_of(configuration.bindings.begin(), configuration.bindings.end(), [](const Pad::InputBinding& binding) {
+        return binding.mouseButton == Pad::MouseButton::Right && binding.button == Pad::PadButton::Circle && binding.mode == Pad::InputMode::Turbo;
+    }), "the TURBO keyword is read case-insensitively for a mouse button");
+    useConfig("Cross = KEY:F\nCross = TURBO KEY:F\n");
+    const auto both = Pad::LoadInputMapping();
+    require(std::count_if(both.bindings.begin(), both.bindings.end(), [](const Pad::InputBinding& binding) {
+        return binding.key == SDL_SCANCODE_F && binding.button == Pad::PadButton::Cross;
+    }) == 2, "a held and a turbo binding of the same key are separate bindings");
+    useConfig("TurboRateHz = 4\n");
+    require(Pad::LoadInputMapping().settings.turboRateHz == 4, "TurboRateHz sets the turbo rate");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().settings.turboRateHz == 10, "the turbo rate defaults to 10 Hz");
+}
+
+void turboReject() {
+    require(rejects("Shake = TURBO KEY:X\n"), "TURBO refuses an action that is not a pad button");
+    require(rejects("ToggleMouse = TURBO MOUSE:Middle\n"), "TURBO refuses an emulator action");
+    require(rejects("Cross = TURBO WHEEL:Up\n"), "TURBO refuses the mouse wheel");
+    require(rejects("Cross = TURBO PAD:Triangle+Circle\n"), "TURBO refuses a PAD source");
+    require(rejects("Cross = TURBO\n"), "TURBO without a source is rejected");
+    require(rejects("Cross = TOGGLE KEY:F\n"), "TOGGLE is no longer a source mode, use ToggleActions");
+    require(rejects("TurboRateHz = 31\n"), "a turbo rate above 30 is rejected");
+    require(rejects("TurboRateHz = 0\n"), "a zero turbo rate is rejected");
+    require(rejects("TurboRateHz = 2.5\n"), "a fractional turbo rate is rejected");
+    require(rejects("TurboRateHz = 4\nturboratehz = 5\n"), "a turbo rate given twice is rejected");
+}
+
 void nonAsciiPaths() {
     const std::u8string name = u8"anyps5-input-\u00fc-\u65e5\u672c-" + std::u8string(root.filename().u8string());
     const auto directory = root / std::filesystem::path(name);
@@ -781,6 +818,8 @@ int main() try {
     toggleMouseDefaults();
     toggleActionsParse();
     toggleActionsReject();
+    turboParse();
+    turboReject();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();
