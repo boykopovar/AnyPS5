@@ -292,6 +292,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
+    if (state.meshSoftwareControlBarriers && !HostSubgroupSingleLane(state) &&
+        std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformBallot)) == state.supportedCapabilities.end()) {
+        FailEmit("mesh software control barriers require subgroup ballot support");
+    }
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
         state.requirements.subgroupLocalInvocationId = true;

@@ -454,10 +454,11 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.requirements.imageGatherExtended) {
         state.module.EmitCapability(spv::CapabilityImageGatherExtended);
     }
-    if (state.laneCount == 2 || state.requirements.subgroupBallot || state.requirements.subgroupShuffle || state.requirements.subgroupLocalInvocationId) {
+    const bool meshSoftwareSubgroupBallot = state.meshSoftwareControlBarriers && !HostSubgroupSingleLane(state);
+    if (state.laneCount == 2 || state.requirements.subgroupBallot || state.requirements.subgroupShuffle || state.requirements.subgroupLocalInvocationId || meshSoftwareSubgroupBallot) {
         state.module.EmitCapability(spv::CapabilityGroupNonUniform);
     }
-    if (state.laneCount == 2 || state.requirements.subgroupBallot) {
+    if (state.laneCount == 2 || state.requirements.subgroupBallot || meshSoftwareSubgroupBallot) {
         state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
     }
     if (state.requirements.subgroupShuffle) {

@@ -176,6 +176,20 @@ std::uint32_t EmitWaveAny(SpirvEmitterState& state, std::uint32_t predicate) {
     return result;
 }
 
+std::uint32_t EmitHostSubgroupAny(SpirvEmitterState& state, std::uint32_t predicate) {
+    const auto ballot = state.module.AllocateId();
+    EmitHostSubgroupBallot(state, ballot, predicate);
+    std::uint32_t any = ConstantU32(state, 0u);
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ballot, component);
+        any = EmitBinaryU32(state, spv::OpBitwiseOr, any, word);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpINotEqual, TypeBool(state), result, any, ConstantU32(state, 0u));
+    return result;
+}
+
 std::uint32_t EmitWaveMaskBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& info) {
     auto& state = ctx.state;
     const auto kind = info.terminator.condition;
@@ -1446,9 +1460,10 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     const auto ticket = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), ticket, arrival, scope, acquireRelease, ConstantU32(state, 1u));
     const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
+    // WorkgroupLocalSize is the emitted SPIR-V invocation count; SetMeshOutputsEXT only sets output counts.
     const std::uint32_t participants = local[0] * local[1] * local[2];
     const auto last = Binary(state, spv::OpIEqual, TypeBool(state), ticket, ConstantU32(state, participants - 1u));
-    const auto lastWave = EmitWaveAny(state, last);
+    const auto lastSubgroup = EmitHostSubgroupAny(state, last);
     const auto lastBlock = state.module.AllocateId();
     const auto waitBlock = state.module.AllocateId();
     const auto waitHeader = state.module.AllocateId();
@@ -1456,7 +1471,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     const auto waitMerge = state.module.AllocateId();
     const auto done = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, lastWave, lastBlock, waitBlock);
+    state.module.AddFunction(spv::OpBranchConditional, lastSubgroup, lastBlock, waitBlock);
     EmitLabel(state, lastBlock);
     const auto releaseBlock = state.module.AllocateId();
     const auto releaseMerge = state.module.AllocateId();
@@ -1467,7 +1482,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), state.module.AllocateId(), generation, scope, release, ConstantU32(state, 1u));
     state.module.AddFunction(spv::OpBranch, releaseMerge);
     EmitLabel(state, releaseMerge);
-    state.module.AddFunction(spv::OpBranch, done);
+    state.module.AddFunction(spv::OpBranch, waitHeader);
     EmitLabel(state, waitBlock);
     state.module.AddFunction(spv::OpBranch, waitHeader);
     EmitLabel(state, waitHeader);
@@ -1475,7 +1490,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observedGeneration, generation, scope, acquire);
     const auto advanced = Binary(state, spv::OpINotEqual, TypeBool(state), observedGeneration, currentGeneration);
     const auto waiting = Unary(state, spv::OpLogicalNot, TypeBool(state), advanced);
-    const auto anyWaiting = EmitWaveAny(state, waiting);
+    const auto anyWaiting = EmitHostSubgroupAny(state, waiting);
     const auto allAdvanced = Unary(state, spv::OpLogicalNot, TypeBool(state), anyWaiting);
     state.module.AddFunction(spv::OpLoopMerge, waitMerge, waitContinue, spv::LoopControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, allAdvanced, waitMerge, waitContinue);
