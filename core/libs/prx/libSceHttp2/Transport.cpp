@@ -1290,7 +1290,13 @@ int Request::Read(void* data, std::size_t size) {
             std::size_t total = 0;
             while (total < limit) {
                 const auto chunk = std::min<std::size_t>(limit - total, staging.size());
-                const int count = state->ReadHttp1(staging.data(), chunk, deadline);
+                int count = 0;
+                try {
+                    count = state->ReadHttp1(staging.data(), chunk, deadline);
+                } catch (const RequestFailure&) {
+                    if (!total) throw;
+                    break;
+                }
                 if (count <= 0) break;
                 if (!Http2Guest::CopyOut(static_cast<std::uint8_t*>(data) + total, staging.data(), static_cast<std::size_t>(count)))
                     throw RequestFailure{InvalidValue};
