@@ -110,6 +110,38 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckScanIgnoredLengths() {
+    for (const auto scan : {sscanf_s_nid_postfix, ScanListS}) {
+        for (const char* format : {"%Ld", "%Li", "%Lu", "%Lx", "%Lo", "%LX"}) {
+            std::array<unsigned char, 8> stored;
+            stored.fill(0x55);
+            Require(scan("17", format, stored.data()) == 1 && stored[4] == 0x55 && stored[7] == 0x55);
+        }
+        for (const char* format : {"%llf", "%jf", "%zf", "%tf", "%lla", "%hhe", "%hg"}) {
+            std::array<unsigned char, 16> stored;
+            stored.fill(0x55);
+            float value = 0.0f;
+            Require(scan("1.5", format, stored.data()) == 1 && stored[4] == 0x55);
+            std::memcpy(&value, stored.data(), sizeof(value));
+            Require(value == 1.5f);
+        }
+        int value = 0;
+        std::array<unsigned char, 8> count;
+        count.fill(0x55);
+        Require(scan("12345", "%d%Ln", &value, count.data()) == 1 && value == 12345 && count[0] == 5 && count[3] == 0 && count[4] == 0x55);
+    }
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, expected] : {std::tuple{"12z", "%Ld%c%n", 0x555555550000000cull}, std::tuple{"1.5z", "%llf%c%n", 0x555555553fc00000ull},
+                 std::tuple{"1.5z", "%jf%c%n", 0x555555553fc00000ull}}) {
+            std::uint64_t stored = 0x5555555555555555ull;
+            char next = '?';
+            int count = -7;
+            Require(scan(input, format, &stored, &next, &count) == 2 && stored == expected && next == 'z');
+        }
+    }
+}
+
 static void CheckPlainScanResults() {
 #ifndef _WIN32
     using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
@@ -1321,6 +1353,7 @@ int main(int argc, char** argv) {
     CheckDanglingExponentScan();
     CheckSecureCountBeforeInputFailure();
     CheckFloatingScanRange();
+    CheckScanIgnoredLengths();
     CheckPlainScanResults();
     CheckSizeLimits();
     CheckLargeWidths();
