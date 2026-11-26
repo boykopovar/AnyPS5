@@ -239,6 +239,8 @@ After configuring a build directory, use `tools/check_compile.py` to check the g
 python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
+With a built Ninja tree, add `--headers` to check the compile commands of translation units that include a header. For example, `python3 tools/check_compile.py --build build-relinker --headers core/relinker/cli/include/Cli.hpp`. The tool uses recorded Ninja dependencies and reports stale or missing entries. Rebuild the affected targets if coverage is incomplete or include relationships changed since the last build. Rebuild after include changes even if the tool reports no coverage warning.
+
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
 `tools/compile_database_inventory.py` reads a saved compilation database and prints JSON that groups its records by source directory and file, with the number of variants of each file. Each database entry counts as one variant, including identical commands.
