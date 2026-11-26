@@ -10,9 +10,11 @@
 
 # libSceOpusSilkEnc
 
-## change [sceOpusSilkEncCtl and sceOpusSilkEncCancel]
+## remove [sceOpusSilkEncCtl and sceOpusSilkEncCancel]
 
-- [sceOpusSilkEncCancel](../../../core/libs/prx/libSceOpusSilkEnc/Export.cpp) answers only the null-state check firmware 13.42 makes, read from disassembly, and throws through `NotImplemented_nid_no_patch` past it: it makes a call with the 32-bit word at state +0xF0 as its first argument. A PS5 (firmware 11.60, payload process; a title process may differ) answered a null state with `0x81770001` as here, but a zero-filled 512 byte state with `0x80930001` and errno 49, no signal, where this throws (prototype assumed, n=1); the result for a valid encoder state and the meaning of that code are unmeasured.
+## add Functional
+
+- [sceOpusSilkEncCancel](../../../core/libs/prx/libSceOpusSilkEnc/Export.cpp) (libSceOpusSilkEnc) - forwards to `sceAjmiBatchCancel` with the 32-bit word at state +0xF0, as firmware 13.42 disassembly indicates. A null state returns `0x81770001` before reading the state; inaccessible state throws preserving `errno`. A zero or uninitialized AJM context returns `SCE_AJM_ERROR_INVALID_CONTEXT`. On a PS5 (firmware 11.60, payload process) a zero-filled 512 byte state returned `0x80930001` with errno 49. Batch cancellation against a live AJM context remains unmeasured on console.
 
 ## add Unknown function info
 

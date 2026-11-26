@@ -1,4 +1,5 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
+#include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -201,6 +202,18 @@ void RequireEarlyAnswers(int callerApplication) {
 
     Require(sceOpusSilkEncCancel(nullptr, 0) == EncoderError(0x01));
     Require(sceOpusSilkEncCancel(nullptr, 0xFFFFFFFFu) == EncoderError(0x01));
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncCancel(reinterpret_cast<OpusSilkEncoder*>(0x10), 0); });
+    Require(errno == 71);
+    constexpr int ajmInvalidContext = static_cast<int>(0x80930002);
+    constexpr int ajmInvalidBatch = static_cast<int>(0x80930004);
+    Require(sceOpusSilkEncCancel(ToState(blank), 0) == ajmInvalidContext);
+    Require(sceOpusSilkEncCancel(ToState(blank), 1234) == ajmInvalidContext);
+    std::uint32_t testAjmContext = 0;
+    Require(sceAjmiInitialize(0, &testAjmContext) == 0);
+    SetWord(marked.data(), 0xF0, testAjmContext);
+    Require(sceOpusSilkEncCancel(ToState(marked), 0) == ajmInvalidBatch);
+    Require(sceOpusSilkEncCancel(ToState(marked), 5678) == ajmInvalidBatch);
 
     std::uint32_t ajmContext = 0x12345678u;
     Require(sceOpusSilkEncGetAjmContext(nullptr, &ajmContext) == EncoderError(0x01));
