@@ -42,13 +42,13 @@ def stack_headers(image):
 def load(path):
     import ctypes
     import _ctypes
-    before = next(line for line in Path('/proc/self/maps').read_text().splitlines() if line.endswith('[stack]'))
+    before = next(line for line in Path('/proc/self/maps').read_text(encoding="utf-8").splitlines() if line.endswith('[stack]'))
     assert 'x' not in before.split()[1], before
     library = ctypes.CDLL(path)
     answer = getattr(library, 'Answer#guest')
     answer.restype = ctypes.c_int
     assert answer() == 42
-    after = next(line for line in Path('/proc/self/maps').read_text().splitlines() if line.endswith('[stack]'))
+    after = next(line for line in Path('/proc/self/maps').read_text(encoding="utf-8").splitlines() if line.endswith('[stack]'))
     assert 'x' not in after.split()[1], after
     _ctypes.dlclose(library._handle)
 
