@@ -167,9 +167,19 @@ LibcException::TypeInfoVtable _ZTVN10__cxxabiv129__pointer_to_member_type_infoE_
 
 namespace {
 struct FundamentalTypeRecord { const void* vtable; const char* name; };
+struct ClassTypeRecord { const void* vtable; const char* name; };
+constinit const ClassTypeRecord SharedCountType {
+    &_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix.destroy,
+    "NSt3__114__shared_countE",
+};
 }
 
 extern "C" {
+constinit const LibcException::SharedWeakCountRtti _ZTINSt3__119__shared_weak_countE_nid_postfix {
+    &_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix.destroy,
+    "NSt3__119__shared_weak_countE",
+    0, 1, &SharedCountType, 0,
+};
 FundamentalTypeRecord _ZTIv_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "v"};
 FundamentalTypeRecord _ZTIw_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "w"};
 FundamentalTypeRecord _ZTIb_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "b"};

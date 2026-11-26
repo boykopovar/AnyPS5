@@ -105,6 +105,14 @@ namespace LibcException {
 namespace LibcException {
 
 struct CategoryObject { const void* vtable; };
+struct SharedWeakCountRtti {
+    const void* vtable;
+    const char* name;
+    std::uint32_t flags;
+    std::uint32_t baseCount;
+    const void* base;
+    std::int64_t offsetFlags;
+};
 
 struct ExceptionObject { const void* vtable; const char* message; };
 
@@ -1855,6 +1863,12 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 void APS5_VABI _ZNSt13exception_ptrC1ERKS__nid_postfix(GuestLibcxxExceptionPointer* self, const GuestLibcxxExceptionPointer* source) noexcept;
 void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer* self) noexcept;
 [[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionSt13exception_ptr_nid_postfix(const GuestLibcxxExceptionPointer* exception);
+void* APS5_VABI _ZNSt3__119__shared_weak_count4lockEv_nid_postfix(void* self);
+void APS5_VABI _ZNSt3__119__shared_weak_count14__release_weakEv_nid_postfix(void* self);
+const void* APS5_VABI _ZNKSt3__119__shared_weak_count13__get_deleterERKSt9type_info_nid_postfix(const void* self, const std::type_info* type);
+void APS5_VABI _ZNSt3__119__shared_weak_countD2Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt3__114__shared_countD2Ev_nid_postfix(void* self);
+extern const LibcException::SharedWeakCountRtti _ZTINSt3__119__shared_weak_countE_nid_postfix;
 [[noreturn]] void APS5_VABI _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(const LibcException::ErrorCode* code);
 [[noreturn]] void APS5_VABI _ZSt25_Rethrow_future_exceptionSt13exception_ptr_nid_postfix(GuestExceptionPointerArgument exception);
 [[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix();
