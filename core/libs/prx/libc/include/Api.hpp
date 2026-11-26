@@ -1887,6 +1887,7 @@ LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandle
 [[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI LibcThrowBadException_nid_no_patch();
 std::uint64_t APS5_VABI _ZNSt3__112__next_primeEm_nid_postfix(std::uint64_t minimum);
+void APS5_VABI _ZNSt3__18ios_base33__set_badbit_and_consider_rethrowEv_nid_postfix(void* self);
 void* APS5_VABI _ZNSt3__19to_stringEi_nid_postfix(void* string, std::int32_t value);
 void* APS5_VABI _ZNSt3__19to_stringEj_nid_postfix(void* string, std::uint32_t value);
 void* APS5_VABI _ZNSt3__19to_stringEm_nid_postfix(void* string, std::uint64_t value);
