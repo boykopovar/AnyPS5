@@ -838,7 +838,7 @@ def flow_mapping(value):
     return result if not stack else {}
 
 
-def pull_request_filtered(lines, trigger, source):
+def pull_request_filtered(lines, trigger, source=()):
     _, _, _, value = trigger
     if value:
         if value.lstrip().startswith("{"):
