@@ -8,9 +8,11 @@
 
 extern "C" {
 
+#if !defined(APS5_AGC_VSH)
 uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
     return sceAgcDcbContextStateOp_0100(buf, operation);
 }
+#endif
 
 uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {
     if (operation > 3) {

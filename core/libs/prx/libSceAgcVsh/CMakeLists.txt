@@ -1,5 +1,6 @@
 add_library(libSceAgcVsh SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libSceAgc/VshTraps.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceAgc/Acb/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceAgc/Acb/src/Dispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceAgc/Acb/src/Memory.cpp
@@ -57,6 +58,7 @@ option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
 
 target_compile_definitions(libSceAgcVsh PRIVATE
         APS5_AGC_CREATE_LOG=$<BOOL:${APS5_AGC_CREATE_LOG}>
+        APS5_AGC_VSH=1
 )
 
 add_test_executable(agcvsh_packet_writer_tests EXCLUDE_FROM_ALL tests/UnknownPacketWriter.cpp)
@@ -68,6 +70,19 @@ if(BUILD_TESTING)
     add_test(NAME agcvsh_packet_writer COMMAND agcvsh_packet_writer_tests)
     if(WIN32)
         set_tests_properties(agcvsh_packet_writer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agcvsh_trap_export_tests EXCLUDE_FROM_ALL tests/TrapExports.cpp)
+target_include_directories(agcvsh_trap_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agcvsh_trap_export_tests PRIVATE libSceAgcVsh libc)
+configure_windows_unwind(agcvsh_trap_export_tests)
+if(BUILD_TESTING)
+    set_target_properties(agcvsh_trap_export_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agcvsh_trap_exports COMMAND agcvsh_trap_export_tests)
+    if(WIN32)
+        set_tests_properties(agcvsh_trap_exports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

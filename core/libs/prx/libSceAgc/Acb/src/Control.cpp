@@ -43,15 +43,18 @@ std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32
         static_cast<std::uint32_t>(extraData >> 32u)}, __func__);
 }
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
     return Agc::Command::WriteJump(buf, true, 1, cachePolicy, target, sizeInDwords, __func__);
 }
+#endif
 
 uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
     return 16;
 }
 
 // Encoded as the custom DISPATCH_RESET NOP packet the driver consumes on compute queues.
+#if !defined(APS5_AGC_VSH)
 uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t value) {
     (void)value;
     Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
@@ -62,15 +65,19 @@ uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_
     packet[1] = op;
     return packet;
 }
+#endif
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState) {
     return Agc::Command::WriteRewind(buf, initialState, __func__);
 }
+#endif
 
 std::uint32_t APS5_VABI sceAgcAcbRewindGetSize() {
     return 8;
 }
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex) {
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::RenderingWaitPacketWords, __func__);
     packet[0] = AgcDriver::RenderingWaitPacketHeader;
@@ -79,7 +86,9 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, 
     packet[3] = 0;
     return packet;
 }
+#endif
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
     packet[0] = AgcDriver::FlipPacketHeader;
@@ -90,6 +99,7 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
     packet[5] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(flipArg) >> 32u);
     return packet;
 }
+#endif
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount) {
     if (buf == nullptr || workloadIds == nullptr || workloadCount == 0 || workloadCount > MaxActiveCount || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
@@ -147,15 +157,19 @@ uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
     return Agc::Marker::PopTag(buf, 0u, __func__);
 }
 
+#if !defined(APS5_AGC_VSH)
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
     auto* packet = Agc::Marker::Push(buf, str, __func__);
     Agc::Marker::Pop(buf, __func__);
     return packet;
 }
+#endif
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcAcbAtomicGds(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData) {
     return sceAgcAcbAtomicGds_0900(buf, control & ~0x80u, mode, gdsOp, src, offset, index, mask, data, compareData, extraData);
 }
+#endif
 
 }

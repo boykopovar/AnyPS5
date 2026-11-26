@@ -58,10 +58,12 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t act
     return packet;
 }
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t waitForMailbox, std::uint32_t signalType, std::uint32_t operation) {
     const auto guestAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address));
     const auto control = ((waitForMailbox & 1u) << 16u) | ((signalType & 1u) << 20u) | (operation << 29u);
     return Agc::Command::Emit(buf, 0x39u, {static_cast<std::uint32_t>(guestAddress) & ~7u, static_cast<std::uint32_t>(guestAddress >> 32u), control}, __func__);
 }
+#endif
 
 }
