@@ -678,6 +678,15 @@ class ProgressHistoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "core/libs/prx"):
                     progress_history.daily_commits("core/libs/prx")
 
+    def test_path_separator_is_not_a_history_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            (root / "--").write_text("tracked file\n", encoding="utf-8")
+            commit(root, "2026-01-01", "initial", "int APS5_VABI A() { return 0; }\n")
+            with patch.object(progress, "ROOT", root), self.assertRaisesRegex(ValueError, "not a Git revision"):
+                progress_history.daily_commits("--")
+
     def test_days_are_utc_whatever_the_committer_offset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

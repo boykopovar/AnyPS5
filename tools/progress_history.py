@@ -50,6 +50,8 @@ def git(*args):
 
 
 def daily_commits(ref):
+    if ref == "--":
+        raise ValueError(f"{ref!r} is not a Git revision")
     log = git("log", "--first-parent", "--format=%H %ct", "--end-of-options", ref, "--")
     seen = {}
     for line in log.decode("utf-8").splitlines():
