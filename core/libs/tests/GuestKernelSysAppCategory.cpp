@@ -51,6 +51,12 @@ int main() {
         Require(*__error_nid_postfix() == 3 && output[0] == 0x5a5a5a5au, "a negative pid set the wrong errno or wrote the output");
         Require(getAppCategoryType(pid, nullptr) == static_cast<int>(0x80020016), "the null check does not come first");
     }
+    {
+        output[0] = 0x5a5a5a5au;
+        *__error_nid_postfix() = 0;
+        Require(getAppCategoryType(999999, output.data()) == static_cast<int>(0x80020003), "an unused pid is not ESRCH");
+        Require(*__error_nid_postfix() == 3 && output[0] == 0x5a5a5a5au, "an unused pid set the wrong errno or wrote the output");
+    }
     Require(getAppCategoryType(getpid_nid_postfix(), reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8002000e),
             "an unwritable output is not EFAULT");
 

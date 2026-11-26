@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
@@ -12,6 +13,7 @@ namespace {
 constexpr int Efault = 14;
 constexpr int Einval = 22;
 constexpr int Eopnotsupp = 45;
+constexpr int DetachDetached = 1;
 constexpr int NetError = static_cast<int>(0x80410100u);
 
 
@@ -30,6 +32,19 @@ void Require(bool value, const char* what) {
 }
 
 void APS5_VABI Count(void* arg) {
+    ++static_cast<Run*>(arg)->started;
+}
+
+std::atomic<int> detachState{-1};
+
+void APS5_VABI RecordDetachState(void* arg) {
+    PthreadAttr attribute = nullptr;
+    int state = -1;
+    if (scePthreadAttrInit(&attribute) == 0) {
+        if (scePthreadAttrGet(scePthreadSelf(), &attribute) == 0 && scePthreadAttrGetdetachstate(&attribute, &state) != 0) state = -1;
+        scePthreadAttrDestroy(&attribute);
+    }
+    detachState = state;
     ++static_cast<Run*>(arg)->started;
 }
 
@@ -63,11 +78,12 @@ int main() {
     Require(sceNetThreadJoin(thread) == 0, "joining an exited thread failed");
     Require(run.started == 2 && !run.pastExit, "sceNetThreadExit did not end the thread");
 
-    static NetThreadParameter detached{Count, &run, 0, 0};
+    static NetThreadParameter detached{RecordDetachState, &run, 0, 0};
     Require(sceNetThreadCreate(nullptr, &detached, "anyps5-net-thread") == 0, "a null thread output was refused");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (run.started != 3 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(run.started == 3, "the thread created without an output did not run");
+    Require(detachState == DetachDetached, "the thread created without an output is not detached");
 
     *sceNetErrnoLoc() = 0;
     Require(sceNetEmulationGet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationGet did not return EOPNOTSUPP");

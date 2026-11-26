@@ -38,6 +38,15 @@
         <div id="mappings" tabindex="-1" aria-label="Controls" data-i18n-label="controls"></div>
         <section id="configuration" class="configuration-panel" aria-label="Configuration output" data-i18n-label="output" tabindex="-1" hidden>
                 <div class="output-heading"><h2 data-i18n="configuration">Configuration</h2><span id="count" class="tag">0 / 31</span></div>
+                <details class="configuration-editor">
+                    <summary data-i18n="controllerButtons">Controller buttons</summary>
+                    <div id="controller-remaps"></div>
+                </details>
+                <details class="configuration-editor">
+                    <summary data-i18n="inputSettings">Input settings</summary>
+                    <p id="input-settings-help" class="hint" data-i18n="inputSettingsHelp">Leave a setting blank to inherit its value. Separate ToggleActions button names with commas.</p>
+                    <div id="input-setting-values"></div>
+                </details>
                 <label for="profile-title-id" data-i18n="profileTitleId">Title ID (optional)</label>
                 <input id="profile-title-id" type="text" placeholder="PPSA00001" aria-describedby="profile-title-id-help profile-title-id-error" autocomplete="off" autocapitalize="off" spellcheck="false" dir="ltr">
                 <p id="profile-title-id-help" class="hint" data-i18n="profileTitleIdHelp">Use the game's exact Title ID for a per-game profile. Leave blank for a shared configuration.</p>
