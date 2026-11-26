@@ -662,10 +662,32 @@ struct LibreSslCert {
 };
 
 struct LibreSslSession {
-    unsigned char beforeCipher[168];
+    std::int32_t sslVersion;
+    std::int32_t masterKeyLength;
+    unsigned char masterKey[48];
+    unsigned int sessionIdLength;
+    unsigned char sessionId[32];
+    unsigned int sidCtxLength;
+    unsigned char sidCtx[32];
+    void* peer;
+    std::int64_t verifyResult;
+    std::int64_t timeout;
+    std::int64_t time;
+    std::int32_t references;
+    std::int32_t padding;
     const void* cipher;
-    unsigned char rest[56];
+    unsigned long cipherId;
+    void* ciphers;
+    char* tlsextHostname;
+    unsigned char* tlsextTick;
+    std::size_t tlsextTickLength;
+    std::int64_t tlsextTickLifetimeHint;
+    void* internal;
 };
+
+static_assert(sizeof(LibreSslSession) == 232);
+static_assert(offsetof(LibreSslSession, references) == 160);
+static_assert(offsetof(LibreSslSession, cipher) == 168);
 
 extern "C" {
 
@@ -928,7 +950,7 @@ int APS5_VABI SSL_CTX_use_certificate_nid_postfix(LibreSslCtx* ctx, void* certif
 int APS5_VABI SSL_CTX_use_certificate_ASN1_nid_postfix(LibreSslCtx* context, int length, const unsigned char* data);
 int APS5_VABI SSL_CTX_use_certificate_chain_file_nid_postfix(LibreSslCtx* ctx, const char* file);
 int APS5_VABI SSL_CTX_use_certificate_file_nid_postfix(LibreSslCtx* ctx, const char* file, int type);
-void APS5_VABI SSL_SESSION_free_nid_postfix(void* session);
+void APS5_VABI SSL_SESSION_free_nid_postfix(LibreSslSession* session);
 int APS5_VABI SSL_accept_nid_postfix(LibreSslSsl* ssl);
 const char* APS5_VABI SSL_alert_desc_string_long_nid_postfix(int value);
 int APS5_VABI SSL_check_private_key_nid_postfix(const LibreSslSsl* ssl);
@@ -967,7 +989,7 @@ int APS5_VABI SSL_set_bio_nid_postfix(void);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd);
-int APS5_VABI SSL_set_session_nid_postfix(void);
+int APS5_VABI SSL_set_session_nid_postfix(LibreSslSsl* ssl, LibreSslSession* session);
 void APS5_VABI SSL_set_verify_nid_postfix(LibreSslSsl* ssl, int mode, void* callback);
 int APS5_VABI SSL_shutdown_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_use_PrivateKey_ASN1_nid_postfix(void);

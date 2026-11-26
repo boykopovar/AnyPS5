@@ -449,11 +449,6 @@ int APS5_VABI SSL_CTX_use_certificate_file_nid_postfix(LibreSslCtx* ctx, const c
     NotImplemented_nid_no_patch(__func__);
 }
 
-void APS5_VABI SSL_SESSION_free_nid_postfix(void* session) {
-    if (session == nullptr) return;
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_get0_param_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -495,11 +490,6 @@ int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_set_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_set_session_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
