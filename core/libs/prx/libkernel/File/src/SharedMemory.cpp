@@ -282,9 +282,62 @@ std::filesystem::path WindowsNamedPath(const std::string& name) {
     return std::filesystem::path(WindowsNamedRoot()) / std::filesystem::path(name + ".dat");
 }
 
+// The process token's user SID. Named shared-memory directories and files are owned
+// by this SID instead of the token's default owner, because an elevated process's
+// default owner is the Administrators group, which the same user's filtered
+// unelevated token carries only as a deny-only SID. With the owner-rights ACE
+// (;;;OW) that denies the unelevated process every access to the object, including
+// WRITE_DAC, so securing an existing directory would fail with ERROR_ACCESS_DENIED.
+// Owning by the user SID keeps the elevated and unelevated tokens of one user equal.
+PSID CurrentUserSid() {
+    static const PSID sid = [] {
+        HANDLE token = nullptr;
+        if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token))
+            throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "opening the process token for the named shared-memory owner");
+        DWORD length = 0;
+        if (!::GetTokenInformation(token, TokenUser, nullptr, 0, &length) && ::GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+            const DWORD error = ::GetLastError();
+            ::CloseHandle(token);
+            throw std::system_error(static_cast<int>(error), std::system_category(), "sizing the process token user for the named shared-memory owner");
+        }
+        std::vector<char> buffer(length);
+        if (!::GetTokenInformation(token, TokenUser, buffer.data(), length, &length)) {
+            const DWORD error = ::GetLastError();
+            ::CloseHandle(token);
+            throw std::system_error(static_cast<int>(error), std::system_category(), "reading the process token user for the named shared-memory owner");
+        }
+        ::CloseHandle(token);
+        const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
+        const DWORD sidLength = ::GetLengthSid(user->User.Sid);
+        PSID copy = ::LocalAlloc(LMEM_FIXED, sidLength);
+        if (copy == nullptr)
+            throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "allocating the named shared-memory owner SID");
+        if (!::CopySid(sidLength, copy, user->User.Sid)) {
+            const DWORD error = ::GetLastError();
+            ::LocalFree(copy);
+            throw std::system_error(static_cast<int>(error), std::system_category(), "copying the named shared-memory owner SID");
+        }
+        return copy;
+    }();
+    return sid;
+}
+
+std::wstring CurrentUserSidString() {
+    LPWSTR text = nullptr;
+    if (!::ConvertSidToStringSidW(CurrentUserSid(), &text))
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "printing the named shared-memory owner SID");
+    const std::wstring result(text);
+    ::LocalFree(text);
+    return result;
+}
+
 void EnsurePrivateWindowsDirectory(const std::filesystem::path& path, bool objectDirectory = false) {
-    const std::wstring ownerRights = objectDirectory ? L"0x001701ff" : L"FA";
-    const std::wstring policy = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;" + ownerRights + L";;;OW)";
+    // The owner-rights ACE needs WRITE_OWNER (0x80000) so the owner-setting call below
+    // passes: with an OWNER-RIGHTS ACE present the owner's implicit rights are limited
+    // to the mask, and 0x001701ff does not include WRITE_OWNER.
+    const std::wstring ownerRights = objectDirectory ? L"0x001f01ff" : L"FA";
+    const std::wstring policy = L"O:" + CurrentUserSidString() +
+        L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;" + ownerRights + L";;;OW)";
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(
             policy.c_str(), SDDL_REVISION_1, &descriptor, nullptr))
@@ -312,15 +365,25 @@ void EnsurePrivateWindowsDirectory(const std::filesystem::path& path, bool objec
         ::LocalFree(descriptor);
         throw std::system_error(static_cast<int>(error), std::system_category(), "validating the named shared-memory directory");
     }
-    const DWORD result = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
-                                                  DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                                                  nullptr, nullptr, dacl, nullptr);
+    // Setting the owner and the DACL in one SetNamedSecurityInfoW call fails with
+    // ERROR_ACCESS_DENIED even when each half alone succeeds, so they are set apart.
+    DWORD result = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
+                                           OWNER_SECURITY_INFORMATION, CurrentUserSid(), nullptr, nullptr, nullptr);
+    if (result == ERROR_SUCCESS)
+        result = ::SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
+                                         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                         nullptr, nullptr, dacl, nullptr);
     ::LocalFree(descriptor);
     if (result != ERROR_SUCCESS) throw std::system_error(static_cast<int>(result), std::system_category(), "securing the named shared-memory directory");
 }
 
+DWORD SetWindowsNamedOwner(HANDLE handle) {
+    return ::SetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+        CurrentUserSid(), nullptr, nullptr, nullptr);
+}
+
 DWORD SetWindowsNamedPermissions(HANDLE handle, int mode) {
-    std::wstring policy = L"D:P(A;OICI;FA;;;SY)(A;;WD;;;OW)";
+    std::wstring policy = L"D:P(A;OICI;FA;;;SY)(A;;WDWO;;;OW)";
     if ((mode & 0400) != 0) policy += L"(A;;GRGXWD;;;OW)";
     if ((mode & 0200) != 0) policy += L"(A;;GWSDWD;;;OW)";
     PSECURITY_DESCRIPTOR descriptor = nullptr;
@@ -334,6 +397,10 @@ DWORD SetWindowsNamedPermissions(HANDLE handle, int mode) {
         ::LocalFree(descriptor);
         return error == ERROR_SUCCESS ? ERROR_INVALID_SECURITY_DESCR : error;
     }
+    // Only the DACL is set here. The owner is set once at creation time by
+    // SetWindowsNamedOwner, because a descriptor's handle is not always opened
+    // with WRITE_OWNER (an O_RDONLY shm_open handle is not), and a handle-based
+    // SetSecurityInfo call needs that access in the handle.
     const DWORD result = ::SetSecurityInfo(handle, SE_FILE_OBJECT,
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl, nullptr);
     ::LocalFree(descriptor);
@@ -437,7 +504,7 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     const bool readWrite = (flags & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR;
     const DWORD access = GENERIC_READ | (readWrite ? GENERIC_WRITE : 0) | WRITE_DAC;
     const bool create = (flags & SCE_KERNEL_O_CREAT) != 0;
-    const DWORD creationAccess = access | (create ? WRITE_DAC | DELETE : 0);
+    const DWORD creationAccess = access | (create ? WRITE_DAC | DELETE | WRITE_OWNER : 0);
     ::SetLastError(ERROR_SUCCESS);
     HANDLE handle = ::CreateFileW(objectPath.c_str(), creationAccess, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                   nullptr, create ? CREATE_NEW : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
@@ -468,6 +535,13 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     }
 
     if (created) {
+        if (const DWORD ownerError = SetWindowsNamedOwner(handle); ownerError != ERROR_SUCCESS) {
+            FILE_DISPOSITION_INFO deletion{TRUE};
+            ::SetFileInformationByHandle(handle, FileDispositionInfo, &deletion, sizeof(deletion));
+            ::CloseHandle(handle);
+            if (const int guest = WindowsNamedError(ownerError)) return Fail(NamedGuestError(guest));
+            throw std::runtime_error("shm_open: setting the shared-memory object owner failed, error=" + std::to_string(ownerError));
+        }
         const int permissions = (mode & 0777) & ~File::GetCreationMask_nid_no_patch();
         const DWORD nativeError = SetWindowsNamedPermissions(handle, permissions);
         if (nativeError != ERROR_SUCCESS) {
