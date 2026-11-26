@@ -858,15 +858,60 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
             Keys[1] = 1;
             const auto inactiveSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, floatImage) : RunDirectCode(device, TableSamplerCode, PointClamp, floatImage);
             Require(Holds(inactiveSampler.samplerTable, sampler), pair + ": the inactive border S# was not included in the snapshot");
-            Require(!Faulted(inactiveSampler) && Group(inactiveSampler, 0) == Group(direct, 0), pair + ": an inactive rejected S# poisoned the active pair:\n" + inactiveSampler.log);
+            Require(!Faulted(inactiveSampler) && Group(inactiveSampler, 0) == Group(direct, 0), pair + " inactive border sampler changed the selected texels");
             Keys[0] = 1;
             Keys[1] = 0;
             const auto activeSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, floatImage) : RunDirectCode(device, TableSamplerCode, PointClamp, floatImage);
-            requireFault(activeSampler, "sampler table entry with a border needs dynamic texture numeric-class pairing", pair);
+            if (border == 0u) {
+                Require(!Faulted(activeSampler) && Group(activeSampler, 0) == Group(direct, 0), pair + " selected float sampler returned different texels");
+            } else {
+                requireFault(activeSampler, "opaque white border", pair);
+            }
+        }
+        if (border == 0u) {
+            SetRecord(1, sampler, Image(UintTexels.data(), Format32UInt));
+            const auto integerSampler = RunDirectCode(device, TableCode, PointClamp, floatImage);
+            Require(!Faulted(integerSampler), name + " selected integer sampler faulted: " + integerSampler.log);
+            RequireRed(integerSampler, 0, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, name + " selected integer sampler texels");
+            alignas(256) static constexpr auto outside = [] {
+                auto code = TableCode;
+                code[18] = std::bit_cast<std::uint32_t>(2.0f);
+                return code;
+            }();
+            SetRecord(0, sampler, floatImage);
+            const auto borderTexels = Run(device, outside, 2, Lanes, 64);
+            alignas(256) static constexpr auto directOutside = [] {
+                auto code = DirectCode;
+                code[12] = std::bit_cast<std::uint32_t>(2.0f);
+                return code;
+            }();
+            const auto floatBorder = RunDirectCode(device, directOutside, sampler, floatImage);
+            const auto integerBorder = RunDirectCode(device, directOutside, sampler, Image(UintTexels.data(), Format32UInt));
+            Require(!Faulted(borderTexels) && !Faulted(floatBorder) && !Faulted(integerBorder), name + " transparent-black border sampling faulted");
+            RequireRed(floatBorder, 0, Lanes, [](std::uint32_t) { return 0u; }, name + " out-of-range float texels");
+            RequireRed(integerBorder, 0, Lanes, [](std::uint32_t) { return 0u; }, name + " out-of-range integer texels");
+            Require(Group(borderTexels, 0) == Group(integerBorder, 0) && Group(borderTexels, 1) == Group(floatBorder, 0), name + " table and direct transparent-black border texels differ");
+        } else {
+            SetRecord(1, sampler, Image(UintTexels.data(), Format11_11_10UInt));
+            requireFault(RunDirectCode(device, TableCode, PointClamp, floatImage), "opaque white border", name + " packed integer image");
         }
         const auto inactiveExec = Run(device, TableCutCode, 1, Lanes, 64);
         Require(Holds(inactiveExec.samplerTable, sampler), name + ": the EXEC-clear border S# was not included in the snapshot");
         Require(!Faulted(inactiveExec) && std::all_of(inactiveExec.words.begin(), inactiveExec.words.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }), name + ": the EXEC-clear border S# faulted or wrote output:\n" + inactiveExec.log);
+    }
+    SetRecord(0, PointClamp, floatImage);
+    for (const auto clamp : {4u, 5u, 7u}) {
+        auto sampler = opaqueBlack;
+        sampler[0] = (sampler[0] & ~7u) | clamp;
+        sampler[3] = 0u;
+        SetRecord(1, sampler, floatImage);
+        Keys[0] = 0;
+        Keys[1] = 1;
+        const auto inactive = RunDirectCode(device, TableCode, PointClamp, floatImage);
+        Require(Holds(inactive.samplerTable, sampler) && !Faulted(inactive), "inactive half-border or mirrored-border sampler faulted");
+        Keys[0] = 1;
+        Keys[1] = 0;
+        requireFault(RunDirectCode(device, TableCode, PointClamp, floatImage), "guest border coordinate handling", "unsupported border coordinate mode " + std::to_string(clamp));
     }
 }
 

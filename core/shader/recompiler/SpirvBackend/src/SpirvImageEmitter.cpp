@@ -2596,6 +2596,7 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         EmitTableFault(ctx, inst, word, driverFault, both(both(exec, live), driverRejected));
         result.valid = both(result.valid, both(checked, negate(driverRejected)));
         state.tableAccess.samplerElement = element;
+        state.tableAccess.integerBorderSampler = driverFault;
         DecorateTableNonUniform(state, state.tableAccess.samplerElement);
     }
     state.tableAccess.active = true;

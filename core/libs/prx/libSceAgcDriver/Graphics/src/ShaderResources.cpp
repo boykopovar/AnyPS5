@@ -6363,10 +6363,25 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
     const VkDescriptorBindingFlags samplerTableFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | (context.samplerTableUpdateAfterBind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0);
     Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_SAMPLER, context.samplerTableCapacity, flags, nullptr}, {}, {}, samplerTableFlags};
     static const bool noSamplerCache = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
+    const auto addSampler = [&](std::uint32_t element, bool integerBorder) {
+        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4u, 4u);
+        const bool compareEnable = binding.samplerDepthCompare.at(element);
+        if (context.samplerCache != nullptr && !noSamplerCache) {
+            samplers.push_back(context.samplerCache->Get(context, words, compareEnable, false, false, integerBorder));
+        } else {
+            auto resource = DecodeSamplerResource(words, false, false, integerBorder);
+            resource.compareEnable = compareEnable;
+            samplers.push_back(std::make_shared<Sampler>(context, resource));
+        }
+        samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, false, integerBorder});
+        return samplers.size() - 1u;
+    };
+    std::vector<std::size_t> integerBorderSamplers;
     for (std::uint32_t entry = 0; entry < binding.count / Abi::SamplerEntryElements; ++entry) {
         const auto first = entry * Abi::SamplerEntryElements;
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(first) * 4u, 4u);
         std::string rejected;
+        bool border = false;
         if (first + Abi::SamplerEntryElements > context.samplerTableCapacity) rejected = "the sampler table exceeds the device's capacity of " + std::to_string(context.samplerTableCapacity) + " samplers";
         for (std::uint32_t element = first; rejected.empty() && element < first + Abi::SamplerEntryElements; ++element) {
             try {
@@ -6376,7 +6391,15 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
                 Sampler::Validate(context, resource);
                 Require(!Sampler::ShaderAppliesLodBias(resource), "a sampler table entry with a LOD bias beyond the sampler limit needs a per-entry shader bias, which is not implemented");
                 Require(!Sampler::ReadsOpaqueBlackBorder(resource), "a sampler table entry with an opaque black border needs dynamic texture BC-swizzle pairing, which is not implemented");
-                Require(resource.addressModeU != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeV != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeW != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "a sampler table entry with a border needs dynamic texture numeric-class pairing, which is not implemented");
+                border = resource.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || resource.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || resource.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+                if (border) {
+                    for (const auto shift : {0u, 3u, 6u}) {
+                        const auto clamp = (elementWords[0] >> shift) & 7u;
+                        Require(clamp <= 3u || clamp == 6u, "a sampler table entry using half-border or mirrored-border addressing needs guest border coordinate handling, which is not implemented");
+                    }
+                }
+                Require(!border || resource.borderColor == VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, "a sampler table entry with an opaque white border needs texture-format-aware border conversion, which is not implemented");
+                Require(!border || binding.count + integerBorderSamplers.size() < context.samplerTableCapacity, "the sampler table has no room for its integer border sampler");
                 Require(!resource.nonSeamlessCube || context.nonSeamlessCubeMap, "a sampler table entry that disables seamless cube filtering needs VK_EXT_non_seamless_cube_map because dynamic texture/sampler pairing is not implemented");
                 Require(!SingleLevelSamplerWords(elementWords, true, false).has_value(), "a sampler table entry with anisotropic ANISO_OVERRIDE needs dynamic texture mip-level pairing, which is not implemented");
             } catch (const std::runtime_error& error) {
@@ -6384,24 +6407,19 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
             }
         }
         if (!rejected.empty()) {
-            table.samplerRejections.emplace_back(entry, rejectTableElement(table, words, rejected));
+            table.samplerOverrides.emplace_back(entry, rejectTableElement(table, words, rejected));
             item.imageAllocations.insert(item.imageAllocations.end(), Abi::SamplerEntryElements, std::numeric_limits<std::size_t>::max());
             continue;
         }
         for (std::uint32_t element = first; element < first + Abi::SamplerEntryElements; ++element) {
-            const auto elementWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4u, 4u);
-            const bool compareEnable = binding.samplerDepthCompare.at(element);
-            if (context.samplerCache != nullptr && !noSamplerCache) {
-                samplers.push_back(context.samplerCache->Get(context, elementWords, compareEnable, false));
-            } else {
-                auto resource = DecodeSamplerResource(elementWords, false);
-                resource.compareEnable = compareEnable;
-                samplers.push_back(std::make_shared<Sampler>(context, resource));
-            }
-            samplerSources.push_back({{elementWords[0], elementWords[1], elementWords[2], elementWords[3]}, compareEnable, false});
-            item.imageAllocations.push_back(samplers.size() - 1u);
+            item.imageAllocations.push_back(addSampler(element, false));
+        }
+        if (border) {
+            table.samplerOverrides.emplace_back(entry, binding.count + static_cast<std::uint32_t>(integerBorderSamplers.size()));
+            integerBorderSamplers.push_back(addSampler(first + 1u, true));
         }
     }
+    item.imageAllocations.insert(item.imageAllocations.end(), integerBorderSamplers.begin(), integerBorderSamplers.end());
     const auto setSamplers = context.samplerTableUpdateAfterBind ? context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindSamplers : context.limits.maxDescriptorSetSamplers;
     Require(samplers.size() <= setSamplers, "pipeline sampler descriptors exceed device limits");
     bindings.push_back(std::move(item));
@@ -6924,7 +6942,7 @@ void ShaderResources::finishImageTables() {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     for (auto& table : tableStages) {
         auto& map = table.map;
-        for (const auto& [entry, code] : table.samplerRejections) map[map[Abi::HeaderSamplerFaults] + entry] = code;
+        for (const auto& [entry, value] : table.samplerOverrides) map[map[Abi::HeaderSamplerFaults] + entry] = value;
         for (std::uint32_t index = 0; index < map[Abi::HeaderTableCount]; ++index) {
             const auto header = Abi::TableHeader(index);
             if (map[header + Abi::TableFault] != 0u) continue;

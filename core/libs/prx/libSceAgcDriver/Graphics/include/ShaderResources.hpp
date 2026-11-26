@@ -529,7 +529,7 @@ private:
         bool storage = false;
         std::vector<std::size_t> elementTextures;
         std::vector<std::uint32_t> representatives;
-        std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerOverrides;
     };
     std::vector<TableStage> tableStages;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
