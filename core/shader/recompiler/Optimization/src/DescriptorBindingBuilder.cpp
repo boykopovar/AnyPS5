@@ -408,7 +408,8 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
 }
 
 bool ReducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
-    return ((word0 >> 29u) & 3u) != 0u && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
+    const auto reduction = (word0 >> 29u) & 3u;
+    return (reduction == 1u || reduction == 2u) && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
 }
 
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter) {
