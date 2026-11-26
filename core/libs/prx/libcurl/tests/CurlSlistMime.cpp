@@ -141,6 +141,10 @@ int main() {
         tail->more = tail;
         Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
         tail->more = nullptr;
+        tail->next = reinterpret_cast<guest_curl_httppost*>(~std::uintptr_t{0xFFF});
+        Require(Throws([&] { curl_formget_nid_postfix(form, &serialized, AppendForm); }));
+        Require(Throws([&] { curl_formget_nid_postfix(tail->next, &serialized, AppendForm); }));
+        tail->next = nullptr;
         FreeGuestForms(form);
     }
     {
