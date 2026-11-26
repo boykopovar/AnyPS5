@@ -14392,7 +14392,7 @@ public:
     CoverPass(const CoverPass&) = delete;
     CoverPass& operator=(const CoverPass&) = delete;
 
-    bool Draw(Recorder& recorder) const {
+    bool Draw(Recorder& recorder, std::function<void(CommandState&)> afterPass = {}) const {
         const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
         const bool continued = start.continued;
         const auto commands = start.commands;
@@ -14403,7 +14403,7 @@ public:
         recorder.GraphicsState().BindPipeline(context, pipeline, 0);
         recorder.NoteSampledDraw(commands);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
-        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{}, std::move(afterPass));
         return continued;
     }
 
@@ -15040,16 +15040,30 @@ void discardedSampleTests(const Device& device) {
             }
         }
         Recorder::FailNextSubmitsForTest(0);
-        cover.Draw(recorder);
-        recorder.EndPassSamples();
-        recorder.Submit();
-        recorder.Sync();
         std::uint64_t afterSealed = 0;
         completesWithin(std::chrono::seconds(20), "the sample total after refused sealed batches", [&] { afterSealed = recorder.SamplesTotal(); });
-        Require(afterSealed >= beforeSealed, "the sample total fell after refused sealed batches");
-        if (context.occlusionQueryPrecise) Require(afterSealed == beforeSealed + CoverPass::Samples, "the segments of refused sealed batches were counted again after a later batch was refused (" + std::to_string(afterSealed - beforeSealed) + " samples past the batch that ran)");
+        Require(afterSealed == beforeSealed, "the segments of refused sealed batches were counted after the last of them was discarded (" + std::to_string(afterSealed - beforeSealed) + " samples)");
     }
     std::cout << "Recorder discarded sample tests passed\n";
+}
+
+void failedPassEndTests(const Device& device) {
+    auto context = device.GetContext();
+    Recorder recorder(context);
+    CoverPass cover(context);
+    cover.Draw(recorder, [](CommandState&) { throw std::runtime_error("injected after-pass failure"); });
+    bool failed = false;
+    try {
+        recorder.Submit();
+    } catch (const std::runtime_error& error) {
+        failed = std::string(error.what()) == "injected after-pass failure";
+    }
+    Require(failed, "a render pass whose after-pass work threw did not fail the submit");
+    Require(!recorder.RenderPassOpen(), "a render pass whose after-pass work threw was left open after it was ended");
+    cover.Draw(recorder);
+    recorder.Submit();
+    recorder.Sync();
+    std::cout << "Recorder failed pass end tests passed\n";
 }
 
 void discardActionTests(const Device& device) {
@@ -20715,6 +20729,7 @@ int main(int argc, char** argv) {
         shadowedKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         discardActionTests(device);
+        failedPassEndTests(device);
         discardedSampleTests(device);
         copiedDirectOrderingTests(device, recorder);
         copiedWriteBackTests(device, recorder);

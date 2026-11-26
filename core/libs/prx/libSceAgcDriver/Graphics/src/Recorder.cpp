@@ -2175,8 +2175,13 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier, std::source_locatio
         recordBarrier(live(), PassEndBarrier.srcStage, PassEndBarrier.dstStage, PassEndBarrier.srcAccess, PassEndBarrier.dstAccess);
         CountBarriers(CommandClass::Draw);
     }
+    std::exception_ptr failure;
     if (pass.afterPass) {
-        pass.afterPass(open->graphicsState);
+        try {
+            pass.afterPass(open->graphicsState);
+        } catch (...) {
+            failure = std::current_exception();
+        }
     }
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
@@ -2185,7 +2190,6 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier, std::source_locatio
     pass = {};
     pass.closedBy = by;
     PerformanceTrace::Amount(PassBreakScopeNames[static_cast<std::size_t>(by)], 1);
-    std::exception_ptr failure;
     for (auto& work : after) {
         try {
             work(*this);
