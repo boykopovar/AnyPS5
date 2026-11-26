@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -80,7 +81,7 @@ struct Scene {
         device.Draw(state, parameters, shaders, {}, nullptr, nullptr, 0, prepared);
         device.WaitIdle();
         const auto red = pixels[0] == std::byte{255} && pixels[1] == std::byte{0} && pixels[2] == std::byte{0} && pixels[3] == std::byte{255};
-        const auto untouched = pixels[0] == std::byte{0} && pixels[3] == std::byte{0};
+        const auto untouched = std::all_of(pixels.begin(), pixels.end(), [](std::byte pixel) { return pixel == std::byte{0}; });
         Require(drawn ? red : untouched, std::string("prepared draw: ") + what + (drawn ? " did not draw the triangle" : " drew although it draws nothing"));
     }
 };
