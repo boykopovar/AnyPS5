@@ -110,3 +110,10 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
   On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
   `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.
+
+For a performance CSV from JSONL files with multiple captures, select the exact `trace` value for either input.
+Each selector must match exactly one row. For example:
+
+```sh
+python3 tools/performance_csv.py before.jsonl after.jsonl --baseline-trace aps5-trace-before.json.gz --candidate-trace aps5-trace-after.json.gz
+```
