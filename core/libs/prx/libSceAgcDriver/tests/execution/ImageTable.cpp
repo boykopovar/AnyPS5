@@ -998,8 +998,8 @@ void RunReadTests(AgcDriver::VulkanDevice& device) {
         const auto control = RunDirectCode(device, ReadDirectD16Code, PointClamp, std::span<const std::uint32_t>(words + 4, 4));
         Require(Group(halves, group) == Group(control, 0), "image table d16 read: record " + std::to_string(group) + " differs from the direct binding of the same words");
     }
-    RequireRed(halves, 0, Lanes, [](std::uint32_t x) { return Half(FloatTexels[x]); }, "image table d16 read: float texels");
-    RequireRed(halves, 1, Lanes, [](std::uint32_t x) { return UintTexels[x] & 0xffffu; }, "image table d16 read: uint texels");
+    RequireRed(halves, 0, Lanes, [](std::uint32_t x) { return Half(FloatTexels[x]) | (Half(FloatTexels[x]) << 16u); }, "image table d16 read: float texels");
+    RequireRed(halves, 1, Lanes, [](std::uint32_t x) { return (UintTexels[x] & 0xffffu) | ((UintTexels[x] & 0xffffu) << 16u); }, "image table d16 read: uint texels");
 
     RunWaveKeys(device, ReadTableWave32Code, "image table read");
 }
