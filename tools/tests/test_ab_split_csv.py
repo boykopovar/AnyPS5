@@ -121,6 +121,19 @@ class AbCsvTests(unittest.TestCase):
                         self.assertEqual(result.stdout, "")
                         self.assertIn(f"{name} ms/present", result.stderr)
 
+    def test_utf32_logs_report_the_encoding_in_both_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            for encoding, bom in (("utf-32-le", b"\xff\xfe\x00\x00"), ("utf-32-be", b"\x00\x00\xfe\xff")):
+                path.write_bytes(bom + "".join(log()).encode(encoding))
+                for tool in (ab_split, ab_split_csv):
+                    with self.subTest(tool=tool.__name__, encoding=encoding):
+                        completed = subprocess.run([sys.executable, tool.__file__, str(path)], capture_output=True)
+                        self.assertEqual(completed.returncode, 2)
+                        self.assertEqual(completed.stdout, b"")
+                        self.assertIn(b"capture.txt is UTF-32", completed.stderr)
+                        self.assertIn(b"cmd /d /c", completed.stderr)
+
     def test_invalid_inputs_emit_no_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "log.txt"
@@ -131,6 +144,8 @@ class AbCsvTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
+                if not arguments:
+                    self.assertIn(path.name.encode(), completed.stderr)
 
     def test_spreadsheet_safe_prefixes_formula_cells_only_when_requested(self):
         for trigger in ("=1+1", "+cmd", "-1", "@SUM(A1)", "\t=1+1"):
