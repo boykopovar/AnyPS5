@@ -698,8 +698,14 @@ IrF32 TranslationContext::floatUnaryValue(const RdnaInstruction& inst, IrOpcode 
 }
 
 bool TranslationContext::floatUnary(const RdnaInstruction& inst, IrOpcode opcode) {
-    const IrF32 value = floatUnaryValue(inst, opcode);
-    writeOperand(inst.destination, &value.Value());
+    IrF32 value = floatUnaryValue(inst, opcode);
+    RdnaOperand destination = inst.destination;
+    const bool transcendental = opcode == IrOpcode::FPRecip32 || opcode == IrOpcode::FPRecipIFlag32 || opcode == IrOpcode::FPRecipSqrt32 || opcode == IrOpcode::FPSqrt || opcode == IrOpcode::FPLog2 || opcode == IrOpcode::FPExp2 || opcode == IrOpcode::FPCos;
+    if (transcendental && destination.omod != 0u && !ieeeMode && !outputModifierApplies(4u)) {
+        value = scaleF32Result(destination.omod, value);
+        destination.omod = 0u;
+    }
+    writeOperand(destination, &value.Value());
     return true;
 }
 

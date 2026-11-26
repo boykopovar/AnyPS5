@@ -135,6 +135,10 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
    or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
 
+   For machine-readable inspection, use `python3 tools/annotate_module.py module.guest.prx --symbols-json --no-names`.
+   It prints `imports`, `exports` and `tls_exports` to stdout without running objdump. Each record has an
+   `address`, the original `symbol` and its display `name`. Omit `--no-names` and supply `--db` to use a local NID database.
+
    Local `R_X86_64_IRELATIVE` resolver addresses inside executable file-backed segments get
    `irelative_resolver_<address>` function names unless a function export already names that address.
    These are the resolver functions, not the implementations they return. The tool does not execute them.

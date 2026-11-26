@@ -879,6 +879,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_replaced_plt_stubs.py $<TARGET_FILE:relinker>)
         add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_syscall_route COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_route.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
