@@ -21,6 +21,7 @@
 #include <iterator>
 #include <utility>
 #include <mutex>
+#include "ClzeroEmulation.hpp"
 #include "Sse4aEmulation.hpp"
 
 namespace {
@@ -361,6 +362,15 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
     return true;
 }
 
+bool HandleClzero(EXCEPTION_POINTERS* info) {
+    const auto* record = info->ExceptionRecord;
+    if (record->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION) return false;
+    auto* context = info->ContextRecord;
+    std::uint8_t bytes[clzero::kInstructionSize];
+    if (ReadCode(context->Rip, bytes, sizeof(bytes)) != sizeof(bytes)) return false;
+    return clzero::Emulate(bytes, sizeof(bytes), *context);
+}
+
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     static std::atomic<bool> reported{false};
     if (GuestArena::GuestArenaRecoverRead_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
@@ -370,6 +380,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (GuestArena::GuestArenaRecoverWrite_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleClzero(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
