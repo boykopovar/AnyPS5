@@ -290,13 +290,49 @@ void TestMemoryReaders() {
     Require(read(api.ReadUShort, 3) == 0 && error == InvalidStreamOperation && stream.pos == 3, "short past the end");
     std::array<std::uint8_t, 6> window{{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}};
     stream = MemoryStream(window.data() + 1, 4);
-    Require(read(api.ReadUShort, Max) == 0x1122 && error == 0 && stream.pos == 1, "position plus size wraps as unsigned long");
+    Require(read(api.ReadUShort, Max) == 0 && error == InvalidStreamOperation && stream.pos == Max, "an overflowing position cannot read before the memory stream base");
     Require(read(api.ReadChar, Max) == 0 && error == InvalidStreamOperation, "char at the maximum position");
     stream = MemoryStream(nullptr, 4);
     Require(read(api.ReadUShort, 0) == 0 && error == 0 && stream.pos == 2, "null base at position 0 reads 0");
     Require(Throws([&] { read(api.ReadUShort, 2); }), "null base past position 0 is unsupported");
     Require(Throws([&] { read(api.ReadChar, 0); }), "null base char is unsupported");
     Require(Throws([&] { api.ReadULong(&stream, nullptr); }), "null error pointer is unsupported");
+}
+
+void TestReaderPositionBounds() {
+    std::array<std::uint8_t, 8> data{};
+    data.fill(1);
+    const auto check = [&](auto reader, std::uint64_t width) {
+        for (bool memory : {false, true}) {
+            for (std::uint64_t position : {Max, Max - 1, Max - 2, std::uint64_t{8}, std::uint64_t{9}, 9 - width}) {
+                auto stream = memory ? MemoryStream(data.data(), data.size()) : DeviceStream(std::vector<std::uint8_t>(8, 1), 8);
+                stream.pos = position;
+                int error = -1;
+                Require(reader(&stream, &error) == 0 && error == InvalidStreamOperation && stream.pos == position,
+                        "out-of-range and overflowing numeric reads fail without moving the position");
+                Require(memory || device.calls.empty(), "an invalid numeric position never reaches the device callback");
+            }
+            auto stream = memory ? MemoryStream(data.data(), data.size()) : DeviceStream(std::vector<std::uint8_t>(8, 1), 8);
+            stream.pos = 8 - width;
+            int error = -1;
+            std::uint64_t expected = 0;
+            for (std::uint64_t byte = 0; byte < width; ++byte) expected = (expected << 8) | 1;
+            Require(static_cast<std::uint64_t>(reader(&stream, &error)) == expected && error == 0 && stream.pos == 8,
+                    "numeric reads ending exactly at the limit still succeed");
+            Require(memory || (device.calls.size() == 1 && device.calls[0].offset == 8 - width && device.calls[0].count == width),
+                    "a boundary read calls the device once with the exact range");
+        }
+    };
+    check(api.ReadShort, 2);
+    check(api.ReadShortLE, 2);
+    check(api.ReadUShort, 2);
+    check(api.ReadUShortLE, 2);
+    check(api.ReadOffset, 3);
+    check(api.ReadUOffset, 3);
+    check(api.ReadLong, 4);
+    check(api.ReadLongLE, 4);
+    check(api.ReadULong, 4);
+    check(api.ReadULongLE, 4);
 }
 
 void TestDeviceStream() {
@@ -559,6 +595,7 @@ void Run() {
     TestOpenMemoryAndPosition();
     TestMemoryReads();
     TestFrameGetters();
+    TestReaderPositionBounds();
     TestMemoryReaders();
     TestDeviceStream();
     TestCloseAndFree();
