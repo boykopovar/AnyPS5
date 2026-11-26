@@ -294,6 +294,7 @@ public:
 #endif
         _handle = handle;
         _guest = {};
+        ClearPushback();
         guestError = false;
         randomDevice = false;
         lowSurrogate = 0;
