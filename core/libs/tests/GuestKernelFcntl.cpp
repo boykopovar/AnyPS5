@@ -16,6 +16,7 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include "prx/libc/include/WindowsDescriptor.hpp"
 #else
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -637,10 +638,26 @@ static void HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs() {
 }
 #endif
 
+static bool StandardInputTakesNonblocking() {
+#ifdef _WIN32
+    const HANDLE input = WindowsDescriptorHandle_nid_no_patch(0);
+    return ::GetFileType(input) != FILE_TYPE_CHAR || WindowsHandleIsNullDevice_nid_no_patch(input);
+#else
+    return true;
+#endif
+}
+
 static void StandardInputFlags() {
     const int flags = fcntl_nid_postfix(0, GetFlags);
     Require(flags >= 0);
     Require((flags & 3) != WriteOnly);
+    if (StandardInputTakesNonblocking()) {
+        Require(fcntl_nid_postfix(0, SetFlags, flags | NonBlocking) == 0);
+        Require(fcntl_nid_postfix(0, GetFlags) == (flags | NonBlocking));
+    } else {
+        Require(ThrowsWith([flags] { fcntl_nid_postfix(0, SetFlags, flags | NonBlocking); }, "fcntl: changing O_NONBLOCK on a character device is not implemented"));
+        Require(fcntl_nid_postfix(0, GetFlags) == flags);
+    }
     Require(fcntl_nid_postfix(0, SetFlags, fcntl_nid_postfix(0, GetFlags) & ~NonBlocking) == 0);
     Require(fcntl_nid_postfix(0, GetFlags) == (flags & ~NonBlocking));
     Require(fcntl_nid_postfix(0, SetDescriptorFlags, 1) == 0);
@@ -709,6 +726,68 @@ static void CharacterDevicesHaveNoDeviceType() {
 #endif
 }
 
+#ifdef _WIN32
+static void RequireNonblockingUnimplemented(int descriptor) {
+    int enable = 1;
+    Require(ThrowsWith([descriptor] { fcntl_nid_postfix(descriptor, SetFlags, NonBlocking); }, "fcntl: changing O_NONBLOCK on a character device is not implemented"));
+    Require(ThrowsWith([descriptor, &enable] { ioctl_nid_postfix(descriptor, NonblockingRequest, &enable); }, "ioctl: changing O_NONBLOCK on a character device is not implemented"));
+    Require((fcntl_nid_postfix(descriptor, GetFlags) & NonBlocking) == 0);
+}
+
+static void NullStandardInputRecordsNonblocking() {
+    if (!WindowsHandleIsNullDevice_nid_no_patch(WindowsDescriptorHandle_nid_no_patch(0))) return;
+    const int flags = fcntl_nid_postfix(0, GetFlags);
+    Require(flags >= 0 && (flags & NonBlocking) == 0);
+    const int copy = dup_nid_postfix(0);
+    const int fromCommand = fcntl_nid_postfix(0, DuplicateCommand, 20);
+    Require(copy >= 0 && fromCommand >= 20);
+    const int moved = dup2_nid_postfix(0, fromCommand + 1);
+    Require(moved == fromCommand + 1);
+    Require(fcntl_nid_postfix(0, SetFlags, flags | NonBlocking) == 0);
+    for (const int descriptor : {0, copy, fromCommand, moved}) Require(fcntl_nid_postfix(descriptor, GetFlags) == (flags | NonBlocking));
+    char buffer[8] = {};
+    Require(read_nid_postfix(0, buffer, sizeof(buffer)) == 0);
+    Require(read_nid_postfix(copy, buffer, sizeof(buffer)) == 0);
+    Require(sceKernelRead(moved, buffer, sizeof(buffer)) == 0);
+    int off = 0;
+    int on = 1;
+    Require(ioctl_nid_postfix(copy, NonblockingRequest, &off) == 0);
+    Require(fcntl_nid_postfix(0, GetFlags) == flags && fcntl_nid_postfix(moved, GetFlags) == flags);
+    Require(ioctl_nid_postfix(moved, NonblockingRequest, &on) == 0);
+    Require(fcntl_nid_postfix(fromCommand, GetFlags) == (flags | NonBlocking));
+    RequireFailure(ioctl_nid_postfix(0, NonblockingRequest, nullptr), GuestEfault);
+    Require(ThrowsWith([flags] { fcntl_nid_postfix(0, SetFlags, flags | NonBlocking | AsyncFlag); }, "fcntl: O_ASYNC on a character device is not implemented"));
+    Require(ThrowsWith([&on] { ioctl_nid_postfix(0, AsyncRequest, &on); }, "ioctl: O_ASYNC on a character device is not implemented"));
+    Require(fcntl_nid_postfix(fromCommand, SetFlags, flags & ~NonBlocking) == 0);
+    for (const int descriptor : {0, copy, fromCommand, moved}) Require(fcntl_nid_postfix(descriptor, GetFlags) == flags);
+    Require(read_nid_postfix(0, buffer, sizeof(buffer)) == 0);
+    Require(close_nid_postfix(moved) == 0 && close_nid_postfix(fromCommand) == 0);
+    Require(fcntl_nid_postfix(copy, SetFlags, flags | NonBlocking) == 0);
+    Require(fcntl_nid_postfix(0, GetFlags) == (flags | NonBlocking));
+    Require(ioctl_nid_postfix(0, NonblockingRequest, &off) == 0);
+    Require(close_nid_postfix(copy) == 0);
+    Require(fcntl_nid_postfix(0, GetFlags) == flags);
+}
+
+static void NullPlaceholdersKeepNonblockingUnimplemented() {
+    const int device = ::_open("NUL", _O_RDONLY | _O_BINARY);
+    Require(device >= 0);
+    const int copy = dup_nid_postfix(device);
+    Require(copy >= 0);
+    RequireNonblockingUnimplemented(device);
+    RequireNonblockingUnimplemented(copy);
+    Require(close_nid_postfix(copy) == 0 && close_nid_postfix(device) == 0);
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    Require(ThrowsWith([queue] { fcntl_nid_postfix(queue, SetFlags, NonBlocking); }, "fcntl: changing O_NONBLOCK on a character device is not implemented"));
+    Require(close_nid_postfix(queue) == 0);
+    std::intptr_t semaphore = 0;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0);
+    RequireNonblockingUnimplemented(static_cast<int>(semaphore));
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
+}
+#endif
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
@@ -725,5 +804,9 @@ int main() {
 #endif
     StandardInputFlags();
     CharacterDevicesHaveNoDeviceType();
+#ifdef _WIN32
+    NullStandardInputRecordsNonblocking();
+    NullPlaceholdersKeepNonblockingUnimplemented();
+#endif
     return 0;
 }

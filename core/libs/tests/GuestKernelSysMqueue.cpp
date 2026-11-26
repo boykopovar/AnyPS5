@@ -15,6 +15,7 @@
 #include <fstream>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #ifdef _WIN32
@@ -454,6 +455,34 @@ void BadPointers() {
     Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
 }
 
+#ifdef _WIN32
+template <typename TCall>
+bool ThrowsWith(TCall call, const std::string& prefix) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).rfind(prefix, 0) == 0;
+    }
+    return false;
+}
+
+void RequireNonblockingUnimplemented(int descriptor) {
+    int enable = 1;
+    Require(ThrowsWith([descriptor] { fcntl_nid_postfix(descriptor, 4, ONonblock); }, "fcntl: changing O_NONBLOCK on a character device is not implemented"));
+    Require(ThrowsWith([descriptor, &enable] { ioctl_nid_postfix(descriptor, 0x8004667e, &enable); }, "ioctl: changing O_NONBLOCK on a character device is not implemented"));
+}
+
+void DescriptorNonblockingUnimplemented() {
+    const auto name = Name("nonblocking");
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, nullptr);
+    Require(queue >= 0);
+    const int copy = dup_nid_postfix(queue);
+    Require(copy >= 0);
+    RequireNonblockingUnimplemented(queue);
+    RequireNonblockingUnimplemented(copy);
+    Require(close_nid_postfix(copy) == 0 && close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+#endif
 }
 
 int main() {
@@ -469,6 +498,9 @@ int main() {
     NullBuffer();
     FarDeadline();
     ConcurrentSetattr();
+#ifdef _WIN32
+    DescriptorNonblockingUnimplemented();
+#endif
     std::puts("message queues passed");
     return 0;
 }

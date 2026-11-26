@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <windows.h>
+#include <winioctl.h>
 #include <winternl.h>
 
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
@@ -27,6 +28,14 @@ static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int de
     if (status < 0)
         throw std::runtime_error(std::string(function) + ": cannot read the access of descriptor " + std::to_string(descriptor) + ", status=" + std::to_string(status));
     return information.GrantedAccess;
+}
+
+static inline bool WindowsHandleIsNullDevice_nid_no_patch(HANDLE handle) {
+    using QueryVolume = NTSTATUS(NTAPI*)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FS_INFORMATION_CLASS);
+    static const auto query = reinterpret_cast<QueryVolume>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryVolumeInformationFile")));
+    FILE_FS_DEVICE_INFORMATION device{};
+    IO_STATUS_BLOCK status{};
+    return query != nullptr && query(handle, &status, &device, sizeof(device), FileFsDeviceInformation) >= 0 && device.DeviceType == FILE_DEVICE_NULL;
 }
 
 static inline std::uint32_t WindowsFileNumber_nid_no_patch(std::uint64_t fileId) {
