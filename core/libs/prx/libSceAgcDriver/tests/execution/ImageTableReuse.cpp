@@ -285,7 +285,7 @@ void RunUntrackedImageTableMutation(AgcDriver::VulkanDevice& device, const Guest
     for (auto& texel : pixels[changed]) texel += 0.5f;
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(AgcDriver::GuestMemory::CollectWrites(AddressOf(pixels[changed].data()), sizeof(pixels[changed])) == 0, "image table mutation: the CPU store unexpectedly supplied a write generation");
-    Require(Dispatch(device, result, changed) == Row(pixels[changed].data()), "image table mutation: reusing the descriptor returned stale texels after an untracked CPU write");
+    Require(Dispatch(device, result, changed) == Row(pixels[changed].data()), "image table mutation: the texture contained stale texels after an untracked CPU write and epoch change");
     Require(Dispatch(device, result, neighbor) == Row(pixels[neighbor].data()), "image table mutation: an adjacent descriptor returned the changed image");
 }
 
