@@ -1,15 +1,18 @@
 import argparse
+import ctypes
 import io
 import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import time
 
 
 COMMAND_FILE_BYTES = 64 * 1024
 MAX_COMMAND_LINE_BYTES = 126
+MAX_SEQUENCE = 2**64 - 1
 
 
 BUTTONS = {
@@ -39,7 +42,7 @@ def timeline_sequence(command, header):
     if fields is None:
         return 0
     version, sequence, count = [int(token) for token in fields.groups()]
-    if version != 1 or not 1 <= sequence <= 2**64 - 1 or not 1 <= count <= 4096:
+    if version != 1 or not 1 <= sequence <= MAX_SEQUENCE or not 1 <= count <= 4096:
         return 0
     previous_end = 0
     for _ in range(count):
@@ -109,9 +112,23 @@ def previous_sequence(path):
 
 def next_sequence(path):
     sequence = max(time.monotonic_ns(), previous_sequence(path) + 1)
-    if sequence > 2**64 - 1:
+    if sequence > MAX_SEQUENCE:
         raise ValueError("controller command sequence is exhausted")
     return sequence
+
+
+def replace_command(temporary, path):
+    try:
+        os.replace(temporary, path)
+    except PermissionError as error:
+        if os.name != "nt" or error.winerror not in (5, 32):
+            raise
+        replace = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+        replace.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                            ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
+        replace.restype = ctypes.c_int
+        if not replace(str(path), str(temporary), None, 0, None, None):
+            raise
 
 
 def button_mask(value):
@@ -124,7 +141,11 @@ def button_mask(value):
     return mask
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a controller pulse for APS5_PAD_INPUT_FILE.")
     parser.add_argument("path", type=Path)
     parser.add_argument("button", help=f"a button name ({', '.join(BUTTONS)}), or several joined by '+' to press them together (for example l1+r1); release must be used alone")
@@ -133,7 +154,7 @@ def main():
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
                         help="touch contact: X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         mask = button_mask(args.button)
     except argparse.ArgumentTypeError as error:
@@ -174,12 +195,13 @@ def main():
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
             output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
-        os.replace(temporary, args.path)
+        replace_command(temporary, args.path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     print(f"Queued {args.button}{' with sticks' + sticks if sticks else ''} for {args.hold_ms} ms in {args.path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

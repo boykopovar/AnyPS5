@@ -471,9 +471,10 @@ void Guards(AgcDriver::VulkanDevice& device) {
     SetEntry(2u, {});
     const auto unsupported = Descriptor(1u, Format{78u, 1u, 1u});
     SetEntry(3u, unsupported);
+    std::vector<std::vector<std::uint32_t>> programs;
     for (const auto opcode : {2u, 0x42u, 0x70u, 10u}) {
         const auto dmask = opcode == 0x42u ? 3u : 1u;
-        const auto code = Code(opcode, dmask, true);
+        const auto& code = programs.emplace_back(Code(opcode, dmask, true));
         const auto inactiveCode = Code(opcode, dmask, true, true);
         const auto initial = Texels;
         const auto inactive = Run(device, inactiveCode, 3u);

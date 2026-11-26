@@ -216,6 +216,84 @@ void importCrossingTests(const Context& context, const BdaTestAccess& access) {
     ::operator delete(block, std::align_val_t{half});
 }
 
+void readTrappableImportTests(const Context& context) {
+    constexpr std::size_t half = 65536;
+    constexpr std::uint64_t page = 4096;
+    void* block = ::operator new(2 * half, std::align_val_t{half});
+    std::memset(block, 0x33, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* import = HostImportFor(importing, first, 2 * half);
+        Require(import != nullptr, "the registered range was not imported");
+        Require(!import->dmaBuf, "plain host memory was imported as a dma-buf");
+        auto hostPointerTraps = importing;
+        hostPointerTraps.readTrapsOverHostPointerImports = true;
+        auto noHostPointerTraps = importing;
+        noHostPointerTraps.readTrapsOverHostPointerImports = false;
+        Require(ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, page), "an imported range was not trappable where host pointer imports keep read traps");
+        Require(!ReadTrappableHostImportCovers(noHostPointerTraps, first + 3 * page, page, page), "a host pointer import was trappable on a driver whose host pointer imports cannot keep read traps");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, 3 * page), "a page size that is not a power of two was accepted");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 2 * half - page, 2 * page, page), "a range past its import was trappable");
+    }
+    registry(false);
+    auto afterImport = importing;
+    afterImport.readTrapsOverHostPointerImports = true;
+    Require(!ReadTrappableHostImportCovers(afterImport, first, page, page), "a range was trappable after its import was gone");
+    ::operator delete(block, std::align_val_t{half});
+}
+
+#if defined(__linux__)
+void trappedImportTests(const Context& context) {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() || !GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(+[](std::uintptr_t, std::uintptr_t) {})) {
+        std::cout << "trapped import tests skipped, the device lacks the userfaultfd write watch read traps need\n";
+        return;
+    }
+    constexpr std::size_t half = 65536;
+    const auto page = static_cast<std::size_t>(::getpagesize());
+    void* mapped = ::mmap(nullptr, 3 * half, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED, "cannot map the trapped import range");
+    auto* block = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapped) + half - 1) & ~static_cast<std::uintptr_t>(half - 1));
+    std::memset(block, 0x44, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, 2 * half);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(first + page, page), "a page of the import range was not trapped");
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) == nullptr && !HostImportCovers(importing, first, 2 * half), "an import pinned a range with a read-trapped page");
+    }
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(first + page, page);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) != nullptr, "a range was not imported once its read trap was gone");
+    }
+    registry(false);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, 2 * half);
+    ::munmap(mapped, 3 * half);
+}
+#endif
+
 constexpr auto FixedImageConstants = [] {
     std::array<std::uint8_t, 64> bytes{};
     for (auto& value : bytes) value = 0x5c;
@@ -1670,7 +1748,10 @@ void hostImportReportTests() {
     counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
     counts.requesters[static_cast<std::size_t>(ImportRequester::ColorTarget)] = {1, 1u << 20u, 0, 0, 0};
     const auto text = FormatHostImportCounts(counts);
-    Require(text == "3 live (3.0 MiB); made 9 (6.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, color target 1/0/0", "the host import report is wrong: " + text);
+    Require(text == "3 live (3.0 MiB); made 9 (6.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, color target 1/0/0, label 0/0/0", "the host import report is wrong: " + text);
+    counts.labelBytes = 3u << 19u;
+    const auto labels = FormatHostImportCounts(counts);
+    Require(labels == text + "; 1.5 MiB of label windows", "the host import report does not name the label windows: " + labels);
 }
 
 class PieceWindow {
@@ -3428,6 +3509,187 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     GuestArena::GuestArenaReset_nid_postfix(block, bytes);
 #endif
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+}
+
+void importRetireCreditTests(const Context& context) {
+#ifndef _WIN32
+    constexpr std::size_t bytes = 1u << 20u;
+    constexpr std::size_t idle = 4;
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    ClearHostImports(context.device);
+    void* area = mmap(nullptr, 2 * (idle + 3) * bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(area != MAP_FAILED, "cannot map the import retire credit blocks");
+    const auto first = (reinterpret_cast<std::uintptr_t>(area) + bytes - 1) & ~(bytes - 1);
+    std::memset(reinterpret_cast<void*>(first), 0x44, 2 * (idle + 2) * bytes);
+    const auto registry = [&](std::uintptr_t at, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, reinterpret_cast<void*>(at), bytes, true, false, false);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, reinterpret_cast<void*>(at));
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto use = [&](std::uintptr_t at) {
+        NoteHostImportFrame();
+        GuestBufferMemory leased(importing);
+        leased.AddReadable(at, 32);
+        leased.Upload(false);
+        leased.WriteBack();
+        return HostImportCovers(importing, at, 16);
+    };
+    SetImportRetireCredit(false);
+    for (std::size_t index = 0; index < idle; ++index) registry(first + 2 * index * bytes, true);
+    for (std::size_t index = 0; index < idle; ++index) Require(use(first + 2 * index * bytes), "an idle range of the import retire credit fixture was not imported");
+    SetHostImportBudget(HostImportLiveBytes());
+    for (int frame = 0; frame < 4; ++frame) NoteHostImportFrame();
+    registry(first + 2 * idle * bytes, true);
+    registry(first + 2 * (idle + 1) * bytes, true);
+    const auto wanted = first + 2 * idle * bytes;
+    const auto second = wanted + 2 * bytes;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(importing);
+        recorder.Activate();
+        const auto before = HostImportCounters();
+        Require(!use(wanted) && HostImportCounters().retiredPinnedBytes == before.retiredPinnedBytes && HostImportCounters().credited == before.credited, "an import over the budget was made under recorded work without APS5_IMPORT_RETIRE_CREDIT");
+        SetImportRetireCredit(true);
+        Require(use(wanted), "an import that retires one idle import was refused under recorded work with APS5_IMPORT_RETIRE_CREDIT");
+        const auto credited = HostImportCounters();
+        Require(credited.liveBytes == before.liveBytes && credited.retiredPinnedBytes == before.retiredPinnedBytes + bytes && credited.credited == before.credited + 1, "the retire credit did not keep one retired import pinned beside the new one");
+        Require(!use(second) && HostImportCounters().retiredPinnedBytes == credited.retiredPinnedBytes, "the retire credit let retired bytes pass a quarter of the budget");
+    }
+    Require(use(second), "an import was refused after the recorded work released the retired bytes");
+    SetImportRetireCredit(false);
+    SetHostImportBudget(0);
+    for (std::size_t index = 0; index < idle + 2; ++index) registry(first + 2 * index * bytes, false);
+    ClearHostImports(context.device);
+    munmap(area, 2 * (idle + 3) * bytes);
+#else
+    static_cast<void>(context);
+#endif
+}
+
+void heapMirrorRetryTests(const Context& context) {
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() || !AddressSpaceCounters().enabled) {
+        std::cout << "write watch unavailable or the address space cache is off: heap mirror retries not tested\n";
+        return;
+    }
+    constexpr std::size_t bytes = 1u << 20u;
+    constexpr int builds = 70;
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    const auto fixture = [&](bool recorded, bool retaken) {
+        const std::string name = recorded ? " (recorded work active)" : retaken ? " (reused address space)" : "";
+        ClearHostImports(context.device);
+        void* area = mmap(nullptr, 4 * bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(area != MAP_FAILED, "cannot map the heap mirror retry blocks");
+        const auto heapAt = (reinterpret_cast<std::uintptr_t>(area) + bytes - 1) & ~(bytes - 1);
+        const auto idleAt = heapAt + 2 * bytes;
+        auto* heap = reinterpret_cast<std::uint8_t*>(heapAt);
+        std::memset(heap, 0x11, bytes);
+        std::memset(reinterpret_cast<void*>(idleAt), 0x22, bytes);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(heap, bytes);
+        const auto registry = [&](std::uintptr_t at, bool add, bool gpu) {
+            auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, reinterpret_cast<void*>(at), bytes, true, false, gpu);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, reinterpret_cast<void*>(at));
+            GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+        };
+        int written = 0;
+        const auto build = [&] {
+            NoteHostImportFrame();
+            heap[65536 + written % 4096] = static_cast<std::uint8_t>(0x30 + written % 64);
+            ++written;
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.Upload(true);
+            const auto ranges = leased.AddressRanges();
+            const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= heapAt && heapAt + bytes <= range.end; });
+            Require(found != ranges.end(), "the heap range is missing from the BDA table of a build" + name);
+            leased.WriteBack();
+        };
+        const auto retakes = [&](int passes) {
+            GuestBufferMemory kept(importing);
+            kept.AcquireRegistered();
+            kept.Upload(true);
+            int taken = 0;
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                static_cast<void>(kept.ReleaseSpace());
+                for (; taken < passes; ++taken) {
+                    heap[65536 + written % 4096] = static_cast<std::uint8_t>(0x30 + written % 64);
+                    ++written;
+                    if (!kept.RetakeSpace()) break;
+                    static_cast<void>(kept.ReleaseSpace());
+                }
+            }
+            kept.WriteBack();
+            return taken;
+        };
+        SetHeapMirrorRetry(false);
+        registry(idleAt, true, false);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AddReadable(idleAt, 32);
+            leased.Upload(false);
+            leased.WriteBack();
+        }
+        Require(HostImportCovers(importing, idleAt, 16), "the idle range of the heap mirror retry fixture was not imported" + name);
+        SetHostImportBudget(HostImportLiveBytes());
+        const auto before = MirrorCounters();
+        registry(heapAt, true, true);
+        build();
+        Require(MirrorCounters().heapMirrors == before.heapMirrors + 1 && !HostImportCovers(importing, heapAt, 16), "a heap over the host import budget was not heap mirrored" + name);
+        const auto off = AddressSpaceCounters();
+        for (int pass = 0; pass < 2 * builds; ++pass) build();
+        Require(MirrorCounters().heapMirrors == before.heapMirrors + 1 && HostImportCovers(importing, idleAt, 16) && AddressSpaceCounters().heapRetries == off.heapRetries, "a heap mirror was tried as an import again without APS5_HEAP_MIRROR_RETRY" + name);
+        if (retaken) Require(retakes(2 * builds) == 2 * builds && AddressSpaceCounters().heapRetryRetakes == off.heapRetryRetakes, "a reused address space was sent to a build without APS5_HEAP_MIRROR_RETRY");
+        SetHeapMirrorRetry(true);
+        const auto counted = AddressSpaceCounters();
+        if (retaken) {
+            const auto taken = retakes(builds);
+            const auto refused = AddressSpaceCounters();
+            Require(taken > 0 && taken < builds && refused.heapRetryRetakes == counted.heapRetryRetakes + 1 && refused.heapRetries == counted.heapRetries, "reuses of an address space with a heap mirror did not send one to a build when the retry was due");
+            build();
+            const auto after = AddressSpaceCounters();
+            Require(after.heapRetries == counted.heapRetries + 1 && after.heapRetryImports == counted.heapRetryImports + 1 && after.heapRetryOwed == counted.heapRetryOwed, "the build after a refused reuse did not try the heap mirror as an import");
+        } else if (recorded) {
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                Recorder recorder(importing);
+                recorder.Activate();
+                for (int pass = 0; pass < builds && AddressSpaceCounters().heapRetryOwed == counted.heapRetryOwed; ++pass) build();
+                const auto owed = AddressSpaceCounters();
+                Require(owed.heapRetries == counted.heapRetries + 1 && owed.heapRetryOwed == counted.heapRetryOwed + 1 && owed.heapRetryImports == counted.heapRetryImports, "a heap mirror retried under recorded work was not owed its import");
+                Require(!HostImportCovers(importing, idleAt, 16) && !HostImportCovers(importing, heapAt, 16) && MirrorCounters().heapMirrors == before.heapMirrors + 1, "an owed heap did not retire the idle import ahead or lost its mirror early");
+                build();
+                Require(!HostImportCovers(importing, idleAt, 16) && !HostImportCovers(importing, heapAt, 16) && AddressSpaceCounters().rebuiltGrowth == owed.rebuiltGrowth, "an owed heap was imported or its room was taken while the retired bytes were still held");
+            }
+            const auto released = AddressSpaceCounters();
+            build();
+            Require(AddressSpaceCounters().rebuiltGrowth == released.rebuiltGrowth + 1, "the release of the retired bytes did not rebuild the address space for the owed heap");
+        } else {
+            for (int pass = 0; pass < builds; ++pass) build();
+            const auto after = AddressSpaceCounters();
+            Require(after.heapRetries == counted.heapRetries + 1 && after.heapRetryImports == counted.heapRetryImports + 1 && after.heapRetryOwed == counted.heapRetryOwed, "a heap mirror refilled on every build was not tried as an import exactly once");
+        }
+        Require(HostImportCovers(importing, heapAt, bytes) && !HostImportCovers(importing, idleAt, 16) && MirrorCounters().heapMirrors == before.heapMirrors, "a retried heap mirror did not replace an idle import" + name);
+        build();
+        Require(HostImportCovers(importing, heapAt, bytes) && MirrorCounters().heapMirrors == before.heapMirrors, "a heap imported by a retry was heap mirrored again" + name);
+        SetHeapMirrorRetry(false);
+        SetHostImportBudget(0);
+        registry(heapAt, false, true);
+        registry(idleAt, false, false);
+        ClearHostImports(context.device);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(heap, bytes);
+        munmap(area, 4 * bytes);
+    };
+    fixture(false, false);
+    fixture(true, false);
+    fixture(false, true);
+#else
+    static_cast<void>(context);
+#endif
 }
 
 void retiredImportWatchTests(const Context& context) {
@@ -5645,6 +5907,10 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
     importCrossingTests(context, access);
+    readTrappableImportTests(context);
+#if defined(__linux__)
+    trappedImportTests(context);
+#endif
     fixedReadOnlyRangeMirrorTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);
@@ -5718,6 +5984,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     heapMirrorTests(context, access);
     partialHeapImportBudgetTests(context, access);
     importedHeapMirrorTests(context, access);
+    heapMirrorRetryTests(context);
+    importRetireCreditTests(context);
     retiredImportWatchTests(context);
     importWatchTests();
     importedFreshTests(context);

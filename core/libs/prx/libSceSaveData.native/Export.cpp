@@ -19,6 +19,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -199,6 +200,35 @@ static bool dir_name_match(const char* str, const char* pattern) {
     return *str == '\0' && *pattern == '\0';
 }
 
+static void flush_path(const std::string& path, bool directory) {
+#ifdef _WIN32
+    if (directory) {
+        return;
+    }
+    const HANDLE handle = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+    }
+    const bool flushed = FlushFileBuffers(handle) != 0;
+    const DWORD error = GetLastError();
+    CloseHandle(handle);
+    if (!flushed) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(static_cast<int>(error), std::system_category()));
+    }
+#else
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    if (descriptor < 0) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(errno, std::generic_category()));
+    }
+    const int result = ::fsync(descriptor);
+    const int error = errno;
+    ::close(descriptor);
+    if (result != 0 && error != EINVAL) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(error, std::generic_category()));
+    }
+#endif
+}
+
 namespace {
 
 // Save-data memory: one blob per user and slot, kept next to the save directory (_sd_mem/u<user>/slot<n>.bin),
@@ -256,6 +286,7 @@ bool read_file_all(const std::filesystem::path& path, std::vector<char>& out) {
 }
 
 constexpr char MEM_JOURNAL_MAGIC[] = {'A', 'P', 'S', '5', 'M', 'J', 'N', '1'};
+constexpr char MEM_JOURNAL_PARAM_MAGIC[] = {'A', 'P', 'S', '5', 'M', 'J', 'N', '2'};
 
 struct MemoryWrite {
     std::uint64_t offset;
@@ -263,8 +294,17 @@ struct MemoryWrite {
     const char* data;
 };
 
-std::vector<char> encode_memory_journal(const std::vector<MemoryWrite>& writes) {
-    std::vector<char> bytes(std::begin(MEM_JOURNAL_MAGIC), std::end(MEM_JOURNAL_MAGIC));
+struct MemoryJournal {
+    std::vector<MemoryWrite> writes;
+    std::span<const char> param;
+};
+
+std::vector<char> encode_memory_journal(const std::vector<MemoryWrite>& writes, std::span<const char> param) {
+    const auto& magic = param.empty() ? MEM_JOURNAL_MAGIC : MEM_JOURNAL_PARAM_MAGIC;
+    std::vector<char> bytes(std::begin(magic), std::end(magic));
+    if (!param.empty()) {
+        bytes.insert(bytes.end(), param.begin(), param.end());
+    }
     for (const MemoryWrite& write : writes) {
         const std::size_t at = bytes.size();
         bytes.resize(at + sizeof(write.offset) + sizeof(write.size) + write.size);
@@ -275,13 +315,22 @@ std::vector<char> encode_memory_journal(const std::vector<MemoryWrite>& writes) 
     return bytes;
 }
 
-std::vector<MemoryWrite> decode_memory_journal(const std::string& journal, const std::vector<char>& bytes, std::size_t memory_size) {
+MemoryJournal decode_memory_journal(const std::string& journal, std::span<const char> bytes, std::size_t memory_size) {
     const auto malformed = [&journal]() { return std::runtime_error("SaveData: memory journal " + journal + " is malformed"); };
-    if (bytes.size() < sizeof(MEM_JOURNAL_MAGIC) || std::memcmp(bytes.data(), MEM_JOURNAL_MAGIC, sizeof(MEM_JOURNAL_MAGIC)) != 0) {
+    if (bytes.size() < sizeof(MEM_JOURNAL_MAGIC)) {
         throw malformed();
     }
-    std::vector<MemoryWrite> writes;
+    MemoryJournal result;
     std::size_t at = sizeof(MEM_JOURNAL_MAGIC);
+    if (std::memcmp(bytes.data(), MEM_JOURNAL_PARAM_MAGIC, sizeof(MEM_JOURNAL_PARAM_MAGIC)) == 0) {
+        if (bytes.size() - at < sizeof(SaveDataParam)) {
+            throw malformed();
+        }
+        result.param = bytes.subspan(at, sizeof(SaveDataParam));
+        at += sizeof(SaveDataParam);
+    } else if (std::memcmp(bytes.data(), MEM_JOURNAL_MAGIC, sizeof(MEM_JOURNAL_MAGIC)) != 0) {
+        throw malformed();
+    }
     while (at != bytes.size()) {
         MemoryWrite write{};
         if (bytes.size() - at < sizeof(write.offset) + sizeof(write.size)) {
@@ -295,24 +344,42 @@ std::vector<MemoryWrite> decode_memory_journal(const std::string& journal, const
         }
         write.data = bytes.data() + at;
         at += write.size;
-        writes.push_back(write);
+        result.writes.push_back(write);
     }
-    return writes;
+    return result;
 }
 
-void apply_memory_journal(std::fstream& memory, const std::string& journal, const std::vector<MemoryWrite>& writes) {
+bool replace_synced_memory_file(const std::filesystem::path& path, std::span<const char> bytes) {
+    const bool replaced = savedata::replace_file_with(path, bytes.data(), bytes.size(), [](const auto& temporary, const auto& destination) {
+        flush_path(temporary.string(), false);
+        return savedata::move_replacing(temporary, destination);
+    });
+    if (replaced) {
+        flush_path(path.parent_path().string(), true);
+    }
+    return replaced;
+}
+
+bool apply_memory_journal(std::fstream& memory, const std::string& path, const std::string& journal, const std::vector<MemoryWrite>& writes, std::span<const char> param) {
     for (const MemoryWrite& write : writes) {
         memory.seekp(static_cast<std::streamoff>(write.offset));
         memory.write(write.data, static_cast<std::streamsize>(write.size));
     }
-    memory.flush();
+    memory.close();
     if (!memory) {
-        throw std::runtime_error("SaveData: cannot write memory journal " + journal + " into the save-data memory");
+        return false;
+    }
+    flush_path(path, false);
+    auto memoryPath = std::filesystem::path(path);
+    if (!param.empty() && !replace_synced_memory_file(memoryPath.replace_extension(".param"), param)) {
+        return false;
     }
     std::error_code ec;
     if (!std::filesystem::remove(journal, ec)) {
-        throw std::runtime_error("SaveData: cannot remove memory journal " + journal);
+        return false;
     }
+    flush_path(memoryPath.parent_path().string(), true);
+    return true;
 }
 
 void replay_memory_journal(std::int32_t user_id, std::uint32_t slot) {
@@ -331,12 +398,16 @@ void replay_memory_journal(std::int32_t user_id, std::uint32_t slot) {
     if (!read_file_all(journal, bytes) || !file_size_of(path, &size)) {
         throw std::runtime_error("SaveData: cannot replay memory journal " + journal);
     }
-    const std::vector<MemoryWrite> writes = decode_memory_journal(journal, bytes, size);
+    const auto pendingWrites = decode_memory_journal(journal, bytes, size);
     std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
     if (!memory) {
         throw std::runtime_error("SaveData: cannot open " + path + " to replay memory journal " + journal);
     }
-    apply_memory_journal(memory, journal, writes);
+    flush_path(journal, false);
+    flush_path(std::filesystem::path(journal).parent_path().string(), true);
+    if (!apply_memory_journal(memory, path, journal, pendingWrites.writes, pendingWrites.param)) {
+        throw std::runtime_error("SaveData: cannot finish memory journal " + journal);
+    }
 }
 
 std::string param_path(const std::string& real_path) {
@@ -417,6 +488,24 @@ int traceLimit() {
             std::fflush(stderr); \
         } \
     } while (0)
+
+template <typename T>
+bool readGuest(const T* source, T& destination) {
+    if (source == nullptr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return copied;
+}
+
+bool writeGuest(void* destination, const void* source, std::size_t bytes) {
+    if (destination == nullptr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 }  // namespace
 
 extern "C" {
@@ -474,7 +563,7 @@ static bool copy_mount_point(const SaveDataMountPoint* mount_point, SaveDataMoun
     if (mount_point == nullptr || out == nullptr) {
         return false;
     }
-    if (!GuestCopyIn_nid_no_patch(out, mount_point, sizeof(*out))) {
+    if (!readGuest(mount_point, *out)) {
         return false;
     }
     return std::memchr(out->data, '\0', sizeof(out->data)) != nullptr;
@@ -590,35 +679,6 @@ static std::map<std::string, std::uintmax_t> tree_sizes(const std::string& root)
     return sizes;
 }
 
-static void flush_path(const std::string& path, bool directory) {
-#ifdef _WIN32
-    if (directory) {
-        return;
-    }
-    const HANDLE handle = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(static_cast<int>(GetLastError()), std::system_category()));
-    }
-    const bool flushed = FlushFileBuffers(handle) != 0;
-    const DWORD error = GetLastError();
-    CloseHandle(handle);
-    if (!flushed) {
-        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(static_cast<int>(error), std::system_category()));
-    }
-#else
-    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
-    if (descriptor < 0) {
-        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(errno, std::generic_category()));
-    }
-    const int result = ::fsync(descriptor);
-    const int error = errno;
-    ::close(descriptor);
-    if (result != 0 && error != EINVAL) {
-        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(error, std::generic_category()));
-    }
-#endif
-}
-
 static void flush_tree(const std::string& root) {
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
         flush_path(entry.path().string(), entry.is_directory());
@@ -671,16 +731,23 @@ static void require_plain_paths(const std::string& dirName, std::initializer_lis
 }
 
 static bool parse_dir_name(const SceSaveDataDirName* name, std::string* dirName) {
-    const auto* nameEnd = static_cast<const char*>(std::memchr(name->data, '\0', sizeof(name->data)));
+    SceSaveDataDirName localName{};
+    if (!readGuest(name, localName)) {
+        return false;
+    }
+    const auto* nameEnd = static_cast<const char*>(std::memchr(localName.data, '\0', sizeof(localName.data)));
     if (nameEnd == nullptr) {
         return false;
     }
-    dirName->assign(name->data, static_cast<std::size_t>(nameEnd - name->data));
+    dirName->assign(localName.data, static_cast<std::size_t>(nameEnd - localName.data));
     return !dirName->empty() && *dirName != "." && *dirName != ".." && dirName->find_first_of("/\\:") == std::string::npos;
 }
 
 static bool running_title(const SceSaveDataTitleId* titleId) {
-    return titleId == nullptr || std::strncmp(titleId->data, GetAppTitleId_nid_postfix().value, sizeof(titleId->data)) == 0;
+    if (titleId == nullptr) return true;
+    SceSaveDataTitleId localTitle{};
+    if (!readGuest(titleId, localTitle)) return false;
+    return std::strncmp(localTitle.data, GetAppTitleId_nid_postfix().value, sizeof(localTitle.data)) == 0;
 }
 
 static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
@@ -701,15 +768,19 @@ static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
     if (blocks != std::filesystem::file_type::not_found && blocks != std::filesystem::file_type::regular) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
-    if (param != nullptr) {
-        *param = stored;
+    if (param != nullptr && !writeGuest(param, &stored, sizeof(stored))) {
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
 }
 
 static void move_backup(const char* step, const std::string& from, const std::string& to, bool* moved = nullptr) {
     file_step(step, to);
-    std::filesystem::rename(from, to);
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    if (error) {
+        throw std::filesystem::filesystem_error("SaveData: cannot move the backup", from, to, error);
+    }
     if (moved != nullptr) *moved = true;
     file_step("backup.flush", to);
     flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -853,14 +924,16 @@ static void restoreSave(const std::string& dirName) {
     RemoveTree(stagedEntry, ignored);
 }
 
-static int deleteSave(const SaveDataDelete* del) {
-    if (del == nullptr || del->dir_name == nullptr) {
+static int deleteSave(const SaveDataDelete* del, std::string* traceDir) {
+    SaveDataDelete localDel{};
+    if (!readGuest(del, localDel) || localDel.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(del->dir_name, &dirName)) {
+    if (!parse_dir_name(localDel.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceDir != nullptr) *traceDir = dirName;
     const std::string path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
@@ -886,8 +959,9 @@ static int deleteSave(const SaveDataDelete* del) {
 }
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
-    const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = deleteSave(del, &dir);
+    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1333,23 +1407,26 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
     return SAVE_DATA_OK;
 }
 
-static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
+static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result, SaveDataMount3* traceMount = nullptr, std::string* traceDir = nullptr, SaveDataMountResult* traceResult = nullptr) {
+    SaveDataMount3 localMount{};
+    if (!readGuest(mount, localMount) || mount_result == nullptr || localMount.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceMount != nullptr) *traceMount = localMount;
     const FreeSpaceMode freeSpace = free_space_mode();
-    const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
-    const bool rdonly = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
-    const bool rdwr = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
+    const bool create = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    const bool create2 = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
+    const bool rdonly = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
+    const bool rdwr = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
     const bool open = !create && !create2 && (rdonly || rdwr);
     if (!create && !create2 && !open) {
         throw std::runtime_error("sceSaveDataMount3: unknown mount_mode");
     }
     std::string dirName;
-    if (!parse_dir_name(mount->dir_name, &dirName)) {
+    if (!parse_dir_name(localMount.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceDir != nullptr) *traceDir = dirName;
     const std::string real_path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
@@ -1369,17 +1446,18 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
         return SAVE_DATA_ERROR_MOUNT_FULL;
     }
     if (!exists && (create || create2) && freeSpace == FreeSpaceMode::Host) {
-        const std::uint64_t blocks = mount->blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(mount->blocks, SAVE_DATA_BLOCKS_MAX);
+        const std::uint64_t blocks = localMount.blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(localMount.blocks, SAVE_DATA_BLOCKS_MAX);
         const std::uint64_t required = blocks * SAVE_DATA_BLOCK_BYTES;
         std::uint64_t available = 0;
         if (host_free_bytes(real_path, available) && available < required) {
-            std::memset(mount_result, 0, sizeof(*mount_result));
-            mount_result->required_blocks = (required - available + SAVE_DATA_BLOCK_BYTES - 1) / SAVE_DATA_BLOCK_BYTES;
+            SaveDataMountResult noSpaceResult{};
+            noSpaceResult.required_blocks = (required - available + SAVE_DATA_BLOCK_BYTES - 1) / SAVE_DATA_BLOCK_BYTES;
+            if (!writeGuest(mount_result, &noSpaceResult, sizeof(noSpaceResult))) return SAVE_DATA_ERROR_PARAMETER;
             return SAVE_DATA_ERROR_NO_SPACE_FS;
         }
     }
-    bool keepSize = mount->blocks != 0 && (create || (create2 && !exists));
-    if (mount->blocks != 0 && !keepSize) {
+    bool keepSize = localMount.blocks != 0 && (create || (create2 && !exists));
+    if (localMount.blocks != 0 && !keepSize) {
         keepSize = !std::filesystem::exists(blocks_path(real_path), error);
         if (error) return SAVE_DATA_ERROR_INTERNAL;
     }
@@ -1387,7 +1465,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     const bool created = (create || create2) && std::filesystem::create_directories(real_path, error);
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    if (keepSize && !keep_save_blocks(real_path, mount->blocks)) {
+    if (keepSize && !keep_save_blocks(real_path, localMount.blocks)) {
         if (created) {
             std::error_code ignored;
             std::filesystem::remove(real_path, ignored);
@@ -1397,55 +1475,76 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
     // path resolver maps it to the save directory, whose name may be far longer.
     const std::string mountPoint = "/savedata" + std::to_string(slot);
+    SaveDataMountResult localResult{};
+    std::memcpy(localResult.mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
+    localResult.required_blocks = 0;
+    localResult.mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    if (!writeGuest(mount_result, &localResult, sizeof(localResult))) {
+        if (created) {
+            std::error_code ignored;
+            RemoveTree(real_path, ignored);
+        }
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
-    std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
-    g_slots[slot].user_id = mount->user_id;
+    g_slots[slot].user_id = localMount.user_id;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
-    std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
-    mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    if (traceResult != nullptr) *traceResult = localResult;
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount3(mount, mount_result);
-    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_point.data : "", rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_status : 0u);
+    SaveDataMount3 traceMount{};
+    traceMount.user_id = -1;
+    std::string traceDir = "(null)";
+    SaveDataMountResult traceResult{};
+    const int rc = mount3(mount, mount_result, &traceMount, &traceDir, &traceResult);
+    SAVEDATA_TRACE("mount3 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", traceMount.user_id, traceDir.c_str(), traceMount.mount_mode, static_cast<unsigned long long>(traceMount.blocks), static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? traceResult.mount_point.data : "", rc == SAVE_DATA_OK ? traceResult.mount_status : 0u);
     return rc;
 }
 
-static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr) {
+static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result, SaveDataMount3* traceMount = nullptr, std::string* traceDir = nullptr, SaveDataMountResult* traceResult = nullptr) {
+    SaveDataMount2 localMount{};
+    if (!readGuest(mount, localMount) || mount_result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (mount->user_id == -1 || mount->user_id == 0) {
+    if (localMount.user_id == -1 || localMount.user_id == 0) {
         return SAVE_DATA_ERROR_INVALID_LOGIN_USER;
     }
-    const bool creates = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    if (mount->mount_mode == 0 || (creates && mount->blocks < SAVE_DATA_BLOCKS_MIN2)) {
+    const bool creates = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    if (localMount.mount_mode == 0 || (creates && localMount.blocks < SAVE_DATA_BLOCKS_MIN2)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (mount->dir_name != nullptr) {
-        const std::string_view name(mount->dir_name->data, sizeof(mount->dir_name->data));
+    if (localMount.dir_name != nullptr) {
+        SceSaveDataDirName localDirName{};
+        if (!readGuest(localMount.dir_name, localDirName)) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        const std::string_view name(localDirName.data, sizeof(localDirName.data));
         if (name.substr(0, name.find('\0')).find('_') != std::string_view::npos) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
     SaveDataMount3 converted{};
-    converted.user_id = mount->user_id;
-    converted.dir_name = mount->dir_name;
-    converted.blocks = mount->blocks;
-    converted.mount_mode = mount->mount_mode;
-    return mount3(&converted, mount_result);
+    converted.user_id = localMount.user_id;
+    converted.dir_name = localMount.dir_name;
+    converted.blocks = localMount.blocks;
+    converted.mount_mode = localMount.mount_mode;
+    return mount3(&converted, mount_result, traceMount, traceDir, traceResult);
 }
 
 int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount2(mount, mount_result);
-    SAVEDATA_TRACE("mount2 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
+    SaveDataMount3 traceMount{};
+    traceMount.user_id = -1;
+    std::string traceDir = "(null)";
+    SaveDataMountResult traceResult{};
+    const int rc = mount2(mount, mount_result, &traceMount, &traceDir, &traceResult);
+    SAVEDATA_TRACE("mount2 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", traceMount.user_id, traceDir.c_str(), traceMount.mount_mode, static_cast<unsigned long long>(traceMount.blocks), static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? traceResult.mount_point.data : "", rc == SAVE_DATA_OK ? traceResult.mount_status : 0u);
     return rc;
 }
 
@@ -1615,6 +1714,9 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
+    const auto paramBytes = localSet.param != nullptr
+        ? std::span<const char>(reinterpret_cast<const char*>(&localParam), sizeof(localParam))
+        : std::span<const char>{};
     const std::uint32_t n = localSet.data != nullptr ? (localSet.data_num != 0 ? localSet.data_num : 1u) : 0u;
     std::vector<MemoryWrite> writes;
     std::deque<std::vector<char>> buffers;
@@ -1653,27 +1755,21 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
                 return SAVE_DATA_ERROR_INTERNAL;
             }
             const std::string journal = mem_path(localSet.user_id, localSet.slot_id, "journal");
-            const std::vector<char> bytes = encode_memory_journal(writes);
-            const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
-                return savedata::move_replacing(temporary, journal);
-            });
-            if (!staged) {
+            const auto bytes = encode_memory_journal(writes, paramBytes);
+            if (!replace_synced_memory_file(journal, bytes) || !apply_memory_journal(memory, path, journal, writes, paramBytes)) {
                 errno = savedErrno;
                 return SAVE_DATA_ERROR_INTERNAL;
             }
-            apply_memory_journal(memory, journal, writes);
-        }
-    } catch (const std::bad_alloc&) {
-        errno = savedErrno;
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    if (localSet.param != nullptr) {
-        std::vector<char> pd(sizeof(SaveDataParam));
-        std::memcpy(pd.data(), &localParam, sizeof(SaveDataParam));
-        if (!write_file_replace(mem_path(localSet.user_id, localSet.slot_id, "param"), pd)) {
+        } else if (!paramBytes.empty() && !replace_synced_memory_file(mem_path(localSet.user_id, localSet.slot_id, "param"), paramBytes)) {
             errno = savedErrno;
             return SAVE_DATA_ERROR_INTERNAL;
         }
+    } catch (const std::filesystem::filesystem_error&) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_INTERNAL;
+    } catch (const std::bad_alloc&) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     errno = savedErrno;
     return SAVE_DATA_OK;
@@ -1880,9 +1976,7 @@ static int unmountMountPoint(const SaveDataMountPoint* mount_point, std::string*
 }
 
 static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point, std::string* tracePoint) {
-    if (mode != 0 &&
-        mode != SAVE_DATA_UMOUNT_MODE_BACKUP &&
-        mode != (SAVE_DATA_UMOUNT_MODE_BACKUP | SAVE_DATA_UMOUNT_MODE_BACKUP_FORCE)) {
+    if ((mode & ~(SAVE_DATA_UMOUNT_MODE_BACKUP | SAVE_DATA_UMOUNT_MODE_BACKUP_FORCE)) != 0) {
         throw std::runtime_error("sceSaveDataUmount2: unknown mode");
     }
     return unmountMountPoint(mount_point, tracePoint, (mode & SAVE_DATA_UMOUNT_MODE_BACKUP) != 0);
@@ -1901,35 +1995,22 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
     return rc;
 }
 
-static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, int* traceUser) {
-    if (cond == nullptr || result == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, std::int32_t* traceUser) {
     SaveDataDirNameSearchCond localCond{};
     SaveDataDirNameSearchResult localResult{};
-    const int savedErrno = errno;
-    const bool copiedCond = GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond));
-    const bool copiedResultIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
-    errno = savedErrno;
-    if (!copiedCond || !copiedResultIn) {
+    if (!readGuest(cond, localCond) || !readGuest(result, localResult)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (traceUser != nullptr) *traceUser = localCond.user_id;
     localResult.hit_num = 0;
     localResult.set_num = 0;
-    const int savedCopyErrno = errno;
-    const bool copiedResultOut = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
-    errno = savedCopyErrno;
-    if (!copiedResultOut) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    return SAVE_DATA_OK;
+    return writeGuest(result, &localResult, sizeof(localResult)) ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    int user = -1;
-    const int rc = dirNameSearchPs4(cond, result, &user);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", user, static_cast<unsigned>(rc));
+    std::int32_t traceUser = -1;
+    const int rc = dirNameSearchPs4(cond, result, &traceUser);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", traceUser, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1993,7 +2074,7 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f);
     return rc;
 }
 
@@ -2080,18 +2161,20 @@ int APS5_VABI sceSaveDataChangeInternal(void) {
     return 0;
 }
 
-static int checkBackupData(const SaveDataCheckBackupData* check) {
+static int checkBackupData(const SaveDataCheckBackupData* check, std::string* traceDir) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (check == nullptr || check->dir_name == nullptr) {
+    SaveDataCheckBackupData localCheck{};
+    if (!readGuest(check, localCheck) || localCheck.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(check->dir_name, &dirName)) {
+    if (!parse_dir_name(localCheck.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(check->title_id)) {
+    if (traceDir != nullptr) *traceDir = dirName;
+    if (!running_title(localCheck.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -2100,12 +2183,13 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
         return SAVE_DATA_ERROR_BUSY;
     }
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    return read_backup(dirName, check->param);
+    return read_backup(dirName, localCheck.param);
 }
 
 int APS5_VABI sceSaveDataCheckBackupData(const SaveDataCheckBackupData* check) {
-    const int rc = checkBackupData(check);
-    SAVEDATA_TRACE("checkBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), check != nullptr && check->dir_name != nullptr ? check->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = checkBackupData(check, &dir);
+    SAVEDATA_TRACE("checkBackupData dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -2450,18 +2534,20 @@ int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, v
     return SAVE_DATA_OK;
 }
 
-static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
+static int restoreBackupData(const SaveDataRestoreBackupData* restore, std::string* traceDir) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (restore == nullptr || restore->dir_name == nullptr) {
+    SaveDataRestoreBackupData localRestore{};
+    if (!readGuest(restore, localRestore) || localRestore.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(restore->dir_name, &dirName)) {
+    if (!parse_dir_name(localRestore.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(restore->title_id)) {
+    if (traceDir != nullptr) *traceDir = dirName;
+    if (!running_title(localRestore.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     const std::string target = save_root() + "/" + dirName;
@@ -2487,8 +2573,9 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
 }
 
 int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore) {
-    const int rc = restoreBackupData(restore);
-    SAVEDATA_TRACE("restoreBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), restore != nullptr && restore->dir_name != nullptr ? restore->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = restoreBackupData(restore, &dir);
+    SAVEDATA_TRACE("restoreBackupData dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 

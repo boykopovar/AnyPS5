@@ -335,6 +335,16 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     return (access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u) ? value : EmitValueOrZero(state, inBounds, value);
 }
 
+std::uint32_t readBufferHalf(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t enable) {
+    auto& state = context.state;
+    const auto u32 = TypeU32(state);
+    const auto low = readBuffer(context, instruction, address, 16u, enable);
+    const auto straddles = equal(state, EmitAndConstant(state, address, 3u), ConstantU32(state, 3u));
+    const auto high = EmitValueOrZeroIfCondition(state, straddles, [&] { return readBuffer(context, instruction, EmitAddU32(state, address, ConstantU32(state, 1u)), 8u, enable); });
+    const auto joined = EmitOrU32(state, EmitAndConstant(state, low, 0xffu), Binary(state, spv::OpShiftLeftLogical, u32, high, ConstantU32(state, 8u)));
+    return Select(state, u32, straddles, joined, low);
+}
+
 std::uint32_t byteBuffers(SpirvEmitterState& state) {
     if (state.storageBufferU8Variable != 0u) return state.storageBufferU8Variable;
     if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
@@ -717,39 +727,79 @@ std::uint32_t genericFormattedLoad(SpirvValueEmitContext& context, const IrValue
         }
         inBounds = Select(state, boolean, required[component], both(state, inBounds, addresses[component].inBounds), inBounds);
     }
+    const auto vector = TypeU32Vector(state, 4u);
+    const auto addressType = memory.gpuDescriptor ? TypeScalarU64(state) : u32;
+    const auto bitsVector = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, vector, bitsVector, bits[0], bits[1], bits[2], bits[3]);
+    std::array<std::uint32_t, 4> wanted{};
+    for (std::uint32_t component = 0; component < 4u; ++component) wanted[component] = Select(state, u32, Select(state, boolean, required[component], inBounds, ConstantBool(state, false)), constant(1u), constant(0u));
+    const auto wantedVector = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, vector, wantedVector, wanted[0], wanted[1], wanted[2], wanted[3]);
+    std::vector<std::pair<SpirvFormatComponentType, std::uint32_t>> conversions;
+    for (std::uint32_t index = 1; index <= formats; ++index) {
+        const auto info = GetFormatInfo(static_cast<IrBufferFormat>(index));
+        for (std::uint32_t component = 0; component < info.componentCount; ++component) {
+            const std::pair<SpirvFormatComponentType, std::uint32_t> key{info.type, info.componentBits[component]};
+            if (std::find(conversions.begin(), conversions.end(), key) == conversions.end()) conversions.push_back(key);
+        }
+    }
+    const auto loopEntry = state.currentLabel;
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto continuation = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    const auto component = state.module.AllocateId();
+    const auto nextComponent = state.module.AllocateId();
+    const auto collected = state.module.AllocateId();
+    const auto inserted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    state.module.AddFunction(spv::OpPhi, u32, component, constant(0u), loopEntry, nextComponent, continuation);
+    state.module.AddFunction(spv::OpPhi, vector, collected, ConstantU32CompositeZero(state, 4u), loopEntry, inserted, continuation);
+    const auto more = Binary(state, spv::OpULessThan, boolean, component, constant(4u));
+    state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlDontUnrollMask);
+    state.module.AddFunction(spv::OpBranchConditional, more, body, merge);
+    EmitLabel(state, body);
+    const auto componentBits = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVectorExtractDynamic, u32, componentBits, bitsVector, component);
+    const auto componentWanted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVectorExtractDynamic, u32, componentWanted, wantedVector, component);
+    auto guest = addresses[0].guest;
+    for (std::uint32_t index = 1u; index < 4u; ++index) guest = Select(state, addressType, equal(state, component, constant(index)), addresses[index].guest, guest);
+    const auto value = EmitValueOrZeroIfCondition(state, nonzero(state, componentWanted), [&] {
+        const auto width = Select(state, u32, packed, constant(32u), componentBits);
+        const auto dword = equal(state, width, constant(32u));
+        const auto raw = memory.gpuDescriptor
+            ? EmitValueIfElse(state, dword, u32, [&] { return readBuffer(context, instruction, guest, 32u); }, [&] {
+                return EmitBdaReadBytes(context, instruction, guest, Binary(state, spv::OpShiftRightLogical, u32, width, constant(3u)));
+            })
+            : Binary(state, spv::OpShiftRightLogical, u32, readBuffer(context, instruction, guest, 32u), Select(state, u32, dword, constant(0u), Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, guest, 3u), constant(3u))));
+        const auto bitOffset = Select(state, u32, packed, EmitBitFieldUExtract(state, bitOffsets, Binary(state, spv::OpIMul, u32, component, constant(8u)), constant(8u)), constant(0u));
+        const auto unsignedField = EmitBitFieldUExtract(state, raw, bitOffset, componentBits);
+        const auto signedField = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldSExtract, TypeI32(state), signedField, Unary(state, spv::OpBitcast, TypeI32(state), raw), bitOffset, componentBits);
+        const auto extracted = Select(state, u32, equal(state, componentBits, constant(32u)), raw, Select(state, u32, signedType, Unary(state, spv::OpBitcast, u32, signedField), unsignedField));
+        auto converted = constant(0u);
+        for (const auto& [conversionType, conversionBits] : conversions) {
+            SpirvBufferFormatInfo info{};
+            info.type = conversionType;
+            info.componentCount = 1u;
+            info.componentBits[0] = conversionBits;
+            const auto candidate = memory.d16 ? EmitD16FormatComponent(state, info, 0u, extracted) : NormalizeFormatComponent(state, info, 0u, extracted);
+            converted = Select(state, u32, both(state, isType(conversionType), equal(state, componentBits, constant(conversionBits))), candidate, converted);
+        }
+        return converted;
+    });
+    state.module.AddFunction(spv::OpVectorInsertDynamic, vector, inserted, collected, value, component);
+    state.module.AddFunction(spv::OpBranch, continuation);
+    EmitLabel(state, continuation);
+    state.module.AddFunction(spv::OpIAdd, u32, nextComponent, component, constant(1u));
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
     std::array<std::uint32_t, 4> values{};
-    for (std::uint32_t component = 0; component < 4u; ++component) {
-        values[component] = EmitValueOrZeroIfCondition(state, Select(state, boolean, required[component], inBounds, ConstantBool(state, false)), [&] {
-            const auto width = Select(state, u32, packed, constant(32u), bits[component]);
-            const auto dword = equal(state, width, constant(32u));
-            const auto raw = memory.gpuDescriptor
-                ? EmitValueIfElse(state, dword, u32, [&] { return readBuffer(context, instruction, addresses[component].guest, 32u); }, [&] {
-                    return EmitBdaReadBytes(context, instruction, addresses[component].guest, Binary(state, spv::OpShiftRightLogical, u32, width, constant(3u)));
-                })
-                : Binary(state, spv::OpShiftRightLogical, u32, readBuffer(context, instruction, addresses[component].guest, 32u), Select(state, u32, dword, constant(0u), Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, addresses[component].guest, 3u), constant(3u))));
-            const auto bitOffset = Select(state, u32, packed, field(state, bitOffsets, component * 8u, 8u), constant(0u));
-            const auto unsignedField = EmitBitFieldUExtract(state, raw, bitOffset, bits[component]);
-            const auto signedField = state.module.AllocateId();
-            state.module.AddFunction(spv::OpBitFieldSExtract, TypeI32(state), signedField, Unary(state, spv::OpBitcast, TypeI32(state), raw), bitOffset, bits[component]);
-            const auto extracted = Select(state, u32, equal(state, bits[component], constant(32u)), raw, Select(state, u32, signedType, Unary(state, spv::OpBitcast, u32, signedField), unsignedField));
-            std::vector<std::pair<SpirvFormatComponentType, std::uint32_t>> conversions;
-            for (std::uint32_t index = 1; index <= formats; ++index) {
-                const auto info = GetFormatInfo(static_cast<IrBufferFormat>(index));
-                if (component >= info.componentCount) continue;
-                const std::pair<SpirvFormatComponentType, std::uint32_t> key{info.type, info.componentBits[component]};
-                if (std::find(conversions.begin(), conversions.end(), key) == conversions.end()) conversions.push_back(key);
-            }
-            auto value = constant(0u);
-            for (const auto& [conversionType, conversionBits] : conversions) {
-                SpirvBufferFormatInfo info{};
-                info.type = conversionType;
-                info.componentCount = 1u;
-                info.componentBits[0] = conversionBits;
-                const auto converted = memory.d16 ? EmitD16FormatComponent(state, info, 0u, extracted) : NormalizeFormatComponent(state, info, 0u, extracted);
-                value = Select(state, u32, both(state, isType(conversionType), equal(state, bits[component], constant(conversionBits))), converted, value);
-            }
-            return value;
-        });
+    for (std::uint32_t index = 0; index < 4u; ++index) {
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, values[index], collected, index);
     }
     const auto one = Select(state, u32, integer, constant(1u), constant(memory.d16 ? 0x3c00u : 0x3f800000u));
     std::array<std::uint32_t, 4> outputs{};
@@ -1084,7 +1134,8 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto access = spanRead ? spanAddresses[component] : address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
                 values[component] = memory.gpuDescriptor ? EmitValueOrZeroIfCondition(state, access.inBounds, [&] { return readBuffer(context, instruction, access.guest, memory.dataBits); })
-                                                         : readBuffer(context, instruction, access.guest, memory.dataBits, access.inBounds);
+                                                         : memory.dataBits == 16u ? readBufferHalf(context, instruction, access.guest, access.inBounds)
+                                                                                  : readBuffer(context, instruction, access.guest, memory.dataBits, access.inBounds);
             }
             return composite(state, components, values);
         };

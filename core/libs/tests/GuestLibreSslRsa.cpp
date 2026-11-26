@@ -287,7 +287,7 @@ static Bytes StandardKey() {
     return RsaKey(Concat({{0x00}, Hex(CavpModulus)}), CavpExponent);
 }
 
-static LibreSslRsa* Decode(const Bytes& der, long length, long* consumed = nullptr) {
+static LibreSslRsa* Decode(const Bytes& der, std::int64_t length, long* consumed = nullptr) {
     const unsigned char* data = der.data();
     auto* rsa = d2i_RSA_PUBKEY_nid_postfix(nullptr, &data, length);
     if (consumed) *consumed = data - der.data();
@@ -342,6 +342,10 @@ static void TestPublicKeyInfo() {
     Require(Decode(published, 293, &consumed) == nullptr && consumed == 0);
     RequireRefused(Bytes(published.begin(), published.end() - 1));
     Require(Decode(published, 0) == nullptr && Decode(published, -1) == nullptr);
+    constexpr std::int64_t FourGiB = std::int64_t{1} << 32;
+    Require((rsa = Decode(published, FourGiB + 100, &consumed)) != nullptr && consumed == 294);
+    RSA_free_nid_postfix(rsa);
+    Require(Decode(published, FourGiB, &consumed) == nullptr && consumed == 0);
     RequireThrows([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
     RequireThrows([&] {
         const unsigned char* none = nullptr;
@@ -819,7 +823,12 @@ static void TestVerify() {
     for (const auto& parameter : {Bytes {0x04, 0x00}, Bytes {0x05, 0x01, 0x00}, Bytes {0x30, 0x00}, Bytes {0x80, 0x00}, Bytes {0x01, 0x01, 0x00}, Concat({Null, Null})})
         Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, parameter, digest)), rsa) == 0);
     const auto algorithm = Encode(0x30, Concat({Encode(0x06, sha256), Null}));
-    Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), {0x00}})), rsa) == 0);
+    for (const auto& excess : {Bytes {0x00}, Bytes {0x05, 0x00}, Bytes(8, 0xFF)}) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), excess})), rsa) == 0);
+        Require(ERR_get_error_nid_postfix() == 0x04fff068);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);
