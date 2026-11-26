@@ -628,6 +628,7 @@ public:
     static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     const char* RefreshObligation(std::uint32_t first = 0, std::uint32_t count = 0) const;
+    bool OtherPendingOverlaps() const;
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();

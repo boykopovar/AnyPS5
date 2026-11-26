@@ -71,14 +71,74 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/libc.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <vector>
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+struct RefCountedBufferSnapshot {
+    std::size_t size;
+    std::size_t capacity;
+    std::uint8_t* data;
+    int refCount;
+};
+
+static_assert(sizeof(RefCountedBufferSnapshot) == sizeof(WebRtcRefCountedBuffer));
+
+void RequireWritableBuffer(WebRtcCopyOnWriteBuffer* buffer, const char* message) {
+    if (!buffer)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(buffer, sizeof(*buffer)))
+        throw std::invalid_argument(message);
+}
+
+void CopyInBuffer(const WebRtcCopyOnWriteBuffer* source, WebRtcCopyOnWriteBuffer& out, const char* message) {
+    if (!source)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestPtr<const WebRtcCopyOnWriteBuffer>(source).CopyIn(out))
+        throw std::invalid_argument(message);
+}
+
+void CopyOutBuffer(WebRtcCopyOnWriteBuffer* destination, const WebRtcCopyOnWriteBuffer& value, const char* message) {
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcCopyOnWriteBuffer>(destination).CopyOut(value))
+        throw std::invalid_argument(message);
+}
+
+void RequireWritableBacking(WebRtcRefCountedBuffer* backing, const char* message) {
+    if (!backing)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(backing, sizeof(*backing)))
+        throw std::invalid_argument(message);
+}
+
+void ReadBacking(const WebRtcRefCountedBuffer* backing, RefCountedBufferSnapshot& out, const char* message) {
+    ErrnoGuard guard;
+    if (!GuestBytes(backing).CopyIn(&out, sizeof(out)))
+        throw std::invalid_argument(message);
+}
+
+std::atomic<int>* BackingRefCount(WebRtcRefCountedBuffer* backing) {
+    return reinterpret_cast<std::atomic<int>*>(
+        reinterpret_cast<std::uintptr_t>(backing) + offsetof(WebRtcRefCountedBuffer, refCount));
+}
 
 WebRtcRefCountedBuffer* CreateBuffer(std::size_t size, std::size_t capacity) {
     auto* storage = _Znwm_nid_postfix(sizeof(WebRtcRefCountedBuffer));
@@ -93,9 +153,14 @@ WebRtcRefCountedBuffer* CreateBuffer(std::size_t size, std::size_t capacity) {
     return new (storage) WebRtcRefCountedBuffer{size, capacity, data, 0};
 }
 
-void ReleaseBuffer(WebRtcRefCountedBuffer* buffer) {
-    if (buffer && buffer->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        _ZdaPv_nid_postfix(buffer->data);
+void ReleaseBuffer(WebRtcRefCountedBuffer* buffer, const char* message) {
+    if (!buffer)
+        return;
+    RequireWritableBacking(buffer, message);
+    RefCountedBufferSnapshot snap{};
+    ReadBacking(buffer, snap, message);
+    if (BackingRefCount(buffer)->fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        _ZdaPv_nid_postfix(snap.data);
         buffer->~WebRtcRefCountedBuffer();
         _ZdlPv_nid_postfix(buffer);
     }
@@ -106,47 +171,124 @@ void ReleaseBuffer(WebRtcRefCountedBuffer* buffer) {
 extern "C" {
 
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Em_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t size) {
-    if (!buffer) throw std::invalid_argument("CopyOnWriteBuffer requires an object");
+    constexpr const char* message = "CopyOnWriteBuffer requires an object";
+    RequireWritableBuffer(buffer, message);
     auto* backing = size > 0 ? CreateBuffer(size, size) : nullptr;
-    if (backing) backing->refCount.fetch_add(1, std::memory_order_relaxed);
-    buffer->buffer = backing;
-    buffer->offset = 0;
-    buffer->size = size;
+    if (backing)
+        BackingRefCount(backing)->fetch_add(1, std::memory_order_relaxed);
+    CopyOutBuffer(buffer, WebRtcCopyOnWriteBuffer{backing, 0, size}, message);
 }
 
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t size, std::size_t capacity) {
-    if (!buffer) throw std::invalid_argument("CopyOnWriteBuffer requires an object");
+    constexpr const char* message = "CopyOnWriteBuffer requires an object";
+    RequireWritableBuffer(buffer, message);
     auto* backing = size > 0 || capacity > 0 ? CreateBuffer(size, capacity) : nullptr;
-    if (backing) backing->refCount.fetch_add(1, std::memory_order_relaxed);
-    buffer->buffer = backing;
-    buffer->offset = 0;
-    buffer->size = size;
+    if (backing)
+        BackingRefCount(backing)->fetch_add(1, std::memory_order_relaxed);
+    CopyOutBuffer(buffer, WebRtcCopyOnWriteBuffer{backing, 0, size}, message);
 }
 
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferC1ERKS0__nid_postfix(WebRtcCopyOnWriteBuffer* buffer, const WebRtcCopyOnWriteBuffer* other) {
-    if (!buffer || !other) throw std::invalid_argument("CopyOnWriteBuffer copy requires objects");
-    buffer->buffer = other->buffer;
-    if (buffer->buffer) buffer->buffer->refCount.fetch_add(1, std::memory_order_relaxed);
-    buffer->offset = other->offset;
-    buffer->size = other->size;
+    constexpr const char* message = "CopyOnWriteBuffer copy requires objects";
+    RequireWritableBuffer(buffer, message);
+    WebRtcCopyOnWriteBuffer src{};
+    CopyInBuffer(other, src, message);
+    if (src.buffer) {
+        RequireWritableBacking(src.buffer, message);
+        BackingRefCount(src.buffer)->fetch_add(1, std::memory_order_relaxed);
+    }
+    CopyOutBuffer(buffer, src, message);
 }
 
 void APS5_VABI _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(WebRtcCopyOnWriteBuffer* buffer) {
-    if (!buffer) throw std::invalid_argument("CopyOnWriteBuffer destructor requires an object");
-    ReleaseBuffer(buffer->buffer);
+    constexpr const char* message = "CopyOnWriteBuffer destructor requires an object";
+    WebRtcCopyOnWriteBuffer host{};
+    CopyInBuffer(buffer, host, message);
+    ReleaseBuffer(host.buffer, message);
+}
+
+void DestroyBackingImmediate(WebRtcRefCountedBuffer* backing, std::uint8_t* data) {
+    _ZdaPv_nid_postfix(data);
+    backing->~WebRtcRefCountedBuffer();
+    _ZdlPv_nid_postfix(backing);
 }
 
 void APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(WebRtcCopyOnWriteBuffer* buffer, std::size_t capacity) {
-    if (!buffer || !buffer->buffer) throw std::invalid_argument("CopyOnWriteBuffer unshare requires backing storage");
-    auto* previous = buffer->buffer;
-    if (previous->refCount.load(std::memory_order_acquire) == 1 && capacity <= previous->capacity - buffer->offset)
+    constexpr const char* message = "CopyOnWriteBuffer unshare requires backing storage";
+    RequireWritableBuffer(buffer, message);
+    WebRtcCopyOnWriteBuffer host{};
+    CopyInBuffer(buffer, host, message);
+    if (!host.buffer)
+        throw std::invalid_argument(message);
+    RequireWritableBacking(host.buffer, message);
+    RefCountedBufferSnapshot prev{};
+    ReadBacking(host.buffer, prev, message);
+    if (BackingRefCount(host.buffer)->load(std::memory_order_acquire) == 1 &&
+        host.offset <= prev.capacity && capacity <= prev.capacity - host.offset)
         return;
-    auto* backing = CreateBuffer(buffer->size, capacity);
-    if (buffer->size > 0) std::memcpy(backing->data, previous->data + buffer->offset, buffer->size);
-    backing->refCount.fetch_add(1, std::memory_order_relaxed);
-    ReleaseBuffer(previous);
-    buffer->buffer = backing;
-    buffer->offset = 0;
+
+    std::uint8_t chunkBuf[4096];
+    if (host.size > 0) {
+        if (!prev.data || host.offset > prev.capacity || host.size > prev.capacity - host.offset)
+            throw std::invalid_argument(message);
+        {
+            ErrnoGuard guard;
+            if (!GuestBytes(prev.data + host.offset).CopyIn(chunkBuf, 1) ||
+                !GuestBytes(prev.data + host.offset + host.size - 1).CopyIn(chunkBuf, 1))
+                throw std::invalid_argument(message);
+        }
+        std::size_t probed = 0;
+        while (probed < host.size) {
+            const std::size_t chunk = std::min<std::size_t>(host.size - probed, sizeof(chunkBuf));
+            ErrnoGuard guard;
+            if (!GuestBytes(prev.data + host.offset + probed).CopyIn(chunkBuf, chunk))
+                throw std::invalid_argument(message);
+            probed += chunk;
+        }
+    }
+
+    auto* backing = CreateBuffer(host.size, capacity);
+    if (host.size > 0) {
+        std::uint8_t* dstData = nullptr;
+        bool readOk = false;
+        {
+            ErrnoGuard guard;
+            readOk = GuestPtr<std::uint8_t* const>(
+                reinterpret_cast<const std::uint8_t* const*>(reinterpret_cast<std::uintptr_t>(backing) + offsetof(WebRtcRefCountedBuffer, data)))
+                .CopyIn(dstData);
+        }
+        if (!readOk || !dstData) {
+            DestroyBackingImmediate(backing, dstData);
+            throw std::invalid_argument(message);
+        }
+        {
+            ErrnoGuard guard;
+            if (!GuestWritable_nid_no_patch(dstData, host.size)) {
+                DestroyBackingImmediate(backing, dstData);
+                throw std::invalid_argument(message);
+            }
+        }
+        std::size_t copied = 0;
+        while (copied < host.size) {
+            const std::size_t chunk = std::min<std::size_t>(host.size - copied, sizeof(chunkBuf));
+            bool chunkOk = false;
+            {
+                ErrnoGuard guard;
+                chunkOk = GuestBytes(prev.data + host.offset + copied).CopyIn(chunkBuf, chunk) &&
+                    GuestBytes(dstData + copied).CopyOut(chunkBuf, chunk);
+            }
+            if (!chunkOk) {
+                DestroyBackingImmediate(backing, dstData);
+                throw std::invalid_argument(message);
+            }
+            copied += chunk;
+        }
+    }
+    BackingRefCount(backing)->fetch_add(1, std::memory_order_relaxed);
+    ReleaseBuffer(host.buffer, message);
+    host.buffer = backing;
+    host.offset = 0;
+    CopyOutBuffer(buffer, host, message);
 }
 
 }

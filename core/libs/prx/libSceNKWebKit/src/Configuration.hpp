@@ -40,6 +40,9 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    bool navigatedBack = false;
+    bool navigatedForward = false;
+    Retained<Object> currentBackForwardListItem;
     mutable Retained<Inspector> inspector;
     bool suppressScrollbarAnimations = false;
     bool hasHorizontalScrollbar = false;
