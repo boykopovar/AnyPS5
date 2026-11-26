@@ -60,7 +60,8 @@ ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
-_VABI_DECLARATION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
+_VABI_FUNCTION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
+_VABI_DECLARATION = re.compile(_VABI_FUNCTION.pattern + r"[^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
@@ -316,12 +317,22 @@ class Linkage:
         self._classes = None
         self.declared = set()
         if "static" in text and "APS5_VABI" in text:
+            previous_end = 0
             for match in _VABI_DECLARATION.finditer(text):
                 start = match.start()
-                boundary = max(text.rfind(";", 0, start), text.rfind("{", 0, start), text.rfind("}", 0, start)) + 1
+                boundary = previous_end
+                for delimiter in ";{}":
+                    boundary = max(boundary, text.rfind(delimiter, previous_end, start) + 1)
+                previous_end = match.end()
                 static_match = _STATIC_KW.search(text, boundary, start)
                 if static_match is not None and self.namespace_scope(static_match.start()):
-                    self.declared.add(match.group(1))
+                    cursor = static_match.end()
+                    depth = 0
+                    for declarator in _VABI_FUNCTION.finditer(text, cursor, match.end()):
+                        depth += text.count("(", cursor, declarator.start()) - text.count(")", cursor, declarator.start())
+                        if depth == 0:
+                            self.declared.add(declarator.group(1))
+                        cursor = declarator.start()
 
     @property
     def classes(self):

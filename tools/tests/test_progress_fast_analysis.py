@@ -133,6 +133,39 @@ class FastAnalysisTests(unittest.TestCase):
                 self.assertEqual(group["done_names"], [])
                 self.assertEqual(spy.call_count, 0)
 
+    def test_grouped_static_declarations_do_not_hide_callback_parameters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lib = Path(directory) / "libSceGrouped"
+            lib.mkdir()
+            (lib / "Exports.cpp").write_text(
+                "static int APS5_VABI sceFirst(int APS5_VABI sceCallback(int)),\n"
+                "           *APS5_VABI sceSecond(int, int);\n"
+                "static int helper(int APS5_VABI sceAnotherCallback(int)), APS5_VABI sceThird();\n"
+                "int APS5_VABI sceFirst(int APS5_VABI sceCallback(int)) { return sceCallback(3); }\n"
+                "int *APS5_VABI sceSecond(int, int) { return nullptr; }\n"
+                "int APS5_VABI sceThird() { return 0; }\n"
+                "int APS5_VABI sceCallback(int value) { return value; }\n"
+                "int APS5_VABI sceAnotherCallback(int value) { return value; }\n",
+                encoding="utf-8",
+            )
+            group = progress.scan_library(lib)
+            self.assertEqual(group["done_names"], ["sceAnotherCallback", "sceCallback"])
+            self.assertFalse(group["todo_names"])
+
+    def test_same_arity_overload_indirect_stub_matches_exact_reachability(self):
+        source = (
+            "static int leaf_stub() { NotImplemented_nid_no_patch(); return -1; }\n"
+            "static int helper(Good* p) { return p ? 1 : 0; }\n"
+            "static int helper(Bad* p) { return leaf_stub(); }\n"
+            "int APS5_VABI sceDirectGood(Good* g) { return helper(g); }\n"
+            "int APS5_VABI sceDirectBad(Bad* b) { return helper(b); }\n"
+            "int APS5_VABI sceTrigger(Bad* b) { return helper(b) + 1; }\n"
+        )
+        headers = ["struct Good {};\nstruct Bad {};\n"]
+        files = progress.reaching_definitions([source], lambda: headers, set())
+        by_name = {d.name: d.reaches for d in files[0][1]}
+        self.assertEqual(by_name, {"sceDirectGood": False, "sceDirectBad": True, "sceTrigger": True})
+
 
 if __name__ == "__main__":
     unittest.main()
