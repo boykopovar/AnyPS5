@@ -362,8 +362,36 @@ def _run_one(recipe, report, output, arm_name, phase, iteration, runtime, captur
     return cache, not assessment["issues"]
 
 
+def _comparison_input_paths(recipe):
+    return {"capture": Path(recipe["capture"]), **{arm: Path(recipe["arms"][arm]["runtime"]) for arm in ARMS}}
+
+
+def preflight_replay_inputs(recipe):
+    summaries = {}
+    for name, path in _comparison_input_paths(recipe).items():
+        try:
+            manifest = evidence.replay_tree_manifest(path)
+        except (ValueError, OSError) as error:
+            raise ValueError(f"{name}: {error}") from error
+        sizes = {os.path.normcase(entry["path"]): entry["bytes"] for entry in manifest}
+        required = ("capture.json", "calls.bin", "memory.bin") if name == "capture" else (
+            Path(recipe["arms"][name][tool]).as_posix() for tool in ("replay", "inspect"))
+        for filename in required:
+            if not sizes.get(os.path.normcase(filename)):
+                raise ValueError(f"{name}: missing or empty {filename}")
+        if name == "capture":
+            capture_report = {"issues": []}
+            try:
+                _capture_metadata(path, capture_report)
+            except (ValueError, OSError) as error:
+                details = ", ".join(capture_report["issues"])
+                raise ValueError(f"capture: {details or error}") from error
+        summaries[name] = (len(manifest), sum(sizes.values()))
+    return summaries
+
+
 def run_replay_comparison(recipe, output):
-    paths = {"capture": Path(recipe["capture"]), **{arm: Path(recipe["arms"][arm]["runtime"]) for arm in ARMS}}
+    paths = _comparison_input_paths(recipe)
     output = output.absolute()
     for path in paths.values():
         left, right = path.resolve(), output.resolve()
@@ -472,18 +500,30 @@ def _offline_report(directory):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run and compare pinned native frame replays; retain limitations and every attempt.")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("recipe", type=Path)
     run.add_argument("--output", type=Path, required=True)
+    validate = commands.add_parser("validate", help="check recipe inputs offline without creating an output bundle",
+                                   description="Check recipe paths, input trees and capture metadata offline. "
+                                               "Native inspection, runtime identity and GPU checks run with 'run'.")
+    validate.add_argument("recipe", type=Path)
     view = commands.add_parser("report")
     view.add_argument("bundle", type=Path)
     view.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if args.command == "run":
+        if args.command in ("run", "validate"):
             recipe = validate_replay_recipe(_read_json(args.recipe), args.recipe.absolute().parent)
+            if args.command == "validate":
+                for name, (files, size) in preflight_replay_inputs(recipe).items():
+                    print(f"{name}: {files} files, {size} bytes")
+                print("Input preflight passed. Native inspection, runtime identity and GPU checks run with 'run'.")
+                return 0
             report = run_replay_comparison(recipe, args.output)
             print(str(args.output / "report.md"))
         else:

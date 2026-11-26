@@ -23,11 +23,11 @@ int APS5_VABI _ZNSt10moneypunctIcLb0EEC1Em_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb0EEC2EPKcm_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb0EEC2ERKSt8_Locinfomb_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb0EEC2Em_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix();
+void APS5_VABI _ZNSt10moneypunctIcLb0EED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt10moneypunctIcLb1EEC2EPKcm_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb1EEC2ERKSt8_Locinfomb_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb1EEC2Em_nid_postfix();
-int APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix();
+void APS5_VABI _ZNSt10moneypunctIcLb1EED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt10moneypunctIcLb1EED1Ev_nid_postfix();
 int APS5_VABI _ZNSt10moneypunctIcLb1EED2Ev_nid_postfix();
 

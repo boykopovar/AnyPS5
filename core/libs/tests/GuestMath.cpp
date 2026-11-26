@@ -1283,6 +1283,22 @@ static void CheckErfConsoleBits() {
     }
 }
 
+static void CheckErfSaturationRounding() {
+    const RestoreFloatingPointState saved;
+    constexpr int modes[] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
+    for (const int mode : modes) {
+        Require(std::fesetround(mode) == 0);
+        for (const double x : {6.0, 0x1.bffffffffffffp+4, 28.0, 40.0}) {
+            std::feclearexcept(FE_ALL_EXCEPT);
+            Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(x)) == 0x3ff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+            std::feclearexcept(FE_ALL_EXCEPT);
+            Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(-x)) == 0xbff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+            std::feclearexcept(FE_ALL_EXCEPT);
+            Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(-x)) == 0x4000000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == (x < 28.0 ? FE_INEXACT : 0));
+        }
+    }
+}
+
 static void CheckLog10EdgeFlags() {
     for (const double input : {-1.0, -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::quiet_NaN()}) {
         errno = 0;
@@ -3874,6 +3890,17 @@ static bool RaisesOnly(long double (APS5_VABI* function)(long double), long doub
     return ExtendedBits(result, mantissa, signExponent) && std::fetestexcept(flag) != 0 && *__error_nid_postfix() == error;
 }
 
+static void CheckTinySinhl() {
+    const RestoreFloatingPointState saved;
+    constexpr std::uint64_t one = 0x8000000000000000ull;
+    for (const std::uint16_t exponent : {0x3fb0, 0xbfb0, 0x3fde, 0xbfde}) {
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        Require(std::feraiseexcept(FE_DIVBYZERO) == 0);
+        Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, exponent)), one, exponent));
+        Require(std::fetestexcept(FE_ALL_EXCEPT) == FE_DIVBYZERO);
+    }
+}
+
 static void CheckLongDoubleExponentialHyperbolic() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -3893,8 +3920,7 @@ static void CheckLongDoubleExponentialHyperbolic() {
     Require(ExtendedBits(sinhl_nid_postfix(0.0L), 0, 0) && ExtendedBits(sinhl_nid_postfix(-0.0L), 0, 0x8000));
     Require(ExtendedBits(sinhl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(sinhl_nid_postfix(-infinity), one, 0xffff));
     Require(std::isnan(sinhl_nid_postfix(nan)));
-    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0x3fb0)), one, 0x3fb0));
-    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0xbfb0)), one, 0xbfb0));
+    CheckTinySinhl();
     Require(RaisesOnly(sinhl_nid_postfix, 12000.0L, FE_OVERFLOW, one, 0x7fff));
     Require(RaisesOnly(sinhl_nid_postfix, -12000.0L, FE_OVERFLOW, one, 0xffff));
     Require(ExtendedBits(coshl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(coshl_nid_postfix(-infinity), one, 0x7fff));
@@ -4280,6 +4306,44 @@ static void CheckLongDoubleFunctions() {
     Require(ynf_nid_postfix(2, 0.0f) == -std::numeric_limits<float>::infinity());
     Require(std::fabs(ynf_nid_postfix(2, 3.0f) - static_cast<float>(-0.160400393484924)) < 1e-6f);
     Require(std::isnan(y0f_nid_postfix(-1.0f)));
+}
+
+static void CheckTrueGammaRounding() {
+    struct Case {
+        std::uint64_t argument;
+        std::uint64_t results[4];
+        unsigned flags[4];
+    };
+    constexpr Case cases[] = {
+        {0x3fb999999999999aull, {0x402306ea7b280d87ull, 0x402306ea7b280d87ull, 0x402306ea7b280d88ull, 0x402306ea7b280d87ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x3ff762d86356be3full, {0x3fec56dc82a74aefull, 0x3fec56dc82a74aeeull, 0x3fec56dc82a74aefull, 0x3fec56dc82a74aeeull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x4008000000000000ull, {0x4000000000000000ull, 0x4000000000000000ull, 0x4000000000000001ull, 0x4000000000000000ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x4018000000000000ull, {0x405e000000000000ull, 0x405dffffffffffffull, 0x405e000000000001ull, 0x405e000000000000ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x4040400000000000ull, {0x4721d8e421e2396cull, 0x4721d8e421e2396bull, 0x4721d8e421e2396cull, 0x4721d8e421e2396bull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x4055400000000000ull, {0x5a33958df4743d96ull, 0x5a33958df4743d96ull, 0x5a33958df4743d97ull, 0x5a33958df4743d96ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0x4065740000000000ull, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0x7ff0000000000000ull, 0x7ff0000000000000ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xbfb999999999999aull, {0xc0255f61032f6358ull, 0xc0255f61032f6358ull, 0xc0255f61032f6355ull, 0xc0255f61032f6358ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xbfd0000000000000ull, {0xc0139b4e8b50f62bull, 0xc0139b4e8b50f62cull, 0xc0139b4e8b50f62bull, 0xc0139b4e8b50f62cull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xbfe0000000000000ull, {0xc00c5bf891b4ef6aull, 0xc00c5bf891b4ef6bull, 0xc00c5bf891b4ef69ull, 0xc00c5bf891b4ef6aull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xc065500000000000ull, {0x8017d2374dfcdb9dull, 0x8017d2374dfcdb9cull, 0x8017d2374dfcd5a9ull, 0x8017d2374dfcdb9dull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xc065700000000000ull, {0x0000238ee05c87a0ull, 0x0000238ee05c87a0ull, 0x0000238ee05c8797ull, 0x0000238ee05c87a0ull}, {0x20, 0x20, 0x20, 0x20}},
+        {0xc065f00000000000ull, {0x000000000000a6a0ull, 0x000000000000a6a0ull, 0x000000000000a6a0ull, 0x000000000000a6a0ull}, {0x20, 0x20, 0x20, 0x20}},
+    };
+    const unsigned saved = _mm_getcsr();
+    const int savedErrno = errno;
+    for (const auto& sample : cases) {
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            errno = 37;
+            _mm_setcsr(0x1f80u | (mode << 13));
+            const double result = tgamma_nid_postfix(std::bit_cast<double>(sample.argument));
+            const unsigned status = _mm_getcsr();
+            _mm_setcsr(saved);
+            Require(std::bit_cast<std::uint64_t>(result) == sample.results[mode]);
+            Require((status & 0x3fu) == sample.flags[mode]);
+            Require(errno == 37);
+        }
+    }
+    errno = savedErrno;
 }
 
 static void CheckDoubleClassification() {
@@ -5310,13 +5374,16 @@ int main() {
     Require(lgamma_nid_postfix(1.) == 0. && lgamma_nid_postfix(2.) == 0. && std::isinf(lgamma_nid_postfix(0.)));
     Require(std::abs(lgamma_nid_postfix(0.5) - 0.5723649429247001) < 1e-15 && std::abs(lgamma_nid_postfix(10.) - 12.801827480081469) < 1e-13);
     Require(std::abs(lgamma_nid_postfix(-0.5) - 1.2655121234846454) < 1e-15);
+    CheckTrueGammaRounding();
     Require(tgamma_nid_postfix(1.) == 1. && tgamma_nid_postfix(2.) == 1. && tgamma_nid_postfix(3.) == 2.);
     Require(std::abs(tgamma_nid_postfix(0.5) - 1.7724538509055160) < 1e-15);
     errno = 0;
     Require(std::isnan(tgamma_nid_postfix(-1.)));
     Require(errno == EDOM);
     errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::isinf(tgamma_nid_postfix(200.)));
+    Require(std::fetestexcept(FE_DIVBYZERO | FE_OVERFLOW) == FE_DIVBYZERO);
     Require(errno == 0);
     const double negativeDoubleGammaUnderflow = tgamma_nid_postfix(-190.5);
     const double positiveDoubleGammaUnderflow = tgamma_nid_postfix(-191.5);
@@ -5526,6 +5593,7 @@ int main() {
     CheckPowConsoleBits();
     CheckExpConsoleBits();
     CheckErfConsoleBits();
+    CheckErfSaturationRounding();
     CheckLog10ConsoleBits();
     CheckAcoshMsunBits();
     CheckAcoshLargeArguments();

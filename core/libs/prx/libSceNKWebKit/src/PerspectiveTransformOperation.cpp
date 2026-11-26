@@ -93,8 +93,8 @@ constexpr std::uint32_t PerspectiveOperationType = 19;
 struct OperationVtable {
     void (APS5_VABI* completeDestructor)(WebCore::PerspectiveTransformOperation*);
     void (APS5_VABI* deletingDestructor)(WebCore::PerspectiveTransformOperation*);
-    WebCore::TransformOperation** (APS5_VABI* clone)(WebCore::TransformOperation**, const WebCore::PerspectiveTransformOperation*);
-    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation&);
+    WebCore::LegacyTransformOperation** (APS5_VABI* clone)(WebCore::LegacyTransformOperation**, const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::LegacyTransformOperation&);
     bool (APS5_VABI* isIdentity)(const WebCore::PerspectiveTransformOperation*);
     bool (APS5_VABI* apply)(const WebCore::PerspectiveTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
     int (APS5_VABI* blend)();
@@ -182,7 +182,7 @@ void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD0Ev(WebCore::Perspecti
     _ZN3WTF8fastFreeEPv(self);
 }
 
-WebCore::TransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::TransformOperation** result, const WebCore::PerspectiveTransformOperation* self) {
+WebCore::LegacyTransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::LegacyTransformOperation** result, const WebCore::PerspectiveTransformOperation* self) {
     if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null result");
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null this");
     *result = &Allocate(&self->m_p)->m_base;
@@ -212,7 +212,7 @@ bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20Transform
     return false;
 }
 
-bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(const WebCore::PerspectiveTransformOperation* self, const WebCore::TransformOperation& other) {
+bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(const WebCore::PerspectiveTransformOperation* self, const WebCore::LegacyTransformOperation& other) {
     if (other.m_type != self->m_base.m_type) return false;
     const LegacyLength& left = self->m_p;
     const LegacyLength& right = reinterpret_cast<const WebCore::PerspectiveTransformOperation&>(other).m_p;
