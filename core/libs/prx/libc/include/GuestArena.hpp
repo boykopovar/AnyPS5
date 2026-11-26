@@ -8,8 +8,6 @@
 struct _EXCEPTION_POINTERS;
 #endif
 
-// Guest virtual memory is placed inside one reserved arena below the PS5 application map limit
-// absolute address and breaks on host addresses outside that range.
 namespace GuestArena {
 
 #ifdef ANYPS5_ENABLE_ASAN
@@ -17,6 +15,13 @@ inline constexpr std::uintptr_t GuestAddressOffset = 0x0000100000000000ull;
 #else
 inline constexpr std::uintptr_t GuestAddressOffset = 0;
 #endif
+
+#ifdef ANYPS5_ENABLE_TSAN
+inline constexpr std::uintptr_t MapperWindowStart = 0x00007E8000000000ull;
+#else
+inline constexpr std::uintptr_t MapperWindowStart = 0x0000080000000000ull + GuestAddressOffset;
+#endif
+inline constexpr std::size_t MapperWindowBytes = std::size_t{512} << 30;
 
 #ifndef _WIN32
 using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
@@ -43,6 +48,12 @@ void GuestArenaRelease_nid_postfix(const void* pointer, std::size_t bytes);
 // The reserved range, and whether it was reserved with page write watching (Windows MEM_WRITE_WATCH).
 void GuestArenaRange_nid_postfix(std::uintptr_t* base, std::size_t* bytes);
 bool GuestArenaWriteWatched_nid_postfix();
+void GuestArenaMapperWindow_nid_no_patch(std::uintptr_t* base, std::size_t* bytes, int* error);
+bool GuestArenaMapperOnly_nid_no_patch(const void* pointer, std::size_t bytes);
+void GuestArenaBeginMapperAccess_nid_no_patch();
+void GuestArenaEndMapperAccess_nid_no_patch();
+void GuestArenaRequireMapperAccess_nid_no_patch(const void* pointer, std::size_t bytes);
+bool GuestArenaFixedTarget_nid_no_patch(const void* pointer, std::size_t bytes);
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection);
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule);
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes);
@@ -121,6 +132,14 @@ private:
     void* pointer;
     std::size_t bytes;
     bool open;
+};
+
+class MapperAccess {
+public:
+    MapperAccess() { GuestArenaBeginMapperAccess_nid_no_patch(); }
+    ~MapperAccess() { GuestArenaEndMapperAccess_nid_no_patch(); }
+    MapperAccess(const MapperAccess&) = delete;
+    MapperAccess& operator=(const MapperAccess&) = delete;
 };
 
 #ifdef _WIN32

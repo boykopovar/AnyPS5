@@ -20,8 +20,10 @@
 #include <future>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #ifdef _WIN32
 #include <windows.h>
@@ -1236,7 +1238,7 @@ void TestAmmRangesAboveHintedMaps() {
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
-    Require(start >= arenaBase && multimapEnd <= arenaBase + arenaBytes && heap + 4 * step <= start);
+    Require(start >= arenaBase + arenaBytes && heap + 4 * step <= start);
 
     for (std::uint64_t hint = heap + step; hint < heap + 4 * step; hint += step) {
         void* mapped = reinterpret_cast<void*>(hint);
@@ -2190,6 +2192,90 @@ static void TestGuestPointerAndErrnoPreservation() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+template <typename TCall>
+bool ThrowsRuntimeError(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void SubmitAmmBehindFlag(Recorder& recorder, std::uint64_t& flag, std::uint64_t value, std::uint64_t& done) {
+    std::uint32_t id = 0;
+    Require(sceAmprAmmSubmitCommandBuffer3(recorder.memory.data(), recorder.Offset(), 0, &id) == 0 && id != 0);
+    Require(std::atomic_ref<std::uint64_t>(done).load(std::memory_order_acquire) != value);
+    std::atomic_ref<std::uint64_t>(flag).store(value, std::memory_order_release);
+    struct Completion {
+        std::atomic<bool> finished{false};
+        int result = -1;
+    };
+    const auto completion = std::make_shared<Completion>();
+    std::thread([id, completion] {
+        completion->result = sceAmprAmmWaitCommandBufferCompletion(id);
+        completion->finished.store(true, std::memory_order_release);
+    }).detach();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!completion->finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(completion->finished.load(std::memory_order_acquire));
+    Require(completion->result == 0);
+    Require(std::atomic_ref<std::uint64_t>(done).load(std::memory_order_acquire) == value);
+}
+
+void TestAmmOnQueueWorker() {
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    constexpr std::uint64_t block = 0x10000;
+    const std::uint64_t address = end - 16 * block;
+    const auto directMemory = static_cast<std::int64_t>(sceKernelGetDirectMemorySize());
+    std::int64_t direct = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, directMemory, block, block, 0, &direct) == 0 && direct >= 0);
+
+    alignas(8) std::uint64_t flag = 0;
+    alignas(8) std::uint64_t done = 0;
+    Recorder maps;
+    Require(sceAmprAmmCommandBufferConstructor(&maps.buffer) == 0);
+    Require(sceAmprCommandBufferWaitOnAddress(&maps.buffer, &flag, 1, 0, 0) == 0);
+    Require(sceAmprAmmCommandBufferMapDirect(&maps.buffer, address, direct, block, 0, cpuReadWrite) == 0);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&maps.buffer, &done, 1) == 0);
+    SubmitAmmBehindFlag(maps, flag, 1, done);
+    At(address) = 0x7777;
+    At(address + block - 8) = 0x8888;
+    Require(At(address) == 0x7777 && At(address + block - 8) == 0x8888);
+
+    std::int64_t physical = -1;
+    Require(sceKernelAllocateDirectMemory(0, directMemory, page, page, 0, &physical) == 0);
+    Require(ThrowsRuntimeError([&] {
+        void* target = reinterpret_cast<void*>(address);
+        sceKernelMapDirectMemory(&target, page, 3, 0x90, physical, 0);
+    }));
+    Require(ThrowsRuntimeError([&] {
+        void* target = reinterpret_cast<void*>(address);
+        sceKernelMapFlexibleMemory(&target, page, 3, 0x90);
+    }));
+    Require(At(address) == 0x7777);
+
+#ifdef _WIN32
+    std::array<std::uint64_t, 1> words{};
+    Require(!GuestArena::GuestArenaArmOwned_nid_no_patch(address, block, words.data(), 1, 1));
+#endif
+
+    Recorder unmaps;
+    Require(sceAmprAmmCommandBufferConstructor(&unmaps.buffer) == 0);
+    Require(sceAmprCommandBufferWaitOnAddress(&unmaps.buffer, &flag, 2, 0, 0) == 0);
+    Require(sceAmprAmmCommandBufferUnmap(&unmaps.buffer, address, block) == 0);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&unmaps.buffer, &done, 2) == 0);
+    SubmitAmmBehindFlag(unmaps, flag, 2, done);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(reinterpret_cast<const void*>(address), 0, &info, sizeof(info)) == 0);
+    Require((info.protection & 3) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -2233,6 +2319,7 @@ int main() {
     TestAmmMapFailureKeepsPoolOwnership();
     TestAmmMapsScatteredPoolPages();
     TestAmm();
+    TestAmmOnQueueWorker();
     TestAmmRemapAndProtect();
     TestAmmPrt();
     TestAmmPrtAllocationFailureKeepsZeros();

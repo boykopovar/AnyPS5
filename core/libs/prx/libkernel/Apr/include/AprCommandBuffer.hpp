@@ -258,6 +258,7 @@ inline std::optional<AmmProtectCommand> EncodeAmmProtect(Opcode opcode, std::uin
 extern "C" {
 int AmmGiveDirectMemory_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset);
 void AmmVirtualAddressRanges_nid_no_patch(std::uint64_t* start, std::uint64_t* end, std::uint64_t* multimapStart, std::uint64_t* multimapEnd);
+bool AmmClaimRelease_nid_no_patch(std::int64_t start, std::size_t bytes, bool requireAllocated);
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes);
 bool AmmSubmitted_nid_no_patch(std::uint32_t id);
 }

@@ -11,6 +11,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -140,6 +141,7 @@ bool CopyMappedName(const char* name, std::string& copy) {
 int NameVirtualRange(const void* addr, uint64_t len, std::string name) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
  if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
+ GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(addr, len);
  std::lock_guard lock(g_rangeNameLock);
  EraseRangeNames(start, start + len);
  g_rangeNames.emplace(start, NamedRange{start + len, std::move(name)});
@@ -224,6 +226,7 @@ int _mapFlexible(void** addr, size_t len, int prot, int flags) {
     size_t replaced = 0;
     constexpr int MapFixed = 0x10;
     constexpr int MapNoOverwrite = 0x80;
+    if (addr != nullptr && len != 0 && (len & (PS5_PAGE_SIZE - 1)) == 0) RequireFixedTarget(*addr, len, flags, PS5_PAGE_SIZE, prot);
     if (addr != nullptr && *addr != nullptr && (flags & (MapFixed | MapNoOverwrite)) == MapFixed) {
         const auto start = reinterpret_cast<uintptr_t>(*addr);
         if (len <= std::numeric_limits<uintptr_t>::max() - start) {
@@ -309,14 +312,20 @@ size_t DirectMemorySize() {
     return size;
 }
 
+int64_t DirectMemorySearchEnd(int64_t searchStart, int64_t searchEnd) {
+    if (searchEnd == 0 && searchStart > 0 && searchStart < static_cast<int64_t>(DirectMemorySize())) return static_cast<int64_t>(DirectMemorySize());
+    return searchEnd;
+}
+
+bool DirectMemoryAllocationValid(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, const int64_t* out) {
+    return searchStart >= 0 && DirectMemorySearchEnd(searchStart, searchEnd) > searchStart && len != 0 && (len & (PS5_PAGE_SIZE - 1)) == 0 && out != nullptr && (alignment & (PS5_PAGE_SIZE - 1)) == 0;
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- if (search_end == 0 && search_start > 0 && search_start < static_cast<int64_t>(DirectMemorySize())) search_end = static_cast<int64_t>(DirectMemorySize());
- if (search_start < 0 || search_end <= search_start || len == 0
-  || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
-  || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
-  return SCE_KERNEL_ERROR_EINVAL;
+ if (!DirectMemoryAllocationValid(search_start, search_end, len, alignment, phys_addr_out)) return SCE_KERNEL_ERROR_EINVAL;
+ search_end = DirectMemorySearchEnd(search_start, search_end);
  int64_t physical = 0;
  const int result = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, &physical);
  if (result != 0) return result;
@@ -462,7 +471,9 @@ int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
  if (start == 0 || (start & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || len > std::numeric_limits<uintptr_t>::max() - start)
   return SCE_KERNEL_ERROR_EINVAL;
- if (len != 0) _releaseFlexible(start, len);
+ if (len == 0) return 0;
+ GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(addr, len);
+ _releaseFlexible(start, len);
  return 0;
 }
 
@@ -471,7 +482,7 @@ int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if ((static_cast<std::uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 ||
      len > DIRECT_MEMORY_SIZE || static_cast<std::uint64_t>(start) > DIRECT_MEMORY_SIZE - len)
      return SCE_KERNEL_ERROR_EINVAL;
- if (!DirectMemoryClaimRelease(start, len, false)) return 0;
+ if (!AmmClaimRelease_nid_no_patch(start, len, false)) return 0;
  ReleaseClaimedDirectMemory(start, len);
  return 0;
 }
@@ -606,7 +617,8 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || (static_cast<uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
  if (len == 0) return 0;
- if (!DirectMemoryClaimRelease(start, len, true)) return SCE_KERNEL_ERROR_ENOENT;
+ if (static_cast<uint64_t>(start) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<uint64_t>(start)) return SCE_KERNEL_ERROR_ENOENT;
+ if (!AmmClaimRelease_nid_no_patch(start, len, true)) return SCE_KERNEL_ERROR_ENOENT;
  ReleaseClaimedDirectMemory(start, len);
  return 0;
 }
@@ -693,6 +705,7 @@ int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const
 int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
  if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
+ GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(addr, len);
  std::lock_guard lock(g_rangeNameLock);
  EraseRangeNames(start, start + len);
  return 0;
@@ -1055,6 +1068,7 @@ int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
     std::uintptr_t end = 0;
     if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
+    GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(reinterpret_cast<void*>(start), end - start);
     return LockHostPages(start, end);
 }
 
@@ -1063,6 +1077,7 @@ int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) 
     std::uintptr_t end = 0;
     if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
+    GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(reinterpret_cast<void*>(start), end - start);
     return UnlockHostPages(start, end);
 }
 

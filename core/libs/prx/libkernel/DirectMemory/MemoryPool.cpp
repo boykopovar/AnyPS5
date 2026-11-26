@@ -94,15 +94,31 @@ struct PhysicalMemoryPool {
 
     bool CheckedFree(uint64_t start, size_t len) { return _release(start, len, true); }
 
-    bool ClaimRelease(uint64_t start, size_t len, bool requireAllocated) {
+    DirectMemoryReleaseClaim TryClaimRelease(uint64_t start, size_t len, bool requireAllocated) {
         uint64_t lo, hi;
-        if (!PageSpan(start, len, lo, hi)) return false;
+        if (!PageSpan(start, len, lo, hi)) return DirectMemoryReleaseClaim::Refused;
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return DirectMemoryReleaseClaim::Refused;
+        if (!_claimed(lo, hi) && DirectMemoryTryAddReleaseClaim(lo, hi)) return DirectMemoryReleaseClaim::Claimed;
+        return DirectMemoryReleaseClaim::Busy;
+    }
+
+    DirectMemoryReleaseClaim AwaitReleaseClaim(uint64_t start, size_t len, bool requireAllocated) {
+        uint64_t lo, hi;
+        if (!PageSpan(start, len, lo, hi)) return DirectMemoryReleaseClaim::Refused;
         std::unique_lock<std::mutex> lock(_mutex);
-        for (;;) {
-            if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return false;
-            if (!_claimed(lo, hi) && DirectMemoryTryAddReleaseClaim(lo, hi)) return true;
-            _claimFinished.wait(lock);
-        }
+        if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return DirectMemoryReleaseClaim::Refused;
+        if (!_claimed(lo, hi) && !DirectMemoryMapHeld(lo, hi)) return DirectMemoryReleaseClaim::Busy;
+        ++_releaseWaiters;
+        _claimFinished.wait(lock);
+        --_releaseWaiters;
+        if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return DirectMemoryReleaseClaim::Refused;
+        return DirectMemoryReleaseClaim::Busy;
+    }
+
+    size_t ReleaseWaiters() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _releaseWaiters;
     }
 
     void WakeReleaseClaims() {
@@ -333,6 +349,7 @@ private:
 
     std::mutex _mutex;
     std::condition_variable _claimFinished;
+    size_t _releaseWaiters = 0;
     bool _used[kNumPages] = {};
     BlockMap _blocks;
 };
@@ -355,8 +372,24 @@ bool DirectMemoryCheckedFree(int64_t start, size_t len) {
     return PhysicalMemoryPool::Instance().CheckedFree(static_cast<uint64_t>(start), len);
 }
 
+DirectMemoryReleaseClaim DirectMemoryTryClaimRelease(int64_t start, size_t len, bool requireAllocated) {
+    return PhysicalMemoryPool::Instance().TryClaimRelease(static_cast<uint64_t>(start), len, requireAllocated);
+}
+
+DirectMemoryReleaseClaim DirectMemoryAwaitReleaseClaim(int64_t start, size_t len, bool requireAllocated) {
+    return PhysicalMemoryPool::Instance().AwaitReleaseClaim(static_cast<uint64_t>(start), len, requireAllocated);
+}
+
+size_t DirectMemoryReleaseWaitersForTest() {
+    return PhysicalMemoryPool::Instance().ReleaseWaiters();
+}
+
 bool DirectMemoryClaimRelease(int64_t start, size_t len, bool requireAllocated) {
-    return PhysicalMemoryPool::Instance().ClaimRelease(static_cast<uint64_t>(start), len, requireAllocated);
+    for (;;) {
+        const auto claim = DirectMemoryTryClaimRelease(start, len, requireAllocated);
+        if (claim != DirectMemoryReleaseClaim::Busy) return claim == DirectMemoryReleaseClaim::Claimed;
+        if (DirectMemoryAwaitReleaseClaim(start, len, requireAllocated) == DirectMemoryReleaseClaim::Refused) return false;
+    }
 }
 
 void DirectMemoryFinishRelease(int64_t start, size_t len) {

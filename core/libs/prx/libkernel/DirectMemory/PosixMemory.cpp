@@ -165,7 +165,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
 }
 #endif
 void* Map(void* address, std::size_t length, int protection,
-          int flags, int descriptor, std::int64_t offset, int& mappingError) noexcept {
+          int flags, int descriptor, std::int64_t offset, int& mappingError) {
     const auto failed = [&mappingError](int error) -> void* {
         mappingError = error;
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
@@ -182,10 +182,11 @@ void* Map(void* address, std::size_t length, int protection,
     if (mappingFlags == (GuestPrivate | GuestAnonymous) || fixedAnonymous) {
         if (descriptor != -1 || offset != 0) return failed(GuestInvalid);
         const auto start = reinterpret_cast<std::uintptr_t>(address);
-        if (fixedAnonymous && ((start & (PS5_PAGE_SIZE - 1)) != 0 ||
+        if (fixedAnonymous && (start == 0 || (start & (PS5_PAGE_SIZE - 1)) != 0 ||
             rounded > std::numeric_limits<std::uintptr_t>::max() - start)) return failed(GuestInvalid);
+        if (fixedAnonymous) GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(address, rounded);
 #ifndef _WIN32
-        if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
+        if (fixedAnonymous && !GuestArena::GuestArenaFixedTarget_nid_no_patch(address, rounded)) return failed(GuestInvalid);
 #endif
         const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
@@ -215,6 +216,14 @@ void* Map(void* address, std::size_t length, int protection,
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
         static_cast<std::uint64_t>(offset) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - rounded)
         return failed(GuestInvalid);
+    const std::size_t alignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
+    const auto invalidFixedTarget = [&] {
+        if ((placement & GuestMapFixed) == 0 || !GuestArena::GuestArenaMapperOnly_nid_no_patch(address, rounded)) return false;
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        if (start == 0 || (start & (alignment - 1)) != 0 || rounded > std::numeric_limits<std::uintptr_t>::max() - start) return true;
+        GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(address, rounded);
+        return false;
+    };
     ArchiveMappingDescriptor archive;
     try {
         if (File::IsArchivedFile(descriptor) && kind == GuestShared && (protection & 2) != 0) return failed(GuestAccess);
@@ -254,6 +263,7 @@ void* Map(void* address, std::size_t length, int protection,
     if ((protection & 1) != 0 && accessMode == O_WRONLY) return failed(GuestAccess);
     if (kind == GuestShared && (protection & 2) != 0 && accessMode == O_RDONLY) return failed(GuestAccess);
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
+    if (invalidFixedTarget()) return failed(GuestInvalid);
 #elif defined(_WIN32)
     const int mappingDescriptor = sourceDescriptor;
     {
@@ -266,16 +276,14 @@ void* Map(void* address, std::size_t length, int protection,
         if (accessMode < 0) return failed(GuestBadDescriptor);
         if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
         if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
-        if (kind == GuestPrivate) {
-            const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
-            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
-        }
+        if (invalidFixedTarget()) return failed(GuestInvalid);
+        if (kind == GuestPrivate) return MapPrivateFileCopy(address, rounded, protection, placement, alignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
     }
 #else
     const int mappingDescriptor = sourceDescriptor;
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) return failed(GuestNotSupported);
+    if (invalidFixedTarget()) return failed(GuestInvalid);
 #endif
-    const std::size_t alignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
     void* mapped = nullptr;
     try {
         mapped = address;
@@ -303,14 +311,14 @@ void* Map(void* address, std::size_t length, int protection,
 extern "C" {
 
 void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
-                                int flags, int descriptor, std::int64_t offset) noexcept {
+                                int flags, int descriptor, std::int64_t offset) {
     int error = 0;
     void* mapped = Map(address, length, protection, flags, descriptor, offset, error);
     if (error != 0) SetError(error);
     return mapped;
 }
 
-int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
+int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -322,6 +330,7 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
+    GuestArena::GuestArenaRequireMapperAccess_nid_no_patch(reinterpret_cast<void*>(start), rounded);
     try {
         if (sceKernelMunmap(start, rounded) != 0) return failed(GuestInvalid);
         return 0;
@@ -333,7 +342,7 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
     }
 }
 
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept {
+int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) {
     const auto failed = [](int error) {
         SetError(error);
         return -1;
@@ -342,6 +351,7 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     if (length == 0) return 0;
     if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
+    RequireProtectTarget(address, length, protection & GuestDefinedProtection);
     try {
         if (DoMprotect(address, length, protection & GuestDefinedProtection, false) != 0) return failed(GuestInvalid);
         return 0;

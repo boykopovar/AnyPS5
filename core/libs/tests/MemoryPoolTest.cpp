@@ -507,6 +507,11 @@ bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
     return true;
 }
 
+bool DirectMemoryMapHeld(std::uint64_t first, std::uint64_t last) {
+    std::lock_guard<std::mutex> lock(g_mapHoldLock);
+    return std::any_of(g_mapHolds.begin(), g_mapHolds.end(), [&](const auto& hold) { return hold.first < last && first < hold.second; });
+}
+
 void DirectMemoryRemoveReleaseClaim(std::uint64_t first) { g_releaseClaims.erase(first); }
 
 void ForgetDirectMemory(int64_t, size_t) {

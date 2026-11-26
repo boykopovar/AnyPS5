@@ -487,18 +487,19 @@ TCommand _read(const Apr::CommandBufferObject& buffer, std::uint32_t cursor) {
     return command;
 }
 
-constexpr std::uint64_t AmmRangeBytes = 256ull << 30;
+constexpr std::uint64_t AmmRangeBytes = 480ull << 30;
 constexpr std::uint64_t AmmMultimapRangeBytes = 32ull << 30;
 constexpr std::uint64_t AmmReservedBytes = AmmRangeBytes + AmmMultimapRangeBytes;
-constexpr std::uint64_t AmmRangeAlignment = 64ull << 30;
 constexpr int GuestMapFixed = 0x10;
 constexpr int GuestMapNoOverwrite = 0x80;
 
 static_assert(AmmPool::PageBytes == PS5_PAGE_SIZE);
+static_assert(AmmReservedBytes == GuestArena::MapperWindowBytes);
 
 using AmmPage = AmmPool::Page;
 
 struct AmmState : AmmPool::Records {
+    std::mutex gift;
     std::mutex lock;
     std::uintptr_t base = 0;
     std::set<std::uintptr_t> prt;
@@ -511,13 +512,17 @@ AmmState& _amm() {
 
 std::uintptr_t _ammBase(AmmState& state) {
     if (state.base == 0) {
-        std::uintptr_t arenaBase = 0;
-        std::size_t arenaBytes = 0;
-        GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
-        if (arenaBase == 0 || arenaBytes < AmmReservedBytes) throw std::runtime_error("AMM: the guest address space arena cannot hold the virtual address range");
-        const auto top = GuestArena::GuestArenaHighestFree_nid_no_patch(AmmReservedBytes, AmmRangeAlignment);
-        if (top == 0) throw std::runtime_error("AMM: the guest address space arena has no free virtual address range");
-        void* address = reinterpret_cast<void*>(top);
+        std::uintptr_t windowBase = 0;
+        std::size_t windowBytes = 0;
+        int windowError = 0;
+        GuestArena::GuestArenaMapperWindow_nid_no_patch(&windowBase, &windowBytes, &windowError);
+        if (windowBase == 0 || windowBytes < AmmReservedBytes) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "AMM: the host cannot reserve the AMM virtual address range at 0x%llx (OS error %d)", static_cast<unsigned long long>(GuestArena::MapperWindowStart), windowError);
+            throw std::runtime_error(message);
+        }
+        void* address = reinterpret_cast<void*>(windowBase);
+        const GuestArena::MapperAccess access;
         if (DoReserveVirtual(&address, AmmReservedBytes, GuestMapFixed | GuestMapNoOverwrite, 0) != 0) throw std::runtime_error("AMM: cannot reserve the virtual address range");
         state.base = reinterpret_cast<std::uintptr_t>(address);
     }
@@ -597,11 +602,13 @@ std::vector<AmmPage> _mappedPages(AmmState& state, std::uint64_t address, std::u
 
 void _reserve(std::uint64_t address, std::uint64_t size) {
     void* target = reinterpret_cast<void*>(address);
+    const GuestArena::MapperAccess access;
     if (DoReserveVirtual(&target, size, GuestMapFixed, 0) != 0) throw std::runtime_error("AMM: cannot return the range to the reservation");
 }
 
 void _mapRun(std::uint64_t address, std::uint64_t physical, std::uint64_t size, std::int32_t protection) {
     void* target = reinterpret_cast<void*>(address);
+    const GuestArena::MapperAccess access;
     if (DoMapDirect(&target, size, _ammHostProtection(protection), GuestMapFixed, static_cast<std::int64_t>(physical), 0) != 0) throw std::runtime_error("AMM: map failed");
 }
 
@@ -628,6 +635,7 @@ void _requirePrt(AmmState& state, std::uint64_t address, std::uint64_t size) {
 void _zeroPrt(std::uint64_t address, std::uint64_t size) {
     constexpr int GpuRead = 0x10;
     void* target = reinterpret_cast<void*>(address);
+    const GuestArena::MapperAccess access;
     if (DoMapZero(&target, size, GpuRead, GuestMapFixed) != 0) throw std::runtime_error("AMM: cannot map the unbacked PRT pages");
 }
 
@@ -675,6 +683,7 @@ void _ammAllocatePrt(const Apr::AmmProtectCommand& command) {
                 entry.type = command.type;
                 entry.protection = command.protection;
             }
+            const GuestArena::MapperAccess access;
             if (DoMprotect(reinterpret_cast<void*>(address), bytes, _ammHostProtection(command.protection)) != 0) throw std::runtime_error("AMM: protection change failed");
         } else {
             try {
@@ -751,6 +760,7 @@ void _ammProtect(const Apr::AmmProtectCommand& command, bool type) {
         const int host = _ammHostProtection(pages[first].protection);
         std::size_t last = first + 1;
         while (last < pages.size() && _ammHostProtection(pages[last].protection) == host) ++last;
+        const GuestArena::MapperAccess access;
         if (DoMprotect(reinterpret_cast<void*>(command.address + first * PS5_PAGE_SIZE), (last - first) * PS5_PAGE_SIZE, host) != 0) throw std::runtime_error("AMM: protection change failed");
         first = last;
     }
@@ -923,12 +933,24 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, int& st
 extern "C" {
 
 int AmmGiveDirectMemory_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
-    if (!offset || (usage != 0 && usage != 1)) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = sceKernelAllocateDirectMemory(searchStart, searchEnd, size, alignment, 0, offset);
-    if (result != 0 || usage == 0) return result;
+    if (usage != 0 && usage != 1) return SCE_KERNEL_ERROR_EINVAL;
+    if (!DirectMemoryAllocationValid(searchStart, searchEnd, size, alignment, offset)) return SCE_KERNEL_ERROR_EINVAL;
     auto& state = _amm();
+    const std::lock_guard gift(state.gift);
+    if (usage == 1) {
+        const std::lock_guard lock(state.lock);
+        _ammBase(state);
+    }
+    std::int64_t physical = 0;
+    const int result = sceKernelAllocateDirectMemory(searchStart, searchEnd, size, alignment, 0, &physical);
+    if (result != 0) return result;
+    if (!GuestCopyOut_nid_no_patch(offset, &physical, sizeof(physical))) {
+        DirectMemoryFree(physical, size);
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (usage == 0) return 0;
     const std::lock_guard lock(state.lock);
-    _returnPoolPages(state, static_cast<std::uint64_t>(*offset), size);
+    _returnPoolPages(state, static_cast<std::uint64_t>(physical), size);
     return 0;
 }
 
@@ -940,6 +962,31 @@ void AmmVirtualAddressRanges_nid_no_patch(std::uint64_t* start, std::uint64_t* e
     if (end) *end = base + AmmRangeBytes;
     if (multimapStart) *multimapStart = base + AmmRangeBytes;
     if (multimapEnd) *multimapEnd = base + AmmReservedBytes;
+}
+
+bool AmmClaimRelease_nid_no_patch(std::int64_t start, std::size_t bytes, bool requireAllocated) {
+    auto& state = _amm();
+    const auto first = static_cast<std::uint64_t>(start);
+    const auto end = first + bytes;
+    for (;;) {
+        {
+            const std::lock_guard gift(state.gift);
+            {
+                const std::lock_guard lock(state.lock);
+                const auto run = state.pool.upper_bound(first);
+                const bool free = (run != state.pool.begin() && std::prev(run)->first + std::prev(run)->second > first) || (run != state.pool.end() && run->first < end);
+                const auto used = state.pooledUses.lower_bound(first);
+                if (free || (used != state.pooledUses.end() && used->first < end)) {
+                    char message[128];
+                    std::snprintf(message, sizeof(message), "releasing direct memory 0x%llx+0x%llx given to the AMM pool", static_cast<unsigned long long>(first), static_cast<unsigned long long>(bytes));
+                    NotImplemented_nid_no_patch(message);
+                }
+            }
+            const auto claim = DirectMemoryTryClaimRelease(start, bytes, requireAllocated);
+            if (claim != DirectMemoryReleaseClaim::Busy) return claim == DirectMemoryReleaseClaim::Claimed;
+        }
+        if (DirectMemoryAwaitReleaseClaim(start, bytes, requireAllocated) == DirectMemoryReleaseClaim::Refused) return false;
+    }
 }
 
 struct AprQueue {

@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostRegionIndex.hpp"
 #include "prx/libc/include/WindowsMappings.hpp"
@@ -69,6 +70,13 @@ std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
     return (value + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
 }
 
+bool Within(std::uintptr_t base, std::uintptr_t end, const void* pointer, std::size_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    return base != 0 && address >= base && bytes <= end - base && address - base <= (end - base) - bytes;
+}
+
+thread_local unsigned mapperAccessDepth = 0;
+
 class Arena {
 public:
     static Arena& Get() {
@@ -81,9 +89,26 @@ public:
     }
 
     bool Contains(const void* pointer, std::size_t bytes) const {
-        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
-        return _base != 0 && address >= _base && bytes <= _end - _base && address - _base <= (_end - _base) - bytes;
+        return Within(_base, _end, pointer, bytes) || InMapperWindow(pointer, bytes);
     }
+
+    bool InUserWindow(const void* pointer, std::size_t bytes) const {
+        return Within(_base, _end, pointer, bytes);
+    }
+
+    bool InMapperWindow(const void* pointer, std::size_t bytes) const {
+        return Within(_mapperBase, _mapperEnd, pointer, bytes);
+    }
+
+    static bool OverlapsMapperWindow(const void* pointer, std::size_t bytes) {
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        if (bytes > std::numeric_limits<std::uintptr_t>::max() - address || address >= MapperWindowStart + MapperWindowBytes) return false;
+        return bytes > MapperWindowStart - std::min(address, MapperWindowStart);
+    }
+
+    std::uintptr_t MapperBase() const { return _mapperBase; }
+    std::size_t MapperSize() const { return _mapperEnd - _mapperBase; }
+    int MapperError() const { return _mapperError; }
 
     void* Allocate(std::size_t bytes, std::size_t alignment) {
         return AllocateAtOrAbove(0, bytes, alignment);
@@ -222,7 +247,16 @@ private:
         for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
         _base = ArenaStart;
         _end = end;
+        const bool mapperReserved = WindowsMappings::Get().Reserve(reinterpret_cast<void*>(MapperWindowStart), MapperWindowBytes) != nullptr;
+        RecordMapperWindow(mapperReserved, mapperReserved ? 0 : static_cast<int>(GetLastError()));
 #endif
+    }
+
+    void RecordMapperWindow(bool reserved, int error) {
+        _mapperError = error;
+        if (!reserved) return;
+        _mapperBase = MapperWindowStart;
+        _mapperEnd = MapperWindowStart + MapperWindowBytes;
     }
 
 #if defined(__linux__)
@@ -289,6 +323,8 @@ private:
         ReserveFreeRanges();
         _base = ArenaStart;
         _end = ApplicationAreaEnd;
+        const int mapperError = ReserveNoReplace(MapperWindowStart, MapperWindowBytes);
+        RecordMapperWindow(mapperError == 0, mapperError);
     }
 
     static void TryReserve(std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& occupied, std::uintptr_t from, std::uintptr_t to) {
@@ -402,6 +438,9 @@ private:
 
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
+    std::uintptr_t _mapperBase = 0;
+    std::uintptr_t _mapperEnd = 0;
+    int _mapperError = 0;
     std::uintptr_t _occupiedPrefixEnd = ArenaStart;
     std::uintptr_t _occupiedDefaultPrefixEnd = DefaultAllocationStart;
     bool _writeWatched = false;
@@ -484,6 +523,37 @@ void GuestArenaRelease_nid_postfix(const void* pointer, std::size_t bytes) {
 void GuestArenaRange_nid_postfix(std::uintptr_t* base, std::size_t* bytes) {
     *base = Arena::Get().Base();
     *bytes = Arena::Get().Size();
+}
+
+void GuestArenaMapperWindow_nid_no_patch(std::uintptr_t* base, std::size_t* bytes, int* error) {
+    *base = Arena::Get().MapperBase();
+    *bytes = Arena::Get().MapperSize();
+    *error = Arena::Get().MapperError();
+}
+
+bool GuestArenaMapperOnly_nid_no_patch(const void* pointer, std::size_t bytes) {
+    return mapperAccessDepth == 0 && Arena::OverlapsMapperWindow(pointer, bytes);
+}
+
+void GuestArenaBeginMapperAccess_nid_no_patch() {
+    ++mapperAccessDepth;
+}
+
+void GuestArenaEndMapperAccess_nid_no_patch() {
+    --mapperAccessDepth;
+}
+
+void GuestArenaRequireMapperAccess_nid_no_patch(const void* pointer, std::size_t bytes) {
+    if (!GuestArenaMapperOnly_nid_no_patch(pointer, bytes)) return;
+    char message[160];
+    std::snprintf(message, sizeof(message), "a title's fixed mapping 0x%llx+0x%zx inside the AMM virtual address range", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer)), bytes);
+    NotImplemented_nid_no_patch(message);
+}
+
+bool GuestArenaFixedTarget_nid_no_patch(const void* pointer, std::size_t bytes) {
+    GuestArenaRequireMapperAccess_nid_no_patch(pointer, bytes);
+    const auto& arena = Arena::Get();
+    return arena.InUserWindow(pointer, bytes) || (mapperAccessDepth != 0 && arena.InMapperWindow(pointer, bytes));
 }
 
 namespace {
@@ -1009,7 +1079,7 @@ bool GuestArenaArmOwned_nid_no_patch(std::uintptr_t address, std::size_t bytes, 
     if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
     const auto first = address & ~std::uintptr_t{65535};
     const auto last = (address + bytes - 1) | std::uintptr_t{65535};
-    if (last == std::numeric_limits<std::uintptr_t>::max() || !Arena::Get().Contains(reinterpret_cast<void*>(first), last + 1 - first) || Arena::Get().OverlapsHostRegion(first, last + 1 - first)) return false;
+    if (last == std::numeric_limits<std::uintptr_t>::max() || !Arena::Get().InUserWindow(reinterpret_cast<void*>(first), last + 1 - first) || Arena::Get().OverlapsHostRegion(first, last + 1 - first)) return false;
     return WindowsMappings::Get().ArmOwned(address, bytes, words, count, flags);
 #else
     static_cast<void>(address);
