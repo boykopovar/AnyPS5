@@ -1000,7 +1000,7 @@ def main_export_findings(prs, current_exports):
         added = pr.get("added_exports", {})
         removed = pr.get("removed_exports", {})
         moved = {}
-        for (library, nid), removed_from in removed.items():
+        for (library, _nid), removed_from in removed.items():
             for name in removed_from:
                 canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
                 moved.setdefault(canonical, set()).add(library)

@@ -514,9 +514,11 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     if (!memory_size) return static_cast<int>(0x80268001);
-    const std::size_t size = CONTEXT_MEMORY_BASE + CONTEXT_MEMORY_PER_PORT * params->max_ports;
+    AudioOut2ContextParam param{};
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(memory_size, &size, sizeof(size));
+    const bool read = GuestCopyIn_nid_no_patch(&param, params, sizeof(param));
+    const std::size_t size = CONTEXT_MEMORY_BASE + CONTEXT_MEMORY_PER_PORT * param.max_ports;
+    const bool copied = read && GuestCopyOut_nid_no_patch(memory_size, &size, sizeof(size));
     errno = savedErrno;
     return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
 }
@@ -538,7 +540,12 @@ int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes) return static_cast<int>(0x80268001);
     for (uint32_t index = 0; index < num; index++) {
-        AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attributes[index].attribute_id, attributes[index].value_size, attributes[index].value);
+        AudioOut2Attribute attribute{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedErrno;
+        if (!copied) return static_cast<int>(0x80268001);
+        AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attribute.attribute_id, attribute.value_size, attribute.value);
     }
     return 0;
 }

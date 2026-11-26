@@ -1,6 +1,10 @@
+import contextlib
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
@@ -38,6 +42,51 @@ class CheckTestRegistrationTests(unittest.TestCase):
     def test_commands_rejects_unterminated_command(self):
         with self.assertRaises(ValueError):
             list(check_test_registration.commands("add_test(t x"))
+
+    def test_commands_reports_the_line_of_each_command(self):
+        content = "add_test(NAME a COMMAND a)\n# note\nadd_test(NAME b COMMAND b)\n"
+        self.assertEqual([line for _, _, line in check_test_registration.command_records(content)], [1, 3])
+
+    def test_unquoted_escaped_space_is_one_property_value(self):
+        source = "set_tests_properties(foo PROPERTIES DISABLED OFF TIMEOUT integration\\ test)\n"
+        self.assertEqual(list(check_test_registration.commands(source)),
+                         [("set_tests_properties", ["foo", "PROPERTIES", "DISABLED", "OFF", "TIMEOUT", "integration test"])])
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CTestTestfile.cmake").write_text("add_test(foo foo)\n" + source, encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"foo"})
+
+    def test_registered_names_the_file_and_line_of_an_unpaired_property_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CTestTestfile.cmake").write_text(
+                "add_test(NAME foo COMMAND foo)\nset_tests_properties(foo PROPERTIES ${props})\n", encoding="utf-8")
+            with self.assertRaises(check_test_registration.PropertyListError) as raised:
+                check_test_registration.registered(build)
+        message = str(raised.exception)
+        self.assertIn("CTestTestfile.cmake:2", message)
+        self.assertIn("set_tests_properties(foo PROPERTIES ${props})", message)
+        self.assertNotIn("git checkout", message)
+
+    def test_scripts_names_the_file_and_line_of_an_unpaired_property_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CMakeLists.txt").write_text(
+                "add_test(NAME foo COMMAND foo)\nset_tests_properties(foo PROPERTIES ${props})\n", encoding="utf-8")
+            with self.assertRaises(check_test_registration.PropertyListError) as raised:
+                check_test_registration.run_scripts(root, ["CMakeLists.txt"])
+        message = str(raised.exception)
+        self.assertIn("CMakeLists.txt:2", message)
+        self.assertIn("${props}", message)
+
+    def test_scripts_property_list_error_does_not_blame_the_git_checkout(self):
+        error = check_test_registration.PropertyListError("a.cmake:1: cannot pair the arguments after PROPERTIES")
+        stderr = io.StringIO()
+        with patch.object(check_test_registration, "unrun_scripts", side_effect=error), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit):
+                check_test_registration.main(["--scripts"])
+        self.assertIn("cannot pair the arguments after PROPERTIES", stderr.getvalue())
+        self.assertNotIn("git checkout", stderr.getvalue())
 
     def test_disabled_properties_reads_set_tests_properties(self):
         found = list(check_test_registration.disabled_properties(

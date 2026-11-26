@@ -709,7 +709,7 @@ def table(found, out):
         out.write(f"### {library}\n\n")
         out.write("| Name | Kind | Source | Default | Description |\n")
         out.write("|------|------|--------|---------|-------------|\n")
-        for name, (source, number, kind, default) in sorted(libraries[library]):
+        for name, (source, _number, kind, default) in sorted(libraries[library]):
             cells = (f"`{name}`", kind.replace("\\", "\\\\"), f"`{source}`", default.replace("\\", "\\\\"))
             out.write("| " + " | ".join(cell(value) for value in cells) + " | |\n")
         out.write("\n")

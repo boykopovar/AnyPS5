@@ -966,7 +966,7 @@ def scan_library(path):
                 loaded.append(code(handle.read()))
         return loaded
 
-    for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, load_headers, assembled)):
+    for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, load_headers, assembled), strict=True):
         if not definitions:
             continue
         wrappers = None
@@ -1148,7 +1148,7 @@ def labelled_tier(groups):
     shown = list(groups)
     while len(shown) > 1:
         rects = squarify([g["done"] + g["todo"] for g in shown], 0, HEADER, PANEL_WIDTH, MAP_HEIGHT)
-        if all(tile_label(g, w, h) for g, (x, y, w, h) in zip(shown, rects)):
+        if all(tile_label(g, w, h) for g, (x, y, w, h) in zip(shown, rects, strict=True)):
             break
         shown.pop()
     return shown

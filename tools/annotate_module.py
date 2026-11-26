@@ -412,7 +412,7 @@ def ghidra_symbols(module, namer):
     for address, name in module.unwind_labels(named_addresses).items():
         rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
-    for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
+    for address, function, resolved, _symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
         if not stem or stem[0].isdigit():
             stem = "_" + stem

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, DEBT_TARGET, debt_entries
+from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, DEBT_TARGET
 
 ROOT = Path(__file__).resolve().parent.parent
 OPERATION = re.compile(r"## (add|change|remove) (.+)")

@@ -2,7 +2,6 @@ import subprocess
 import os
 import stat
 import signal
-import sys
 import tempfile
 import time
 import unittest

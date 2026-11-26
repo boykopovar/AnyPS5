@@ -59,7 +59,6 @@ class RegistrationJsonTests(unittest.TestCase):
     @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_executable_report(self):
         import json
-        import shutil
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "tests").mkdir()

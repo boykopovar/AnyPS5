@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_jmprel_table_bounds import fixture, DT_RELA, DT_RELASZ
+from test_jmprel_table_bounds import fixture, DT_RELASZ
 from test_guest_symbol_names import DYNAMIC as STRICT_DYNAMIC, importing_executable
 
 

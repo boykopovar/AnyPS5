@@ -326,7 +326,7 @@ def apply_change(root, base, new, index_text):
                 resolved[j1 + offset] = entries[position]
                 kept_old.add(offset)
                 kept_new.add(offset)
-        for offset, old in enumerate(removed):
+        for offset, _old in enumerate(removed):
             if offset not in kept_old:
                 entries, position = locate(i1 + offset)
                 del entries[position]

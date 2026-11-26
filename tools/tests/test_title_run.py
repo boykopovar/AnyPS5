@@ -15,7 +15,6 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import unittest.mock
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
@@ -677,7 +676,6 @@ class AssetCopyTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
     def test_cloned_metadata_failure_propagates_without_copy_fallback(self):
-        import fcntl
         self.require_reflink()
         target = self.root / "metadata-error"
         with unittest.mock.patch.object(title_run.shutil, "copystat", side_effect=PermissionError("metadata refused")), \

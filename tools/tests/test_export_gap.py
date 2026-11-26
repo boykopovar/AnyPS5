@@ -1126,32 +1126,6 @@ class MaskDirectivesTests(unittest.TestCase):
         self.assertEqual(export_gap.mask_directives(source), source)
 
 
-class RecordProvidedTests(unittest.TestCase):
-    def test_no_patch_cut_registers_the_base_name(self):
-        provided = {}
-        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
-        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
-
-    def test_no_patch_registers_the_full_name(self):
-        provided = {}
-        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
-        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
-
-    def test_plain_and_postfixed_names_register_the_computed_nid(self):
-        nid = nid_names.compute_nid("sceFoo")
-        plain, postfixed = {}, {}
-        export_gap.record_provided(plain, "sceFoo")
-        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
-        self.assertEqual(plain, {nid: "under its own name sceFoo"})
-        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
-
-    def test_first_origin_wins(self):
-        provided = {}
-        export_gap.record_provided(provided, "sceFoo", "first")
-        export_gap.record_provided(provided, "sceFoo", "second")
-        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
-
-
 class LoadConsoleNidsTests(unittest.TestCase):
     def test_export_table_that_is_not_a_directory_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -374,7 +374,7 @@ int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2C
     const int planned = PlanJobs(checked, plan);
     if (planned < 0) return planned;
     const std::size_t size = plan.size;
-    if (!WriteGuest(&buffer_info->host_buffer_size, size)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (!WriteGuestBytes(reinterpret_cast<char*>(buffer_info) + offsetof(Ngs2ContextBufferInfo, host_buffer_size), &size, sizeof(size))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -565,16 +565,18 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     if (num_buffer_info > 31) return SCE_NGS2_ERROR_INVALID_NUM_RENDER_BUFFERS;
     if (buffer_info == nullptr || num_buffer_info == 0) APS5_INVALID_ARG_EX;
+    std::vector<Ngs2RenderBufferInfo> buffers(num_buffer_info);
     for (std::uint32_t i = 0; i < num_buffer_info; i++) {
-        const auto waveform_type = buffer_info[i].waveform_type;
+        if (!ReadGuest(buffer_info + i, buffers[i])) APS5_INVALID_ARG_EX;
+        const auto waveform_type = buffers[i].waveform_type;
         if (waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16B &&
             waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_F32L && waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_F32B) {
             return SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE;
         }
-        if (buffer_info[i].buffer == nullptr) return SCE_NGS2_ERROR_INVALID_RENDER_BUFFER;
+        if (buffers[i].buffer == nullptr) return SCE_NGS2_ERROR_INVALID_RENDER_BUFFER;
     }
-    if (PS4_LIBRARY && std::any_of(buffer_info, buffer_info + num_buffer_info, [](const Ngs2RenderBufferInfo& info) { return Ngs2Ps4UnsupportedBufferChannels(info.num_channels); })) {
-        Ngs2RenderRefused(*system, buffer_info, num_buffer_info);
+    if (PS4_LIBRARY && std::any_of(buffers.begin(), buffers.end(), [](const Ngs2RenderBufferInfo& info) { return Ngs2Ps4UnsupportedBufferChannels(info.num_channels); })) {
+        Ngs2RenderRefused(*system, buffers.data(), num_buffer_info);
         return SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS;
     }
     SystemLockState* state = nullptr;
@@ -583,7 +585,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
         std::lock_guard locks(SystemLockMutex());
         auto& found = SystemLocks().at(system_handle);
         if (found.depth != 0 && found.owner != self) {
-            Ngs2RenderSilence(*system, buffer_info, num_buffer_info);
+            Ngs2RenderSilence(*system, buffers.data(), num_buffer_info);
             return SCE_NGS2_OK;
         }
         found.owner = self;
@@ -603,7 +605,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
             ReleaseSystemLock(*state);
         }
     } release{state, system};
-    Ngs2RenderSystem(*system, buffer_info, num_buffer_info);
+    Ngs2RenderSystem(*system, buffers.data(), num_buffer_info);
     return SCE_NGS2_OK;
 }
 
