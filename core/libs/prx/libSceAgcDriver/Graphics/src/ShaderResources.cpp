@@ -3796,6 +3796,7 @@ bool ShaderResources::keepsTemplateRecords() const {
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation(bool spaceReusable) {
+    depthSerialSeen = 0;
     if (!keepsTemplateRecords() && !(spaceReusable && !RuntimeSwitches::Set(RuntimeSwitch::NoSpaceReuseRecords))) {
         validatedTextures.clear();
         lookupLog().clear();
@@ -3884,6 +3885,8 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     overlapping.clear();
     accepted = false;
     if (!EpochRevalidate()) return fastRevalidateEach();
+    const auto depthSerial = DepthSurfacesSerial();
+    const bool depthMoved = depthSerialSeen != depthSerial;
     const auto elementCount = only != nullptr ? only->size() : textures.size();
     const auto elementAt = [only](std::size_t k) { return only != nullptr ? (*only)[k] : k; };
     const auto fail = [&reason](FastFail why) {
@@ -3926,6 +3929,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         if (textures[i]->Released()) return fail(FastFail::Replaced);
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
+        if (depthMoved && DepthSurfaceAt(address)) return fail(FastFail::Depth);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
         if (surface.collected == 0 && surface.generation == 0 && surface.committedGeneration != 0 && surface.source == nullptr && !RuntimeSwitches::Set(RuntimeSwitch::NoExtendedFastProofs)) {
@@ -4065,11 +4069,14 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         surface.keys = scannedKeys[i];
     }
+    if (only == nullptr) depthSerialSeen = depthSerial;
     return true;
 }
 
 bool ShaderResources::fastRevalidateEach() {
     if (validatedTextures.size() != textures.size()) return false;
+    const auto depthSerial = DepthSurfacesSerial();
+    const bool depthMoved = depthSerialSeen != depthSerial;
     for (std::size_t i = 0; i < textures.size(); ++i) {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
@@ -4080,6 +4087,7 @@ bool ShaderResources::fastRevalidateEach() {
         if (textures[i]->Released()) return false;
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
+        if (depthMoved && DepthSurfaceAt(address)) return false;
         if (!FlushDepthPlanes(address, bytes).empty()) return false;
         surface.collected = GuestMemory::CollectWrites(address, bytes);
         if (surface.collected == 0) return false;
@@ -4130,6 +4138,7 @@ bool ShaderResources::fastRevalidateEach() {
     for (auto& surface : validatedTextures) {
         if (surface.source == nullptr) surface.generation = surface.collected;
     }
+    depthSerialSeen = depthSerial;
     return true;
 }
 
@@ -4509,6 +4518,7 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         return result;
     };
     const auto fallback = [&] { return outcome(IndexOutcome::Fallback); };
+    if (depthSerialSeen != DepthSurfacesSerial()) return fallback();
     auto& subscription = *writeSubscription;
     for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) {
         if (!FlushDepthPlanes(begin, static_cast<std::size_t>(end - begin)).empty()) return fallback();
@@ -4615,7 +4625,8 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto proof = GuestMemory::ProofSerial();
         const auto pending = StorageTexture::PendingSerial();
         const auto retired = RetiredImportSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedRetired == retired) {
+        const auto depth = DepthSurfacesSerial();
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedRetired == retired && provedDepth == depth) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             thread_local std::uint64_t reuses = 0;
             if (verify && ++reuses % 64u == 0u) {
@@ -4634,6 +4645,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             provedProof = proof;
             provedPending = pending;
             provedRetired = retired;
+            provedDepth = depth;
         } else {
             provedEpoch = 0;
         }
@@ -4681,6 +4693,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // they must hand back the very objects the set's views belong to. The build appended them stage
     // by stage, binding by binding, so the walk repeats that order.
     const auto fullWalk = [&] {
+        const auto walkDepthSerial = DepthSurfacesSerial();
         lastFullWalk = std::chrono::steady_clock::now();
         walkImportGeneration = HostImportSetGeneration();
         lookupLog().clear();
@@ -4779,6 +4792,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
         // object on the full walk for good.
         captureValidation(spaceReuse);
+        depthSerialSeen = walkDepthSerial;
         return true;
     };
     struct OverlappingTag {};
