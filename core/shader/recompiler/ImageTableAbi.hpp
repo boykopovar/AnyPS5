@@ -112,7 +112,7 @@ constexpr std::string_view PoisonReasonName(PoisonReason reason) {
         case PoisonReason::UnsupportedOperation: return "unsupported operation";
         case PoisonReason::OffsetCarry: return "record offset carries past 32 bits";
         case PoisonReason::LaneRecordLayout: return "table V# indexed per lane is swizzled, adds the thread ID, has an unbounded range check, misaligned records or records smaller than the descriptor";
-        case PoisonReason::LaneModes: return "records indexed per lane need different image modes under implicit derivatives";
+        case PoisonReason::LaneModes: return "records indexed per lane need one image record under implicit derivatives";
         case PoisonReason::Count: break;
     }
     return "unknown";
