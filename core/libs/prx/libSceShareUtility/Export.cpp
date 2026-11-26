@@ -106,28 +106,40 @@ int APS5_VABI sceShareUtilityAdvanceValidateContents() {
 
 int APS5_VABI sceShareUtilityAdvanceWakeUpShareMenu(std::int64_t argument1, std::uint32_t argument2) {
     if (argument2 < 1 || argument2 > 4 || argument1 < 0) return ErrorInvalidArgument;
-    std::lock_guard lock(g_mutex);
-    if (!g_advanceInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_advanceInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityAdvanceWakeUpShareMenuBroadcast() {
-    std::lock_guard lock(g_mutex);
-    if (!g_advanceInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_advanceInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityAdvanceWakeUpShareMenuDefault() {
-    std::lock_guard lock(g_mutex);
-    if (!g_advanceInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_advanceInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityAdvanceWakeUpShareMenuForShareContent(const void* argument1, std::uint64_t argument2) {
     if (argument1 == nullptr || argument2 == 0) return ErrorInvalidArgument;
     if (argument2 >= MaxShareContentSize) return ErrorInvalidSize;
-    std::lock_guard lock(g_mutex);
-    if (!g_advanceInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_advanceInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -150,28 +162,40 @@ int APS5_VABI sceShareUtilityInitializeEx2(std::uint64_t argument1, std::uint64_
 
 int APS5_VABI sceShareUtilityOpenShareMenu(std::int64_t argument1, std::uint32_t argument2) {
     if (argument2 < 1 || argument2 > 4 || argument1 < 0) return ErrorInvalidArgument;
-    std::lock_guard lock(g_mutex);
-    if (!g_basicInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_basicInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityOpenShareMenuBroadcast() {
-    std::lock_guard lock(g_mutex);
-    if (!g_basicInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_basicInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityOpenShareMenuDefault() {
-    std::lock_guard lock(g_mutex);
-    if (!g_basicInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_basicInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceShareUtilityOpenShareMenuForShareContent(const void* argument1, std::uint64_t argument2) {
     if (argument1 == nullptr || argument2 == 0) return ErrorInvalidArgument;
     if (argument2 >= MaxShareContentSize) return ErrorInvalidSize;
-    std::lock_guard lock(g_mutex);
-    if (!g_basicInitialized) return ErrorNotInitialized;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_basicInitialized) return ErrorNotInitialized;
+    }
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

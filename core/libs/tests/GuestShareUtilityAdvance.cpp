@@ -4,12 +4,25 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 constexpr int AdvanceResult = static_cast<int>(0x81170001u);
 
 using Query = int (APS5_VABI *)();
+
+template <typename TCall>
+void RequireNotImplemented(TCall call, const std::string& name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) != name + " not implemented") std::abort();
+        return;
+    }
+    std::abort();
+}
 
 void CheckAnswersBeforeInitialization() {
     constexpr int invalidArgument = static_cast<int>(0x81170003u);
@@ -74,6 +87,7 @@ void CheckAnswersBeforeInitialization() {
 
 void CheckLifecycle() {
     constexpr int invalidArgument = static_cast<int>(0x81170003u);
+    constexpr int invalidSize = static_cast<int>(0x81170004u);
     constexpr int alreadyInitialized = static_cast<int>(0x81170101u);
     constexpr int notInitialized = static_cast<int>(0x81170102u);
     unsigned char block[16]{1, 2, 3, 4};
@@ -86,12 +100,17 @@ void CheckLifecycle() {
     if (sceShareUtilityInitialize(1, 0x20000) != 0) std::abort();
     if (sceShareUtilityInitialize(1, 0x20000) != alreadyInitialized) std::abort();
     if (sceShareUtilityInitializeEx2(1, 0x20000, 0x200, block) != alreadyInitialized) std::abort();
-    if (sceShareUtilityOpenShareMenuBroadcast() != 0) std::abort();
-    if (sceShareUtilityOpenShareMenuDefault() != 0) std::abort();
-    if (sceShareUtilityOpenShareMenu(0, 1) != 0) std::abort();
-    if (sceShareUtilityOpenShareMenuForShareContent(block, sizeof(block)) != 0) std::abort();
+    if (sceShareUtilityOpenShareMenu(-1, 1) != invalidArgument) std::abort();
+    if (sceShareUtilityOpenShareMenu(0, 0) != invalidArgument) std::abort();
+    if (sceShareUtilityOpenShareMenuForShareContent(nullptr, 1) != invalidArgument) std::abort();
+    if (sceShareUtilityOpenShareMenuForShareContent(block, 0x1000) != invalidSize) std::abort();
+    RequireNotImplemented([] { return sceShareUtilityOpenShareMenuBroadcast(); }, "sceShareUtilityOpenShareMenuBroadcast");
+    RequireNotImplemented([] { return sceShareUtilityOpenShareMenuDefault(); }, "sceShareUtilityOpenShareMenuDefault");
+    RequireNotImplemented([] { return sceShareUtilityOpenShareMenu(0, 1); }, "sceShareUtilityOpenShareMenu");
+    RequireNotImplemented([&] { return sceShareUtilityOpenShareMenuForShareContent(block, sizeof(block)); }, "sceShareUtilityOpenShareMenuForShareContent");
     if (sceShareUtilityTerminate() != 0) std::abort();
     if (sceShareUtilityTerminate() != notInitialized) std::abort();
+    if (sceShareUtilityOpenShareMenuDefault() != notInitialized) std::abort();
 
     if (sceShareUtilityInitializeEx2(1, 0x20000, 0x100, block) != 0) std::abort();
     if (sceShareUtilityTerminate() != 0) std::abort();
@@ -108,12 +127,17 @@ void CheckLifecycle() {
     if (sceShareUtilityAdvanceSetUploadContentData(reinterpret_cast<const void*>(0x10), 4) != invalidArgument) std::abort();
     if (errno != 71) std::abort();
     if (sceShareUtilityAdvanceSetUploadContentData(block, sizeof(block)) != 0) std::abort();
-    if (sceShareUtilityAdvanceWakeUpShareMenuBroadcast() != 0) std::abort();
-    if (sceShareUtilityAdvanceWakeUpShareMenuDefault() != 0) std::abort();
-    if (sceShareUtilityAdvanceWakeUpShareMenu(42, 2) != 0) std::abort();
-    if (sceShareUtilityAdvanceWakeUpShareMenuForShareContent(block, sizeof(block)) != 0) std::abort();
+    if (sceShareUtilityAdvanceWakeUpShareMenu(-1, 2) != invalidArgument) std::abort();
+    if (sceShareUtilityAdvanceWakeUpShareMenu(42, 0) != invalidArgument) std::abort();
+    if (sceShareUtilityAdvanceWakeUpShareMenuForShareContent(nullptr, 1) != invalidArgument) std::abort();
+    if (sceShareUtilityAdvanceWakeUpShareMenuForShareContent(block, 0x1000) != invalidSize) std::abort();
+    RequireNotImplemented([] { return sceShareUtilityAdvanceWakeUpShareMenuBroadcast(); }, "sceShareUtilityAdvanceWakeUpShareMenuBroadcast");
+    RequireNotImplemented([] { return sceShareUtilityAdvanceWakeUpShareMenuDefault(); }, "sceShareUtilityAdvanceWakeUpShareMenuDefault");
+    RequireNotImplemented([] { return sceShareUtilityAdvanceWakeUpShareMenu(42, 2); }, "sceShareUtilityAdvanceWakeUpShareMenu");
+    RequireNotImplemented([&] { return sceShareUtilityAdvanceWakeUpShareMenuForShareContent(block, sizeof(block)); }, "sceShareUtilityAdvanceWakeUpShareMenuForShareContent");
     if (sceShareUtilityAdvanceTerminate() != 0) std::abort();
     if (sceShareUtilityAdvanceTerminate() != notInitialized) std::abort();
+    if (sceShareUtilityAdvanceWakeUpShareMenuDefault() != notInitialized) std::abort();
     if (sceShareUtilityAdvanceSetPlayingContent(42) != notInitialized) std::abort();
     if (sceShareUtilityAdvanceSetUploadContentData(block, 1) != notInitialized) std::abort();
 }
