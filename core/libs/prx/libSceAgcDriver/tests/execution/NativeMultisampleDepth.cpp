@@ -1467,7 +1467,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         if (importedAlias) Require(!MultisampleColorTargetOver(alias.address, aliasBytes).has_value(), "a publication over a colour target the depth surface had taken in kept that colour target resident");
         if (write == PublicationWrite::Pages || write == PublicationWrite::Queued || (write >= PublicationWrite::DriverSameDepth && write <= PublicationWrite::DriverSameHtile)) {
             const auto before = DepthSurfacesSerial();
-            Require(DepthSurfaceView(context, target) != view && DepthSurfacesSerial() == before + 1u, "a published native D32S8 owner whose planes the guest wrote since was not imported again");
+            Require(DepthSurfaceView(context, target) != view && DepthSurfacesSerial() == before + 2u, "a published native D32S8 owner whose planes the guest wrote since was not retired and imported again");
         }
         else if (unmap == PublicationUnmap::None) Require(DepthSurfaceView(context, target) == view, "a published native D32S8 owner was not reused");
         protectedHoles.Restore();
@@ -4578,7 +4578,7 @@ void CheckOtherIdentity(Context context, std::uint32_t samples, OtherIdentity mo
         return;
     }
     const auto boundView = DepthSurfaceViewWithStencilWriteIntent(context, bound, true, true, true, reference);
-    Require(boundView != VK_NULL_HANDLE && boundView != view && DepthSurfacesSerial() == imported + 1u && DepthSurfaceAt(bound.address), "a depth target of another identity over a written owner's planes did not import");
+    Require(boundView != VK_NULL_HANDLE && boundView != view && DepthSurfacesSerial() == imported + (mode == OtherIdentity::HeldView ? 1u : 2u) && DepthSurfaceAt(bound.address), "a depth target of another identity over a written owner's planes did not retire the owner and import");
     guestHolds("a depth target of another identity did not find the first identity's samples in guest memory");
     Require(DepthSurfacesReleased() == released + (mode == OtherIdentity::HeldView ? 0u : 1u), mode == OtherIdentity::HeldView ? "a retired owner whose sampled view is held was released" : "the owner of another identity was not retired and released");
     if (mode == OtherIdentity::HeldView) {
@@ -4609,7 +4609,7 @@ void CheckOtherIdentity(Context context, std::uint32_t samples, OtherIdentity mo
     if (mode == OtherIdentity::RoundTrip || mode == OtherIdentity::HeldView) {
         const auto serial = DepthSurfacesSerial();
         const auto backView = DepthSurfaceViewWithStencilWriteIntent(context, target, true, true, true, back);
-        Require(backView != VK_NULL_HANDLE && backView != view && DepthSurfacesSerial() == serial + 1u && DepthSurfaceAt(target.address), "the first identity bound again over the second's planes was not imported afresh");
+        Require(backView != VK_NULL_HANDLE && backView != view && DepthSurfacesSerial() == serial + (mode == OtherIdentity::HeldView ? 3u : 2u) && DepthSurfaceAt(target.address), "the first identity bound again over the second's planes was not imported afresh");
         guestHolds("the first identity bound again did not find the second identity's samples in guest memory");
         drawBack = std::make_unique<DepthRaster>(context, target, backView, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, back}, false, false);
         NoteDepthSurfaceWrite(context, target);
@@ -5222,7 +5222,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
             auto other = target;
             other.extent = {128u, 64u};
             const auto otherView = DepthSurfaceView(context, other);
-            Require(otherView != VK_NULL_HANDLE && otherView != view && DepthSurfacesSerial() == serial + 1u && DepthSurfaceAt(other.address), "a new native depth attachment over a written owner's planes with nothing undecided did not import");
+            Require(otherView != VK_NULL_HANDLE && otherView != view && DepthSurfacesSerial() == serial + 2u && DepthSurfaceAt(other.address), "a new native depth attachment over a written owner's planes with nothing undecided did not retire the owner and import");
         }
         Require(guestStencil() == host, "a depth read of a host-written native owner did not publish the host's stencil bytes");
         for (std::uint32_t y = 0u; y < extent.height; ++y) {
@@ -5238,7 +5238,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
             const float written = 0.5f;
             std::memcpy(reinterpret_cast<void*>(target.address + depthLayout.Offset(0u, 0u, 0u, 0u)), &written, sizeof(written));
             const auto before = DepthSurfacesSerial();
-            Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 1u, "binding a native depth target after a shader buffer write over its planes did not import the guest bytes");
+            Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 2u, "binding a native depth target after a shader buffer write over its planes did not retire the owner and import the guest bytes");
             return;
         }
         if (use == ReuseCase::GuestWriteAfterRead) {
@@ -5247,7 +5247,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
             std::memcpy(reinterpret_cast<void*>(target.address + depthLayout.Offset(0u, 0u, 0u, 0u)), &written, sizeof(written));
             const auto before = DepthSurfacesSerial();
             const auto rebound = DepthSurfaceView(context, target);
-            Require(rebound != VK_NULL_HANDLE && rebound != view && DepthSurfacesSerial() == before + 1u, "binding a published native depth owner after a guest write over its planes did not import the guest bytes");
+            Require(rebound != VK_NULL_HANDLE && rebound != view && DepthSurfacesSerial() == before + 2u, "binding a published native depth owner after a guest write over its planes did not retire it and import the guest bytes");
             return;
         }
         if (use == ReuseCase::DecidedNewDepthTarget) {
@@ -5291,7 +5291,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
         auto other = target;
         other.extent = {128u, 64u};
         const auto otherView = DepthSurfaceView(context, other);
-        Require(otherView != VK_NULL_HANDLE && otherView != view && DepthSurfacesSerial() == serial + 1u, "a new native depth attachment over a reused owner's planes did not import");
+        Require(otherView != VK_NULL_HANDLE && otherView != view && DepthSurfacesSerial() == serial + 2u, "a new native depth attachment over a reused owner's planes did not retire the owner and import");
         Require(DepthSurfaceAt(other.address), "a new native depth attachment over a reused owner's planes is not resident");
     }
     const auto published = guestStencil();
@@ -5308,7 +5308,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
     }
     if (use != ReuseCase::NewDepthTarget) {
         const auto before = DepthSurfacesSerial();
-        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 1u, "a reuse publication left its native depth owner resident");
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 2u, "a reuse publication left its native depth owner resident");
     }
 }
 
