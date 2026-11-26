@@ -184,12 +184,19 @@ bool ZeroGuestRegion(std::uint64_t base, std::uint64_t size, int savedErrno) {
     return true;
 }
 
-bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& record, const SdecMemory& memory, int savedErrno) {
+bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& record, const SdecMemory& memory, void** handle, int savedErrno) {
     const std::uint64_t base = memory.blocks[0].base;
+    if (memory.blocks[0].size > ~std::uint64_t{0} - base) return false;
     const std::uint64_t ws = base + HandleHeaderSize;
     const std::uint64_t wsEnd = base + memory.blocks[0].size;
     const std::uint64_t codecAddr = ((ws + WorkspaceHeaderSize) & ~std::uint64_t{0x1f}) + WorkspaceHeaderSize;
     if (codecAddr + CodecObjectSize > wsEnd) return false;
+
+    const auto rollback = [&](bool clearHandle, bool clearCodec, bool clearWs) {
+        if (clearHandle) ZeroGuestRegion(base, HandleHeaderSize, savedErrno);
+        if (clearCodec) ZeroGuestRegion(codecAddr, CodecObjectSize, savedErrno);
+        if (clearWs) ZeroGuestRegion(ws, WorkspaceHeaderSize, savedErrno);
+    };
 
     const std::array<std::uint64_t, 4> wsHeader{ws + WorkspaceHeaderSize, codecAddr + CodecObjectSize, wsEnd, 0};
     const bool wsWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(ws)), wsHeader.data(), sizeof(wsHeader));
@@ -220,15 +227,32 @@ bool InitializeDecoderWorkspace(const SdecConfig2& config, const SdecRecord2& re
 
     const bool codecWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(codecAddr)), codecBytes.data(), codecBytes.size());
     errno = savedErrno;
-    if (!codecWritten) return false;
+    if (!codecWritten) {
+        rollback(false, false, true);
+        return false;
+    }
 
     const std::array<std::uint64_t, 3> handleHeader{1, ws, codecAddr};
     const bool headerWritten = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(static_cast<std::uintptr_t>(base)), handleHeader.data(), sizeof(handleHeader));
     errno = savedErrno;
-    if (!headerWritten) return false;
+    if (!headerWritten) {
+        rollback(false, true, true);
+        return false;
+    }
 
     if (memory.blocks[1].size != 0 && memory.blocks[1].base != 0) {
-        if (!ZeroGuestRegion(memory.blocks[1].base, memory.blocks[1].size, savedErrno)) return false;
+        if (!ZeroGuestRegion(memory.blocks[1].base, memory.blocks[1].size, savedErrno)) {
+            rollback(true, true, true);
+            return false;
+        }
+    }
+
+    void* createdHandle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(base));
+    const bool stored = GuestCopyOut_nid_no_patch(handle, &createdHandle, sizeof(createdHandle));
+    errno = savedErrno;
+    if (!stored) {
+        rollback(true, true, true);
+        return false;
     }
     return true;
 }
@@ -254,13 +278,7 @@ int APS5_VABI sceSdecCreateSw2(const SdecConfig2* config, const void* attributes
     if (localMemory.blocks[0].base == 0 || localMemory.blocks[0].size < HandleHeaderSize) return SdecInvalid;
     if (const int status = CheckCreate(localConfig, localRecord, localMemory); status != 0) return status;
     if (localRecord.unknown20 == 0) NotImplemented_nid_no_patch("sceSdecCreateSw2 default thread affinity");
-    if (!InitializeDecoderWorkspace(localConfig, localRecord, localMemory, savedErrno)) {
-        NotImplemented_nid_no_patch("sceSdecCreateSw2 decoder setup");
-    }
-    void* createdHandle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(localMemory.blocks[0].base));
-    const bool stored = GuestCopyOut_nid_no_patch(handle, &createdHandle, sizeof(createdHandle));
-    errno = savedErrno;
-    return stored ? 0 : SdecInvalid;
+    return InitializeDecoderWorkspace(localConfig, localRecord, localMemory, handle, savedErrno) ? 0 : SdecInvalid;
 }
 
 int APS5_VABI sceSdecDestroySw2(void* decoder) {
