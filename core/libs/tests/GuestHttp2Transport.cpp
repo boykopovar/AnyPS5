@@ -2319,6 +2319,62 @@ void AsyncOptionalArguments(int ssl) {
     Require(server.Negotiated(), "async optional h2 ALPN");
 }
 
+void AsyncInputCopies(int ssl, std::string_view input, std::string_view access) {
+    std::fprintf(stderr, "HTTP2 async input copies %.*s %.*s\n", static_cast<int>(input.size()), input.data(), static_cast<int>(access.size()), access.data());
+    Require(input == "send-option" || input == "read-option" || input == "upload" || input == "unused-upload", "known async input mode");
+    Require(access == "unmapped" || access == "cross-page", "known async input access mode");
+    const bool read = input == "read-option";
+    const bool upload = input == "upload";
+    const bool unused = input == "unused-upload";
+    const std::array<char, 8> payload{'a', 'b', '\0', 'c', 'd', static_cast<char>(0x7f), 'e', 'f'};
+    Server server(Mode::Normal);
+    Client client(ssl);
+    client.Create(server.Url(), upload ? "POST" : "GET", upload ? payload.size() : 0);
+    if (read) {
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before read option copy");
+        server.Join();
+    }
+    AsyncQueue queue(client.request);
+    std::array<char, 64> buffer{};
+    void* bad = reinterpret_cast<void*>(0x10);
+    if (access == "cross-page") {
+        auto* boundary = GuestTestPages(false);
+        if (upload) {
+            bad = boundary - 4;
+            std::memcpy(bad, payload.data(), 4);
+        } else {
+            bad = boundary - sizeof(void*);
+            std::memcpy(bad, &queue.option, sizeof(void*));
+        }
+    }
+    if (!unused) {
+        int result = 0;
+        if (read) result = sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), bad, nullptr);
+        else if (upload) result = sceHttp2SendRequestAsync(client.request, bad, payload.size(), &queue.option, nullptr);
+        else result = sceHttp2SendRequestAsync(client.request, nullptr, 0, static_cast<Http2AsyncOption*>(bad), nullptr);
+        Require(result == static_cast<int>(0x817b1225), "unreadable async input returns null pointer");
+        Require(buffer == std::array<char, 64>{}, "rejected input leaves read output untouched");
+        Http2AsyncResult empty{};
+        empty.req_id = -1;
+        std::uint32_t timeout = 0;
+        Require(sceHttp2WaitAsync(client.request, &empty, &timeout, nullptr) == static_cast<int>(0x817b1065), "rejected input registers no operation");
+        Require(timeout == 0 && empty.req_id == -1, "rejected input leaves poll outputs untouched");
+        Require(sceHttp2WaitAsync(client.request, &empty, nullptr, nullptr) == static_cast<int>(0x817b1065), "rejected input leaves no blocking wait");
+    }
+    const int submitted = read ? sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &queue.option, nullptr)
+        : sceHttp2SendRequestAsync(client.request, unused ? bad : upload ? payload.data() : nullptr, upload ? payload.size() : 0, &queue.option, nullptr);
+    Require(submitted == 0, "valid submission after input rejection");
+    queue.ExpectEvent();
+    Http2AsyncResult completion{};
+    Require(sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr) == 0, "completion after input rejection");
+    Require(completion.req_id == client.request && completion.event_type == (read ? 1 : 0) && completion.result == (read ? 13 : 0), "completion identity after input rejection");
+    if (read) Require(std::string(buffer.data(), 13) == "response body", "read payload after option rejection");
+    else {
+        server.Join();
+        Require(server.Upload() == (upload ? std::string(payload.data(), payload.size()) : std::string{}), "copied upload preserves every binary byte");
+    }
+}
+
 void AsyncBlockingWait(int ssl) {
     std::fprintf(stderr, "HTTP2 async blocking wait scenario\n");
     Server server(Mode::StallResponse, "/another", 302, "localhost");
@@ -3184,6 +3240,8 @@ int main(int argc, char** argv) {
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
     if (argc == 2 && std::string_view(argv[1]) == "--async-deletion-publication-race") {
         AsyncDeletionPublicationRace(ssl);
+    } else if (argc == 4 && std::string_view(argv[1]) == "--async-input-copies") {
+        AsyncInputCopies(ssl, argv[2], argv[3]);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-completion-storage") {
         Require(std::string_view(argv[2]) == "read" || std::string_view(argv[2]) == "offline", "completion storage probe mode");
         AsyncCompletionStorage(ssl, std::string_view(argv[2]) == "offline");

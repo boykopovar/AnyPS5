@@ -397,8 +397,12 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
     const auto request = Transport(req_id, false, &state);
     if (!request) return ERROR_INVALID_ID;
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::SubmissionResolved);
-    const std::optional<Http2AsyncOption> async = kqueue_option
-        ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
+    std::optional<Http2AsyncOption> async;
+    if (kqueue_option) {
+        Http2AsyncOption copied{};
+        if (!Http2Guest::CopyIn(&copied, kqueue_option, sizeof(copied))) return ERROR_NULL_POINTER;
+        async = copied;
+    }
     auto registration = PrepareAsync(req_id, 1);
     const auto operation = registration.front();
     std::thread worker;
@@ -431,8 +435,12 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
     (void)option;
     if (!post_data && size) return ERROR_NULL_POINTER;
-    const std::optional<Http2AsyncOption> async = kqueue_option
-        ? std::optional<Http2AsyncOption>(*kqueue_option) : std::nullopt;
+    std::optional<Http2AsyncOption> async;
+    if (kqueue_option) {
+        Http2AsyncOption copied{};
+        if (!Http2Guest::CopyIn(&copied, kqueue_option, sizeof(copied))) return ERROR_NULL_POINTER;
+        async = copied;
+    }
     std::shared_ptr<Http2AsyncState> state;
     const auto request = Transport(req_id, true, &state, true);
     if (!request) return ERROR_INVALID_ID;
@@ -455,18 +463,21 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         CompleteAsync(state, operation, __func__, req_id, async ? &*async : nullptr, result, std::move(failure));
         return 0;
     }
-    std::vector<std::uint8_t> body;
-    if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
+    std::unique_ptr<std::uint8_t[]> body;
+    if (size) {
+        body = std::make_unique_for_overwrite<std::uint8_t[]>(size);
+        if (!Http2Guest::CopyIn(body.get(), post_data, size)) return ERROR_NULL_POINTER;
+    }
     std::thread worker;
     {
         std::lock_guard lock(state->mutex);
         if (state->deleted || state->retired) return ERROR_INVALID_ID;
         ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerStarting);
-        worker = std::thread([request, state, operation, async, body = std::move(body), req_id]() mutable {
+        worker = std::thread([request, state, operation, async, body = std::move(body), size, req_id]() mutable {
             int result = 0;
             std::exception_ptr failure;
             try {
-                result = request->Send(body.empty() ? nullptr : body.data(), body.size());
+                result = request->Send(body.get(), size);
             } catch (...) {
                 failure = std::current_exception();
             }
