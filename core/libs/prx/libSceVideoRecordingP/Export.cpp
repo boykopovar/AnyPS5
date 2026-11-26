@@ -142,10 +142,9 @@ int APS5_VABI sceVideoRecordingClose(int discard) {
 }
 
 int APS5_VABI sceVideoRecordingCloseByHandle(VideoRecordingContext* handle, int discard) {
- (void)handle;
  (void)discard;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (handle == nullptr) return ErrorInvalidArgument;
+ return ErrorNotOpen;
 }
 
 int APS5_VABI sceVideoRecordingCopyBGRAtoNV12(void* dst, const void* src, uint32_t width, uint32_t height) {
@@ -362,8 +361,11 @@ int APS5_VABI sceVideoRecordingGetCopyrightImageMemory(void** addr, std::size_t*
     return ErrorNotPresent;
 }
 
-int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle(VideoRecordingContext* handle, int discard, int truncation, unsigned int mode) {
+ (void)discard;
+ const int limit = (mode & 2u) != 0 ? -60000 : -60;
+ if (mode > 3 || handle == nullptr || truncation > 0 || truncation < limit) return ErrorInvalidArgument;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 

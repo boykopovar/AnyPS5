@@ -1,8 +1,6 @@
 # libSceVideoRecordingP
 
-## change 13.60 remaining inventory exports
-
-- [13.60 remaining inventory exports](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp) - `sceVideoRecordingCloseWithTruncationByHandle` (`oryBI-2iyxw`) has unknown signature and behavior. Parameterless `int` declaration is an import-resolution placeholder, not a verified ABI prototype; every call throws through `NotImplemented_nid_no_patch`. These defined name/NID bindings come from the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscevideorecordingp-2f2509cb1b.jsonl).
+## remove [13.60 remaining inventory exports]
 
 ## add Functional
 
