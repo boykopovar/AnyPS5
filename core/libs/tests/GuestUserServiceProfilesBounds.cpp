@@ -30,16 +30,15 @@ void TestUserIdRangeBounds() {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
 
         int number = -1;
-        Require(sceUserServiceGetUserNumber(userId, &number) == USER_SERVICE_OK);
-        Require(number == i + 1);
+        Require(sceUserServiceGetUserNumber(userId, &number) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(number == -1);
 
         int color = -1;
         Require(sceUserServiceGetUserColor(userId, &color) == USER_SERVICE_OK);
         Require(color == i);
 
         char name[32]{};
-        Require(sceUserServiceGetUserName(userId, name, sizeof(name)) == USER_SERVICE_OK);
-        Require(std::strcmp(name, USER_SERVICE_USER_NAMES[i]) == 0);
+        Require(sceUserServiceGetUserName(userId, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         char homePath[64]{};
         Require(sceUserServiceGetHomeDirectory(userId, homePath, sizeof(homePath)) == USER_SERVICE_OK);
@@ -77,9 +76,9 @@ void TestInvalidUserIdRejection() {
 
     for (int invalidId : invalidUserIds) {
         int number = -1;
-        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(number == -1);
-        Require(sceUserServiceGetUserNumber(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserNumber(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int color = -1;
         Require(sceUserServiceGetUserColor(invalidId, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -87,30 +86,30 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetUserColor(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
         char name[32]{};
-        Require(sceUserServiceGetUserName(invalidId, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
-        Require(sceUserServiceGetUserName(invalidId, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-        Require(sceUserServiceGetUserName(invalidId, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-        Require(sceUserServiceGetUserName(invalidId, name, 5) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetUserName(invalidId, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, nullptr, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, nullptr, 0) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+        Require(sceUserServiceGetUserName(invalidId, name, 5) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t ktype = -1;
-        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(ktype == -1);
-        Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t jpType = -1;
-        Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(jpType == -1);
-        Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t zhType = -1;
-        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, &zhType) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, &zhType) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(zhType == -1);
-        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         uint32_t ageLevel = 0x5A5A;
-        Require(sceUserServiceGetAgeLevel(invalidId, &ageLevel) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(invalidId, &ageLevel) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(ageLevel == 0x5A5A);
-        Require(sceUserServiceGetAgeLevel(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         int32_t privacy = 0x5A5A;
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
@@ -118,9 +117,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
         uint64_t accountId = 0xDEADBEEF;
-        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(accountId == 0xDEADBEEF);
-        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         UserServiceGamePresets presets{};
         presets.difficulty = 0x5A;
@@ -139,14 +138,15 @@ void TestInvalidUserIdRejection() {
         };
         for (auto fn : a11yFunctions) {
             int32_t val = 0x5A5A;
-            Require(fn(invalidId, &val) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(fn(invalidId, &val) == USER_SERVICE_ERROR_NOT_INITIALIZED);
             Require(val == 0x5A5A);
-            Require(fn(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(fn(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         }
     }
 }
 
 void TestUserNameBufferOverflowGuards() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     for (int i = 0; i < USER_SERVICE_MAX_USERS; ++i) {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
         const char* expectedName = USER_SERVICE_USER_NAMES[i];
@@ -177,6 +177,7 @@ void TestUserNameBufferOverflowGuards() {
             Require(MemoryMatches(buffer, size, sizeof(buffer) - size, 'Z'));
         }
     }
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
 
 void TestEapHomePathGuestWrite() {

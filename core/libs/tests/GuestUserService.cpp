@@ -111,13 +111,31 @@ void VerifyLoggedInUser(int userId) {
 }
 
 int main() {
-    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int foreground = -1;
+    Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(foreground == -1);
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+
+    int initialUser = -1;
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetRegisteredUserIdList(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 32) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetAccessibilityVibration(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    const UserServiceInitParam init_param{USER_SERVICE_THREAD_PRIORITY_MIN};
+    Require(sceUserServiceInitialize(&init_param) == USER_SERVICE_OK);
+
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
     Require(foreground == USER_SERVICE_INITIAL_USER_ID);
-
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    int initialUser = -1;
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK);
     Require(initialUser == USER_SERVICE_INITIAL_USER_ID);
 
