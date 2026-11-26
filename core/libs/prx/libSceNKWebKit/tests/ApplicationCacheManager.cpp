@@ -14,7 +14,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
     }
 }
 
-void OnGetApplicationCacheOrigins(const void*, const void*, void* context) {
+void APS5_VABI OnGetApplicationCacheOrigins(const void*, const void*, void* context) {
     if (context) {
         ++(*static_cast<int*>(context));
     }

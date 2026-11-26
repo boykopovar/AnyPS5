@@ -37,7 +37,8 @@ def render_csv(report, spreadsheet_safe=False):
     for kind, key, unit in (("metric", "metrics_ms", "ms"), ("phase", "top_phases_ms_per_frame", "ms/frame"),
                             ("worker", "worker_busy_pct", "%")):
         for name, values in report[key].items():
-            writer.writerow((cell(kind), cell(name), cell(unit), *(cell(values[field]) for field in ("baseline", "candidate", "change", "change_pct"))))
+            row_unit = "ms/present" if kind == "metric" and name == "gpu_busy_ms_per_present" else unit
+            writer.writerow((cell(kind), cell(name), cell(row_unit), *(cell(values[field]) for field in ("baseline", "candidate", "change", "change_pct"))))
     graphics = report.get("graphics_track", {})
     if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
         for name, values in graphics.items():

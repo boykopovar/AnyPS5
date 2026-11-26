@@ -216,6 +216,84 @@ void importCrossingTests(const Context& context, const BdaTestAccess& access) {
     ::operator delete(block, std::align_val_t{half});
 }
 
+void readTrappableImportTests(const Context& context) {
+    constexpr std::size_t half = 65536;
+    constexpr std::uint64_t page = 4096;
+    void* block = ::operator new(2 * half, std::align_val_t{half});
+    std::memset(block, 0x33, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* import = HostImportFor(importing, first, 2 * half);
+        Require(import != nullptr, "the registered range was not imported");
+        Require(!import->dmaBuf, "plain host memory was imported as a dma-buf");
+        auto hostPointerTraps = importing;
+        hostPointerTraps.readTrapsOverHostPointerImports = true;
+        auto noHostPointerTraps = importing;
+        noHostPointerTraps.readTrapsOverHostPointerImports = false;
+        Require(ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, page), "an imported range was not trappable where host pointer imports keep read traps");
+        Require(!ReadTrappableHostImportCovers(noHostPointerTraps, first + 3 * page, page, page), "a host pointer import was trappable on a driver whose host pointer imports cannot keep read traps");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, 3 * page), "a page size that is not a power of two was accepted");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 2 * half - page, 2 * page, page), "a range past its import was trappable");
+    }
+    registry(false);
+    auto afterImport = importing;
+    afterImport.readTrapsOverHostPointerImports = true;
+    Require(!ReadTrappableHostImportCovers(afterImport, first, page, page), "a range was trappable after its import was gone");
+    ::operator delete(block, std::align_val_t{half});
+}
+
+#if defined(__linux__)
+void trappedImportTests(const Context& context) {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() || !GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(+[](std::uintptr_t, std::uintptr_t) {})) {
+        std::cout << "trapped import tests skipped, the device lacks the userfaultfd write watch read traps need\n";
+        return;
+    }
+    constexpr std::size_t half = 65536;
+    const auto page = static_cast<std::size_t>(::getpagesize());
+    void* mapped = ::mmap(nullptr, 3 * half, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED, "cannot map the trapped import range");
+    auto* block = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapped) + half - 1) & ~static_cast<std::uintptr_t>(half - 1));
+    std::memset(block, 0x44, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, 2 * half);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(first + page, page), "a page of the import range was not trapped");
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) == nullptr && !HostImportCovers(importing, first, 2 * half), "an import pinned a range with a read-trapped page");
+    }
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(first + page, page);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) != nullptr, "a range was not imported once its read trap was gone");
+    }
+    registry(false);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, 2 * half);
+    ::munmap(mapped, 3 * half);
+}
+#endif
+
 constexpr auto FixedImageConstants = [] {
     std::array<std::uint8_t, 64> bytes{};
     for (auto& value : bytes) value = 0x5c;
@@ -1670,7 +1748,10 @@ void hostImportReportTests() {
     counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
     counts.requesters[static_cast<std::size_t>(ImportRequester::ColorTarget)] = {1, 1u << 20u, 0, 0, 0};
     const auto text = FormatHostImportCounts(counts);
-    Require(text == "3 live (3.0 MiB); made 9 (6.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, color target 1/0/0", "the host import report is wrong: " + text);
+    Require(text == "3 live (3.0 MiB); made 9 (6.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, color target 1/0/0, label 0/0/0", "the host import report is wrong: " + text);
+    counts.labelBytes = 3u << 19u;
+    const auto labels = FormatHostImportCounts(counts);
+    Require(labels == text + "; 1.5 MiB of label windows", "the host import report does not name the label windows: " + labels);
 }
 
 class PieceWindow {
@@ -5826,6 +5907,10 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
     importCrossingTests(context, access);
+    readTrappableImportTests(context);
+#if defined(__linux__)
+    trappedImportTests(context);
+#endif
     fixedReadOnlyRangeMirrorTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);

@@ -13,16 +13,22 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <atomic>
+#include <map>
 #include <mutex>
-#include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 constexpr std::int32_t MaxExecution = 10;
 constexpr std::uint32_t ContentTypeSdkVersion = 0x02500000;
 constexpr std::uint32_t MemoryPoolSdkVersion = 0x04000000;
+constexpr std::uint32_t ThumbnailTypeSdkVersion = 0x04000000;
+constexpr std::uint32_t ProgressSdkVersion = 0x06000000;
+constexpr std::uint32_t MaximumValidatedContents = 0x100;
 constexpr std::size_t MaximumPathLength = 0x400;
+constexpr std::size_t MaximumTitleIdListLength = 15000;
+constexpr std::string_view ThumbnailType = "image/jpeg";
 constexpr int ErrorGeneric = static_cast<int>(0x809D3001u);
 constexpr int ErrorInvalidState = static_cast<int>(0x809D3002u);
 constexpr int ErrorBusy = static_cast<int>(0x809D3003u);
@@ -32,16 +38,31 @@ constexpr int ErrorInvalidContentType = static_cast<int>(0x809D3012u);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x809D3016u);
 constexpr int ErrorStorage = static_cast<int>(0x809D3017u);
 constexpr int ErrorExecutionMax = static_cast<int>(0x809D3018u);
+constexpr int ErrorThumbnailType = static_cast<int>(0x809D3019u);
 constexpr int ErrorDataCallback = static_cast<int>(0x809D301Bu);
+enum class SessionState { Idle, Ended, AfterFromData };
 std::atomic<bool> g_initialized{false};
 std::mutex g_sessionMutex;
-std::set<std::int32_t> g_sessions;
+std::map<std::int32_t, SessionState> g_sessions;
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version;
+bool NotInitializedForCaller() {
+    return ApplicationCompiledSdkVersion() >= MemoryPoolSdkVersion && !g_initialized.load();
+}
+
+bool SessionIdInRange(std::int32_t expId) {
+    return static_cast<std::uint32_t>(expId) < static_cast<std::uint32_t>(MaxExecution);
+}
+
+bool ExportContentType(const char* contentType) {
+    constexpr std::array<std::string_view, 5> types{"video/mp4", "image/jpeg", "image/png", "image/gif", "video/webm"};
+    return std::find(types.begin(), types.end(), contentType) != types.end();
+}
+
+int CopyExportParam(const ContentExportParam* param, ContentExportParam& localParam) {
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return ErrorInvalidArgument;
+    if (std::any_of(std::begin(localParam.comment), std::end(localParam.comment), [](char value) { return value != '\0'; })) return ErrorInvalidArgument;
+    localParam.content_type[sizeof(localParam.content_type) - 1] = '\0';
+    return 0;
 }
 
 void RequireSession(const char* function, std::int32_t expId) {
@@ -80,7 +101,7 @@ int APS5_VABI sceContentExportFinish(std::int32_t expId) {
 }
 
 int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportParam* param, std::size_t contentLength, ContentExportDataCallback callback, void* userData, char* path, std::size_t pathBufferLength) {
-    const std::int32_t sdkVersion = static_cast<std::int32_t>(CompiledSdkVersion());
+    const std::int32_t sdkVersion = static_cast<std::int32_t>(ApplicationCompiledSdkVersion());
     if (sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion) && !g_initialized.load()) return ErrorNotInitialized;
     if (expId < 0 || expId >= MaxExecution || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
     ContentExportParam localParam{};
@@ -91,7 +112,9 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
     {
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
+        g_sessions[expId] = SessionState::AfterFromData;
     }
+    if (std::memchr(localParam.content_type, '\0', sizeof(localParam.content_type)) == nullptr) return ErrorInvalidArgument;
     if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
     const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;
@@ -198,8 +221,20 @@ int APS5_VABI sceContentExportFromFileWithContentIdList(std::int32_t expId, cons
 }
 
 int APS5_VABI sceContentExportFromFileWithTitleIdList(std::int32_t expId, const ContentExportParam* param, const char* sourcePath, const char* thumbnailPath, const char* titleIdList, char* path, std::size_t pathBufferLength) {
+    if (NotInitializedForCaller()) return ErrorNotInitialized;
+    if (!SessionIdInRange(expId) || param == nullptr || sourcePath == nullptr || thumbnailPath == nullptr) return ErrorInvalidArgument;
+    std::string text;
+    if (CopyGuestString_nid_no_patch(thumbnailPath, MaximumPathLength + 1, text) != 0 || text.empty()) return ErrorInvalidArgument;
+    if (titleIdList != nullptr && (CopyGuestString_nid_no_patch(titleIdList, MaximumTitleIdListLength + 1, text) != 0 || text.empty())) return ErrorInvalidArgument;
+    ContentExportParam localParam{};
+    if (const int error = CopyExportParam(param, localParam)) return error;
     std::lock_guard lock(g_sessionMutex);
-    RequireSession(__func__, expId);
+    const auto session = g_sessions.find(expId);
+    if (session == g_sessions.end()) return ErrorInvalidArgument;
+    if (!ExportContentType(localParam.content_type)) {
+        session->second = SessionState::Ended;
+        return ErrorInvalidContentType;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -233,24 +268,31 @@ int APS5_VABI sceContentExportRenameContent(std::int64_t contentId, const char* 
 }
 
 int APS5_VABI sceContentExportValidateContents(const std::int64_t* contentIds, std::uint32_t count) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (count > MaximumValidatedContents || (contentIds == nullptr && count != 0)) return ErrorInvalidArgument;
+    if (count == 0) return 0;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportStart(void) {
     std::lock_guard lock(g_sessionMutex);
     if (!g_initialized.load()) return ErrorNotInitialized;
     for (std::int32_t expId = 0; expId < MaxExecution; ++expId) {
-        if (g_sessions.insert(expId).second) return expId;
+        if (g_sessions.emplace(expId, SessionState::Idle).second) return expId;
     }
     return ErrorExecutionMax;
 }
 
 int APS5_VABI sceContentExportGetProgress(std::int32_t expId) {
+    if (NotInitializedForCaller()) return ErrorNotInitialized;
+    if (!SessionIdInRange(expId)) return ErrorInvalidArgument;
     std::lock_guard lock(g_sessionMutex);
-    RequireSession(__func__, expId);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto session = g_sessions.find(expId);
+    if (session == g_sessions.end()) return ErrorInvalidArgument;
+    if (session->second == SessionState::AfterFromData) NotImplemented_nid_no_patch(__func__);
+    if (ApplicationCompiledSdkVersion() < ProgressSdkVersion) return ErrorInvalidState;
+    return session->second == SessionState::Ended ? 100 : 0;
 }
 
 int APS5_VABI sceContentExportCancel(std::int32_t expId) {
@@ -260,8 +302,26 @@ int APS5_VABI sceContentExportCancel(std::int32_t expId) {
 }
 
 int APS5_VABI sceContentExportFromDataWithThumbnail(std::int32_t expId, const ContentExportParam* param, const ContentExportCallbackParam* contentCallbackParam, const char* thumbnailType, const ContentExportCallbackParam* thumbnailCallbackParam, char* path, std::size_t pathBufferLength) {
+    if (NotInitializedForCaller()) return ErrorNotInitialized;
+    if (!SessionIdInRange(expId) || param == nullptr || contentCallbackParam == nullptr || thumbnailCallbackParam == nullptr) return ErrorInvalidArgument;
+    ContentExportParam localParam{};
+    if (const int error = CopyExportParam(param, localParam)) return error;
     std::lock_guard lock(g_sessionMutex);
-    RequireSession(__func__, expId);
+    const auto session = g_sessions.find(expId);
+    if (session == g_sessions.end()) return ErrorInvalidArgument;
+    ContentExportCallbackParam content{};
+    ContentExportCallbackParam thumbnail{};
+    if (!GuestCopyIn_nid_no_patch(&content, contentCallbackParam, sizeof(content)) || !GuestCopyIn_nid_no_patch(&thumbnail, thumbnailCallbackParam, sizeof(thumbnail))) return ErrorInvalidArgument;
+    if (content.content_length == 0 || content.func == nullptr || thumbnail.content_length == 0 || thumbnail.func == nullptr) return ErrorInvalidArgument;
+    const auto endExport = [&session](int error) {
+        session->second = SessionState::Ended;
+        return error;
+    };
+    if (!ExportContentType(localParam.content_type)) return endExport(ErrorInvalidContentType);
+    if (ApplicationCompiledSdkVersion() >= ThumbnailTypeSdkVersion) {
+        std::string type;
+        if (thumbnailType == nullptr || CopyGuestString_nid_no_patch(thumbnailType, ThumbnailType.size() + 2, type) != 0 || type != ThumbnailType) return endExport(ErrorThumbnailType);
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
