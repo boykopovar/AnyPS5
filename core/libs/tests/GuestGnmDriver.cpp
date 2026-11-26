@@ -75,6 +75,31 @@ void TestWriters() {
     check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
 
     words.fill(0xdeadbeefu);
+    auto unchanged = words;
+    check(sceGnmInsertSetMarker(words.data(), 6, nullptr) == -1 && sceGnmInsertSetMarker(nullptr, 6, "ab") == -1, "a set marker without a buffer or text was accepted");
+    check(sceGnmInsertSetMarker(words.data(), 5, "ab") == -1 && sceGnmInsertSetMarker(words.data(), 7, "ab") == -1 && words == unchanged, "a set marker was written into the wrong size");
+    check(sceGnmInsertSetMarker(words.data(), 6, "ab") == 0, "the set marker was not written");
+    check(words[0] == Header(0x10, 5) && words[1] == 0x68750003u && std::memcmp(&words[2], "ab\0\0", 4) == 0 && words[3] == 0 && words[4] == 0 && words[5] == 0
+        && words[6] == 0xdeadbeefu && WholePackets(words.data(), 6), "the set marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertPushColorMarker(words.data(), 9, nullptr, 0x11223344u) == -1 && sceGnmInsertPushColorMarker(nullptr, 9, "ab", 0x11223344u) == -1, "a color marker without a buffer or text was accepted");
+    check(sceGnmInsertPushColorMarker(words.data(), 6, "ab", 0x11223344u) == -1 && sceGnmInsertPushColorMarker(words.data(), 8, "ab", 0x11223344u) == -1 && words == unchanged,
+        "a color marker was written into the wrong size");
+    check(sceGnmInsertPushColorMarker(words.data(), 9, "ab", 0x11223344u) == 0, "the color marker was not written");
+    std::array<std::uint8_t, 28> colorText{};
+    std::memcpy(colorText.data(), "ab", 3);
+    const std::uint32_t color = 0x11223344u;
+    std::memcpy(colorText.data() + 11, &color, sizeof(color));
+    check(words[0] == Header(0x10, 8) && words[1] == 0x6875000eu && std::memcmp(&words[2], colorText.data(), colorText.size()) == 0 && words[9] == 0xdeadbeefu
+        && WholePackets(words.data(), 9), "the color marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertWaitFlipDone(words.data(), 6, 0, 0) == -1 && sceGnmInsertWaitFlipDone(words.data(), 8, 0, 0) == -1 && words == unchanged, "a flip wait was written into the wrong size");
+
+    words.fill(0xdeadbeefu);
     const auto untouched = words;
     check(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
     check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");
@@ -91,6 +116,7 @@ void TestWorkloads() {
     std::uint32_t stream = 0xdeadbeefu;
     check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a workload stream without a name did not return 3 untouched");
     check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, nullptr) == 3, "a workload stream without an output did not return 3");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
     check(sceGnmCreateWorkloadStream_nid_disambig1(0, nullptr) == 3, "a workload stream without a name and an output did not return 3");
     check(sceGnmCreateWorkloadStream_nid_disambig1(nameAddress, &stream) == 0 && stream == 1, "the created workload stream is not 1");
     stream = 0xdeadbeefu;
@@ -98,6 +124,8 @@ void TestWorkloads() {
 
     check(sceGnmBeginWorkload_nid_disambig1(0, nullptr) == 3, "a workload without an output did not return 3");
     check(sceGnmBeginWorkload_nid_disambig1(0x10, nullptr) == 3, "the workload output is not checked before the stream");
+    check(sceGnmBeginWorkload_nid_disambig1(1, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(0x10, reinterpret_cast<std::uint64_t*>(1)) == 3, "the invalid workload output was not checked before the stream");
     for (const std::uint32_t known : {0u, 1u, 0xfu}) {
         std::uint64_t workload = ~0ull;
         check(sceGnmBeginWorkload_nid_disambig1(known, &workload) == 0 && workload == 1, "stream " + std::to_string(known) + " did not begin workload 1");

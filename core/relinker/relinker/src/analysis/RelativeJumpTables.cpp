@@ -50,6 +50,8 @@ std::size_t TableEntries(std::span<const std::uint8_t> code, std::size_t table, 
     while (table + (entries + 1) * 4 <= end) {
         std::int32_t relative = 0;
         std::memcpy(&relative, code.data() + table + entries * 4, sizeof(relative));
+        if (relative < 0 && static_cast<std::uint64_t>(-static_cast<std::int64_t>(relative)) > table) break;
+        if (relative > 0 && static_cast<std::uint64_t>(relative) > std::numeric_limits<std::int64_t>::max() - table) break;
         const auto destination = static_cast<std::int64_t>(table) + relative;
         if (destination < 0 || destination >= static_cast<std::int64_t>(firstTable) || !instructionStarts[static_cast<std::size_t>(destination)]) break;
         ++entries;
@@ -299,10 +301,12 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
         if (info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.OpcodeOffset < info.Length && info.Length >= 4 && code[position + info.OpcodeOffset] == 0x8d) {
             std::int32_t displacement = 0;
             std::memcpy(&displacement, code.data() + next - 4, sizeof(displacement));
-            const auto target = static_cast<std::int64_t>(next) + displacement;
-            if (target > static_cast<std::int64_t>(next) && target < static_cast<std::int64_t>(code.size())) {
-                loads.push_back({position, static_cast<std::size_t>(target)});
-                loadsAt[static_cast<std::size_t>(target)].push_back(position);
+            if (displacement > 0 && static_cast<std::uint64_t>(displacement) <= code.size() - next) {
+                const auto target = next + static_cast<std::size_t>(displacement);
+                if (target < code.size()) {
+                    loads.push_back({position, target});
+                    loadsAt[target].push_back(position);
+                }
             }
         }
         if (info.FlowKind == Codegen::ControlFlowKind::IndirectJump) {

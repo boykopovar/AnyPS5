@@ -123,10 +123,7 @@ bool ps4Title() {
 bool rangeChecked() {
     static const bool ps4 = ps4Title();
     if (!ps4) return true;
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version >= RANGE_CHECKED_SDK_VERSION;
+    return ApplicationCompiledSdkVersion() >= RANGE_CHECKED_SDK_VERSION;
 }
 
 std::uint64_t currentTick(std::size_t clock = 0) {
@@ -854,10 +851,10 @@ int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, in
     const std::uint64_t shift = static_cast<std::uint64_t>(time_zone_minutes < 0 ? -time_zone_minutes : time_zone_minutes) * TICKS_PER_MINUTE;
     std::uint64_t localTick = 0;
     if (time_zone_minutes < 0) {
-        if (source.tick < shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick < shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick - shift;
     } else {
-        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick + shift;
     }
     const RtcDateTime time = fromTick(localTick);

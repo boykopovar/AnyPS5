@@ -15,7 +15,7 @@ import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
                                   TLS_NAME, CODE_ADDRESS, DATA_ADDRESS, CALL_ADDRESS, EXPORT_ADDRESS, build_module,
-                                  append_dynamic_tags, code_bytes, nid, symbol_name)
+                                  append_dynamic_tags, code_bytes, nid, symbol_name, unwind_image)
 
 
 def lifecycle_array_image(tag=25, values=(CODE_ADDRESS, EXPORT_ADDRESS), fixups=(), symbols=(), **options):
@@ -63,6 +63,68 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertTrue(result.stdout.isascii())
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
+
+    def test_tlsdesc_plt_marks_only_file_backed_code_and_preserves_export_names(self):
+        source = self.root / "tlsdesc.prx"
+        database = self.root / "names.csv"
+        database.write_text(f"{nid(EXPORT_NAME)} {EXPORT_NAME}\n", encoding="utf-8")
+        for address, flags, expected in ((CODE_ADDRESS, 5, ["elf_tlsdesc_plt 0x1000 f"]),
+                                         (EXPORT_ADDRESS, 5, []), (DATA_ADDRESS, 5, []),
+                                         (CODE_ADDRESS + len(code_bytes()), 5, []), (CODE_ADDRESS, 4, [])):
+            with self.subTest(address=address, flags=flags):
+                source.write_bytes(append_dynamic_tags(build_module(code_flags=flags), [(0x6ffffef6, address),
+                                                                                         (0x6ffffef7, DATA_ADDRESS)]))
+                result = self.cli(source, "--db", database)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual([row for row in rows if "tlsdesc" in row], expected)
+                if address == EXPORT_ADDRESS:
+                    self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
+
+    def test_unwind_index_labels_unnamed_code_ranges_offline(self):
+        source = self.root / "ranges.prx"
+        source.write_bytes(unwind_image([CODE_ADDRESS, CODE_ADDRESS, EXPORT_ADDRESS, DATA_ADDRESS, 0x9000], relocations=()))
+        result = self.cli(source, "--no-names")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        rows = result.stdout.splitlines()
+        self.assertEqual([row for row in rows if row.startswith("unwind_")], ["unwind_1000 0x1000 l"])
+        self.assertTrue(any(row.endswith("0x100b f") for row in rows))
+
+    def test_unwind_index_skips_unsupported_encoding(self):
+        image = unwind_image([CODE_ADDRESS], encoding=b"\x01\x1b\x03\xff", relocations=())
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertFalse(any(row.startswith("unwind_") for row in rows))
+
+    def test_truncated_unwind_index_fails_before_printing_a_map(self):
+        image = unwind_image([CODE_ADDRESS], relocations=())
+        struct.pack_into("<I", image, 0x2508, 2)
+        source = self.root / "truncated.prx"
+        source.write_bytes(image)
+        result = self.cli(source, "--no-names")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unwind search table exceeds", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_header_entry_point_without_symbols(self):
+        source = self.root / "stripped.elf"
+        for address, flags, file_size, expected in ((CODE_ADDRESS, 5, 12, ["elf_entry 0x1000 f"]),
+                                                   (0, 5, 12, []), (DATA_ADDRESS, 5, 12, []),
+                                                   (CODE_ADDRESS, 4, 12, []), (EXPORT_ADDRESS, 5, 11, [])):
+            with self.subTest(address=address, flags=flags, file_size=file_size):
+                image = bytearray(build_module(symbols=[], relocations=(), code_flags=flags))
+                struct.pack_into("<Q", image, 24, address)
+                struct.pack_into("<Q", image, 64 + 32, file_size)
+                source.write_bytes(image)
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_header_entry_point_keeps_named_functions(self):
+        image = bytearray(append_dynamic_tags(build_module(), [(12, CODE_ADDRESS)]))
+        for address in (CODE_ADDRESS, EXPORT_ADDRESS):
+            struct.pack_into("<Q", image, 24, address)
+            rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+            self.assertEqual([row for row in rows if row.endswith(" f")], ["elf_init 0x1000 f", "sceKernelUsleep 0x100b f"])
 
     def test_lifecycle_functions_without_exports_are_named_offline(self):
         source = self.root / "lifecycle.prx"
@@ -133,6 +195,15 @@ class GhidraSymbolsTests(unittest.TestCase):
                                               symbols=[("target", section, symbol_type, CODE_ADDRESS)])
                 rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
                 self.assertFalse(any(row.startswith("elf_init_array") for row in rows))
+
+    def test_absolute_lifecycle_target_needs_a_fixed_address_executable(self):
+        image = lifecycle_array_image(values=(0,), fixups=((0, (1 << 32) | 1, 11),),
+                                      symbols=[("fixed", 0xfff1, 0x01, CODE_ADDRESS)])
+        namer = annotate_module.Namer({})
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer), [])
+        struct.pack_into("<H", image, 16, 2)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer),
+                         ["elf_init_array_0 0x100b f"])
         for fixups in (((0, 8, CODE_ADDRESS), (0, 8, EXPORT_ADDRESS)), ((1, 8, EXPORT_ADDRESS),), ((-8, 36, 0),)):
             image = lifecycle_array_image(values=(CODE_ADDRESS,), fixups=fixups)
             self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
@@ -306,6 +377,15 @@ class GhidraSymbolsTests(unittest.TestCase):
             "sceKernelUsleep 0x100b f", "allocated 0x2700 l", "imp_sceKernelGetProcessTime 0x2800 l"])
         exports, _ = annotate_module.Module(build_module(symbols=symbols)).exports()
         self.assertEqual(exports[0x20], [symbol_name("unallocated")])
+
+    def test_absolute_exports_do_not_claim_image_addresses(self):
+        symbols = [("version", 0xfff1, 0x11, 0), ("at_zero", 1, 0x11, 0),
+                   ("constant", 0xfff1, 0x11, EXPORT_ADDRESS), (EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS),
+                   ("absolute_function", 0xfff1, 0x12, CODE_ADDRESS)]
+        image = append_dynamic_tags(build_module(symbols=symbols, relocations=()), [(12, CODE_ADDRESS)])
+        namer = annotate_module.Namer({nid(row[0]): row[0] for row in symbols})
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), namer),
+                         ["at_zero 0x0 l", "elf_init 0x1000 f", EXPORT_NAME + " 0x100b f"])
 
     def test_both_hash_tables_export_the_same_symbols(self):
         sysv = self.format_symbols()

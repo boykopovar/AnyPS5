@@ -189,8 +189,64 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.skipTest(str(error))
         self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
-            self.assert_archive_bytes((self.umbrella, self.api, target, self.libs / "Common.hpp"))
+            self.assert_archive_bytes((self.umbrella, self.api, link, self.libs / "Common.hpp"))
         self.assertTrue(link.is_symlink())
+
+    def test_symlink_aliases_preserve_relative_includes_in_both_archive_modes(self):
+        directory = self.umbrella.parent
+        target = directory / "Target.hpp"
+        target.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        (directory / "Nested.hpp").write_text('struct Nested {};\n', encoding="utf-8")
+        aliases = [directory / "Alias.hpp", directory / "Other.hpp"]
+        try:
+            for alias in aliases:
+                alias.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n#include "Other.hpp"\n', encoding="utf-8")
+        for epoch in (None, "0"):
+            with self.subTest(epoch=epoch), patch.dict(os.environ, {}, clear=False):
+                if epoch is None:
+                    os.environ.pop("SOURCE_DATE_EPOCH", None)
+                else:
+                    os.environ["SOURCE_DATE_EPOCH"] = epoch
+                self.assert_archive_bytes((self.umbrella, self.api, *aliases, directory / "Nested.hpp", self.libs / "Common.hpp"))
+                with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+                    for alias in aliases:
+                        info = archive.getinfo("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(stat.S_ISREG(info.external_attr >> 16))
+                with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+                    for alias in aliases:
+                        info = archive.getmember("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(info.isfile())
+
+
+    def test_same_target_search_paths_use_relative_alias(self):
+        alias = self.umbrella.with_name("Alias.hpp")
+        (self.libs / "Alias.hpp").write_text("struct Alias {};\n", encoding="utf-8")
+        try:
+            alias.symlink_to(self.libs / "Alias.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
+        self.assert_archive_bytes((self.umbrella, self.api, alias, self.libs / "Common.hpp"))
+
+    def test_parent_after_symlink_directory_cannot_change_source(self):
+        directory = self.umbrella.parent
+        target = self.libs / "other" / "nested"
+        target.mkdir(parents=True)
+        (target.parent / "Dependency.hpp").write_text("struct Other {};\n", encoding="utf-8")
+        (directory / "Dependency.hpp").write_text("struct Local {};\n", encoding="utf-8")
+        try:
+            (directory / "Link").symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(str(error))
+        spelled = directory / "Link" / ".." / "Dependency.hpp"
+        if os.path.realpath(spelled) == os.path.realpath(os.path.abspath(spelled)):
+            self.skipTest("host resolves the symlink-parent path without changing its target")
+        self.api.write_text('#include "Link/../Dependency.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "changes when normalized"):
+            package_headers.package(self.source, self.output, "v1")
 
     def test_source_date_epoch_rejects_empty_header_set_and_missing_license(self):
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
@@ -557,6 +613,7 @@ class FontconfigLicenseInstallTests(unittest.TestCase):
         compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
         if not cmake or not ninja or not compiler:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         root = Path(__file__).resolve().parents[2]
         library = root / "core/libs/prx/libfontconfig"
         with tempfile.TemporaryDirectory() as temporary:
@@ -625,6 +682,11 @@ class ReleasePackageTests(unittest.TestCase):
             file = self.source / "3rdparty/freetype" / source
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(content)
+        self.ffmpeg_notices = self.root / "FFmpeg override" / "share/ffmpeg"
+        self.ffmpeg_notices.mkdir(parents=True)
+        (self.ffmpeg_notices / "copyright").write_bytes(b"FFmpeg copyright\n")
+        (self.ffmpeg_notices / "SOURCE.txt").write_bytes(b"FFmpeg corresponding source\n")
+        (self.build / "release-ffmpeg-notices.txt").write_text(self.ffmpeg_notices.as_posix() + "\n", encoding="utf-8")
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -699,6 +761,33 @@ class ReleasePackageTests(unittest.TestCase):
             package_release.package("linux", self.build, self.output, "v1")
         self.assertEqual(list(self.output.iterdir()), [previous])
         self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def stage_ffmpeg_library(self):
+        (self.source / "core/libs/prx/libSceVdecCore").mkdir()
+        (self.library.parent / "libSceVdecCore.prx").write_bytes(b"patched video decoder")
+        (self.unpatched.parent / "libSceVdecCore.prx").write_bytes(b"unpatched video decoder")
+
+    def test_ffmpeg_notices_follow_the_configured_prebuilt(self):
+        self.stage_ffmpeg_library()
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.read("libs/licenses/ffmpeg/" + name), (self.ffmpeg_notices / name).read_bytes())
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                for name in ("copyright", "SOURCE.txt"):
+                    self.assertEqual(archive.extractfile("libs/licenses/ffmpeg/" + name).read(), (self.ffmpeg_notices / name).read_bytes())
+
+    def test_missing_ffmpeg_notice_preserves_existing_output(self):
+        self.stage_ffmpeg_library()
+        (self.ffmpeg_notices / "SOURCE.txt").unlink()
+        self.output.mkdir()
+        published = self.output / "prx-linux-v1.zip"
+        published.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, "Missing or empty release file: .*SOURCE.txt"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [published])
+        self.assertEqual(published.read_bytes(), b"previous release")
 
     def test_mimalloc_license_in_archives(self):
         package_release.package("linux", self.build, self.output, "v1")
@@ -908,7 +997,7 @@ class ReleasePackageTests(unittest.TestCase):
                     (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
                     self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
-    def test_webrtc_library_archives_include_vad_notices(self):
+    def test_webrtc_library_archives_include_vad_and_scaler_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
@@ -916,8 +1005,14 @@ class ReleasePackageTests(unittest.TestCase):
         source.mkdir(parents=True)
         (source / "LICENSE").write_bytes(b"VAD license\n")
         (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        source = self.source / "3rdparty/libyuv"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"Scaler license\n")
+        (source / "PATENTS").write_bytes(b"Scaler patent grant\n")
         package_release.package("linux", self.build, self.output, "v1")
-        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+        notices = {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n",
+                   "libyuv.txt": b"Scaler license\n", "libyuv-patents.txt": b"Scaler patent grant\n"}
+        for archive_name, content in notices.items():
             with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
@@ -2411,6 +2506,31 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertFalse(body.exists())
             self.assertFalse(full.exists())
             self.assertEqual(list(root.glob(".release-notes-*")), [])
+
+class NativeAuxiliaryRuntimesTests(unittest.TestCase):
+    def runtimes(self, platform, sanitizer=False, tracy=()):
+        with patch.object(package_release, "cmake_option", return_value=sanitizer), \
+                patch.object(package_release, "tracy_runtime", return_value=list(tracy)):
+            return package_release.native_auxiliary_runtimes(platform, Path("build"))
+
+    def test_each_platform_names_its_mimalloc_runtime(self):
+        base = Path("build") / "core/libs/libs"
+        self.assertEqual(self.runtimes("linux"), [base / "libmimalloc.so"])
+        self.assertEqual(self.runtimes("windows"), [base / "mimalloc.dll", base / "mimalloc-redirect.dll"])
+        self.assertEqual(self.runtimes("macos"), [base / "libmimalloc.dylib"])
+
+    def test_sanitizer_builds_on_linux_drop_mimalloc(self):
+        self.assertEqual(self.runtimes("linux", sanitizer=True), [])
+        self.assertEqual(len(self.runtimes("windows", sanitizer=True)), 2)
+
+    def test_tracy_runtime_is_appended(self):
+        extra = Path("build") / "tracy.so"
+        self.assertEqual(self.runtimes("linux", tracy=[extra])[-1], extra)
+        self.assertEqual(self.runtimes("linux", sanitizer=True, tracy=[extra]), [extra])
+
+    def test_unknown_platform_is_refused(self):
+        with self.assertRaises(KeyError):
+            self.runtimes("plan9")
 
 
 if __name__ == "__main__":

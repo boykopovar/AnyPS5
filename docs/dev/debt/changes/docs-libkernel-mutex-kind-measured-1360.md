@@ -1,0 +1,5 @@
+# libkernel
+
+## change [scePthreadMutexattrSetkind, scePthreadMutexattrGetkind]
+
+- [scePthreadMutexattrSetkind, scePthreadMutexattrGetkind](../../../core/libs/prx/libkernel/Pthread/src/Mutex.cpp) (libkernel) - disassembled from firmware 13.42's `libkernel.sprx` and `libkernel_sys.sprx` in an emulator ([#9632](https://github.com/boykopovar/AnyPS5/pull/9632#issuecomment-6363402814), [#10725](https://github.com/boykopovar/AnyPS5/pull/10725#issuecomment-6397556344)); a PS5 Pro payload process (firmware 13.60) confirmed the model: kind and type are one stored field, `scePthreadMutexattrGetkind` returns `0x80020000` plus the stored value - fresh `0x80020001`, `-1` reads back `0x8001FFFF`, `999` `0x800203E7` - while `scePthreadMutexattrGettype` passes a negative stored kind through unchanged and refuses kinds above 4 with `EINVAL`. `scePthreadMutexattrSetkind` stores any kind; for a kind outside 1 to 4 only the emulator refusal by `scePthreadMutexInit` and `pthread_mutex_init` was measured. A title process was not measured.

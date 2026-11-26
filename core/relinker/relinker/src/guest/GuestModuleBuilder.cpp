@@ -216,7 +216,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::AppendString(strings, name + GuestSymbolSuffix);
     };
     const auto bindingName = [&](const std::string& name, const std::size_t provider) {
-        if (windows || macos || !sharedExports.contains(name)) return name;
+        if (windows || !sharedExports.contains(name)) return name;
         return name + "#module" + std::to_string(provider);
     };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
@@ -264,9 +264,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
             if (candidate != found->second.end()) declaredProvider = &*candidate;
         }
-        if (needed != 1 && (macos || declaredProvider == nullptr)) rejectSharedImport(base, Io::Utf8Path(inputPath));
+        if (needed != 1 && declaredProvider == nullptr) rejectSharedImport(base, Io::Utf8Path(inputPath));
         if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
-            if (!macos && declaredProvider != nullptr) {
+            if (declaredProvider != nullptr) {
                 const auto type = dynamic.DynSymData[offset + 4] & 15;
                 const auto exportType = declaredProvider->Type;
                 if (type != 0 && type != exportType && (exportType != 0 || type == 6)) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
@@ -274,7 +274,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
             if (executableReferences[offset / 24]) {
-                if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
+                if (declaredProvider != nullptr) executableProviders.insert(declared->second);
                 else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
             }
         }
@@ -323,7 +323,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
-                if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
+                if (!windows && declared != guestNames.end() && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
@@ -377,7 +377,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                     rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, bound == importBindings[module].end() ? symbol.Name : bound->second);
                 }
                 const auto shared = sharedExports.find(symbol.Name);
-                if (!macos && exported && shared != sharedExports.end() && shared->second.contains(module))
+                if (exported && shared != sharedExports.end() && shared->second.contains(module))
                     image.BindingAliases.emplace_back(index, symbol.Name + "#module" + std::to_string(module) + GuestSymbolSuffix);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
@@ -473,7 +473,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (!windows) for (std::size_t begin = 0; begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
-        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest run path must be absolute or begin with $ORIGIN");
         begin = end + 1;
     }
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
@@ -484,7 +484,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); }, macos)->Convert(std::move(image.Bytes), image.Headers);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
@@ -599,14 +599,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
+std::vector<BackupCopy> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
+    struct Identity {
+        std::string Soname;
+        std::vector<std::string> ModuleNames;
+    };
+    std::map<std::size_t, Identity> identities;
+    const auto identity = [&](std::size_t index) -> const Identity& {
+        const auto [found, inserted] = identities.try_emplace(index);
+        if (inserted) {
+            auto image = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots);
+            found->second = {std::move(image.Soname), std::move(image.ModuleNames)};
+        }
         return found->second;
     };
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    const auto match = [&](std::size_t copy, std::size_t original) -> const char* {
+        const auto& left = identity(copy);
+        const auto& right = identity(original);
+        if (!left.Soname.empty() || !right.Soname.empty()) return left.Soname == right.Soname ? "same SONAME" : nullptr;
+        return !left.ModuleNames.empty() && left.ModuleNames == right.ModuleNames ? "same module names" : nullptr;
+    };
+    std::vector<BackupCopy> skipped;
     std::vector<bool> copies(modules.size());
     for (std::size_t copy = 0; copy < modules.size(); ++copy) {
         const auto& path = modules[copy].Path;
@@ -615,9 +628,10 @@ std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBacku
             const auto& kept = modules[original].Path;
             const auto prefix = Io::Utf8Path(kept.filename());
             if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            const auto* matched = match(copy, original);
+            if (matched == nullptr) continue;
             copies[copy] = true;
-            skipped.emplace_back(path, kept);
+            skipped.push_back({path, kept, matched});
             break;
         }
     }

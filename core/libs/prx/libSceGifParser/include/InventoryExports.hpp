@@ -6,6 +6,8 @@ extern "C" {
 
 int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser17gifParserFinalizeEv();
 int APS5_VABI libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(const void* config);
+int APS5_VABI libSceGifParserUnknown_T8p1TeFElWo_nid_no_patch(const void* path, void* request, void* output);
+int APS5_VABI libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(const void* path, void* meta);
 int APS5_VABI libSceGifParserUnknown_qiEL_minus_fPgaAA_nid_no_patch();
 int APS5_VABI libSceGifParserUnknown__minus_ZzjSDCInl4_nid_no_patch();
 

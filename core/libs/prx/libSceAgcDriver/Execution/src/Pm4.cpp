@@ -14,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -110,8 +111,8 @@ std::uint64_t ReleaseMemValue(std::span<const std::uint32_t> packet) {
     return address(packet[5], packet[6]);
 }
 
-std::uint32_t registerOffset(std::uint32_t value) {
-    require(value != 0xffffffffu, "indirect register sentinel semantics are not implemented");
+std::optional<std::uint32_t> registerOffset(std::uint32_t value) {
+    if (value == 0xffffffffu) return std::nullopt;
     const auto offset = value & ~0x70000000u;
     if (offset > 0xffffu) {
         char what[80];
@@ -492,6 +493,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     size(2);
                     require(eventIndex == 0, "invalid stream-out statistics event index");
                     break;
+                case 0x38:
+                    graphics();
+                    size(4);
+                    require(eventIndex == 1, "invalid pixel pipe statistics control event index");
+                    require((packet[2] & ~0x07fffff8u) == 0 && packet[3] == 0, "unsupported PIXEL_PIPE_STAT_CONTROL reserved bits");
+                    require(((packet[2] >> 3u) & 0x3fu) == 0, "PIXEL_PIPE_STAT_CONTROL counters other than occlusion count 0 are not implemented");
+                    require(((packet[2] >> 9u) & 3u) == 2, "PIXEL_PIPE_STAT_CONTROL dump strides other than 128 bits are not implemented");
+                    break;
                 case 0x39:
                     graphics();
                     size(4);
@@ -529,7 +538,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet.size() >= 3, "register packet has no values");
             if (opcode == 0x7a) require((packet[1] & 0xf0000000u) == 0 || (packet.size() == 3 && (packet[1] == 0x20000243u || packet[1] == 0x10000242u)), "indexed register bank selection is not implemented");
             const auto offset = registerOffset(packet[1]);
-            require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
+            if (offset.has_value()) require(packet.size() - 2 <= 0x10000u - *offset, "register range overflow");
             break;
         }
         case 0x59:
@@ -668,19 +677,16 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
     const auto awaitedBytes = WaitAwaitedBytes(packet);
     const auto source = address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]);
-    std::uint64_t value = 0;
     // Named for the [hooksync] attribution (the read goes through the flush hook).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
-    GuestMemory::Read(source, std::as_writable_bytes(std::span(&value, 1)).first(awaitedBytes), awaitedBytes);
-    return waitCompares(packet, wide, value);
+    return waitCompares(packet, wide, GuestMemory::ReadLabel(source, awaitedBytes));
 }
 
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
     const auto awaitedBytes = WaitAwaitedBytes(packet);
     const auto source = address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]);
-    const std::uint64_t value = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
-    return waitCompares(packet, wide, value);
+    return waitCompares(packet, wide, LoadLabel(source, awaitedBytes));
 }
 
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value) {
@@ -704,12 +710,14 @@ bool PredicationPasses(const QueueState& queue) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
     if (predication.operation == 1) {
         constexpr std::uint64_t ready = 1ull << 63u;
-        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
-        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        require(queue.sampleDumpBlocks != 0, "Z-pass predication with no counter block enabled by PIXEL_PIPE_STAT_CONTROL is not implemented");
         std::uint64_t samples = 0;
         for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
-            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
-            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if (((queue.sampleDumpBlocks >> db) & 1u) == 0) continue;
+            std::array<std::uint64_t, 2> pair{};
+            GuestMemory::Read(predication.address + db * SampleDumpStride, std::as_writable_bytes(std::span(pair)), 8);
+            const auto begin = pair[0];
+            const auto end = pair[1];
             if ((begin & ready) == 0 || (end & ready) == 0) {
                 require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
                 return true;
@@ -1104,15 +1112,19 @@ void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<c
     require(pairs.size() == static_cast<std::size_t>(packet[4]) * 2, "indirect register list does not match its packet");
     const auto usable = [&](std::uint32_t value) { return !skipInvalid || IndirectRegistersValid(std::span(&value, 1)); };
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
-        if (usable(pairs[i])) registerOffset(pairs[i]);
+        if (usable(pairs[i])) (void)registerOffset(pairs[i]);
     }
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
-        if (usable(pairs[i])) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
+        if (!usable(pairs[i])) continue;
+        const auto offset = registerOffset(pairs[i]);
+        if (offset.has_value()) writeRegister(queue, opcode, *offset, pairs[i + 1]);
     }
     if (queue.savedContext.has_value() && TraceContextState()) {
         std::fprintf(stderr, "[context]   indirect 0x%x:", opcode);
         for (std::size_t i = 0; i < pairs.size(); i += 2) {
-            if (usable(pairs[i])) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
+            if (usable(pairs[i])) {
+                if (const auto offset = registerOffset(pairs[i])) std::fprintf(stderr, " %x", *offset);
+            }
         }
         std::fprintf(stderr, "\n");
     }
@@ -1199,6 +1211,10 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x2a: queue.indexType = packet[1]; return;
         case 0x91: executeIndexAttributes(readIndexAttributes(packet), queue); return;
         case 0x2f: queue.instanceCount = packet[1]; return;
+        case 0x46:
+            if (!SampleControl(packet)) throw std::runtime_error("packet requires driver execution");
+            queue.sampleDumpBlocks = SampleControlBlocks(packet);
+            return;
         case 0x63: case 0x64: case 0x9f:
             ExecuteIndirectRegisters(packet, ReadIndirectRegisters(packet), queue);
             return;
@@ -1278,7 +1294,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) return;
             const auto offset = registerOffset(packet[1]);
-            for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, offset + static_cast<std::uint32_t>(i - 2), packet[i]);
+            if (offset.has_value()) for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, *offset + static_cast<std::uint32_t>(i - 2), packet[i]);
             return;
         }
         case 0x81:
