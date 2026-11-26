@@ -99,6 +99,22 @@ void CheckEmptyDeviceQueries() {
     errno = 71;
     Require(sceMbusGetDeviceInfoByConditionForDeviceService(0, serviceInfos, 1, reinterpret_cast<std::int32_t*>(0x10), &second, condition) == invalidArgument, "unwritable service count accepted");
     Require(errno == 71, "service condition query altered errno");
+
+    constexpr auto unavailable = static_cast<std::int32_t>(0x809B00FFu);
+    records.fill(0xa5);
+    Require(sceMbusGetDeviceInfo_(0x0020123456789ABCull, infos, sizeof(condition)) == unavailable, "device info lookup reached a service");
+    Require(records[0] == 0xa5 && records[255] == 0xa5, "device info lookup wrote a record");
+    Require(sceMbusGetDeviceInfo_(1, nullptr, sizeof(condition)) == invalidArgument, "null device info accepted");
+    Require(sceMbusGetDeviceInfo_(1, infos, 112) == invalidArgument, "short device info accepted");
+    Require(sceMbusGetDeviceInfoByBusId_(1, infos, sizeof(condition)) == unavailable, "bus device info lookup reached a service");
+    Require(sceMbusGetDeviceInfoByBusId_(1, nullptr, sizeof(condition)) == invalidArgument, "null bus device info accepted");
+    Require(sceMbusGetDeviceInfoByBusId_(1, infos, 0) == invalidArgument, "empty bus device info accepted");
+    alignas(16) std::array<std::uint8_t, 16> descriptionBytes{};
+    descriptionBytes.fill(0xa5);
+    auto* description = reinterpret_cast<MbusDeviceDescription*>(descriptionBytes.data());
+    Require(sceMbusGetDeviceDescription(1, 0, description) == unavailable, "device description lookup reached a service");
+    Require(descriptionBytes[0] == 0xa5, "device description lookup wrote a record");
+    Require(sceMbusGetDeviceDescription(1, 0, nullptr) == invalidArgument, "null device description accepted");
 }
 
 void CheckInit() {

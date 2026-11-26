@@ -391,14 +391,25 @@ int APS5_VABI sceMbusGetControlStatus(std::uint64_t control, MbusControlStatus* 
     return 0;
 }
 
+static int UnavailableDeviceRecord(const void* record, std::uint32_t size, std::uint32_t expected) {
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    constexpr auto unavailable = static_cast<std::int32_t>(0x809B00FFu);
+    if (record == nullptr || size != expected) return invalidArgument;
+    return unavailable;
+}
+
 int APS5_VABI sceMbusGetDeviceDescription(std::uint64_t deviceId, std::uint32_t selector, MbusDeviceDescription* description) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    (void)selector;
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    constexpr auto unavailable = static_cast<std::int32_t>(0x809B00FFu);
+    if (description == nullptr) return invalidArgument;
+    return unavailable;
 }
 
 int APS5_VABI sceMbusGetDeviceInfoByBusId_(std::int32_t busId, MbusDeviceInfo* info, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)busId;
+    return UnavailableDeviceRecord(info, size, 256u);
 }
 
 static bool WriteEmptyQueryCount(std::int32_t* out) {
@@ -433,8 +444,8 @@ int APS5_VABI sceMbusGetDeviceInfoByCondition_(const MbusDeviceCondition* condit
 }
 
 int APS5_VABI sceMbusGetDeviceInfo_(std::uint64_t deviceId, MbusDeviceInfo* info, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    return UnavailableDeviceRecord(info, size, 256u);
 }
 
 int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType(std::uint32_t busType, std::int32_t first, std::uint64_t deviceId, std::uint32_t second, std::uint32_t third) {
