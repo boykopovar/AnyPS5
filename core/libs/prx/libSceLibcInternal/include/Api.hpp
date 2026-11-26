@@ -89,6 +89,7 @@ std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32
 std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
 std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
 std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
+char* APS5_VABI inet_neta_nid_postfix(std::uint32_t source, char* destination, std::size_t size);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
 int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
