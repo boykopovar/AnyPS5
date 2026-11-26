@@ -14537,16 +14537,17 @@ void discardedSampleTests(Recorder& recorder, const Context& context, const Cove
     std::fill(words, words + 64, 0);
     Require(recorder.DumpSamples(target, address), "a dump after a discarded fold was not made on the GPU");
     recorder.Sync();
-    const auto kept = (words[0] & ~SampleReady) - base;
-    Require((words[0] & SampleReady) != 0 && kept > 0, "a discarded batch that folded the segments of a submitted one lost their samples");
-    Require(recorder.SamplesTotal() - base == kept, "the host total and the dump disagree after a discarded fold");
+    const auto dumped = words[0] & ~SampleReady;
+    Require((words[0] & SampleReady) != 0 && dumped > base, "a discarded batch that folded the segments of a submitted one lost their samples");
+    const auto kept = dumped - base;
+    Require(recorder.SamplesTotal() == dumped, "the host total and the dump disagree after a discarded fold");
     if (context.occlusionQueryPrecise) Require(kept == 3 * CoverPass::Samples, "a discarded batch's segments were counted beside the submitted ones it folded");
     std::fill(words, words + 64, 0);
     passes(1);
     Require(recorder.DumpSamples(target, address), "a dump after a discarded batch was not made on the GPU");
     recorder.Sync();
     const auto total = recorder.SamplesTotal();
-    Require((words[0] & ~SampleReady) == total && total > base + kept, "a dump after a discarded batch counted the wrong draws");
+    Require((words[0] & SampleReady) != 0 && (words[0] & ~SampleReady) == total && total > base + kept, "a dump after a discarded batch counted the wrong draws");
     if (context.occlusionQueryPrecise) Require(total == base + 4 * CoverPass::Samples, "a dump after a discarded batch counted the wrong samples");
 }
 
