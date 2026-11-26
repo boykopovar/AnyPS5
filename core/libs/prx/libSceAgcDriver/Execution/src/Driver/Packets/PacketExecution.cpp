@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Packets/StatePacketCount.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -110,6 +111,15 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
     }
 }
 
+bool statePacketOpcode(std::uint32_t opcode) {
+    switch (opcode) {
+        case 0x13: case 0x26: case 0x2a: case 0x2f: case 0x69: case 0x76: case 0x79: return true;
+        default: return false;
+    }
+}
+
+std::atomic<std::uint64_t> statePacketTotal{0};
+
 bool sealsWriteOnly(std::span<const std::uint32_t> packet, std::uint32_t opcode) {
     if (opcode == 0x58) return true;
     if (opcode != 0x46 || packet.size() < 2) return false;
@@ -124,6 +134,14 @@ bool& drawnSinceSeal() {
     return drawn;
 }
 
+}
+
+void AddStatePackets(std::uint64_t count) {
+    statePacketTotal.fetch_add(count, std::memory_order_relaxed);
+}
+
+std::uint64_t StatePackets() {
+    return statePacketTotal.load(std::memory_order_relaxed);
 }
 
 void Driver::deliverGuestEopInterrupt(std::uint32_t queue, std::uint32_t context) {
@@ -261,6 +279,16 @@ void Driver::execute(Submission& submission) {
     PacketHistory recent{submission.commands};
 
     static const bool profilePackets = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const bool stateFastPath = !APS5_ENABLE_TIMING_LOG && std::getenv("APS5_NO_STATE_FAST_PATH") == nullptr && std::getenv("APS5_DRAIN_ALL") == nullptr && !traceGpu && dumpQueue < 0 && !packetEpoch() && !CaptureTrace::Enabled();
+    struct StateCount {
+        std::uint64_t packets = 0;
+        void Flush() {
+            if (packets != 0) AddStatePackets(std::exchange(packets, 0));
+        }
+        ~StateCount() {
+            Flush();
+        }
+    } stateCount;
 
     thread_local PacketProfile* packetProfileSlot = nullptr;
     auto& packetProfile = ShaderRecompiler::ThreadOwned(packetProfileSlot);
@@ -308,6 +336,13 @@ void Driver::execute(Submission& submission) {
         if (executingPacket != nullptr) executingPacket->store((static_cast<std::uint64_t>(cursor + 1) << 8u) | opcode, std::memory_order_relaxed);
         auto nextCursor = cursor + count;
         const bool predicated = Pm4::Predicated(header) && queue.predication.operation != 0;
+        if (stateFastPath && !predicated && statePacketOpcode(opcode) && (submission.queue == 0 || opcode == 0x76)) {
+            recent.Record(cursor);
+            Pm4::Execute(packet, queue);
+            ++stateCount.packets;
+            cursor = nextCursor;
+            continue;
+        }
         if (submission.queue == 0 && DrawFinisher::Busy() && !keepsDrawFinisher(header, opcode)) {
             const bool queuesLabel = pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && labelPacketQueues(packet, opcode);
             const bool heldLabelWait = pipelined && !predicated && orderedWaits && (opcode == 0x3c || opcode == 0x93) && header != RenderingWaitPacketHeader && waitTakesPendingLabel(packet);
@@ -633,6 +668,7 @@ void Driver::execute(Submission& submission) {
         cursor = nextCursor;
     }
 
+    stateCount.Flush();
     if (submission.queue == 0) DrawFinisher::Get().Drain();
     PerformanceContext endContext(submission.queue == 0 ? frameTiming() : FrameTiming::Async());
     PerformanceTimer endTiming("Driver.EndSubmission");
