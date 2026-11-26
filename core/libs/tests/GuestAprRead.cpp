@@ -441,6 +441,32 @@ std::uint64_t LoadValue(std::uint64_t* address) {
     return std::atomic_ref<std::uint64_t>(*address).load(std::memory_order_acquire);
 }
 
+void TestCompletionStore() {
+    alignas(std::atomic_ref<std::uint64_t>::required_alignment) std::uint64_t done = 0;
+    std::atomic_ref<std::uint64_t> completion(done);
+    std::atomic<unsigned> started = 0;
+    std::atomic<unsigned> consumed = 0;
+    std::vector<std::uint8_t> commands;
+    Append(commands, WriteValue(&done, 1));
+    const auto bytes = static_cast<std::uint32_t>(commands.size());
+    const Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, bytes, 1, bytes, commands.data()};
+    std::jthread consumer([&](std::stop_token stop) {
+        for (unsigned round = 1; !stop.stop_requested(); ++round) {
+            while (started.load(std::memory_order_acquire) != round && !stop.stop_requested()) {}
+            while (completion.load(std::memory_order_acquire) == 0 && !stop.stop_requested()) {}
+            if (stop.stop_requested()) return;
+            completion.store(0, std::memory_order_release);
+            consumed.store(round, std::memory_order_release);
+        }
+    });
+    for (unsigned round = 1; round <= 10000; ++round) {
+        started.store(round, std::memory_order_release);
+        Require(sceKernelAprSubmitCommandBuffer(&buffer, 0) == 0, "cannot submit the APR completion store");
+        while (consumed.load(std::memory_order_acquire) != round) std::this_thread::yield();
+        Require(completion.load(std::memory_order_acquire) == 0, "APR rewrote a completion after the consumer cleared it");
+    }
+}
+
 void TestPriorities() {
     alignas(8) static std::uint64_t release = 0;
     alignas(8) static std::uint64_t waiterDone = 0;
@@ -595,6 +621,8 @@ int main(int argc, char** argv) {
             TestPriorities();
         } else if (mode == "order") {
             TestSubmitOrder();
+        } else if (mode == "completion_store") {
+            TestCompletionStore();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;

@@ -387,9 +387,15 @@ std::string _addressText(std::uint64_t address) {
 }
 
 void _storeGuestAddress(std::uint64_t address, std::uint64_t value) {
-    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), &value, sizeof(value)))
-        throw std::runtime_error("APR: the write address " + _addressText(address) + " is not writable guest memory");
-    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(value, std::memory_order_release);
+    auto* target = reinterpret_cast<std::uint64_t*>(address);
+    if (target != nullptr && address % std::atomic_ref<std::uint64_t>::required_alignment == 0) {
+        const GuestArena::HostWrite writeAccess(target, sizeof(value));
+        if (writeAccess.Open() && GuestWritable_nid_no_patch(target, sizeof(value))) {
+            std::atomic_ref<std::uint64_t>(*target).store(value, std::memory_order_release);
+            return;
+        }
+    }
+    throw std::runtime_error("APR: the write address " + _addressText(address) + " is not writable guest memory");
 }
 
 std::uint64_t _loadGuestAddress(std::uint64_t address) {
