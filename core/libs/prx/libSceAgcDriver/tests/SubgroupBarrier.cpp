@@ -148,6 +148,8 @@ struct MeshBarrierOps {
     std::uint32_t atomicIAdd = 0;
     std::uint32_t atomicStore = 0;
     std::uint32_t loopMerge = 0;
+    std::uint32_t subgroupBallot = 0;
+    std::uint32_t selectionMerge = 0;
     bool softwareSafe = false;
 };
 
@@ -194,6 +196,8 @@ MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::ui
         case spv::OpAtomicIAdd: ++ops.atomicIAdd; break;
         case spv::OpAtomicStore: ++ops.atomicStore; break;
         case spv::OpLoopMerge: ++ops.loopMerge; break;
+        case spv::OpGroupNonUniformBallot: ++ops.subgroupBallot; break;
+        case spv::OpSelectionMerge: ++ops.selectionMerge; break;
         default: break;
         }
     }
@@ -208,6 +212,8 @@ void verifyMeshSoftwareBarrierEmission() {
     const auto software = recompileMeshBarrier(BranchedLdsStep, 0x26267000u, true);
     require(software.control == 2u, "the software mesh barrier path did not retain only the two unconditional wrapper control barriers");
     require(software.atomicLoad >= 2u && software.atomicIAdd >= 2u && software.atomicStore >= 1u && software.loopMerge >= 1u, "the software mesh barrier path did not emit the cyclic atomic rendezvous");
+    require(software.subgroupBallot >= normal.subgroupBallot + 2u, "the software mesh barrier path did not make its release and wait decisions uniform across each guest wave");
+    require(software.selectionMerge >= normal.selectionMerge + 2u, "the software mesh barrier path did not reconverge the single-lane release before leaving its wave");
     const auto earlyReturn = recompileMeshBarrier(EarlyReturnBarrier, 0x26267100u, true);
     require(!earlyReturn.softwareSafe, "a mesh barrier bypassed by an early return was marked safe for software rendezvous");
     require(earlyReturn.atomicLoad == 0u && earlyReturn.atomicIAdd == 0u && earlyReturn.atomicStore == 0u, "a mesh barrier bypassed by an early return used a software rendezvous that can wait forever");
