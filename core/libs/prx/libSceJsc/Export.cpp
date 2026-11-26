@@ -1119,10 +1119,6 @@ int APS5_VABI _ZN3JSC4Yarr25unicodeMatchPropertyValueEN3WTF6StringES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC4Yarr7replaceERN3WTF6StringERKNS0_17RegularExpressionERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC4Yarr9interpretEPNS0_15BytecodePatternERKN3WTF6StringEjPj() {
     NotImplemented_nid_no_patch(__func__);
 }
