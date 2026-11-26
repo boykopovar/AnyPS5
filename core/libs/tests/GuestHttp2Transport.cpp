@@ -43,6 +43,7 @@
 #include <future>
 #include <map>
 #include <mutex>
+#include <new>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -51,6 +52,19 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+thread_local bool g_http2RejectAllocations = false;
+std::atomic<unsigned> g_http2RejectedAllocations{0};
+
+void* operator new(std::size_t size) {
+    if (g_http2RejectAllocations) {
+        g_http2RejectAllocations = false;
+        g_http2RejectedAllocations.fetch_add(1, std::memory_order_relaxed);
+        throw std::bad_alloc();
+    }
+    if (void* allocation = std::malloc(size == 0 ? 1 : size)) return allocation;
+    throw std::bad_alloc();
+}
 
 namespace {
 
@@ -686,9 +700,11 @@ struct AsyncPhases {
     int request;
     std::mutex mutex;
     std::condition_variable changed;
-    std::array<bool, 7> blocked{};
-    std::array<unsigned, 7> seen{};
+    std::array<bool, 11> blocked{};
+    std::array<unsigned, 11> seen{};
     bool finished = false;
+    bool rejectCompletionAllocations = false;
+    bool rejectAbortAllocations = false;
 
     explicit AsyncPhases(int id) : request(id) {
         GuestSceHttp2Test::SetAsyncPhaseHookForTests_nid_no_patch(Observe, this);
@@ -697,6 +713,14 @@ struct AsyncPhases {
     static void Observe(int request, AsyncPhase phase, void* data) {
         auto& self = *static_cast<AsyncPhases*>(data);
         if (request != self.request) return;
+        if (self.rejectCompletionAllocations) {
+            if (phase == AsyncPhase::Completed) g_http2RejectAllocations = true;
+            if (phase == AsyncPhase::Published) g_http2RejectAllocations = false;
+        }
+        if (self.rejectAbortAllocations) {
+            if (phase == AsyncPhase::Aborting) g_http2RejectAllocations = true;
+            if (phase == AsyncPhase::Aborted) g_http2RejectAllocations = false;
+        }
         const auto index = static_cast<std::size_t>(phase);
         std::unique_lock lock(self.mutex);
         ++self.seen[index];
@@ -845,6 +869,118 @@ void AsyncWorkerStartFailure(int ssl, bool read) {
     Require(completion.req_id == client.request && completion.event_type == (read ? 1 : 0) && completion.result == (read ? 13 : 0), "successful retry result after worker failure");
     if (read) Require(std::string(buffer.data(), 13) == "response body", "successful read after worker failure");
     else server.Join();
+}
+
+void AsyncCompletionStorage(int ssl, bool offline) {
+    try { throw std::bad_alloc(); } catch (const std::bad_alloc&) {}
+    std::fprintf(stderr, "HTTP2 completion storage allocation rejection offline %d\n", offline ? 1 : 0);
+    std::unique_ptr<Server> server;
+    if (!offline) server = std::make_unique<Server>(Mode::Normal);
+    Client client(ssl);
+    client.Create(offline ? "https://127.0.0.1:1/" : server->Url());
+    if (server) {
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before completion storage probe");
+        server->Join();
+    }
+    const char* previous = std::getenv("APS5_NET_DISCONNECTED");
+    const bool hadPrevious = previous != nullptr;
+    const std::string saved = previous ? previous : "";
+    if (offline) {
+#ifdef _WIN32
+        Require(::_putenv_s("APS5_NET_DISCONNECTED", "1") == 0, "enable offline completion storage probe");
+#else
+        Require(::setenv("APS5_NET_DISCONNECTED", "1", 1) == 0, "enable offline completion storage probe");
+#endif
+    }
+    AsyncPhases phases(client.request);
+    phases.rejectCompletionAllocations = true;
+    g_http2RejectedAllocations.store(0);
+    std::array<std::array<char, 64>, 32> buffers{};
+    bool allocationFailed = false;
+    try {
+        unsigned published = 0;
+        for (auto& buffer : buffers) {
+            const int result = offline ? sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr)
+                : sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr);
+            Require(result == 0, "accept completion storage probe operation");
+            phases.Wait(AsyncPhase::Published, ++published);
+        }
+    } catch (const std::bad_alloc&) {
+        g_http2RejectAllocations = false;
+        allocationFailed = true;
+    }
+    if (offline) {
+#ifdef _WIN32
+        Require(::_putenv_s("APS5_NET_DISCONNECTED", hadPrevious ? saved.c_str() : "") == 0, "restore offline state after storage probe");
+#else
+        Require((hadPrevious ? ::setenv("APS5_NET_DISCONNECTED", saved.c_str(), 1) : ::unsetenv("APS5_NET_DISCONNECTED")) == 0, "restore offline state after storage probe");
+#endif
+    }
+    Require(!allocationFailed, "completion publication does not allocate accepted storage");
+    phases.Wait(AsyncPhase::Published, 32);
+    Require(g_http2RejectedAllocations.load() == 0, "completion publication attempted no allocations");
+    int bytes = 0;
+    for (unsigned index = 0; index != buffers.size(); ++index) {
+        Http2AsyncResult completion{};
+        Require(sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr) == 0, "consume reserved completion");
+        Require(completion.req_id == client.request && completion.event_type == (offline ? 0 : 1), "reserved completion identity");
+        if (offline) Require(completion.result == static_cast<int>(0x80431063), "reserved offline completion result");
+        else {
+            Require(completion.result >= 0 && completion.result <= 13, "reserved read completion result");
+            bytes += completion.result;
+        }
+    }
+    if (!offline) Require(bytes == 13, "reserved read completions retain every byte");
+    Http2AsyncResult empty{};
+    std::uint32_t timeout = 0;
+    Require(sceHttp2WaitAsync(client.request, &empty, &timeout, nullptr) == static_cast<int>(0x817b1065), "all reserved completions consumed once");
+}
+
+void AsyncAbortStorage(int ssl) {
+    try { throw std::bad_alloc(); } catch (const std::bad_alloc&) {}
+    std::fprintf(stderr, "HTTP2 abort storage allocation rejection\n");
+    Server server(Mode::StallBody);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "prepare response before abort storage probe");
+    server.WaitStage(2);
+    AsyncPhases phases(client.request);
+    phases.rejectAbortAllocations = true;
+    phases.Block(AsyncPhase::WorkerEntered);
+    g_http2RejectedAllocations.store(0);
+    std::array<std::array<char, 64>, 32> buffers{};
+    for (auto& buffer : buffers) Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr) == 0, "accept abort storage probe read");
+    phases.Wait(AsyncPhase::WorkerEntered, 32);
+    std::vector<std::future<std::pair<int, Http2AsyncResult>>> waiters;
+    waiters.reserve(buffers.size());
+    for (unsigned index = 0; index != buffers.size(); ++index) {
+        waiters.push_back(std::async(std::launch::async, [&] {
+            Http2AsyncResult completion{};
+            const int result = sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr);
+            return std::make_pair(result, completion);
+        }));
+    }
+    phases.Wait(AsyncPhase::WaitPending, 32);
+    bool allocationFailed = false;
+    int deleted = -1;
+    try {
+        deleted = sceHttp2DeleteRequest(client.request);
+    } catch (const std::bad_alloc&) {
+        g_http2RejectAllocations = false;
+        allocationFailed = true;
+    }
+    Require(!allocationFailed, "abort publication does not allocate accepted storage");
+    Require(deleted == 0 && g_http2RejectedAllocations.load() == 0, "abort publication attempted no allocations");
+    phases.Release(AsyncPhase::WorkerEntered);
+    server.Release();
+    for (auto& waiter : waiters) {
+        Require(waiter.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "reserved abort wakes its pending waiter");
+        const auto [result, completion] = waiter.get();
+        Require(result == 0 && completion.req_id == client.request && completion.event_type == 1 && completion.result == static_cast<int>(0x817b1080), "every accepted read receives a reserved abort");
+    }
+    phases.Wait(AsyncPhase::Completed, 32);
+    server.Join();
+    Require(buffers == std::array<std::array<char, 64>, 32>{}, "aborted storage probe reads leave output untouched");
 }
 
 void CookieBox(int ssl) {
@@ -3050,6 +3186,11 @@ int main(int argc, char** argv) {
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
     if (argc == 2 && std::string_view(argv[1]) == "--async-deletion-publication-race") {
         AsyncDeletionPublicationRace(ssl);
+    } else if (argc == 3 && std::string_view(argv[1]) == "--async-completion-storage") {
+        Require(std::string_view(argv[2]) == "read" || std::string_view(argv[2]) == "offline", "completion storage probe mode");
+        AsyncCompletionStorage(ssl, std::string_view(argv[2]) == "offline");
+    } else if (argc == 2 && std::string_view(argv[1]) == "--async-abort-storage") {
+        AsyncAbortStorage(ssl);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-worker-start-failure") {
         Require(std::string_view(argv[2]) == "read" || std::string_view(argv[2]) == "send", "worker start failure mode");
         AsyncWorkerStartFailure(ssl, std::string_view(argv[2]) == "read");

@@ -13,7 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <deque>
+#include <list>
 #include <exception>
 #include <mutex>
 #include <memory>
@@ -45,13 +45,27 @@ struct Http2AsyncCompletion {
     std::exception_ptr failure;
 };
 
+struct Http2AsyncOperation {
+    Http2AsyncCompletion completion;
+    std::list<std::shared_ptr<Http2AsyncOperation>>::iterator position;
+};
+
+static std::list<std::shared_ptr<Http2AsyncOperation>> PrepareAsync(int request, int kind) {
+    std::list<std::shared_ptr<Http2AsyncOperation>> registration;
+    auto operation = std::make_shared<Http2AsyncOperation>();
+    operation->completion.result.req_id = request;
+    operation->completion.result.event_type = kind;
+    registration.push_back(std::move(operation));
+    registration.front()->position = registration.begin();
+    return registration;
+}
+
 struct Http2AsyncState {
     std::mutex mutex;
     std::condition_variable changed;
-    std::deque<Http2AsyncCompletion> pending;
-    std::size_t inFlight[2] = {0, 0};
-    std::size_t aborted[2] = {0, 0};
-    std::size_t InFlight() const { return inFlight[0] + inFlight[1]; }
+    std::list<std::shared_ptr<Http2AsyncOperation>> pending;
+    std::list<std::shared_ptr<Http2AsyncOperation>> active;
+    std::size_t InFlight() const { return active.size(); }
     bool deleted = false;
     bool retired = false;
 };
@@ -85,30 +99,27 @@ static void ObserveAsync(int request, GuestSceHttp2Test::AsyncPhase phase) {
     }
 }
 
-static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, const char* function, int req_id,
-    const Http2AsyncOption* option, int event_type, int result, std::exception_ptr failure) {
+static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state,
+    const std::shared_ptr<Http2AsyncOperation>& operation, const char* function, int req_id,
+    const Http2AsyncOption* option, int result, std::exception_ptr failure) {
     std::lock_guard lock(state->mutex);
-    const auto index = static_cast<std::size_t>(event_type);
-    if (index < 2 && state->inFlight[index] != 0) --state->inFlight[index];
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::Completed);
     if (state->deleted || state->retired) return;
-    Http2AsyncCompletion completion{};
-    completion.result.event_type = event_type;
-    completion.result.req_id = req_id;
-    completion.result.result = result;
-    completion.failure = std::move(failure);
-    state->pending.push_back(std::move(completion));
+    operation->completion.result.result = result;
+    operation->completion.failure = std::move(failure);
+    state->pending.splice(state->pending.end(), state->active, operation->position);
     if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
         hook(g_asyncPublishHookData.load(std::memory_order_acquire));
     }
     if (option && sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data) != 0 &&
-        !state->pending.back().failure) {
+        !operation->completion.failure) {
         try {
             NotImplemented_nid_no_patch(function);
         } catch (...) {
-            state->pending.back().failure = std::current_exception();
+            operation->completion.failure = std::current_exception();
         }
     }
+    ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::Published);
     state->changed.notify_all();
 }
 
@@ -117,7 +128,7 @@ static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
         std::lock_guard lock(state->mutex);
         state->retired = true;
         state->pending.clear();
-        state->inFlight[0] = state->inFlight[1] = 0;
+        state->active.clear();
     }
     state->changed.notify_all();
 }
@@ -125,25 +136,24 @@ static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
 static void DropAsync(const std::shared_ptr<Http2AsyncState>& state) {
     std::lock_guard lock(state->mutex);
     state->deleted = true;
-    state->aborted[0] = state->inFlight[0];
-    state->aborted[1] = state->inFlight[1];
 }
 
 static void AbortAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id) {
     std::lock_guard lock(state->mutex);
+    ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::Aborting);
     state->retired = true;
     state->pending.clear();
-    for (std::size_t kind = 0; kind != 2; ++kind) {
-        for (std::size_t pending = state->aborted[kind]; pending != 0; --pending) {
-            Http2AsyncCompletion completion{};
-            completion.result.event_type = static_cast<int>(kind);
-            completion.result.req_id = req_id;
+    for (int kind = 0; kind != 2; ++kind) {
+        for (auto next = state->active.begin(); next != state->active.end();) {
+            const auto current = next++;
+            auto& completion = (*current)->completion;
+            if (completion.result.event_type != kind) continue;
             completion.result.result = ERROR_ABORTED;
-            state->pending.push_back(std::move(completion));
+            completion.failure = nullptr;
+            state->pending.splice(state->pending.end(), state->active, current);
         }
-        state->aborted[kind] = 0;
-        state->inFlight[kind] = 0;
     }
+    ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::Aborted);
     state->changed.notify_all();
 }
 
@@ -380,12 +390,15 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::SubmissionResolved);
     const std::optional<Http2AsyncOption> async = kqueue_option
         ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
+    auto registration = PrepareAsync(req_id, 1);
+    const auto operation = registration.front();
     std::thread worker;
     {
         std::lock_guard lock(state->mutex);
         if (state->deleted || state->retired) return ERROR_INVALID_ID;
         ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerStarting);
-        worker = std::thread([request, state, async, data, size, req_id] {
+        worker = std::thread([request, state, operation, async, data, size, req_id] {
+            ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerEntered);
             int result = 0;
             std::exception_ptr failure;
             try {
@@ -393,9 +406,9 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
             } catch (...) {
                 failure = std::current_exception();
             }
-            CompleteAsync(state, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, 1, result, std::move(failure));
+            CompleteAsync(state, operation, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, result, std::move(failure));
         });
-        ++state->inFlight[1];
+        state->active.splice(state->active.end(), registration);
     }
     worker.detach();
     return 0;
@@ -415,11 +428,13 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     const auto request = Transport(req_id, true, &state, true);
     if (!request) return ERROR_INVALID_ID;
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::SubmissionResolved);
+    auto registration = PrepareAsync(req_id, 0);
+    const auto operation = registration.front();
     if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
         {
             std::lock_guard lock(state->mutex);
             if (state->deleted || state->retired) return ERROR_INVALID_ID;
-            ++state->inFlight[0];
+            state->active.splice(state->active.end(), registration);
         }
         int result = 0;
         std::exception_ptr failure;
@@ -428,7 +443,7 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         } catch (...) {
             failure = std::current_exception();
         }
-        CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, result, std::move(failure));
+        CompleteAsync(state, operation, __func__, req_id, async ? &*async : nullptr, result, std::move(failure));
         return 0;
     }
     std::vector<std::uint8_t> body;
@@ -438,7 +453,7 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         std::lock_guard lock(state->mutex);
         if (state->deleted || state->retired) return ERROR_INVALID_ID;
         ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::WorkerStarting);
-        worker = std::thread([request, state, async, body = std::move(body), req_id]() mutable {
+        worker = std::thread([request, state, operation, async, body = std::move(body), req_id]() mutable {
             int result = 0;
             std::exception_ptr failure;
             try {
@@ -446,9 +461,9 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
             } catch (...) {
                 failure = std::current_exception();
             }
-            CompleteAsync(state, "sceHttp2SendRequestAsync", req_id, async ? &*async : nullptr, 0, result, std::move(failure));
+            CompleteAsync(state, operation, "sceHttp2SendRequestAsync", req_id, async ? &*async : nullptr, result, std::move(failure));
         });
-        ++state->inFlight[0];
+        state->active.splice(state->active.end(), registration);
     }
     worker.detach();
     return 0;
@@ -601,11 +616,11 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         state->changed.wait(lock, available);
     }
     if (!state->pending.empty()) {
-        if (const auto failure = state->pending.front().failure) {
+        if (const auto failure = state->pending.front()->completion.failure) {
             state->pending.pop_front();
             std::rethrow_exception(failure);
         }
-        if (!Http2Guest::Store(result, state->pending.front().result)) return ERROR_NULL_POINTER;
+        if (!Http2Guest::Store(result, state->pending.front()->completion.result)) return ERROR_NULL_POINTER;
         state->pending.pop_front();
         return 0;
     }
