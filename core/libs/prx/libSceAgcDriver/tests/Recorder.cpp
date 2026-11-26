@@ -3065,6 +3065,17 @@ bool settleFirstUseTests(const Device& device) {
     return true;
 }
 
+PFN_vkGetDeviceProcAddr settleFenceResolve = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL settleFenceNotReady(VkDevice, VkFence) {
+    return VK_NOT_READY;
+}
+
+PFN_vkVoidFunction VKAPI_CALL settleFenceHeldProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkGetFenceStatus") == 0) return reinterpret_cast<PFN_vkVoidFunction>(settleFenceNotReady);
+    return settleFenceResolve(device, name);
+}
+
 bool settleEarlierImportTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
@@ -3105,7 +3116,11 @@ bool settleEarlierImportTests(const Device& device) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         CopyBuffer(context, commands, earlier->buffer, 0, scratch.Handle(), 0, unit);
     }
-    const auto* whole = HostImportFor(context, address + unit - 16, 32);
+    settleFenceResolve = context.deviceProc;
+    auto unsettled = context;
+    unsettled.deviceProc = settleFenceHeldProc;
+    unsettled.functions = nullptr;
+    const auto* whole = HostImportFor(unsettled, address + unit - 16, 32);
     Require(whole != nullptr && whole->base == address && whole->bytes == 2 * unit && whole->unwatched, "(e) an access across the windows did not replace the first window's import");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!Watched(address, 2 * unit) && std::chrono::steady_clock::now() < deadline) {
