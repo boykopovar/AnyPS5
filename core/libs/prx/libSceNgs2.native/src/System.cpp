@@ -575,8 +575,8 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
         }
         if (buffers[i].buffer == nullptr) return SCE_NGS2_ERROR_INVALID_RENDER_BUFFER;
     }
-    if (PS4_LIBRARY && std::any_of(buffer_info, buffer_info + num_buffer_info, [](const Ngs2RenderBufferInfo& info) { return Ngs2Ps4UnsupportedBufferChannels(info.num_channels); })) {
-        Ngs2RenderRefused(*system, buffer_info, num_buffer_info);
+    if (PS4_LIBRARY && std::any_of(buffers.begin(), buffers.end(), [](const Ngs2RenderBufferInfo& info) { return Ngs2Ps4UnsupportedBufferChannels(info.num_channels); })) {
+        Ngs2RenderRefused(*system, buffers.data(), num_buffer_info);
         return SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS;
     }
     SystemLockState* state = nullptr;
@@ -585,7 +585,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
         std::lock_guard locks(SystemLockMutex());
         auto& found = SystemLocks().at(system_handle);
         if (found.depth != 0 && found.owner != self) {
-            Ngs2RenderSilence(*system, buffer_info, num_buffer_info);
+            Ngs2RenderSilence(*system, buffers.data(), num_buffer_info);
             return SCE_NGS2_OK;
         }
         found.owner = self;
@@ -605,7 +605,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
             ReleaseSystemLock(*state);
         }
     } release{state, system};
-    Ngs2RenderSystem(*system, buffer_info, num_buffer_info);
+    Ngs2RenderSystem(*system, buffers.data(), num_buffer_info);
     return SCE_NGS2_OK;
 }
 
