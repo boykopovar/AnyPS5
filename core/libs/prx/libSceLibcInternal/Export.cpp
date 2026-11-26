@@ -354,6 +354,12 @@ std::vector<ThreadDestructor>& ThreadDestructors() {
     return HostThreadLocal<std::vector<ThreadDestructor>, ThreadDestructorsTag>();
 }
 
+struct ThreadExitCallbacksTag {};
+
+std::vector<GuestExitCallback>& ThreadExitCallbacks() {
+    return HostThreadLocal<std::vector<GuestExitCallback>, ThreadExitCallbacksTag>();
+}
+
 bool IsInLoadedImage(const void* address) {
     if (address == nullptr)
         return false;
@@ -378,10 +384,18 @@ void CallThreadDestructor(const ThreadDestructor& destructor) {
 
 void APS5_VABI RunThreadDestructors_nid_no_patch() {
     auto& destructors = ThreadDestructors();
-    while (!destructors.empty()) {
-        const ThreadDestructor destructor = destructors.back();
-        destructors.pop_back();
-        CallThreadDestructor(destructor);
+    auto& callbacks = ThreadExitCallbacks();
+    while (!destructors.empty() || !callbacks.empty()) {
+        while (!destructors.empty()) {
+            const ThreadDestructor destructor = destructors.back();
+            destructors.pop_back();
+            CallThreadDestructor(destructor);
+        }
+        if (!callbacks.empty()) {
+            const auto callback = callbacks.back();
+            callbacks.pop_back();
+            callback();
+        }
     }
 }
 
@@ -595,13 +609,17 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atqexit_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _Atqexit_nid_postfix(void (APS5_VABI *func)()) {
+    if (func == nullptr)
+        return 0;
+    return at_quick_exit_nid_postfix(func);
 }
 
-int APS5_VABI _Atthreadexit_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _Atthreadexit_nid_postfix(void (APS5_VABI *func)()) {
+    if (func == nullptr)
+        return 0;
+    RegisterThreadExitHook();
+    ThreadExitCallbacks().push_back(func);
     return 0;
 }
 

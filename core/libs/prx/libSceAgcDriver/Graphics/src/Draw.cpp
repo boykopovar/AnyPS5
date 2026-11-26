@@ -3997,7 +3997,7 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
     auto& depth = ThreadTargetMemo().depth;
     const bool enabled = TargetMemoEnabled() && proof.epoch != 0;
     colors.valid = enabled && !targets.empty() && std::ranges::all_of(targets, [&](const TargetBinding& binding) {
-        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
+        return binding.resident != nullptr && binding.resident->Cached() && !binding.multisampled && binding.color.fmaskAddress == 0 && !binding.resident->OtherPendingOverlaps() && !colorOverlapsDepth(state, binding) && metadataProved(binding.color);
     });
     if (colors.valid) {
         colors.proof = proof;
@@ -4013,6 +4013,15 @@ void rememberTargets(const State& state, std::span<const TargetBinding> targets,
     }
 }
 
+bool sameColorTargetSurface(const ColorTarget& a, const ColorTarget& b) {
+    if (a == b) return true;
+    if (a.arrayLastSlice != 0 || b.arrayLastSlice != 0 || !(a.volume || a.depth > 1) || !(b.volume || b.depth > 1)) return false;
+    auto adjusted = b;
+    adjusted.depthSlice = a.depthSlice;
+    adjusted.layers = a.layers;
+    return a == adjusted;
+}
+
 bool repeatColors(const Context& context, const State& state, const TargetProof& proof, std::vector<TargetBinding>& targets, std::vector<VkImageView>& views) {
     auto& memo = ThreadTargetMemo().colors;
     thread_local std::uint32_t lookups = 0;
@@ -4024,9 +4033,15 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
         return false;
     }
     if (!colorProofMatches(memo.proof, proof)) return false;
-    if (memo.descriptors != state.colors) {
+    if (memo.descriptors.size() != state.colors.size()) {
         noteTargetMemo(TargetMemoEvent::Descriptor);
         return false;
+    }
+    for (std::size_t index = 0; index < state.colors.size(); ++index) {
+        if (!sameColorTargetSurface(memo.descriptors[index], state.colors[index]) || (memo.descriptors[index] != state.colors[index] && memo.attachments[index].proxied)) {
+            noteTargetMemo(TargetMemoEvent::Descriptor);
+            return false;
+        }
     }
     const auto footprint = depthFootprint(state.depth);
     const bool overlapKnown = footprint == memo.clearOfDepth && !RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemoOverlapCache);
@@ -4045,7 +4060,8 @@ bool repeatColors(const Context& context, const State& state, const TargetProof&
         }
         binding.gpuTiling = binding.color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr;
         binding.proxied = memo.attachments[index].proxied;
-        views.push_back(memo.attachments[index].view);
+        const bool exact = memo.descriptors[index] == binding.color;
+        views.push_back(exact ? memo.attachments[index].view : binding.resident->AttachmentView(binding.color.format, binding.color.mip, binding.color.depthSlice, binding.color.layers, binding.color.arraySlice));
     }
     noteTargetMemo(TargetMemoEvent::Hit);
     noteTargetMemo(overlapKnown ? TargetMemoEvent::OverlapCached : TargetMemoEvent::OverlapComputed);

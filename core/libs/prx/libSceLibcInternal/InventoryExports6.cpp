@@ -49,11 +49,6 @@ int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9_EndwriteEv_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZNSt6locale6globalERKS__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix(void* self) {
     _ZdlPv_nid_postfix(self);
 }
@@ -219,11 +214,6 @@ void APS5_VABI _ZNSt24_Iostream_error_categoryD0Ev_nid_postfix(void* self) {
 }
 
 int APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -425,11 +415,6 @@ void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0E
 }
 
 int APS5_VABI _ZNSt8numpunctIcED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
