@@ -425,12 +425,20 @@ public:
 
     void SyncStatus() {
         pushbackLive = false;
+        RefreshStatus();
+    }
+
+    void RefreshStatus() {
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
         pushbackLive = false;
+        RefreshUnlockedStatus();
+    }
+
+    void RefreshUnlockedStatus() {
         if (!_handle) return;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
@@ -573,7 +581,7 @@ public:
         if (!_handle) return;
         std::clearerr(GetHandle());
         guestError = false;
-        SyncStatus();
+        RefreshStatus();
     }
 
     char16_t TakeLowSurrogate() {

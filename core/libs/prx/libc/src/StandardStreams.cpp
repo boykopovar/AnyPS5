@@ -316,21 +316,21 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     return result;
 }
 int APS5_VABI feof_nid_postfix(FileStream* stream) {
-    stream->SyncStatus();
+    stream->RefreshStatus();
     return (stream->GuestState().flags & 0x20) != 0;
 }
 int APS5_VABI ferror_nid_postfix(FileStream* stream) {
-    stream->SyncStatus();
+    stream->RefreshStatus();
     return (stream->GuestState().flags & 0x40) != 0;
 }
 
 int APS5_VABI feof_unlocked_nid_postfix(FileStream* stream) {
-    stream->SyncUnlockedStatus();
+    stream->RefreshUnlockedStatus();
     return (stream->GuestState().flags & 0x20) != 0;
 }
 
 int APS5_VABI ferror_unlocked_nid_postfix(FileStream* stream) {
-    stream->SyncUnlockedStatus();
+    stream->RefreshUnlockedStatus();
     return (stream->GuestState().flags & 0x40) != 0;
 }
 void APS5_VABI clearerr_nid_postfix(FileStream* stream) {
