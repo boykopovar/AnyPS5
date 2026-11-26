@@ -10,6 +10,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include <array>
+#include <new>
 #include "GuestAccess.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
@@ -502,6 +504,204 @@ int APS5_VABI sceHttp2SetCookieMaxSize(int cookieBoxId, std::uint32_t size) {
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     box->maxSize = size;
+    return 0;
+}
+
+}
+
+namespace {
+
+constexpr int ERROR_OUT_OF_MEMORY = static_cast<int>(0x817B1022);
+constexpr std::size_t MAX_URL_LENGTH = 65536;
+constexpr std::array<std::uint8_t, 8> COOKIE_EXPORT_MAGIC{'A', 'P', 'S', '5', 'H', '2', 'C', 1};
+constexpr std::size_t COOKIE_EXPORT_HEADER_BYTES = COOKIE_EXPORT_MAGIC.size() + 4;
+constexpr std::size_t COOKIE_RECORD_MIN_BYTES = 27;
+constexpr std::size_t MAX_IMPORT_BLOB_SIZE = 64u * 1024u * 1024u;
+
+bool ReadGuestBlob(const void* source, std::size_t length, std::vector<std::uint8_t>& host) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    const auto* bytes = static_cast<const std::uint8_t*>(source);
+    host.clear();
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t step = std::min(Chunk, length - done);
+        host.resize(done + step);
+        if (!Http2Guest::CopyIn(host.data() + done, bytes + done, step)) return false;
+        done += step;
+    }
+    return true;
+}
+
+void AppendU32(std::vector<std::uint8_t>& output, std::uint32_t value) {
+    for (int shift = 0; shift < 32; shift += 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendU64(std::vector<std::uint8_t>& output, std::uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendString(std::vector<std::uint8_t>& output, const std::string& text) {
+    AppendU32(output, static_cast<std::uint32_t>(text.size()));
+    output.insert(output.end(), text.begin(), text.end());
+}
+
+bool Take(std::vector<std::uint8_t>::const_iterator& cursor, std::vector<std::uint8_t>::const_iterator end, void* destination, std::size_t bytes) {
+    if (static_cast<std::size_t>(end - cursor) < bytes) return false;
+    std::memcpy(destination, &*cursor, bytes);
+    cursor += static_cast<std::ptrdiff_t>(bytes);
+    return true;
+}
+
+bool TakeU32(std::vector<std::uint8_t>::const_iterator& cursor, std::vector<std::uint8_t>::const_iterator end, std::uint32_t& value) {
+    value = 0;
+    for (int shift = 0; shift < 32; shift += 8) {
+        std::uint8_t byte = 0;
+        if (!Take(cursor, end, &byte, 1)) return false;
+        value |= static_cast<std::uint32_t>(byte) << shift;
+    }
+    return true;
+}
+
+bool TakeU64(std::vector<std::uint8_t>::const_iterator& cursor, std::vector<std::uint8_t>::const_iterator end, std::uint64_t& value) {
+    value = 0;
+    for (int shift = 0; shift < 64; shift += 8) {
+        std::uint8_t byte = 0;
+        if (!Take(cursor, end, &byte, 1)) return false;
+        value |= static_cast<std::uint64_t>(byte) << shift;
+    }
+    return true;
+}
+
+bool TakeString(std::vector<std::uint8_t>::const_iterator& cursor, std::vector<std::uint8_t>::const_iterator end, std::string& text) {
+    std::uint32_t length = 0;
+    if (!TakeU32(cursor, end, length)) return false;
+    if (static_cast<std::size_t>(end - cursor) < length) return false;
+    if (length == 0) {
+        text.clear();
+        return true;
+    }
+    text.assign(reinterpret_cast<const char*>(&*cursor), length);
+    cursor += static_cast<std::ptrdiff_t>(length);
+    return true;
+}
+
+std::vector<std::uint8_t> ExportBlob(const CookieBox& box) {
+    std::vector<std::uint8_t> output(COOKIE_EXPORT_MAGIC.begin(), COOKIE_EXPORT_MAGIC.end());
+    AppendU32(output, static_cast<std::uint32_t>(box.cookies.size()));
+    for (const Cookie& cookie : box.cookies) {
+        AppendString(output, cookie.name);
+        AppendString(output, cookie.value);
+        AppendString(output, cookie.domain);
+        AppendString(output, cookie.path);
+        output.push_back(cookie.hasValue ? 1 : 0);
+        output.push_back(cookie.secure ? 1 : 0);
+        const bool hasExpiry = cookie.expiry != NEVER;
+        output.push_back(hasExpiry ? 1 : 0);
+        const std::uint64_t seconds = hasExpiry && cookie.expiry > 0 ? static_cast<std::uint64_t>(cookie.expiry) : 0;
+        AppendU64(output, seconds);
+    }
+    return output;
+}
+
+bool ImportBlob(const std::vector<std::uint8_t>& input, std::vector<Cookie>& cookies) {
+    auto cursor = input.begin();
+    const auto end = input.end();
+    if (static_cast<std::size_t>(end - cursor) < COOKIE_EXPORT_HEADER_BYTES) return false;
+    if (!std::equal(COOKIE_EXPORT_MAGIC.begin(), COOKIE_EXPORT_MAGIC.end(), cursor)) return false;
+    cursor += static_cast<std::ptrdiff_t>(COOKIE_EXPORT_MAGIC.size());
+    std::uint32_t count = 0;
+    if (!TakeU32(cursor, end, count)) return false;
+    if (count > static_cast<std::size_t>(end - cursor) / COOKIE_RECORD_MIN_BYTES) return false;
+    cookies.clear();
+    cookies.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        Cookie cookie{};
+        if (!TakeString(cursor, end, cookie.name) || !TakeString(cursor, end, cookie.value) ||
+            !TakeString(cursor, end, cookie.domain) || !TakeString(cursor, end, cookie.path)) {
+            return false;
+        }
+        std::uint8_t hasValue = 0;
+        std::uint8_t secure = 0;
+        std::uint8_t hasExpiry = 0;
+        std::uint64_t seconds = 0;
+        if (!Take(cursor, end, &hasValue, 1) || !Take(cursor, end, &secure, 1) || !Take(cursor, end, &hasExpiry, 1) ||
+            hasValue > 1 || secure > 1 || hasExpiry > 1 || !TakeU64(cursor, end, seconds)) {
+            return false;
+        }
+        if (hasValue == 0 && !cookie.value.empty()) return false;
+        if (cookie.name.empty() && cookie.value.empty()) return false;
+        if (cookie.domain.empty() || cookie.domain.size() > MAX_URL_LENGTH) return false;
+        if (cookie.path.empty() || cookie.path.front() != '/' || cookie.path.size() > MAX_URL_LENGTH) return false;
+        cookie.hasValue = hasValue != 0;
+        cookie.secure = secure != 0;
+        if (hasExpiry == 0) {
+            cookie.expiry = NEVER;
+        } else {
+            cookie.expiry = seconds > static_cast<std::uint64_t>(NEVER) ? NEVER : static_cast<std::int64_t>(seconds);
+        }
+        cookies.push_back(std::move(cookie));
+    }
+    return cursor == end;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceHttp2CookieExport(int cookieBoxId, void* buffer, std::size_t size, std::size_t* requiredSize) {
+    std::vector<std::uint8_t> blob;
+    {
+        std::lock_guard lock(g_cookiesMutex);
+        CookieBox* box = FindBox(cookieBoxId);
+        if (!box) return ERROR_INVALID_ID;
+        if (!requiredSize) return ERROR_INVALID_VALUE;
+        RemoveExpired(*box, Now());
+        try {
+            blob = ExportBlob(*box);
+        } catch (const std::bad_alloc&) {
+            return ERROR_OUT_OF_MEMORY;
+        }
+    }
+    const std::size_t required = blob.size();
+    if (!Http2Guest::Store(requiredSize, required)) return ERROR_INVALID_VALUE;
+    if (!buffer) return 0;
+    if (size < required) return ERROR_OUT_OF_SIZE;
+    return Http2Guest::CopyOut(buffer, blob.data(), required) ? 0 : ERROR_INVALID_VALUE;
+}
+
+int APS5_VABI sceHttp2CookieImport(int cookieBoxId, const void* buffer, std::size_t size) {
+    {
+        std::lock_guard lock(g_cookiesMutex);
+        if (!FindBox(cookieBoxId)) return ERROR_INVALID_ID;
+    }
+    if (!buffer || size < COOKIE_EXPORT_HEADER_BYTES) return ERROR_INVALID_VALUE;
+    if (size > MAX_IMPORT_BLOB_SIZE) return ERROR_OUT_OF_SIZE;
+    std::vector<std::uint8_t> input;
+    std::vector<Cookie> cookies;
+    try {
+        if (!ReadGuestBlob(buffer, size, input)) return ERROR_INVALID_VALUE;
+        if (!ImportBlob(input, cookies)) return ERROR_INVALID_VALUE;
+    } catch (const std::bad_alloc&) {
+        return ERROR_OUT_OF_MEMORY;
+    }
+    const std::int64_t now = Now();
+    cookies.erase(std::remove_if(cookies.begin(), cookies.end(), [&](const Cookie& cookie) { return cookie.expiry <= now; }), cookies.end());
+    std::lock_guard lock(g_cookiesMutex);
+    CookieBox* box = FindBox(cookieBoxId);
+    if (!box) return ERROR_INVALID_ID;
+    if (cookies.size() > box->maxNum) return ERROR_OUT_OF_SIZE;
+    std::unordered_map<std::string, std::uint32_t> perDomain;
+    try {
+        for (const Cookie& cookie : cookies) {
+            if (box->maxSize == 0 || PairSize(cookie) > box->maxSize) return ERROR_OUT_OF_SIZE;
+            if (++perDomain[cookie.domain] > box->maxNumPerDomain) return ERROR_OUT_OF_SIZE;
+        }
+    } catch (const std::bad_alloc&) {
+        return ERROR_OUT_OF_MEMORY;
+    }
+    box->cookies = std::move(cookies);
+    box->removedNum = 0;
+    box->maxInuseSize = InuseSize(*box);
+    box->maxInuseNum = static_cast<std::uint32_t>(box->cookies.size());
     return 0;
 }
 

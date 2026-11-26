@@ -584,16 +584,6 @@ int APS5_VABI sceHttp2AuthCacheFlush(int lib_http2_ctx_id) {
     return FindHandle(lib_http2_ctx_id, Http2Kind::Context) ? 0 : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttp2CookieExport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttp2CookieImport(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttp2GetAuthEnabled(int id, int* is_enable) {
     return Read(id, [&](const auto& settings) {
         if (!is_enable) throw std::invalid_argument("sceHttp2GetAuthEnabled: null out-pointer");
