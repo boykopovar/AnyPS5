@@ -505,6 +505,7 @@ void rememberImport(HostImports& state, const HostImport* entry) {
         state.recentImports = {};
         state.recentEpoch = state.epoch;
         state.recentSize = state.imports.size();
+        state.recentNext = 0;
     }
     state.recentImports[state.recentNext++ % state.recentImports.size()] = entry;
 }
@@ -5192,17 +5193,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 #endif
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (recentImportsEnabled()) {
-            if (const auto* entry = recentImport(state, address, address + bytes)) {
-                entry->lastUse = ++state.useCounter;
-                return entry;
-            }
-        }
-        if (const auto* entry = findImport(state, address, address + bytes)) {
-            entry->lastUse = ++state.useCounter;
-            if (recentImportsEnabled()) rememberImport(state, entry);
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, address + bytes)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -5238,10 +5229,7 @@ const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t addr
 #endif
     const auto end = address + bytes;
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (const auto* entry = findImport(state, address, end)) {
-            entry->lastUse = ++state.useCounter;
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, end)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -5255,12 +5243,8 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    if (importsStale(context, state) && !refreshedFromLoggedChanges(context, state)) return nullptr;
-    const auto end = address + bytes;
-    if (recentImportsEnabled()) {
-        if (const auto* entry = recentImport(state, address, end)) return entry;
-    }
-    return findImport(state, address, end);
+    if (importsStale(context, state)) return nullptr;
+    return findImport(state, address, address + bytes);
 }
 
 std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes) {
