@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -88,7 +89,7 @@ void SetWideSize(String* string, std::size_t size) {
 }
 
 std::size_t WideCapacityFor(const String* string, std::size_t size) {
-    if (size > MaxWideSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    if (size > MaxWideSize) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(string);
     const std::size_t rounded = size | std::size_t{7};
     if (rounded < size || rounded > MaxWideSize) return size;
     std::size_t capacity = rounded;
@@ -100,14 +101,14 @@ std::size_t WideCapacityFor(const String* string, std::size_t size) {
 }
 
 std::size_t WideAllocationBytes(const String* string, std::size_t capacity) {
-    if (capacity > MaxWideSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    if (capacity > MaxWideSize) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(string);
     const std::size_t bytes = (capacity + 1) * sizeof(std::uint16_t);
     if (bytes >= GuestStringStorage::LargeAllocation && bytes > NoPosition - GuestStringStorage::AllocationPadding) _ZSt11_Xbad_allocv_nid_postfix();
     return bytes;
 }
 
 void ReserveWide(String* string, std::size_t size) {
-    if (size > MaxWideSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    if (size > MaxWideSize) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(string);
     if (size <= string->capacity) return;
     const std::size_t capacity = WideCapacityFor(string, size);
     const std::size_t bytes = WideAllocationBytes(string, capacity);
@@ -122,7 +123,7 @@ void ReserveWide(String* string, std::size_t size) {
 }
 
 std::size_t ClampWide(const String* source, std::size_t position, std::size_t count) {
-    if (position > source->size) _ZNKSs5_XranEv_nid_postfix(source);
+    if (position > source->size) _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(source);
     return std::min<std::size_t>(count, source->size - position);
 }
 
@@ -147,7 +148,7 @@ void AssignWide(String* string, const char* source, std::size_t count) {
     const std::size_t sourceBytes = string->size * sizeof(std::uint16_t);
     const bool aliases = sourceAddress >= dataAddress && sourceAddress - dataAddress < sourceBytes;
     if (aliases) count = std::min<std::size_t>(count, string->size - (sourceAddress - dataAddress) / sizeof(std::uint16_t));
-    if (count > MaxWideSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    if (count > MaxWideSize) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(string);
     const std::size_t bytes = count * sizeof(std::uint16_t);
     if (count <= string->capacity) {
         if (count != 0) std::memmove(WideData(string), source, bytes);
@@ -165,6 +166,16 @@ void AssignWide(String* string, const char* source, std::size_t count) {
     string->pointer = data;
     string->capacity = capacity;
     string->size = count;
+}
+
+char* AllocateWide(const String* string, std::size_t capacity) {
+    return static_cast<char*>(GuestStringStorage::Allocate(WideAllocationBytes(string, capacity)));
+}
+
+void TidyWide(String* string) {
+    if (string->capacity > WideInlineCapacity) GuestStringStorage::Deallocate(string->pointer, (string->capacity + 1) * sizeof(std::uint16_t));
+    string->capacity = WideInlineCapacity;
+    SetWideSize(string, 0);
 }
 
 void ReserveForInsert(String* string, std::size_t size) {
@@ -199,6 +210,14 @@ extern "C" {
 
 [[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const String*) {
     _ZSt14_Xlength_errorPKc_nid_postfix("string too long");
+}
+
+[[noreturn]] void APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(const String* self) {
+    _ZNKSs5_XranEv_nid_postfix(self);
+}
+
+[[noreturn]] void APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(const String* self) {
+    _ZNKSs5_XlenEv_nid_postfix(self);
 }
 
 String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(String* self, std::size_t position, std::size_t count) {
@@ -257,7 +276,7 @@ String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm_nid_postfix(String* s
 
 String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm_nid_postfix(String* self, const String* source, std::size_t position, std::size_t count) {
     count = ClampWide(source, position, count);
-    if (count > MaxWideSize - self->size) _ZNKSs5_XlenEv_nid_postfix(self);
+    if (count > MaxWideSize - self->size) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(self);
     if (count == 0) return self;
     const std::size_t size = self->size;
     ReserveWide(self, size + count);
@@ -267,7 +286,7 @@ String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm_nid_postfix(Str
 }
 
 String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6appendEmw_nid_postfix(String* self, std::size_t count, std::uint16_t character) {
-    if (count > MaxWideSize - self->size) _ZNKSs5_XlenEv_nid_postfix(self);
+    if (count > MaxWideSize - self->size) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(self);
     if (count == 0) return self;
     const std::size_t size = self->size;
     ReserveWide(self, size + count);
@@ -300,8 +319,8 @@ String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEmw_nid_postfix(String* 
 }
 
 String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw_nid_postfix(String* self, std::size_t position, std::size_t count, std::uint16_t character) {
-    if (position > self->size) _ZNKSs5_XranEv_nid_postfix(self);
-    if (count > MaxWideSize - self->size) _ZNKSs5_XlenEv_nid_postfix(self);
+    if (position > self->size) _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(self);
+    if (count > MaxWideSize - self->size) _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(self);
     if (count == 0) return self;
     const std::size_t size = self->size;
     ReserveWide(self, size + count);
@@ -310,6 +329,30 @@ String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw_nid_postfix(String*
     FillWide(data, position, count, character);
     SetWideSize(self, size + count);
     return self;
+}
+
+void APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(String* self, std::size_t newSize, std::size_t oldLength) {
+    if (self == nullptr) throw std::invalid_argument("basic_string<wchar_t>::_Copy: null string");
+    if (oldLength > self->size || oldLength > newSize || newSize <= WideInlineCapacity)
+        throw std::invalid_argument("basic_string<wchar_t>::_Copy: the new size must exceed the inline buffer and hold the kept length");
+    std::size_t capacity = WideCapacityFor(self, newSize);
+    char* data = nullptr;
+    try {
+        data = AllocateWide(self, capacity);
+    } catch (...) {
+        capacity = newSize;
+        try {
+            data = AllocateWide(self, capacity);
+        } catch (...) {
+            TidyWide(self);
+            throw;
+        }
+    }
+    std::memcpy(data, WideData(self), oldLength * sizeof(std::uint16_t));
+    if (self->capacity > WideInlineCapacity) GuestStringStorage::Deallocate(self->pointer, (self->capacity + 1) * sizeof(std::uint16_t));
+    self->pointer = data;
+    self->capacity = capacity;
+    SetWideSize(self, oldLength);
 }
 
 String* APS5_VABI _ZNSs6insertEmmc_nid_postfix(String* self, std::size_t position, std::size_t count, char character) {

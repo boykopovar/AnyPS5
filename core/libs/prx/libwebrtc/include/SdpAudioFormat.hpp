@@ -33,6 +33,8 @@ struct WebRtcSdpAudioFormat {
     WebRtcStringMap parameters;
 };
 
+extern "C" void WebRtcValidateSdpAudioFormat_nid_no_patch(const WebRtcSdpAudioFormat* format, const char* message);
+
 static_assert(sizeof(WebRtcStringMapLinks) == 32);
 static_assert(sizeof(WebRtcStringMapNode) == 112);
 static_assert(offsetof(WebRtcStringMapNode, key) == 32);

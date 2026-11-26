@@ -179,6 +179,52 @@ int main() {
     Require(ModalDialogOpen_nid_postfix(owned), "the dialog did not open again");
     ModalDialogClose_nid_postfix(ModalDialogOwnerMsgDialog);
     Require(ModalDialogPoll_nid_postfix(other, ModalDialogOwnerMsgDialog) == ModalDialogState::Closed, "the owner could not close its dialog");
+
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetShowTimeout_nid_postfix(ModalDialogShowTimeoutMilliseconds);
+    ModalDialogRequest first = YesNo(0, 1);
+    first.owner = ModalDialogOwnerMsgDialog;
+    Require(ModalDialogOpen_nid_postfix(first), "first owned dialog was refused before open expire check");
+
+    ModalDialogRequest second = YesNo(0, 1);
+    second.owner = ModalDialogOwnerErrorDialog;
+    Require(!ModalDialogOpen_nid_postfix(second), "second dialog opened before timeout");
+
+    ModalDialogSetShowTimeout_nid_postfix(0);
+    Require(ModalDialogOpen_nid_postfix(second), "undrawn timed-out dialog wedged subsequent open");
+
+    ModalDialogSetShowTimeout_nid_postfix(ModalDialogShowTimeoutMilliseconds);
+    Require(ModalDialogPoll_nid_postfix(other, ModalDialogOwnerMsgDialog) == ModalDialogState::Idle && other == ModalDialogNoButton, "expired first owner still active");
+    Require(ModalDialogPoll_nid_postfix(other, ModalDialogOwnerErrorDialog) == ModalDialogState::Showing && other == ModalDialogNoButton, "second owner not showing");
+
+    Require(ModalDialogReadView_nid_postfix(view), "second owner could not be drawn");
+    ModalDialogSetShowTimeout_nid_postfix(0);
+    Require(!ModalDialogOpen_nid_postfix(first), "drawn dialog was expired by open");
+
+    ModalDialogSetShowTimeout_nid_postfix(ModalDialogShowTimeoutMilliseconds);
+    ModalDialogReset_nid_postfix();
+
+    Require(ModalDialogOpen_nid_postfix(YesNo(0, 1)), "reopen refused before IME pad edge check");
+    ModalDialogPublishPad_nid_postfix(Pad(0));
+    ModalDialogPublishPad_nid_postfix(Pad(Right));
+    Require(ModalDialogReadView_nid_postfix(view) && view.buttons[1].selected, "D-pad right did not move focus before IME");
+    ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Previous);
+    Require(ModalDialogReadView_nid_postfix(view) && view.buttons[0].selected, "previous input did not reset focus");
+    ImeSetHostTextSink_nid_no_patch(&IgnoreText);
+    ModalDialogPublishPad_nid_postfix(Pad(0));
+    ImeSetHostTextSink_nid_no_patch(nullptr);
+    ModalDialogPublishPad_nid_postfix(Pad(Right));
+    Require(ModalDialogReadView_nid_postfix(view) && view.buttons[1].selected, "held button was not cleared while IME owned input");
+
+    ImeSetHostTextSink_nid_no_patch(&IgnoreText);
+    ModalDialogPublishPad_nid_postfix(Pad(Cross));
+    ImeSetHostTextSink_nid_no_patch(nullptr);
+    ModalDialogPublishPad_nid_postfix(Pad(Cross));
+    Chosen(ModalDialogState::Showing);
+    ModalDialogPublishPad_nid_postfix(Pad(0));
+    ModalDialogPublishPad_nid_postfix(Pad(Cross));
+    Require(Chosen(ModalDialogState::Answered) == 1, "Cross did not confirm after release following IME ownership");
+
     ModalDialogReset_nid_postfix();
     ModalDialogSetPresenter_nid_postfix(false);
 }

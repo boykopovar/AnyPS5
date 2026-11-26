@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "prx/libc/include/CpuTopology.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -182,6 +183,10 @@ static void SysfsTests() {
     Require(second.has_value() && second->chosen.logical == 6, "the finisher stays in the same cache");
     const auto workers = CpuTopology::PipelineCacheSet(dualSets, {first->chosen, second->chosen});
     Require(workers == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 16, 17, 18, 19, 20, 21}, "queue workers keep the other processors of the reserved cache");
+    const auto committerCpus = CpuTopology::ReservedThreadCpus(dualSets, *first);
+    Require(committerCpus.size() == 32 && std::count(committerCpus.begin(), committerCpus.end(), 7u) == 1 && std::count(committerCpus.begin(), committerCpus.end(), 23u) == 1, "the committer may run on its own core and on every unreserved processor");
+    const auto finisherCpus = CpuTopology::ReservedThreadCpus(dualSets, *second);
+    Require(finisherCpus.size() == 30 && std::count(finisherCpus.begin(), finisherCpus.end(), 7u) == 0 && std::count(finisherCpus.begin(), finisherCpus.end(), 6u) == 1, "the finisher may not run on the committer's core");
     std::filesystem::remove_all(dual);
 
     const auto sockets = FakeSysfs(2, 1, 8, false);
