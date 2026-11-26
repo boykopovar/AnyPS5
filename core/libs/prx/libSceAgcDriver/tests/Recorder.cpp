@@ -14557,6 +14557,17 @@ void encoderFailedSegmentTests(const Device& device) {
     completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch that folded an earlier batch", [&] { afterFold = recorder.SamplesTotal(); });
     Require(afterFold > beforeFold, "the samples of a submitted batch folded by a discarded batch were lost (" + std::to_string(afterFold) + " after " + std::to_string(beforeFold) + ")");
     if (context.occlusionQueryPrecise) Require(afterFold == beforeFold + CoverPass::Samples, "the sample total after a discarded batch that folded an earlier batch is " + std::to_string(afterFold) + ", not " + std::to_string(beforeFold + CoverPass::Samples));
+    cover.Draw(recorder);
+    recorder.Submit();
+    Require(recorder.InFlightBatches() != 0, "the batch submitted before the failing one was not in flight");
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failures.store(1);
+    cover.DrawEncodedSampled(recorder, context);
+    recorder.EndPassSamples();
+    const auto synced = caught([&] { recorder.Sync(); });
+    Require(synced == "injected replay failure", "a sync whose open batch failed its replay did not report it ('" + synced + "')");
+    Require(recorder.InFlightBatches() == 0, "a sync whose open batch failed its replay left " + std::to_string(recorder.InFlightBatches()) + " submitted batches in flight");
     std::cout << "Command encoder failed segment tests passed\n";
 }
 
