@@ -3,6 +3,7 @@ import functools
 import json
 import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -545,15 +546,27 @@ def main(argv=None):
     if missing:
         parser.error(f"not a library under core/libs/prx: {', '.join(missing)}")
     report = audit([PRX / name for name in names])
-    if args.json:
-        print(json.dumps(report, indent=2))
+    try:
+        if args.json:
+            print(json.dumps(report, indent=2))
+            sys.stdout.flush()
+            return 0
+        for entry in report:
+            print(f"{entry['file']}:{entry['line']}: {entry['function']}: parameter {entry['parameter']} ({', '.join(entry['kinds'])})")
+        counts = Counter(entry["library"] for entry in report)
+        print(f"{len(report)} direct guest pointer accesses in {len({(e['file'], e['function']) for e in report})} exported functions")
+        for library, count in counts.most_common():
+            print(f"  {count:5} {library}")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        finally:
+            os.close(devnull)
         return 0
-    for entry in report:
-        print(f"{entry['file']}:{entry['line']}: {entry['function']}: parameter {entry['parameter']} ({', '.join(entry['kinds'])})")
-    counts = Counter(entry["library"] for entry in report)
-    print(f"{len(report)} direct guest pointer accesses in {len({(e['file'], e['function']) for e in report})} exported functions")
-    for library, count in counts.most_common():
-        print(f"  {count:5} {library}")
     return 0
 
 

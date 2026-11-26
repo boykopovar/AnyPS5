@@ -323,6 +323,23 @@ class CommandLineTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
+    def test_broken_pipe_exits_cleanly_without_traceback(self):
+        import subprocess
+        script = Path(guest_pointer_audit.__file__).resolve()
+        process = subprocess.Popen(
+            [sys.executable, str(script), "libc"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdout.readline()
+        process.stdout.close()
+        stderr = process.stderr.read().decode("utf-8", errors="replace")
+        process.stderr.close()
+        self.assertEqual(process.wait(timeout=15), 0)
+        self.assertEqual(stderr, "")
+
 
     def test_split_top_level_ignores_commas_inside_brackets(self):
         parts = guest_pointer_audit.split_top_level("a, f(b, c), [d, e]")
