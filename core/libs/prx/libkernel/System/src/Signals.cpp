@@ -11,6 +11,7 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -396,9 +397,9 @@ bool Deliverable(int guest) {
     return NativeSignal(guest) != 0 || CaughtByGuest(guest) || TerminatesWithoutHandler(guest);
 }
 
-bool TakePendingUnblocked(int* guest) {
+bool TakePendingUnblocked(const std::array<bool, MaxSignal + 1>& deliverable, int* guest) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
-        if (SignalBlocked(candidate) || !Deliverable(candidate)) continue;
+        if (!deliverable[candidate] || SignalBlocked(candidate)) continue;
         if (!TakePendingLocked(candidate)) continue;
         *guest = candidate;
         return true;
@@ -473,10 +474,13 @@ bool FillSiginfo(GuestSiginfo* info, int guest, const QueuedSignal& entry) {
 void WaitForDeliverableSignal() {
     auto& pending = Pending();
     for (;;) {
+        std::array<bool, MaxSignal + 1> deliverable{};
+        for (int candidate = 1; candidate <= MaxSignal; ++candidate)
+            deliverable[candidate] = !SignalBlocked(candidate) && Deliverable(candidate);
         int guest = 0;
         {
             std::unique_lock lock(pending.lock);
-            if (!TakePendingUnblocked(&guest)) {
+            if (!TakePendingUnblocked(deliverable, &guest)) {
                 pending.changed.Wait(lock);
                 continue;
             }
