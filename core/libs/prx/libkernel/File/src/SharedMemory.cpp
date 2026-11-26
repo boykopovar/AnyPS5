@@ -19,6 +19,7 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <memory>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -67,7 +68,8 @@ const std::wstring& WindowsNamedRoot() {
         ::CloseHandle(handle);
         if (error != ERROR_SUCCESS)
             throw std::system_error(static_cast<int>(error), std::system_category(), "resolving the named shared-memory temporary root");
-        return (std::filesystem::path(std::wstring(pathBuffer.data(), length)) / L"AnyPS5" / L"shm").wstring();
+        return (std::filesystem::path(std::wstring(pathBuffer.data(), length)) /
+                File::WindowsSharedMemoryNamespaceDirectoryNameForCurrentProcess_nid_no_patch()).wstring();
     }();
     return root;
 }
@@ -425,7 +427,6 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     std::filesystem::path objectPath;
     try {
         objectPath = WindowsNamedPath(hostName);
-        EnsurePrivateWindowsDirectory(objectPath.parent_path().parent_path());
         EnsurePrivateWindowsDirectory(objectPath.parent_path(), true);
         CleanupUnlinkedWindowsObjects(objectPath, hostName);
     } catch (const std::system_error& error) {
@@ -695,7 +696,6 @@ int CreateAnonymousFile() {
 #ifdef _WIN32
     static std::atomic<unsigned> sequence{0};
     const auto root = std::filesystem::path(WindowsNamedRoot());
-    EnsurePrivateWindowsDirectory(root.parent_path());
     EnsurePrivateWindowsDirectory(root, true);
     std::random_device random;
     for (int attempt = 0; attempt < 64; ++attempt) {
@@ -751,6 +751,45 @@ bool IsSharedMemoryDescriptor_nid_no_patch(int descriptor) {
 }
 
 #ifdef _WIN32
+std::wstring WindowsSharedMemoryNamespaceDirectoryName_nid_no_patch(std::wstring_view userSid, bool elevated) {
+    if (userSid.empty() || userSid.find_first_of(L"\\/") != std::wstring_view::npos)
+        throw std::invalid_argument("invalid Windows shared-memory user SID");
+    return L"AnyPS5-shm-" + std::wstring(userSid) + (elevated ? L"-elevated" : L"-unelevated");
+}
+
+std::wstring WindowsSharedMemoryNamespaceDirectoryNameForCurrentProcess_nid_no_patch() {
+    HANDLE rawToken = nullptr;
+    if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &rawToken))
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "opening the current process token for shared memory");
+
+    std::unique_ptr<void, decltype(&::CloseHandle)> token(rawToken, ::CloseHandle);
+    DWORD userSize = 0;
+    const BOOL userQuery = ::GetTokenInformation(token.get(), TokenUser, nullptr, 0, &userSize);
+    const DWORD userQueryError = userQuery ? ERROR_SUCCESS : ::GetLastError();
+    if (userQuery || userQueryError != ERROR_INSUFFICIENT_BUFFER || userSize < sizeof(TOKEN_USER))
+        throw std::system_error(static_cast<int>(userQuery ? ERROR_INVALID_DATA : userQueryError), std::system_category(),
+                                "sizing the current process user SID for shared memory");
+
+    std::vector<std::uint8_t> userBuffer(userSize);
+    if (!::GetTokenInformation(token.get(), TokenUser, userBuffer.data(), userSize, &userSize))
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "reading the current process user SID for shared memory");
+
+    const auto* user = reinterpret_cast<const TOKEN_USER*>(userBuffer.data());
+    LPWSTR rawSid = nullptr;
+    if (!::ConvertSidToStringSidW(user->User.Sid, &rawSid))
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "formatting the current process user SID for shared memory");
+
+    std::unique_ptr<wchar_t, decltype(&::LocalFree)> sid(rawSid, ::LocalFree);
+    TOKEN_ELEVATION elevation{};
+    DWORD elevationSize = 0;
+    if (!::GetTokenInformation(token.get(), TokenElevation, &elevation, sizeof(elevation), &elevationSize))
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "reading the current process elevation for shared memory");
+    if (elevationSize < sizeof(elevation))
+        throw std::system_error(static_cast<int>(ERROR_INVALID_DATA), std::system_category(), "reading the current process elevation for shared memory");
+
+    return WindowsSharedMemoryNamespaceDirectoryName_nid_no_patch(sid.get(), elevation.TokenIsElevated != 0);
+}
+
 int SetSharedMemoryMode_nid_no_patch(int descriptor, int mode) {
     return SetSharedMemoryModeInternal(descriptor, mode);
 }
