@@ -12,6 +12,15 @@
 #include <new>
 #include <stdexcept>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 struct Case {
@@ -151,6 +160,47 @@ int CheckPasteboardString() {
     return 0;
 }
 
+bool KeepsEveryStringWhenALaterEntryIsInaccessible(bool noAccess) {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* base = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!base) return false;
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapping == MAP_FAILED) return false;
+    auto* base = static_cast<char*>(mapping);
+#endif
+    auto* strings = reinterpret_cast<NKWebKit::WpePasteboardString*>(base + page) - 1;
+    wpe_pasteboard_string_initialize(&strings[0], "a", 1);
+    const NKWebKit::WpePasteboardString first = strings[0];
+#ifdef _WIN32
+    DWORD previous;
+    const bool guarded = VirtualProtect(base + page, page, noAccess ? PAGE_NOACCESS : PAGE_READONLY, &previous);
+#else
+    const bool guarded = mprotect(base + page, page, noAccess ? PROT_NONE : PROT_READ) == 0;
+#endif
+    NKWebKit::WpePasteboardStringVector vector{strings, 2};
+    freeCount = 0;
+    bool rejected = false;
+    try {
+        wpe_pasteboard_string_vector_free(&vector);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    const bool kept = freeCount == 0 && vector.strings == strings && vector.length == 2 &&
+        strings[0].data == first.data && strings[0].length == first.length;
+    if (kept) wpe_pasteboard_string_free(&strings[0]);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page * 2);
+#endif
+    return guarded && rejected && kept;
+}
+
 int CheckPasteboardStringVector() {
     auto* strings = static_cast<NKWebKit::WpePasteboardString*>(std::calloc(2, sizeof(NKWebKit::WpePasteboardString)));
     wpe_pasteboard_string_initialize(&strings[0], "a", 1);
@@ -178,6 +228,10 @@ int CheckPasteboardStringVector() {
         wpe_pasteboard_string_vector_free(nullptr);
     } catch (const std::invalid_argument&) {
         rejectedVector = true;
+    }
+    if (!KeepsEveryStringWhenALaterEntryIsInaccessible(false) || !KeepsEveryStringWhenALaterEntryIsInaccessible(true)) {
+        std::fprintf(stderr, "WPE pasteboard string vector freed a string before rejecting a later entry.\n");
+        return 1;
     }
     if (!released || !empty || !rejectedOversize || !untouched || !rejectedVector) {
         std::fprintf(stderr, "WPE pasteboard string vector free failed.\n");

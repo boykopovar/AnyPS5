@@ -95,6 +95,13 @@ void APS5_VABI wpe_pasteboard_string_vector_free(NKWebKit::WpePasteboardStringVe
         const bool writable = GuestWritable_nid_no_patch(current.strings, current.length * sizeof(NKWebKit::WpePasteboardString));
         errno = savedErrno;
         if (!writable) throw std::invalid_argument("wpe_pasteboard_string_vector_free: unwritable strings");
+        for (std::uint64_t index = 0; index < current.length; ++index) {
+            NKWebKit::WpePasteboardString entry{};
+            const int entryErrno = errno;
+            const bool readable = GuestCopyIn_nid_no_patch(&entry, &current.strings[index], sizeof(entry));
+            errno = entryErrno;
+            if (!readable) throw std::invalid_argument("wpe_pasteboard_string_vector_free: unreadable string");
+        }
         for (std::uint64_t index = 0; index < current.length; ++index) wpe_pasteboard_string_free(&current.strings[index]);
     }
     const NKWebKit::WpePasteboardStringVector empty{};
