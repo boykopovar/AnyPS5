@@ -24407,22 +24407,6 @@ int APS5_VABI _ZNK7WebCore13ContainerNode15countChildNodesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore13ContainerNode16lastElementChildEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore13ContainerNode17childElementCountEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore13ContainerNode17firstElementChildEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore13ContainerNode17traverseToChildAtEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore13FetchResponse16resourceResponseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25954,19 +25938,11 @@ int APS5_VABI _ZNK7WebCore4Node18lookupNamespaceURIERKN3WTF10AtomStringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore4Node18nextElementSiblingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore4Node19rootEditableElementEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZNK7WebCore4Node21isRootEditableElementEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore4Node22previousElementSiblingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
