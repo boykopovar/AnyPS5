@@ -47,7 +47,7 @@ When a selected pull request changes a file the relinker-only build uses, the ma
 
 When a pull request targeting `main` is opened, updated or reopened, a change to relinker inputs runs the relinker-only matrix on Linux, Windows and macOS arm64 and the Linux address-sanitizer tests if the author already has a commit or a merged pull request in `main`. Changes to `core/libs/` or other inputs to the Windows build can also trigger the Windows job. On pull requests it links selected host-only test executables and builds and runs selected `core/libs` tests, regardless of the author's previous contributions. Its full build and test steps run on pushes and manual runs.
 
-The file-gated register context tests run on macOS Intel in Release only and the write watch tests on macOS arm64 only on pull requests. Both also run under Rosetta on arm64 when selected on manual runs and pushes to `main`.
+The file-gated register context tests run on macOS Intel in Release only and the write watch tests on macOS arm64 only on pull requests. Both also run under Rosetta on arm64 when selected on manual runs and pushes to `main`. The file-gated pipe write and edge watch tests run on macOS Intel and arm64.
 
 Automatic build and test jobs for pull requests use a file filter. Use `paths` or `paths-ignore` on the `pull_request` trigger, or `needs: eligibility` with an `if` on the relevant eligibility output in `build.yml`. The Conventions check fails a workflow change that adds a job without one. All build jobs check out the current `main` and merge the head of each selected pull request into it with `git merge --no-ff`, so a pull request that no longer merges cleanly must be rebased first. New commits require another manual run for full builds.
 
