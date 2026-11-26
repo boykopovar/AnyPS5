@@ -75,6 +75,17 @@ int main() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     Require(PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind::PsnFeature, 20000), "show mode is not restored after silent");
     Clear();
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogOwnerPsnNotice);
+    Require(PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind::PsnFeature, 10000), "baseline offer before backward timestamp failed");
+    ModalDialogReset_nid_postfix(ModalDialogOwnerPsnNotice);
+    Require(!PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind::GenericFeature, 9000), "a backward timestamp bypassed the cooldown");
+    Require(StateFor(ModalDialogAnyOwner, chosen) == ModalDialogState::Idle, "a refused backward timestamp opened a modal dialog");
+    Require(!PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind::PsnFeature, 10000 + PsnDialogNoticeIntervalMilliseconds - 1), "a backward timestamp rewound the cooldown window");
+    Require(PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind::PsnFeature, 10000 + PsnDialogNoticeIntervalMilliseconds), "an offer after the cooldown interval was refused");
+    Clear();
+
     ModalDialogSetPresenter_nid_postfix(false);
     return 0;
 }
