@@ -19,6 +19,18 @@ class FeatureTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / script), *map(str, args)],
                               capture_output=True, encoding="utf-8", timeout=15)
 
+    def test_pulse_preview_rejects_a_directory_as_the_command_path(self):
+        result = self.cli("preview_pad_input.py", self.root, "cross")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("controller command must be a regular file", result.stderr)
+
+    @unittest.skipUnless(os.name == "posix", "requires the POSIX null device")
+    def test_pulse_preview_rejects_a_device_as_the_command_path(self):
+        result = self.cli("preview_pad_input.py", Path(os.devnull), "cross")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("controller command must be a regular file", result.stderr)
+
     def test_preview_matches_the_existing_command_reader_without_writes(self):
         from pad_input import previous_sequence
         path = self.root / "command"

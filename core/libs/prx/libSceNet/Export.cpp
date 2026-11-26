@@ -25,6 +25,7 @@
 #include <unistd.h>
 #endif
 #include <algorithm>
+#include <thread>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -378,6 +379,8 @@ struct Sock {
     std::uint32_t tcpKeepIdle = 0;
     std::uint32_t tcpKeepInterval = 0;
     std::uint32_t tcpKeepCount = 0;
+    int listenBacklog = 0;
+    int pendingAccepts = 0;
     std::string name;
 };
 
@@ -482,6 +485,7 @@ int* errno_slot() {
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
 extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu);
 extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway);
+extern "C" void NetCtlHostTraffic_nid_no_patch(std::uint64_t* sent, std::uint64_t* received);
 
 std::mutex g_dnsLock;
 bool g_dnsOverridden = false;
@@ -710,43 +714,57 @@ int timeout_option(int optname) {
 constexpr int CONNECT_EXPIRED = -1;
 
 #ifdef __APPLE__
-bool GuestHoldsUnlistenedLoopback(const sockaddr_storage& target) {
+struct GuestLoopbackHolder {
+    bool holding = false;
+    bool listening = false;
+    int descriptor = -1;
+};
+
+GuestLoopbackHolder GuestLoopbackSocket(const sockaddr_storage& target) {
     const bool v4 = target.ss_family == AF_INET;
-    if (!v4 && target.ss_family != AF_INET6) return false;
+    if (!v4 && target.ss_family != AF_INET6) return {};
     if (v4) {
-        if ((ntohl(reinterpret_cast<const sockaddr_in*>(&target)->sin_addr.s_addr) >> 24) != 127) return false;
+        if ((ntohl(reinterpret_cast<const sockaddr_in*>(&target)->sin_addr.s_addr) >> 24) != 127) return {};
     } else if (!IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&target)->sin6_addr)) {
-        return false;
+        return {};
     }
     const std::uint16_t port = v4 ? reinterpret_cast<const sockaddr_in*>(&target)->sin_port
                                   : reinterpret_cast<const sockaddr_in6*>(&target)->sin6_port;
-    if (port == 0) return false;
+    if (port == 0) return {};
+    GuestLoopbackHolder holder;
     std::lock_guard lk(g_mutex);
     for (const auto& entry : g_socks) {
         const Sock& candidate = entry.second;
-        if (!candidate.bound || candidate.listening || candidate.type != NET_SOCK_STREAM) continue;
+        if (!candidate.bound || candidate.type != NET_SOCK_STREAM) continue;
         if (candidate.family != (v4 ? NET_AF_INET : NET_AF_INET6)) continue;
         sockaddr_storage local{};
         NativeLength length = sizeof(local);
         if (::getsockname(candidate.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) continue;
         std::uint16_t boundPort = 0;
         bool wildcard = false;
+        bool loopback = false;
         if (v4) {
             boundPort = reinterpret_cast<const sockaddr_in*>(&local)->sin_port;
             wildcard = reinterpret_cast<const sockaddr_in*>(&local)->sin_addr.s_addr == htonl(INADDR_ANY);
+            loopback = (ntohl(reinterpret_cast<const sockaddr_in*>(&local)->sin_addr.s_addr) >> 24) == 127;
         } else {
             boundPort = reinterpret_cast<const sockaddr_in6*>(&local)->sin6_port;
             wildcard = IN6_IS_ADDR_UNSPECIFIED(&reinterpret_cast<const sockaddr_in6*>(&local)->sin6_addr);
+            loopback = IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&local)->sin6_addr);
         }
-        if (boundPort != port) continue;
-        if (wildcard) return true;
-        if (v4) {
-            if ((ntohl(reinterpret_cast<const sockaddr_in*>(&local)->sin_addr.s_addr) >> 24) == 127) return true;
-        } else if (IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&local)->sin6_addr)) {
-            return true;
-        }
+        if (boundPort != port || (!wildcard && !loopback)) continue;
+        holder.holding = true;
+        holder.listening = candidate.listening;
+        holder.descriptor = entry.first;
+        if (candidate.listening) break;
     }
-    return false;
+    return holder;
+}
+
+void NoteGuestListenerConnect(int listener) {
+    std::lock_guard lk(g_mutex);
+    const auto it = g_socks.find(listener);
+    if (it != g_socks.end() && it->second.listening) ++it->second.pendingAccepts;
 }
 #endif
 
@@ -1500,6 +1518,7 @@ int APS5_VABI sceNetListen(int s, int backlog) {
     if (it != g_socks.end()) {
         it->second.bound = true;
         it->second.listening = true;
+        it->second.listenBacklog = backlog;
     }
     return 0;
 }
@@ -1549,6 +1568,11 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
     connection.native->sendTimeout = listener.native->sendTimeout.load();
 #endif
+    {
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(s);
+        if (it != g_socks.end() && it->second.pendingAccepts > 0) --it->second.pendingAccepts;
+    }
     const int descriptor = KernelReserveSocketNumber_nid_no_patch(static_cast<std::uintptr_t>(connection.native->value));
     if (descriptor < 0) return fail(-descriptor);
     {
@@ -1691,7 +1715,30 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     const int connectTimeout = socket.native->connectTimeout;
 #ifndef _WIN32
 #ifdef __APPLE__
-    if (socket.type == NET_SOCK_STREAM && !socket.native->nonblock && GuestHoldsUnlistenedLoopback(native)) return fail(NET_ECONNREFUSED);
+    if (socket.type == NET_SOCK_STREAM && !socket.native->nonblock) {
+        const auto holder = GuestLoopbackSocket(native);
+        if (holder.holding && !holder.listening) return fail(NET_ECONNREFUSED);
+        if (holder.holding && holder.listening && connectTimeout > 0) {
+            int backlog = 0;
+            int pending = 0;
+            {
+                std::lock_guard lk(g_mutex);
+                const auto it = g_socks.find(holder.descriptor);
+                if (it != g_socks.end()) {
+                    backlog = it->second.listenBacklog;
+                    pending = it->second.pendingAccepts;
+                }
+            }
+            const int effective = backlog < 0 ? 128 : backlog;
+            if (pending > 3 * effective / 2) {
+                (void)connect_within(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length, connectTimeout);
+                std::this_thread::sleep_for(std::chrono::microseconds(connectTimeout));
+                NoteGuestListenerConnect(holder.descriptor);
+                socket.native->connectExpired = 1;
+                return fail(NET_EAGAIN);
+            }
+        }
+    }
 #endif
     if (socket.type == NET_SOCK_STREAM && connectTimeout > 0 && !socket.native->nonblock) {
         const int error = connect_within(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length, connectTimeout);
@@ -1702,6 +1749,7 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         if (error != 0) return fail(error);
 #ifdef __APPLE__
         note_local_address(s, socket);
+        NoteGuestListenerConnect(GuestLoopbackSocket(native).descriptor);
 #endif
         return 0;
     }
@@ -1712,6 +1760,9 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
 #endif
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
+#endif
+#ifdef __APPLE__
+        if (socket.type == NET_SOCK_STREAM) NoteGuestListenerConnect(GuestLoopbackSocket(native).descriptor);
 #endif
         return 0;
     }
@@ -3440,7 +3491,13 @@ int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t fla
 }
 
 int APS5_VABI sceNetGetInterfaceStats(NetInterfaceStats* stats, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (stats == nullptr || flags != 0) NotImplemented_nid_no_patch(__func__);
+    NetInterfaceStats result{};
+    NetCtlHostTraffic_nid_no_patch(&result.txBytes, &result.rxBytes);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
