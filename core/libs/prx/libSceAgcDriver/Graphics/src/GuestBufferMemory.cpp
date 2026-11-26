@@ -209,6 +209,7 @@ std::atomic<std::uint64_t> importSetGeneration{1};
 struct RetiredImport;
 
 std::atomic<std::uint64_t> retiredPinnedBytes{0};
+std::atomic<std::uint64_t> retiredLabelBytes{0};
 std::atomic<bool> retiredPinnedReleased{false};
 constexpr std::uint64_t HeapRetryBuilds = 64;
 
@@ -399,6 +400,7 @@ struct HostImports {
     std::map<std::uint64_t, HostImport> imports;
     std::map<VkDevice, std::vector<std::shared_ptr<RetiredImport>>> parked;
     std::uint64_t liveBytes = 0;
+    std::uint64_t labelBytes = 0;
     std::map<std::uint64_t, ImportFailure> failed;
     std::map<std::uint64_t, ImportFailure> failedJoins;
     std::map<std::uint64_t, std::uint64_t> sparseRunEnds;
@@ -607,12 +609,14 @@ struct RetiredImport {
 #endif
         if (!pinned) return;
         retiredPinnedBytes.fetch_sub(entry.pinnedBytes, std::memory_order_acq_rel);
+        if (entry.label) retiredLabelBytes.fetch_sub(entry.pinnedBytes, std::memory_order_acq_rel);
         retiredPinnedReleased.store(true, std::memory_order_release);
     }
     void Pin() {
         if (pinned) return;
         pinned = true;
         retiredPinnedBytes.fetch_add(node.mapped().pinnedBytes, std::memory_order_acq_rel);
+        if (node.mapped().label) retiredLabelBytes.fetch_add(node.mapped().pinnedBytes, std::memory_order_acq_rel);
     }
     VkDevice device;
     PFN_vkDestroyBuffer destroyBuffer;
@@ -621,8 +625,16 @@ struct RetiredImport {
     bool pinned = false;
 };
 
-std::uint64_t pinnedTotal(const HostImports& state) {
+std::uint64_t importedTotal(const HostImports& state) {
     return state.liveBytes + retiredPinnedBytes.load(std::memory_order_acquire);
+}
+
+std::uint64_t budgetedLive(const HostImports& state) {
+    return state.liveBytes - state.labelBytes;
+}
+
+std::uint64_t pinnedTotal(const HostImports& state) {
+    return budgetedLive(state) + retiredPinnedBytes.load(std::memory_order_acquire) - retiredLabelBytes.load(std::memory_order_acquire);
 }
 
 class UntrappedImport {
@@ -669,6 +681,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     bumpEpoch(state);
     retiredImports.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
+    if (it->second.label) state.labelBytes -= std::min(state.labelBytes, it->second.pinnedBytes);
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
     if (reading != nullptr) {
@@ -2046,7 +2059,7 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
     while (freed < wanted) {
         auto oldest = state.imports.end();
         for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
-            if (it->second.base + it->second.bytes > begin && it->second.base < end) continue;
+            if (it->second.label || (it->second.base + it->second.bytes > begin && it->second.base < end)) continue;
             if (evictable(state, it->second) && (oldest == state.imports.end() || effectiveUse(state, it->second) < effectiveUse(state, oldest->second))) oldest = it;
         }
         if (oldest == state.imports.end()) break;
@@ -2159,7 +2172,7 @@ std::uint64_t effectiveBudget(const Context& context, HostImports& state) {
             VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
             VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &report};
             context.memoryProperties2(context.physical, &properties);
-            state.reportedBudget = HostImportBudgetFor(context.memory, &report, std::numeric_limits<std::uint64_t>::max(), pinnedTotal(state));
+            state.reportedBudget = HostImportBudgetFor(context.memory, &report, std::numeric_limits<std::uint64_t>::max(), importedTotal(state));
             const auto heap = hostHeapIndex(context.memory);
             state.reportedHeap = heap.value_or(0);
             state.reportedHeapBudget = heap ? report.heapBudget[*heap] : 0;
@@ -2184,14 +2197,15 @@ std::string budgetSource(const Context& context, const HostImports& state, std::
     return text;
 }
 
+constexpr std::uint64_t LabelImportWindow = 64ull << 10u;
+constexpr std::uint64_t LabelImportLimit = 16ull << 20u;
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
 std::atomic<std::uint64_t> importMaxBytes{0};
 
 // The import of an access to a registered range larger than the range window: the cells the access touches, grown to
 // the union of the range's imports it overlaps, so accesses across neighbouring cell edges share one import instead of
 // replacing each other's.
-std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const GuestAllocations::Range& range, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment) {
-    const auto window = rangeImportWindow.load(std::memory_order_relaxed);
+std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const GuestAllocations::Range& range, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment, std::uint64_t window = rangeImportWindow.load(std::memory_order_relaxed)) {
     if (window == 0 || alignment == 0 || window % alignment != 0 || range.bytes <= window || begin < range.address || end > range.address + range.bytes || end <= begin) return std::nullopt;
     const auto lastCell = range.bytes / window - 1;
     const auto cell = [&](std::uint64_t address) { return std::min((address - range.address) / window, lastCell); };
@@ -2202,10 +2216,10 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const 
     return std::pair{windowBegin, windowEnd};
 }
 
-ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment) {
+ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment, std::uint64_t window = rangeImportWindow.load(std::memory_order_relaxed)) {
     if (run.ranges.size() != 1) return run;
     const auto& range = *run.ranges.front();
-    const auto bounds = importWindowBounds(range, begin, end, alignment);
+    const auto bounds = importWindowBounds(range, begin, end, alignment, window);
     if (!bounds) return run;
     auto [windowBegin, windowEnd] = *bounds;
     for (bool grown = true; grown;) {
@@ -2298,7 +2312,7 @@ void coverGrowth(HostImports& state, std::uint64_t base, std::uint64_t bytes) {
 std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end, std::uint64_t& ready, std::uint64_t& readyHeld) {
     std::uint64_t bytes = 0;
     for (const auto& [base, entry] : state.imports) {
-        if (entry.base + entry.bytes > begin && entry.base < end) continue;
+        if (entry.label || (entry.base + entry.bytes > begin && entry.base < end)) continue;
         if (evictable(state, entry)) {
             bytes += entry.pinnedBytes;
             continue;
@@ -2349,7 +2363,9 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     const auto budget = evict ? 0 : effectiveBudget(context, state);
     const auto index = leasedIndexContaining(lease, address);
-    const auto windowBounds = index != lease.size() && end != 0 ? importWindowBounds(*lease[index], address, end, context.hostImportAlignment) : std::nullopt;
+    const auto window = requester == ImportRequester::Label ? std::max<std::uint64_t>(LabelImportWindow, context.hostImportAlignment) : rangeImportWindow.load(std::memory_order_relaxed);
+    const auto windowBounds = index != lease.size() && end != 0 ? importWindowBounds(*lease[index], address, end, context.hostImportAlignment, window) : std::nullopt;
+    if (requester == ImportRequester::Label && !windowBounds) return nullptr;
     const bool complete = !windowBounds || (windowBounds->first == lease[index]->address && windowBounds->second == lease[index]->address + lease[index]->bytes);
     if (budget != 0 && index != lease.size() && complete && stillRefused(state, rememberedRun(state.refusals, lease, index, index), budget) && findImport(state, address, address + 1) == nullptr) {
         auto& counts = state.counts[static_cast<std::size_t>(requester)];
@@ -2366,7 +2382,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         if (const auto* current = findImport(state, address, bounds.found ? lease[bounds.last]->address + lease[bounds.last]->bytes : address + 1)) return current;
     }
     auto run = bounds.found ? leasedRun(lease, bounds.first, bounds.last) : ImportRun{};
-    if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment);
+    if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment, window);
     if (run.ranges.empty()) return nullptr;
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict, requester);
 }
@@ -2444,6 +2460,27 @@ const HostImport* importJoined(const Context& context, HostImports& state, std::
     return entry;
 }
 
+bool reserveLabelImport(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t base, std::uint64_t bytes) {
+    if (bytes > LabelImportLimit) return false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
+    bool reserved = true;
+    while (state.labelBytes + bytes > LabelImportLimit) {
+        auto oldest = state.imports.end();
+        for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
+            if (!it->second.label || !evictable(state, it->second) || (it->second.base < base + bytes && base < it->second.base + it->second.bytes)) continue;
+            if (oldest == state.imports.end() || effectiveUse(state, it->second) < effectiveUse(state, oldest->second)) oldest = it;
+        }
+        if (oldest == state.imports.end()) {
+            reserved = false;
+            break;
+        }
+        noteRetiredUnwatched(unwatched, oldest->second, lease);
+        retireImport(context.device, state, oldest, lease);
+    }
+    rewatchRetired(state, std::move(unwatched));
+    return reserved;
+}
+
 const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict, ImportRequester requester) {
     auto& counts = state.counts[static_cast<std::size_t>(requester)];
     const auto base = run.base;
@@ -2467,7 +2504,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const auto budget = effectiveBudget(context, state);
     const auto containing = std::find_if(run.ranges.begin(), run.ranges.end(), [address](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
-    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && !state.mirrorsYield && remembered != state.evictingRefusals.end()) {
+    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && requester != ImportRequester::Label && !state.mirrorsYield && remembered != state.evictingRefusals.end()) {
         if (remembered->second.joined == joined && evictingRefusalCurrent(state, remembered->second, budget) && sameRun(remembered->second, run)) {
             ++counts.refused;
             counts.refusedBytes += bytes;
@@ -2510,19 +2547,25 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             oweGrowth(context, state, lease, base, bytes, GrowthBlock::Held, budget);
             return stepDown ? importAllocation(context, state, address, lease, requester, end, evict, bytes / 2) : nullptr;
         }
-        replaced += it->second.pinnedBytes;
+        if (!it->second.label) replaced += it->second.pinnedBytes;
     }
     const bool freed = retireFreesAtOnce(true);
     const auto pinned = pinnedTotal(state);
-    const auto retired = pinned - state.liveBytes;
+    const auto retired = pinned - budgetedLive(state);
     const auto allowance = !freed && importRetireCredit.load(std::memory_order_relaxed) ? budget / 4 : 0;
     const bool immediate = freed || (allowance != 0 && retired + replaced <= allowance);
     const auto reserved = state.heapOwedBytes != 0 && requester != ImportRequester::Build && (base + bytes <= state.heapOwedBase || base >= state.heapOwedBase + state.heapOwedBytes) ? state.heapOwedBytes : 0;
     const auto live = pinned - (immediate ? replaced : 0) + reserved;
     auto ready = std::numeric_limits<std::uint64_t>::max();
     auto readyHeld = std::numeric_limits<std::uint64_t>::max();
-    const auto evictable = evict && live + bytes > budget ? std::min(evictableBytes(state, base, base + bytes, ready, readyHeld), freed ? std::numeric_limits<std::uint64_t>::max() : immediate ? allowance - retired - replaced : 0) : 0;
-    if (live + bytes > budget + evictable) {
+    const bool label = requester == ImportRequester::Label;
+    if (label && !reserveLabelImport(context, state, lease, base, bytes)) {
+        ++counts.refused;
+        counts.refusedBytes += bytes;
+        return nullptr;
+    }
+    const auto evictable = !label && evict && live + bytes > budget ? std::min(evictableBytes(state, base, base + bytes, ready, readyHeld), freed ? std::numeric_limits<std::uint64_t>::max() : immediate ? allowance - retired - replaced : 0) : 0;
+    if (!label && live + bytes > budget + evictable) {
         if (state.heapRetrying && !immediate && !joined && state.heapOwedBytes == 0) {
             auto idleReady = std::numeric_limits<std::uint64_t>::max();
             auto idleReadyHeld = std::numeric_limits<std::uint64_t>::max();
@@ -2564,7 +2607,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const UntrappedImport untrapped(base, bytes);
     if (!untrapped.Held()) return nullptr;
-    if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
+    if (!label && live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
     entry.range = run.ranges.front();
@@ -2751,11 +2794,15 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (const auto held = !freed && immediate ? state.liveBytes : pinnedTotal(state); held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
+    if (const auto held = !freed && immediate ? budgetedLive(state) : pinnedTotal(state); !label && held + bytes > budget) retireLeastRecent(context, state, lease, held + bytes - budget, base, base + bytes);
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
     state.liveBytes += bytes;
+    if (label) {
+        entry.label = true;
+        state.labelBytes += bytes;
+    }
     state.allocationFailures = 0;
     ++counts.made;
     counts.madeBytes += bytes;
@@ -2854,6 +2901,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
 #endif
         }
         state.liveBytes = 0;
+        state.labelBytes = 0;
         state.failed.clear();
         state.failedJoins.clear();
         state.failedBlocks.clear();
@@ -4716,6 +4764,7 @@ void ClearHostImports(VkDevice device) {
     state.growthFloor = std::numeric_limits<std::uint64_t>::max();
     state.growthDue = false;
     state.liveBytes = 0;
+    state.labelBytes = 0;
     state.failed.clear();
     state.failedJoins.clear();
     state.failedBlocks.clear();
@@ -5116,6 +5165,7 @@ const char* ImportRequesterName(ImportRequester requester) {
         case ImportRequester::Join: return "join";
         case ImportRequester::Segment: return "segment";
         case ImportRequester::ColorTarget: return "color target";
+        case ImportRequester::Label: return "label";
     }
     return "unknown";
 }
@@ -5123,7 +5173,7 @@ const char* ImportRequesterName(ImportRequester requester) {
 HostImportCounts HostImportCounters() {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire), state.credited, state.creditedBytes};
+    return {state.imports.size(), state.liveBytes, state.counts, state.growth.size(), state.budgetChecks, retiredPinnedBytes.load(std::memory_order_acquire), state.credited, state.creditedBytes, state.labelBytes};
 }
 
 std::string FormatHostImportCounts(const HostImportCounts& counts) {
@@ -5152,6 +5202,11 @@ std::string FormatHostImportCounts(const HostImportCounts& counts) {
         char credited[96];
         std::snprintf(credited, sizeof(credited), "; %llu (%.1f MiB) admitted on retire credit", static_cast<unsigned long long>(counts.credited), counts.creditedBytes / 1048576.0);
         requesters += credited;
+    }
+    if (counts.labelBytes != 0) {
+        char label[64];
+        std::snprintf(label, sizeof(label), "; %.1f MiB of label windows", counts.labelBytes / 1048576.0);
+        requesters += label;
     }
     return text + requesters;
 }
