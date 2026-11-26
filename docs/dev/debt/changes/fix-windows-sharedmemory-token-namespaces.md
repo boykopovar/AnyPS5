@@ -1,0 +1,5 @@
+# libkernel
+
+## change [shm_open, shm_unlink]
+
+- [shm_open, shm_unlink](../../../core/libs/prx/libkernel/File/src/SharedMemory.cpp) (libkernel, Windows) - named objects are regular files under `AnyPS5-shm-<SID>-elevated` or `AnyPS5-shm-<SID>-unelevated` in the current user's temporary directory, identified by SHA-1 of the exact guest name. Processes with the same user SID and token elevation state share objects; elevated and UAC-filtered processes intentionally do not, avoiding ACL rewrites on a directory owned by BUILTIN\\Administrators. Each namespace has a protected ACL for its owner, SYSTEM and Administrators. Object ACLs map guest owner read/write bits after the creation mask; `fchmod` updates them. Guest group/other permission classes are not represented independently. The owner's read permission also grants execute; mappings use regular-file checks (`guest_named_shm_windows_mapping`). Windows lifecycle and same-context cross-process behavior are tested. No PS5 behavior has been measured.
