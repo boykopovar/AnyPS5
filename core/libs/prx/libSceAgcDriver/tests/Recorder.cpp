@@ -3644,7 +3644,8 @@ bool settleInitialDccTests(const Device& device, bool ordered = false) {
         }
         std::unique_lock gpu(GpuMutex());
         if (partial) {
-            for (int round = 0; round < 20; ++round) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            for (int round = 0; round < 20 || (kind == Case::PartialBlock && !Watched(address, importBytes) && std::chrono::steady_clock::now() < deadline); ++round) {
                 gpu.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 gpu.lock();
