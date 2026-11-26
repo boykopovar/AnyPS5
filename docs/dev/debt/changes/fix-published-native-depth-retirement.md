@@ -1,0 +1,13 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Native depth owner reclamation](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp): written HTILE D32 multisampled owners without completed guest publication remain cached unless their guest allocations are released; bounded eviction and reconstruction from arbitrary guest bytes are not implemented. Publication makes HTILE D32 owners inactive only after both planes commit; reclamation follows the inactive, unwritten and released-view checks. Console decompression bytes remain unmeasured. Bare D32 and D32S8 owner retention follows the publication rules below.
+
+## change [Native D32S8 guest publication]
+
+- [Native depth guest publication](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) overwrites a late CPU store only when it matches the snapshot and the host changes that byte; other late stores are kept and the read throws. When a written page holds the snapshot byte, the host result differs and no driver store covers it, reuse by a draw input, storage image, colour or depth target takes the guest's byte (inferred); CPU, DMA, texture and buffer reads throw. HTILE is published expanded; stencil is retiled with the depth XOR. HTILE D32 retires after both planes commit. Bare D32 and D32S8 retire on reuse that takes a guest byte. A new depth target over a retained owner throws; retained host bytes are rebased and a plane with a guest byte or hole throws at next use. D16, unproven clears, resident colour aliases, colour acquisition mid-read, pending storage-image units and in-completion publication throw.
+
+## change [Native multisampled D32S8 depth without HTILE]
+
+- [Native multisampled D32S8 depth without HTILE](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) is imported when its depth plane repeats one float in [0, 1], its separate stencil plane repeats one byte and no multisampled colour target covers either plane; the host image starts at those values and the sampled descriptor must name no metadata, whose pipe-aligned and ITERATE_256 bits are then not compared. The depth plane is sampled as a 32-bit float, the stencil plane through the R8_UINT descriptor of the stencil plane sampling entry below. That every sample then holds them is inferred from the uncompressed layout, not measured on the console. A written owner is published on a guest read as the native depth guest publication entry above describes, with no HTILE to expand. Other planes import once a stencil readback shows the first draw (depth ALWAYS with writes, stencil ALWAYS/REPLACE, mask 0xff) reached every sample; else they throw, as D16 without HTILE does.
