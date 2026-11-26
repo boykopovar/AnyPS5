@@ -111,6 +111,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 
 Save data is kept under the runtime's `_sd/` folder, and save-data memory under `_sd_mem/`. Copy them into a new runtime to continue from the same point.
 
+Make the copy after all processes of the source run have exited. Keep the source save files unchanged and use a separate writable copy for each runtime. Confirm in-game that the copied save loads and reaches the intended scene before starting a comparison.
+
 ## Reporting a result
 
 Include, in this order:
@@ -153,6 +155,11 @@ The launcher verifies output console handles and never tees the native output to
 Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+
+When reporting a capture, distinguish the [summary's measurements](BUILD.md#performance-trace):
+
+- Check `trace_dropped_threads` when `trace_dropped` is true. `events_lost` makes retained slice and wait inventories incomplete; `totals_full` makes that thread's phase totals incomplete. Event loss alone does not invalidate the separately accumulated phase totals. Report both states rather than treating a readable trace as complete.
+- Phase totals include nested scopes and aggregate threads that can run at the same time. Do not add them to derive exclusive frame cost. `worker_busy_pct` includes waits inside its measured scopes, so it does not establish OS thread CPU utilization. Preserve these limits when naming a suspected bottleneck.
 
 If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
 `tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.

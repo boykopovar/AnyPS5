@@ -768,7 +768,7 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 | Line | Meaning |
 |------|---------|
 | `FPS`, `FRAME` | As on page 1. |
-| `BUSY %` | The share of the last second each queue's packet worker (`Q0` for queue 0, `Q1` for queue 1, and so on) spent on packets, suspends, ends of submissions, rewinds and completions, as `worker_busy_pct` of the trace summary counts it. From the trace totals. |
+| `BUSY %` | The share of the last second each queue's packet worker (`Q0` for queue 0, `Q1` for queue 1, and so on) spent on packets, suspends, ends of submissions, rewinds, completions and waits for the draw finisher, as `worker_busy_pct` of the trace summary counts it. From the trace totals. |
 | phases | The 5 phases with the most CPU time per frame over the last second, in ms, summed over the driver's threads and named as in the trace summary's `top_phases_ms_per_frame`: a timed scope, or a scope and one of its stages. A scope's time includes the scopes and stages within it, and threads that work at once each count, so the phases can add up to more than `FRAME`. From the trace totals. |
 | `Q0 WAIT MS/FRAME` | Time per frame that queue 0's packet worker waited, in ms: `MEM` in packets that wait for guest memory or for rendering to finish, `LOCK` for the GPU lock, `GPU` in the recorder's syncs and serial waits and in command batches' fence waits. A memory wait that syncs the GPU counts in `MEM` and in `GPU`. From the trace totals. |
 | `RENDER PASSES/FRAME` | Render passes begun per frame; a draw that continues the open pass begins none. From the trace totals; not shown while an `APS5_TRACE_*` variable is set. |
