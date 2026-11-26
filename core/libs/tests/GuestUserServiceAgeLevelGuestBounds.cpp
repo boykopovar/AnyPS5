@@ -32,9 +32,9 @@ void TestAgeLevelLoggedOutAndUnregisteredRejection() {
 
     for (int userId : absentUsers) {
         std::uint32_t ageLevel = 0x5A5A5A5Au;
-        Require(sceUserServiceGetAgeLevel(userId, &ageLevel) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(userId, &ageLevel) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(ageLevel == 0x5A5A5A5Au);
-        Require(sceUserServiceGetAgeLevel(userId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(sceUserServiceGetAgeLevel(userId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     }
 }
 
@@ -144,16 +144,16 @@ void TestSharePlayClientUserBitmaskEdgeCases() {
 }
 
 void TestUserQueryBoundsAndNulls() {
-    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 32) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetRegisteredUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetRegisteredUserIdList(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetLoginUserIdList(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetEvent(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
-    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -177,7 +177,7 @@ void TestUserQueryBoundsAndNulls() {
     };
     for (int invalidId : invalidIds) {
         int number = -1;
-        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserNumber(invalidId, &number) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(number == -1);
 
         int color = -1;
@@ -186,7 +186,7 @@ void TestUserQueryBoundsAndNulls() {
 
         Require(sceUserServiceGetUserName(invalidId, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
         int32_t ktype = -1;
-        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetKeyboardType(invalidId, &ktype) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         int32_t jpType = -1;
         Require(sceUserServiceGetJapaneseInputType(invalidId, &jpType) == USER_SERVICE_ERROR_UNKNOWN_USER);
         int32_t zhType = -1;

@@ -357,6 +357,9 @@ int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, int32_t
 }
 
 int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
@@ -415,6 +418,9 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
 }
 
 int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -496,6 +502,9 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
 }
 
 int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  const int index = UserIndex(user_id);
  if (number == nullptr || index < 0) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
@@ -581,6 +590,9 @@ int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* valu
 }
 
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -595,6 +607,9 @@ int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
 }
 
 int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -632,6 +647,9 @@ int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
 }
 
 int APS5_VABI sceUserServiceGetKeyboardType(int user_id, int32_t* type) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  return ReportKeyboardSetting(user_id, type, KeyboardTypeForSystemLanguage);
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libSceKeyboard/include/keyboard_structs.h"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
@@ -205,6 +206,7 @@ static void CheckHistoryWrap() {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     KeyboardData data[16]{};
     KeyboardCharData charData{};
     bool connected = false;

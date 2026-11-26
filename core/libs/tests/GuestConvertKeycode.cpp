@@ -1,5 +1,6 @@
 #include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceConvertKeycode/ImeKeyboardType.hpp"
@@ -166,6 +167,7 @@ void RequireAbnt2Layout() {
 int main() {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     constexpr std::uint32_t sdkVersion = 0x09000000u;
     std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
     constexpr int invalidAddress = static_cast<int>(0x80BC0031u);
