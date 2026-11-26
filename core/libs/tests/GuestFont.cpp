@@ -1018,6 +1018,13 @@ int main() {
     }
     Require(sceFontGetTypographicDesign(nullptr, 1, &setting) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && setting == 0);
     Require(sceFontGetTypographicDesign(nullptr, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetScriptLanguage(font, 0x100, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetScriptLanguage(nullptr, 0x100, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetTypographicDesign(font, 1, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetTypographicDesign(font, 2, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetTypographicDesign(nullptr, 1, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
     Require(sceFontSetTypographicDesign(nullptr, 1, 2) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontSetTypographicDesign(font, 65537, 0) == SCE_FONT_ERROR_INVALID_PARAMETER);
     for (const auto selector : {1, 17, 65537, 65538, 65539}) {

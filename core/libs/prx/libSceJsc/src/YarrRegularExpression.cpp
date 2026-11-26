@@ -196,8 +196,7 @@ bool IsEngineLimit(std::string_view message) {
 std::uint8_t* Compile(const Units& pattern, int flags) {
     if (RejectedByYarr(pattern)) return nullptr;
     const std::string encoded = EncodePattern(pattern, (flags & LRE_FLAG_UNICODE) != 0);
-    char marker = 0;
-    EngineState state{&marker, 0};
+    EngineState state{static_cast<const char*>(__builtin_frame_address(0)), 0};
     char message[128] = "";
     int length = 0;
     std::uint8_t* bytecode = lre_compile(&length, message, sizeof(message), encoded.c_str(), encoded.size(), flags, &state);
@@ -223,8 +222,7 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
     static const std::uint8_t empty[2] = {};
     const auto* buffer = input.data ? static_cast<const std::uint8_t*>(input.data) : empty;
     if (input.length <= static_cast<unsigned>(INT_MAX) && static_cast<unsigned>(startFrom) <= input.length) {
-        char marker = 0;
-        EngineState state{&marker, 0};
+        EngineState state{static_cast<const char*>(__builtin_frame_address(0)), 0};
         const int type = input.is8Bit ? 0 : 1;
         const int result = lre_exec(captures, bytecode, buffer, startFrom, static_cast<int>(input.length), type, &state);
         if (result == LRE_RET_MEMORY_ERROR) throw std::bad_alloc();

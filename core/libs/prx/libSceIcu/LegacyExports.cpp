@@ -831,10 +831,6 @@ int APS5_VABI utrie2_get32FromLeadSurrogateCodeUnit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_686Locale8hashCodeEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1136,7 +1132,16 @@ int APS5_VABI ures_getVersionNumberInternal_nid_postfix() {
 }
 
 void APS5_VABI uprv_deleteUObject_nid_postfix(void* object) {
-    uprv_deleteUObject(object);
+    using DeletingDestructor = void (APS5_VABI*)(void*);
+    constexpr std::size_t DeletingDestructorSlot = 1;
+    if (!object) return;
+    std::uintptr_t vtable = 0;
+    if (!GuestCopyIn_nid_no_patch(&vtable, object, sizeof(vtable))) throw std::invalid_argument(std::string(__func__) + ": unreadable object");
+    DeletingDestructor destroy = nullptr;
+    const auto slot = reinterpret_cast<const void*>(vtable + DeletingDestructorSlot * sizeof(destroy));
+    if (!GuestCopyIn_nid_no_patch(&destroy, slot, sizeof(destroy))) throw std::invalid_argument(std::string(__func__) + ": unreadable vtable");
+    if (!destroy) throw std::invalid_argument(std::string(__func__) + ": null deleting destructor");
+    destroy(object);
 }
 
 int APS5_VABI sceIcuLegacyUnknown_5tc_plus_6cE9fAc_nid_no_patch() {
@@ -4329,10 +4334,6 @@ int APS5_VABI _ZN6icu_6813UnicodeString8foldCaseEj_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getLocaleInternal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7055,10 +7056,6 @@ int APS5_VABI _ZN6icu_6810UnicodeSetC1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_openAvailableLocales_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_jCEAhlQoJXY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8464,10 +8461,6 @@ std::int32_t APS5_VABI ures_getFunctionalEquivalent_nid_postfix(char* result, st
     char scratch = 0;
     char* target = (result == nullptr || resultCapacity == 0) ? &scratch : result;
     return ures_getFunctionalEquivalent(target, resultCapacity, path, resName, keyword, locid, isAvailable, omitDefault, reinterpret_cast<UErrorCode*>(status));
-}
-
-int APS5_VABI uloc_getTableStringWithFallback_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceIcuLegacyUnknown_t1kRYepQFw0_nid_no_patch() {

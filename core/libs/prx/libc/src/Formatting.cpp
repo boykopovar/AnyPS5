@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cctype>
+#include <initializer_list>
 #include <cstring>
 #include <string>
 #include <cerrno>
@@ -338,6 +339,39 @@ public:
     void Advance(std::ptrdiff_t count) { consumed += count; }
     std::ptrdiff_t Consumed() const { return consumed; }
 
+    bool MalformedFloatAhead(unsigned long width) const {
+        const unsigned long limit = width == 0 ? ULONG_MAX : width;
+        char ahead[9]{};
+        unsigned long read = 0;
+        const auto next = [&]() -> int {
+            if (read >= sizeof(ahead) || read >= limit) return EOF;
+            const int byte = std::fgetc(file);
+            if (byte != EOF) ahead[read++] = static_cast<char>(byte);
+            return byte;
+        };
+        const auto lower = [](int byte) { return byte == EOF ? EOF : std::tolower(byte); };
+        bool malformed = false;
+        int byte = next();
+        if (byte == '+' || byte == '-') byte = next();
+        if (byte == '0') {
+            byte = next();
+            if (byte == 'x' || byte == 'X') {
+                byte = next();
+                malformed = byte == EOF || (std::isxdigit(byte) == 0 && byte != '.');
+            }
+        } else if (lower(byte) == 'i' && lower(next()) == 'n' && lower(next()) == 'f' && lower(next()) == 'i') {
+            malformed = true;
+            for (const char expected : {'n', 'i', 't', 'y'}) {
+                if (lower(next()) != expected) break;
+                if (expected == 'y') malformed = false;
+            }
+        }
+        for (unsigned long index = read; index > 0; --index) {
+            if (std::ungetc(static_cast<unsigned char>(ahead[index - 1]), file) == EOF) throw std::runtime_error("float scan prefix pushback failed");
+        }
+        return malformed;
+    }
+
     int Scan(const char* directive, bool suppress, void* target, int* count) const {
         return suppress ? HostFscanf(file, directive, count) : HostFscanf(file, directive, target, count);
     }
@@ -564,6 +598,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             if (prefix == HexPrefix::InputFailure) return finish(converted ? assigned : EOF);
             if (prefix == HexPrefix::MatchingFailure) return finish(assigned);
         }
+        if constexpr (!TSource::Contiguous) if (floating && source.MalformedFloatAhead(width)) return finish(assigned);
         const int savedError = errno;
         int consumed = -1;
         int matched = 0;
