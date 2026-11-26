@@ -52,6 +52,8 @@
 
 namespace {
 
+constexpr int NullPointer = static_cast<int>(0x817B1225);
+
 void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "HTTP2: %s\n", message); std::abort(); }
 }
@@ -1527,6 +1529,14 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "length getter");
     Require(kind == (mode == Mode::NoLength ? 1 : 0), "length kind");
     if (kind == 0) Require(length == (mode == Mode::Large ? 200000 : 13), "actual content length");
+    if (mode == Mode::Normal) {
+        int preservedKind = -7;
+        std::uint64_t preservedLength = 777;
+        Require(sceHttp2GetResponseContentLength(client.request, reinterpret_cast<int*>(0x10), &preservedLength) == NullPointer &&
+            preservedLength == 777, "unmapped content-length kind output");
+        Require(sceHttp2GetResponseContentLength(client.request, &preservedKind, reinterpret_cast<std::uint64_t*>(0x10)) == NullPointer &&
+            preservedKind == -7, "unmapped content-length value output");
+    }
     std::string body;
     std::array<char, 317> buffer;
     for (;;) {
@@ -1550,6 +1560,14 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     char* rawHeaders = nullptr;
     std::size_t rawSize = 0;
     Require(sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize) == 0, "response header serialization");
+    if (mode == Mode::Normal) {
+        char* preservedHeader = rawHeaders;
+        std::size_t preservedSize = 777;
+        Require(sceHttp2GetAllResponseHeaders(client.request, reinterpret_cast<char**>(0x10), &preservedSize) == NullPointer &&
+            preservedSize == 777, "unmapped response-header pointer output");
+        Require(sceHttp2GetAllResponseHeaders(client.request, &preservedHeader, reinterpret_cast<std::size_t*>(0x10)) == NullPointer &&
+            preservedHeader == rawHeaders, "unmapped response-header size output");
+    }
     const std::string blob(rawHeaders, rawSize);
     Require(blob.starts_with("HTTP/2.0 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
         "response header block");
@@ -1573,6 +1591,12 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
         char* rawTrailers = nullptr;
         std::size_t rawTrailerSize = 0;
         Require(sceHttp2GetAllTrailingHeaders(client.request, &rawTrailers, &rawTrailerSize) == 0, "trailing header serialization");
+        char* preservedTrailers = rawTrailers;
+        std::size_t preservedTrailerSize = 777;
+        Require(sceHttp2GetAllTrailingHeaders(client.request, reinterpret_cast<char**>(0x10), &preservedTrailerSize) == NullPointer &&
+            preservedTrailerSize == 777, "unmapped trailing-header pointer output");
+        Require(sceHttp2GetAllTrailingHeaders(client.request, &preservedTrailers, reinterpret_cast<std::size_t*>(0x10)) == NullPointer &&
+            preservedTrailers == rawTrailers, "unmapped trailing-header size output");
         Require(std::string(rawTrailers, rawTrailerSize) == "x-trailer: yes\r\nx-trailer-two: 2\r\n\r\n", "trailing header block");
     }
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1066), "another send after a complete response");

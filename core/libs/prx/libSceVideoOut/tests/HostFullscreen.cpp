@@ -213,6 +213,18 @@ static void ParseTest() {
     Require(multilineWarning.find('\r') == std::string::npos && multilineWarning.find('\n') == std::string::npos, "the warning contained raw line breaks");
 }
 
+static bool Borderless(const DisplayWindow& window) {
+    return (SDL_GetWindowFlags(window.Handle()) & SDL_WINDOW_BORDERLESS) != 0;
+}
+
+static void BorderlessCoverTest() {
+    const auto cover = BorderlessCoverRect(HostWindowRect{1920, 0, 2560, 1440});
+    Require(cover.has_value() && *cover == HostWindowRect{1920, 0, 2560, 1440}, "a borderless window does not cover its whole display");
+    Require(!BorderlessCoverRect(HostWindowRect{0, 0, 0, 1080}).has_value(), "a display with no width was covered");
+    Require(!BorderlessCoverRect(HostWindowRect{0, 0, 1920, 0}).has_value(), "a display with no height was covered");
+    Require(!BorderlessCoverRect(HostWindowRect{0, 0, -1, 1080}).has_value(), "a negative display width was covered");
+}
+
 static bool Fullscreen(const DisplayWindow& window) {
     return (SDL_GetWindowFlags(window.Handle()) & SDL_WINDOW_FULLSCREEN) != 0;
 }
@@ -315,6 +327,14 @@ static int FailedCreateTest() {
     return 0;
 }
 
+static void SetWindowModeSetting(const char* value) {
+#ifdef _WIN32
+    _putenv_s("ANYPS5_WINDOW_MODE", value);
+#else
+    SDL_setenv("ANYPS5_WINDOW_MODE", value, 1);
+#endif
+}
+
 static void SetFullscreenSetting(const char* value) {
 #ifdef _WIN32
     // SDL_setenv on Windows only changes the process block, which std::getenv does not read.
@@ -350,6 +370,34 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(back == windowed, "leaving fullscreen did not restore the windowed size");
     }
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        HostWindowSize before;
+        SDL_GetWindowSize(window.Handle(), &before.width, &before.height);
+        window.ToggleBorderless();
+        Require(Borderless(window) && !Fullscreen(window), "ToggleBorderless did not remove the decorations without fullscreen");
+        SDL_Rect display{};
+        Require(SDL_GetDisplayBounds(SDL_GetWindowDisplayIndex(window.Handle()), &display) == 0, "the display bounds were not readable");
+        int x = 0;
+        int y = 0;
+        HostWindowSize covered;
+        SDL_GetWindowPosition(window.Handle(), &x, &y);
+        SDL_GetWindowSize(window.Handle(), &covered.width, &covered.height);
+        Require(x == display.x && y == display.y && covered.width == display.w && covered.height == display.h, "the borderless window does not cover its display");
+        window.ToggleBorderless();
+        HostWindowSize back;
+        SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
+        Require(!Borderless(window) && back == before, "leaving borderless did not restore the windowed size");
+        window.ToggleBorderless();
+        window.ToggleFullscreen();
+        Require(Fullscreen(window) && !Borderless(window), "F11 while borderless did not leave borderless before entering fullscreen");
+        window.ToggleFullscreen();
+        Require(!Fullscreen(window) && !Borderless(window), "F11 did not leave fullscreen");
+    }
     SetFullscreenSetting("borderless");
     {
         DisplayWindow window;
@@ -362,6 +410,37 @@ static int WindowTest() {
         HostWindowSize back;
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
+    }
+    SetFullscreenSetting("windowed");
+    SetWindowModeSetting("borderless");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Borderless(window) && !Fullscreen(window), "ANYPS5_WINDOW_MODE=borderless did not start borderless");
+        window.ToggleBorderless();
+        Require(!Borderless(window) && !Fullscreen(window), "F2 did not leave a borderless start");
+    }
+    SetFullscreenSetting("borderless");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Fullscreen(window) && !Borderless(window), "a fullscreen start did not take precedence over a borderless window mode");
+    }
+    SetFullscreenSetting("windowed");
+    SetWindowModeSetting("yes");
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(!Borderless(window) && !Fullscreen(window), "a window mode other than borderless started borderless");
     }
     SetFullscreenSetting("yes");
     {
@@ -406,6 +485,10 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "libdecor-retry") == 0) return WaylandWindowTest(false);
 #endif
     ParseTest();
+    Require(WindowModeStartsBorderless("borderless") && !WindowModeStartsBorderless(nullptr), "ANYPS5_WINDOW_MODE=borderless was not recognised");
+    for (const char* other : {"", "windowed", "1", "0", "Borderless", "borderless ", "yes"}) {
+        Require(!WindowModeStartsBorderless(other), (std::string("a window mode other than borderless started borderless: ") + other).c_str());
+    }
     SkipPolicyTest();
     ToggleTest();
     RestoreSizeTest();
@@ -413,5 +496,6 @@ int main(int argc, char** argv) {
     FailureTest();
     CursorTest();
     ReleaseFailureTest();
+    BorderlessCoverTest();
     return 0;
 }

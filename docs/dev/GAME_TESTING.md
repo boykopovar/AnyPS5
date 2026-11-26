@@ -121,6 +121,16 @@ Include, in this order:
 
 Keep AI-generated analysis separate from measured data, and say which is which.
 
+## Comparing saved smoke runs
+
+Compare two smoke-run summaries without a build or extracted titles:
+
+```sh
+python tools/title_run.py compare baseline/summary.json candidate/summary.json
+```
+
+The table groups saved outcomes by title and by cold or warm run label. A run with no recognized label appears under `unknown`. FPS samples, medians and ranges use only rendering runs with a recorded FPS. Missing titles are listed on the side where they were absent. Use `--json` to retain the outcome order in each group. Compare runs made on the same machine with matched content, settings and scenes.
+
 ## Clean window captures
 
 Use the opt-in performance profile from an interactive terminal to produce the native evidence required by the [performance report](../../.github/ISSUE_TEMPLATE/performance.yml):

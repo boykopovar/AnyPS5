@@ -345,7 +345,7 @@ int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func,
     return Update(id, __func__, [&](auto& settings) {
         settings.redirectCallback = cb_func;
         settings.redirectArgument = user_arg;
-    });
+    }, true);
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -367,6 +367,10 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
+    }
     return Update(id, __func__, [&](auto& settings) {
         settings.sslCallback = cb_func;
         settings.sslArgument = user_arg;
