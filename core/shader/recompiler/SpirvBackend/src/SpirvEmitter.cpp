@@ -77,6 +77,15 @@ std::uint32_t WaveLdsScope(const IrProgram& program, const ShaderWorkgroupInputI
     return threads <= program.WaveSize() ? spv::ScopeWorkgroup : 0u;
 }
 
+bool ProgramHasBarrier(const IrProgram& program) {
+    for (const auto* block : program.BlockOrder()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction->Opcode() == IrOpcode::Barrier) return true;
+        }
+    }
+    return false;
+}
+
 }
 
 SpirvEmitterState::SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo) : module(program.Resources().stage == IrShaderStage::Mesh ? 0x00010400u : 0x00010300u), program(program), inputInfo(inputInfo), requirements(AnalyzeProgramRequirements(program)) {
@@ -288,7 +297,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
     state.deviceAtomicWorkgroupMemoryBarriers = target.deviceAtomicWorkgroupMemoryBarriers;
-    state.meshSoftwareControlBarriers = target.meshSoftwareControlBarriers && program.Resources().stage == IrShaderStage::Mesh;
+    state.meshSoftwareControlBarriers = target.meshSoftwareControlBarriers && program.Resources().stage == IrShaderStage::Mesh && ProgramHasBarrier(program);
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;

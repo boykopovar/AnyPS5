@@ -40,6 +40,7 @@ constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
     0xbf8cc07fu, 0xbf8a0000u, 0xbf810000u,
 };
 constexpr std::array<std::uint32_t, 5> EarlyReturnBarrier{0x7d880090u, 0xbf860001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 1> MeshNoBarrier{0xbf810000u};
 
 constexpr std::array<std::uint32_t, 5> LdsHalfStore{0x34040082u, 0xd87c0400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> LdsAtomicAdd{0x34040082u, 0xd8000400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
@@ -198,14 +199,19 @@ bool releaseMergeEntersGenerationWait(std::span<const std::uint32_t> words) {
     return false;
 }
 
-MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::uint64_t codeAddress, bool software, std::uint32_t guestWaveSize = 64u, std::uint32_t hostSubgroupSize = 64u) {
+MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::uint64_t codeAddress, bool software, std::uint32_t guestWaveSize = 64u, std::uint32_t hostSubgroupSize = 64u, bool ballotSupported = true) {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 8> hidden{};
-    static constexpr std::array<std::uint32_t, 9> capabilities{
+    static constexpr std::array<std::uint32_t, 9> capabilitiesWithBallot{
         spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
         spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
         spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot,
         spv::CapabilityMeshShadingEXT
+    };
+    static constexpr std::array<std::uint32_t, 7> capabilitiesWithoutBallot{
+        spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
+        spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+        spv::CapabilityClipDistance, spv::CapabilityMeshShadingEXT
     };
     static constexpr std::array<std::string_view, 3> extensions{
         "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
@@ -221,7 +227,8 @@ MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::ui
     request.target.spirvVersion = 0x00010400u;
     request.target.subgroupSize = hostSubgroupSize;
     request.target.bdaAbiVersion = 1u;
-    request.target.supportedCapabilities = capabilities;
+    if (ballotSupported) request.target.supportedCapabilities = capabilitiesWithBallot;
+    else request.target.supportedCapabilities = capabilitiesWithoutBallot;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
     request.target.maxWorkgroupInvocations = 1024u;
@@ -275,6 +282,8 @@ void verifyMeshSoftwareBarrierEmission() {
     require(splitSoftware.subgroupBallotCapability, "the split-subgroup mesh software barrier omitted the subgroup-ballot capability");
     const auto singleLane = recompileMeshBarrier(BranchedLdsStep, 0x26267300u, true, 32u, 1u);
     require(singleLane.subgroupBallot == 0u && !singleLane.groupNonUniformCapability && !singleLane.subgroupBallotCapability, "a single-lane host subgroup emitted an unnecessary subgroup operation or capability");
+    const auto noBarrier = recompileMeshBarrier(MeshNoBarrier, 0x26267400u, true, 32u, 64u, false);
+    require(noBarrier.subgroupBallot == 0u && !noBarrier.groupNonUniformCapability && !noBarrier.subgroupBallotCapability, "a mesh shader without a guest barrier required subgroup ballot capabilities");
     const auto earlyReturn = recompileMeshBarrier(EarlyReturnBarrier, 0x26267100u, true);
     require(!earlyReturn.softwareSafe, "a mesh barrier bypassed by an early return was marked safe for software rendezvous");
     require(earlyReturn.atomicLoad == 0u && earlyReturn.atomicIAdd == 0u && earlyReturn.atomicStore == 0u, "a mesh barrier bypassed by an early return used a software rendezvous that can wait forever");
