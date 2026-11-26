@@ -393,14 +393,14 @@ void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block,
     Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
 }
 
-void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
+bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     using AgcDriver::Graphics::ShaderResources;
     auto* base = block.At(EpochExitOffset);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (context.hostImportAlignment == 0) {
         std::puts("host imports unavailable: a depth plane drawn under a buffer read in place is not checked against the epoch exit");
-        return;
+        return false;
     }
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
@@ -428,7 +428,7 @@ void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     const bool inPlace = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= address && range.second >= address + SliceBytes; });
     if (!resources->Reusable() || !inPlace) {
         std::puts("the plane's buffer was not read in place from its import in a reusable build: the depth plane epoch exit is not checked");
-        return;
+        return false;
     }
     Require(resources->Revalidate(shader), "depth plane epoch exit: the buffer build did not prove current");
     const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
@@ -458,6 +458,7 @@ void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     std::printf("depth plane epoch exit: a second draw over the buffer %s its depth surface; the next proof %s the exit and %s, leaving the plane %s\n", kept ? "kept" : "replaced", reexited ? "took" : "did not take", reproved ? "proved current" : "refused", releft ? "unstored" : "stored");
     Require(!reproved || !releft, "depth plane epoch exit: a reused buffer build read guest memory its kept depth surface had not stored to");
     resources.reset();
+    return true;
 }
 
 void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -776,10 +777,17 @@ int main(int argc, char** argv) {
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const std::span<std::uint32_t> epochOutput(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-plane") {
+            if (!EpochExitPlaneCase(*device, block)) return VulkanTestSkipped;
+            std::puts("depth plane epoch exit tests passed");
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit") {
-            EpochExitPlaneCase(*device, block);
-            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
+            const bool planeChecked = EpochExitPlaneCase(*device, block);
+            EpochExitSurfaceCase(*device, block, epochOutput);
             if (AgcDriver::Graphics::EpochProofCountsProfiled()) AgcDriver::Graphics::ReportEpochProofCounts();
+            if (!planeChecked) return VulkanTestSkipped;
             std::puts("depth plane epoch exit tests passed");
             return 0;
         }
