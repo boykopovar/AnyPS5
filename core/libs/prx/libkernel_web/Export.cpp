@@ -5,6 +5,7 @@
 #include "prx/libkernel_web/include/Api.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 extern "C" {
 
@@ -16,7 +17,7 @@ int APS5_VABI __freeze_nid_disambig1_nid_postfix() {
 }
 
 std::uint64_t APS5_VABI __sceKernelGetGPI_nid_disambig1_nid_postfix() {
-    return __sceKernelGetGPI_nid_postfix();
+    return sceKernelGetGPI();
 }
 
 int APS5_VABI __sys_debug_init_nid_disambig1_nid_postfix() {
