@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <algorithm>
 #include <array>
@@ -253,6 +254,60 @@ void CheckAlpnProtos() {
         threw = true;
     }
     Require(threw, "null SSL");
+}
+
+void CheckQuic() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.quicMethod = nullptr;
+    guarded.object.quicTransportParams = nullptr;
+    guarded.object.quicTransportParamsLength = 0;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "SSL without a QUIC method");
+    const int method = 0;
+    guarded.object.quicMethod = &method;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "SSL with a QUIC method");
+    const auto start = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 280;
+    const auto Stored = [&](const std::uint8_t* params, std::uint64_t length) {
+        auto expected = start;
+        const auto* pointer = guarded.object.quicTransportParams;
+        std::memcpy(expected.data() + offset, &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offset + 8, &length, sizeof(length));
+        return Same(guarded, expected) && guarded.object.quicTransportParamsLength == length && pointer != nullptr &&
+               pointer != params && (length == 0 || std::memcmp(pointer, params, length) == 0);
+    };
+    const std::uint8_t first[] = {0x01, 0x04, 0x80, 0x00, 0x75, 0x30};
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, first, sizeof(first)) == 1, "parameters");
+    Require(Stored(first, sizeof(first)), "parameters not copied to offsets 280 and 288");
+    const std::uint8_t second[] = {0x04, 0x01, 0x10};
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, second, sizeof(second)) == 1, "replacement");
+    Require(Stored(second, sizeof(second)), "replacement not copied");
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, nullptr, 0) == 1, "empty parameters");
+    Require(Stored(nullptr, 0), "empty parameters not stored as a zero-length allocation");
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, first, sizeof(first)) == 1, "parameters again");
+    const auto before = Bytes(guarded);
+    bool threw = false;
+    try {
+        SSL_set_quic_transport_params_nid_postfix(&guarded.object, nullptr, 1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && Same(guarded, before), "null parameters with a length");
+    threw = false;
+    try {
+        SSL_set_quic_transport_params_nid_postfix(nullptr, first, sizeof(first));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL for SSL_set_quic_transport_params");
+    threw = false;
+    try {
+        SSL_is_quic_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL for SSL_is_quic");
+    free_nid_postfix(guarded.object.quicTransportParams);
 }
 
 struct Versions {
@@ -563,6 +618,7 @@ int main() {
     CheckVersionName();
     CheckInfoCallback();
     CheckAlpnProtos();
+    CheckQuic();
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();

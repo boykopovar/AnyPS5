@@ -81,6 +81,15 @@ int RetainGuest(T* object, const char* function) {
     return Retain_nid_no_patch(*references);
 }
 
+void FreeZero(void* data, std::size_t length) {
+    if (!data)
+        return;
+    auto* bytes = static_cast<volatile unsigned char*>(data);
+    for (std::size_t i = 0; i < length; ++i)
+        bytes[i] = 0;
+    free_nid_postfix(data);
+}
+
 } // namespace
 
 extern "C" {
@@ -133,6 +142,30 @@ int APS5_VABI SSL_set_alpn_protos_nid_postfix(LibreSsl3Ssl* ssl, const std::uint
     ssl->alpnClientProtoList = copy;
     ssl->alpnClientProtoListLength = protosLength;
     return 0;
+}
+
+int APS5_VABI SSL_is_quic_nid_postfix(const LibreSsl3Ssl* ssl) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_is_quic requires an SSL");
+    return ssl->quicMethod != nullptr ? 1 : 0;
+}
+
+int APS5_VABI SSL_set_quic_transport_params_nid_postfix(LibreSsl3Ssl* ssl, const std::uint8_t* params, std::size_t paramsLength) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_set_quic_transport_params requires an SSL");
+    if (!params && paramsLength > 0)
+        throw std::invalid_argument("SSL_set_quic_transport_params requires parameters for a non-zero length");
+    FreeZero(ssl->quicTransportParams, ssl->quicTransportParamsLength);
+    ssl->quicTransportParams = nullptr;
+    ssl->quicTransportParamsLength = 0;
+    auto* copy = static_cast<std::uint8_t*>(malloc_nid_postfix(paramsLength));
+    if (!copy)
+        return 0;
+    if (paramsLength > 0)
+        std::memcpy(copy, params, paramsLength);
+    ssl->quicTransportParams = copy;
+    ssl->quicTransportParamsLength = paramsLength;
+    return 1;
 }
 
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
