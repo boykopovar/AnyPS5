@@ -5,9 +5,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <thread>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -28,9 +30,9 @@ static bool Failed(std::int64_t result, int error) {
     return matched;
 }
 
-static int Open(bool net, int type) {
+static int Open(bool net, int type, int family = 2) {
     const int protocol = type == 1 ? 6 : 17;
-    return net ? sceNetSocket("forward", 2, type, protocol) : socket_nid_postfix(2, type, protocol);
+    return net ? sceNetSocket("forward", family, type, protocol) : socket_nid_postfix(family, type, protocol);
 }
 
 static int Close(bool net, int descriptor) {
@@ -74,6 +76,13 @@ static void CheckDatagram(bool net) {
     size = 123;
     Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, &size) == sizeof(payload));
     Require(size == 123 && std::strcmp(received, payload) == 0);
+    Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, receiverAddress.data(), receiverAddress.size()) == sizeof(payload));
+    std::array<unsigned char, 16> untouched;
+    untouched.fill(0xaa);
+    std::array<unsigned char, 16> from = untouched;
+    std::memset(received, 0, sizeof(received));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, from.data(), nullptr) == sizeof(payload));
+    Require(std::strcmp(received, payload) == 0 && from == untouched);
     Require(Failed(connect_nid_postfix(sender, nullptr, receiverAddress.size()), 14));
     Require(connect_nid_postfix(sender, receiverAddress.data(), receiverAddress.size()) == 0);
     const auto sent = net ? sceNetSend(sender, payload, sizeof(payload), 0)
@@ -124,7 +133,8 @@ static void CheckArguments(bool net) {
     Require(Failed(sendto_nid_postfix(socket, "x", std::uint64_t{INT_MAX} + 1, 0, local.data(), 16), 40));
     char received[8]{};
     Require(Failed(recvfrom_nid_postfix(socket, nullptr, 1, 0, nullptr, nullptr), 14));
-    Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, local.data(), nullptr), 14));
+    const auto bound = local;
+    Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0x80, local.data(), nullptr), 35) && local == bound);
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, nullptr, reinterpret_cast<std::uint32_t*>(unreadable)), 14));
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, local.data(), reinterpret_cast<std::uint32_t*>(unreadable)), 14));
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0x1, nullptr, nullptr), 45));
@@ -139,21 +149,43 @@ struct Stream {
     int accepted;
 };
 
-static Stream OpenStream(bool net) {
-    Stream stream{Open(net, 1), Open(net, 1), -1};
+static Stream OpenStream(bool net, std::uint32_t peerCapacity = 16, int family = 2) {
+    Stream stream{Open(net, 1, family), Open(net, 1, family), -1};
     Require(stream.listener >= 0 && stream.client >= 0);
-    std::array<unsigned char, 16> local{16, 2, 0, 0, 127, 0, 0, 1};
-    Require(bind_nid_postfix(stream.listener, local.data(), local.size()) == 0);
-    std::uint32_t size = local.size();
+    const std::uint32_t addressSize = family == 2 ? 16 : 28;
+    std::array<unsigned char, 28> local{};
+    local[0] = static_cast<unsigned char>(addressSize);
+    local[1] = static_cast<unsigned char>(family);
+    if (family == 2) {
+        local[4] = 127;
+        local[7] = 1;
+    } else {
+        local[23] = 1;
+    }
+    Require(bind_nid_postfix(stream.listener, local.data(), addressSize) == 0);
+    std::uint32_t size = addressSize;
     Require(getsockname_nid_postfix(stream.listener, local.data(), &size) == 0);
-    Require((net ? sceNetListen(stream.listener, 1) : listen_nid_postfix(stream.listener, 1)) == 0);
-    Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
-    stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
+    Require(listen_nid_postfix(stream.listener, 1) == 0);
+    Require((net ? sceNetConnect(stream.client, local.data(), addressSize) : connect_nid_postfix(stream.client, local.data(), addressSize)) == 0);
+    std::array<unsigned char, 28> clientAddress{};
+    size = addressSize;
+    Require(getsockname_nid_postfix(stream.client, clientAddress.data(), &size) == 0 && size == addressSize);
+    std::array<unsigned char, 32> acceptedPeer;
+    acceptedPeer.fill(0xa5);
+    size = peerCapacity;
+    if (net) {
+        Require(Failed(accept_nid_postfix(stream.listener, acceptedPeer.data(), nullptr), 14));
+        Require(Failed(accept_nid_postfix(stream.listener, acceptedPeer.data(), reinterpret_cast<std::uint32_t*>(1)), 14));
+    }
+    stream.accepted = accept_nid_postfix(stream.listener, acceptedPeer.data(), &size);
     Require(stream.accepted >= 0);
-    std::array<unsigned char, 16> peer{};
-    size = peer.size();
+    const auto copied = peerCapacity < addressSize ? peerCapacity : addressSize;
+    Require(size == copied && std::memcmp(acceptedPeer.data(), clientAddress.data(), copied) == 0);
+    for (auto i = copied; i < acceptedPeer.size(); ++i) Require(acceptedPeer[i] == 0xa5);
+    std::array<unsigned char, 28> peer{};
+    size = addressSize;
     Require(getpeername_nid_postfix(stream.client, peer.data(), &size) == 0);
-    Require(size == local.size() && peer == local);
+    Require(size == addressSize && peer == local);
     Require(Failed(getpeername_nid_postfix(stream.client, nullptr, &size), 14));
     return stream;
 }
@@ -185,10 +217,52 @@ static void CheckStreamWaitAll(bool net) {
     Require(recvfrom_nid_postfix(stream.accepted, peeked, sizeof(peeked), peek, nullptr, nullptr) == 2);
     Require(std::memcmp(peeked, "ef", 2) == 0);
     Require(sendto_nid_postfix(stream.client, "g", 1, 0, nullptr, 0) == 1);
-    Require((net ? sceNetShutdown(stream.client, 1) : shutdown_nid_postfix(stream.client, 1)) == 0);
+    Require(Failed(shutdown_nid_postfix(stream.client, 3), 22));
+    Require(shutdown_nid_postfix(stream.client, 1) == 0);
     char rest[8]{};
     Require(recvfrom_nid_postfix(stream.accepted, rest, sizeof(rest), WaitAll, nullptr, nullptr) == 3);
     Require(std::memcmp(rest, "efg", 3) == 0);
+    Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+}
+
+static void CheckFailedShutdown() {
+    const int socket = Open(true, 1);
+    Require(socket >= 0);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    Require(KernelFindSocketNative_nid_no_patch(socket, &owner, &native));
+    const auto state = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(owner);
+    for (const int how : {0, 1, 2}) {
+        Require(Failed(shutdown_nid_postfix(socket, how), 57));
+        Require(state->shutdownFlags.load() == 0);
+    }
+    Require(Close(true, socket) == 0);
+}
+
+static void CheckShutdownPoll(bool net, int how) {
+    using namespace std::chrono_literals;
+    const auto stream = OpenStream(net);
+    constexpr short Readable = 0x0001;
+    constexpr short HangUp = 0x0010;
+    std::promise<void> enteringPoll;
+    auto entered = enteringPoll.get_future();
+    std::packaged_task<short()> poll([&] {
+        GuestPollDescriptor entry{stream.accepted, Readable, 0};
+        enteringPoll.set_value();
+        Require(poll_nid_postfix(&entry, 1, 2000) == 1);
+        return entry.revents;
+    });
+    auto ready = poll.get_future();
+    std::thread reader(std::move(poll));
+    entered.wait();
+    Require(ready.wait_for(50ms) == std::future_status::timeout);
+    Require(shutdown_nid_postfix(how == 1 ? stream.client : stream.accepted, how) == 0);
+    reader.join();
+    Require((ready.get() & (Readable | HangUp)) != 0);
+    if (how == 1) {
+        char byte = 0;
+        Require(recvfrom_nid_postfix(stream.accepted, &byte, 1, 0, nullptr, nullptr) == 0);
+    }
     Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
 }
 
@@ -236,8 +310,19 @@ int main() {
         CheckDatagram(net);
         CheckArguments(net);
         CheckStreamWaitAll(net);
+        CheckShutdownPoll(net, 1);
+        CheckShutdownPoll(net, 0);
         CheckConnectedDatagramTransfer(net);
         CheckStreamTransfer(net);
+    }
+    CheckFailedShutdown();
+    for (const bool net : {false, true}) {
+        for (const int family : {2, 28}) {
+            for (const std::uint32_t capacity : {0u, 1u, 4u, 15u, 16u, 17u, 27u, 28u, 32u, UINT_MAX}) {
+                const auto stream = OpenStream(net, capacity, family);
+                Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+            }
+        }
     }
     CheckUnknownDescriptor();
     return 0;

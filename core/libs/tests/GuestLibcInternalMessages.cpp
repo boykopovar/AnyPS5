@@ -266,6 +266,144 @@ void CheckExportedVtable() {
     Release(narrow, fallback);
 }
 
+
+struct alignas(8) FacetStorage {
+    unsigned char bytes[sizeof(Facet) + 8];
+};
+
+FacetStorage Filled() {
+    FacetStorage storage;
+    std::memset(storage.bytes, 0xa5, sizeof(storage.bytes));
+    return storage;
+}
+
+bool Constructed(const FacetStorage& storage, const void* vtable, std::uint64_t references) {
+    const void* written = nullptr;
+    std::uint64_t count = 0;
+    std::memcpy(&written, storage.bytes, sizeof(written));
+    std::memcpy(&count, storage.bytes + 8, sizeof(count));
+    for (std::size_t index = sizeof(Facet); index < sizeof(storage.bytes); ++index) {
+        if (storage.bytes[index] != 0xa5) return false;
+    }
+    return written == vtable && count == references;
+}
+
+void CheckNarrowConstructors() {
+    const void* vtable = &_ZTVSt8messagesIcE_nid_postfix[2];
+    constexpr std::uint64_t references = 0x100000007ull;
+    GuestLocale::LocinfoStorage locinfo;
+    _ZNSt8_LocinfoC1EPKc_nid_postfix(&locinfo, "C");
+    FacetStorage storage = Filled();
+    _ZNSt8messagesIcEC2Em_nid_postfix(storage.bytes, references);
+    Require(Constructed(storage, vtable, references), "messages<char>(refs) installs the exported vtable and the reference count only");
+    storage = Filled();
+    _ZNSt8messagesIcEC1EPKcm_nid_postfix(storage.bytes, "C", 0);
+    Require(Constructed(storage, vtable, 0), "messages<char>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIcEC2EPKcm_nid_postfix(storage.bytes, "C", 6);
+    Require(Constructed(storage, vtable, 6), "the base messages<char>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIcEC1Em_nid_postfix(storage.bytes, references);
+    Require(Constructed(storage, vtable, references), "the complete messages<char>(refs) installs the exported vtable and the reference count only");
+    storage = Filled();
+    _ZNSt8messagesIcEC1ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 1);
+    Require(Constructed(storage, vtable, 1), "the complete _Locinfo constructor builds the facet");
+    storage = Filled();
+    _ZNSt8messagesIcEC2ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 2);
+    Require(Constructed(storage, vtable, 2), "the base _Locinfo constructor builds the facet");
+    _ZNSt8_LocinfoD1Ev_nid_postfix(&locinfo);
+    const auto* facet = reinterpret_cast<const Facet*>(storage.bytes);
+    const String name{};
+    const int locale = 0;
+    Require(_ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(facet, &name, &locale) == -1, "a constructed messages<char> opens no catalog");
+}
+
+void CheckWideConstructors() {
+    constexpr std::uint64_t references = 3;
+    GuestLocale::LocinfoStorage locinfo;
+    _ZNSt8_LocinfoC1EPKc_nid_postfix(&locinfo, "C");
+    FacetStorage first = Filled();
+    _ZNSt8messagesIwEC2Em_nid_postfix(first.bytes, references);
+    const void* vtable = nullptr;
+    std::memcpy(&vtable, first.bytes, sizeof(vtable));
+    Require(vtable != nullptr && vtable != &_ZTVSt8messagesIcE_nid_postfix[2], "messages<wchar_t> has its own vtable");
+    Require(Constructed(first, vtable, references), "messages<wchar_t>(refs) installs the vtable and the reference count only");
+    FacetStorage storage = Filled();
+    _ZNSt8messagesIwEC1EPKcm_nid_postfix(storage.bytes, "C", 4);
+    Require(Constructed(storage, vtable, 4), "messages<wchar_t>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIwEC1ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 5);
+    Require(Constructed(storage, vtable, 5), "the _Locinfo constructor builds the facet");
+    storage = Filled();
+    _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(storage.bytes, &locinfo, 7);
+    Require(Constructed(storage, vtable, 7), "the base _Locinfo constructor builds the wide facet");
+    storage = Filled();
+    _ZNSt8messagesIwEC2EPKcm_nid_postfix(storage.bytes, "C", 8);
+    Require(Constructed(storage, vtable, 8), "the base messages<wchar_t>(name, refs) builds the facet for the C locale");
+    storage = Filled();
+    _ZNSt8messagesIwEC1Em_nid_postfix(storage.bytes, references);
+    Require(Constructed(storage, vtable, references), "the complete messages<wchar_t>(refs) installs the vtable and the reference count only");
+    _ZNSt8_LocinfoD1Ev_nid_postfix(&locinfo);
+
+    const auto* facet = reinterpret_cast<const Facet*>(storage.bytes);
+    const String name{};
+    const int locale = 0;
+    Require(sceLibcInternalPending4_010_nid_no_patch(facet, &name, &locale) == -1, "a constructed messages<wchar_t> opens no catalog");
+    const Layout wide{2, 7, sceLibcInternalPending4_012_nid_no_patch};
+    String fallback = MakeHeap(wide, 20, 23, 0x35);
+    const long before = live;
+    String result{};
+    Require(sceLibcInternalPending4_009_nid_no_patch(&result, facet, 1, 2, 3, &fallback) == &result, "get through the wide vtable returns its result");
+    Require(live == before + 1 && result.size == 20 && result.capacity == 23 && std::memcmp(result.pointer, fallback.pointer, 42) == 0, "get through the wide vtable copies the wide default");
+    sceLibcInternalPending4_011_nid_no_patch(facet, 1);
+    Release(wide, result);
+    Release(wide, fallback);
+
+    auto* heap = _Znwm_nid_postfix(sizeof(Facet));
+    const long allocated = live;
+    _ZNSt8messagesIwEC2Em_nid_postfix(heap, 0);
+    auto* object = static_cast<Facet*>(heap);
+    object->vtable->retain(object);
+    Require(object->references == 1 && object->vtable->release(object) == object, "the wide vtable counts references");
+    object->vtable->deleteObject(object);
+    Require(live == allocated - 1, "the wide vtable deletes the facet");
+}
+
+}
+
+void CheckGetcat() {
+    GuestLocale::Implementation classic{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
+    GuestLocale::Implementation* classicPointer = &classic;
+    const long before = live;
+    Facet* narrow = nullptr;
+    Require(_ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&narrow, &classicPointer) == 6 && narrow != nullptr && live == before + 1, "messages<char>::_Getcat builds a facet for an empty slot and returns the messages category");
+    Require(narrow->vtable == reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt8messagesIcE_nid_postfix[2]) && narrow->references == 0 && narrow->reserved == 0, "messages<char>::_Getcat installs the exported vtable and no references");
+    Facet* const kept = narrow;
+    Require(_ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&narrow, &classicPointer) == 6 && narrow == kept && live == before + 1, "messages<char>::_Getcat leaves a filled slot alone");
+    Require(_ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, nullptr) == 6, "messages<char>::_Getcat without a slot returns the messages category");
+    const String name{};
+    const int locale = 0;
+    Require(_ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(narrow, &name, &locale) == -1, "a messages<char> from _Getcat opens no catalog");
+    narrow->vtable->deleteObject(narrow);
+    Require(live == before, "the messages<char> from _Getcat is deleted through its vtable");
+
+    FacetStorage reference = Filled();
+    _ZNSt8messagesIwEC2Em_nid_postfix(reference.bytes, 0);
+    const void* wideVtable = nullptr;
+    std::memcpy(&wideVtable, reference.bytes, sizeof(wideVtable));
+    Facet* wide = nullptr;
+    Require(_ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&wide, &classicPointer) == 6 && wide != nullptr && live == before + 1, "messages<wchar_t>::_Getcat builds a facet for an empty slot and returns the messages category");
+    Require(wide->vtable == wideVtable && wide->references == 0 && wide->reserved == 0, "messages<wchar_t>::_Getcat installs the wide vtable and no references");
+    Facet* const keptWide = wide;
+    Require(_ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&wide, &classicPointer) == 6 && wide == keptWide && live == before + 1, "messages<wchar_t>::_Getcat leaves a filled slot alone");
+    Require(_ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, nullptr) == 6, "messages<wchar_t>::_Getcat without a slot returns the messages category");
+    wide->vtable->deleteObject(wide);
+    Require(live == before, "the messages<wchar_t> from _Getcat is deleted through its vtable");
+
+    Facet* empty = nullptr;
+    Require(Throws([&] { _ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&empty, nullptr); }) && empty == nullptr, "messages<char>::_Getcat without a locale throws");
+    GuestLocale::Implementation* nullLocale = nullptr;
+    Require(Throws([&] { _ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&empty, &nullLocale); }) && empty == nullptr && live == before, "messages<wchar_t>::_Getcat with a null locale throws and allocates nothing");
 }
 
 int main() {
@@ -280,6 +418,9 @@ int main() {
     CheckDefaultCopies({1, GuestLocale::StringInlineCapacity, sceLibcInternalPending4_006_nid_no_patch}, 5000);
     CheckDefaultCopies({2, 7, sceLibcInternalPending4_012_nid_no_patch}, 3000);
     CheckExportedVtable();
+    CheckNarrowConstructors();
+    CheckWideConstructors();
+    CheckGetcat();
     Require(live == before, "every copy is released");
     std::puts("libc internal messages: ok");
     return 0;

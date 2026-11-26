@@ -180,9 +180,18 @@ void RunSamplerReductionTests(const Fields& base) {
     linearMip.xyMinFilter = 0;
     rejectFields(linearMip, "min or max reduction with a linear mip filter");
 
-    Fields badFilterMode = base;
-    badFilterMode.filterMode = 3;
-    rejectFields(badFilterMode, "unknown reduction filter mode 3");
+    for (const std::uint32_t mip : {1u, 2u}) {
+        Fields blendMode = base;
+        blendMode.filterMode = 3;
+        blendMode.xyMagFilter = 1;
+        blendMode.xyMinFilter = 1;
+        blendMode.mipFilter = mip;
+        const auto decoded = DecodeSamplerResource(pack(blendMode));
+        Require(decoded.reductionMode == VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, "filter mode 3 did not decode to a weighted average");
+        const auto created = createSampler(context, decoded);
+        Require(created.created && created.next == nullptr, "a filter mode 3 sampler chained a reduction mode");
+        Require(!Sampler(context, decoded).RequiresFilterMinmax(), "a filter mode 3 sampler requires min/max filtering");
+    }
     Fields anisoReduction = base;
     anisoReduction.maxAnisoRatio = 2;
     anisoReduction.mipFilter = 1;
@@ -469,6 +478,15 @@ void RunGuestSamplerResourceTests() {
         const auto decoded = DecodeSamplerResource(pack(mirrored), true);
         requireUnnormalized(decoded, clamp == 1u ? "unnormalized S# with clamp mode 1" : "unnormalized S# with clamp mode 3");
         Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-edge after the shader mirrors the coordinate");
+    }
+    for (std::uint32_t type = 0; type < borders.size(); ++type) {
+        Fields mirroredBorder = unnormalizedBase;
+        mirroredBorder.clampX = 7;
+        mirroredBorder.clampY = type == 0u ? 2u : 7u;
+        mirroredBorder.borderColorType = type;
+        const auto decoded = DecodeSamplerResource(pack(mirroredBorder), true);
+        requireUnnormalized(decoded, "unnormalized S# with clamp mode 7");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && decoded.addressModeV == (type == 0u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) && decoded.borderColor == borders[type], "unnormalized clamp mode 7 must decode to clamp-to-border after the shader mirrors the coordinate");
     }
     Fields unnormalizedBiased = unnormalizedBase;
     unnormalizedBiased.lodBiasRaw = 256;

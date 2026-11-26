@@ -90,6 +90,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
     {135, VK_FORMAT_R5G5B5A1_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
+    {137, VK_FORMAT_R4G4_UNORM_PACK8, 1, false},
     {141, VK_FORMAT_D24_UNORM_S8_UINT, 4, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
@@ -120,7 +121,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 || guestFormat == 131 ? 20 : guestFormat;
 }
 
 std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
@@ -168,6 +169,26 @@ std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties forma
     return formats;
 }
 
+constexpr std::array<std::uint32_t, 3> kOptionalTextureFormats{51u, 55u, 137u};
+
+std::uint32_t OptionalSampledBit(std::uint32_t guestFormat) {
+    for (std::uint32_t index = 0; index < kOptionalTextureFormats.size(); ++index) {
+        if (kOptionalTextureFormats[index] == guestFormat) return 1u << index;
+    }
+    return 0u;
+}
+
+std::uint32_t OptionalSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
+    std::uint32_t formats = 0;
+    for (const auto format : kOptionalTextureFormats) {
+        VkFormatProperties properties{};
+        formatProperties(physical, ResolveTextureFormat(format), &properties);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if ((properties.optimalTilingFeatures & required) == required) formats |= OptionalSampledBit(format);
+    }
+    return formats;
+}
+
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
     const bool always = forced != nullptr && (std::strcmp(forced, "1") == 0 || std::strcmp(forced, "copy") == 0);
@@ -200,6 +221,8 @@ bool SampledDepth24S8(const Context& context) {
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     const auto scaled = ScaledSampledBit(guestFormat);
     Require(scaled == 0u || (context.scaledSampledFormats & scaled) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
+    const auto optional = OptionalSampledBit(guestFormat);
+    Require(optional == 0u || (context.optionalSampledFormats & optional) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;
@@ -242,8 +265,9 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
 
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
-        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
-        case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
+        case 7u: case 8u: case 11u: case 12u: case 13u: case 20u: case 21u: case 22u: case 23u: case 24u: case 27u: case 28u: case 29u: case 36u: case 50u: case 51u: case 54u: case 55u:
+        case 62u: case 63u: case 64u: case 65u: case 66u: case 69u: case 70u: case 71u: case 72u: case 73u: case 74u: case 75u: case 76u: case 77u:
+        case 132u: case 133u: case 134u: case 135u: case 136u: case 141u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }
 }
@@ -262,11 +286,13 @@ VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponen
     constexpr std::array<VkComponentSwizzle, 4> bgra{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
     constexpr std::array<VkComponentSwizzle, 4> abgr{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R};
     constexpr std::array<VkComponentSwizzle, 4> argb{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B};
+    constexpr std::array<VkComponentSwizzle, 4> grba{VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     switch (guestFormat) {
         case 133: return bgrb[index];
         case 134: return bgra[index];
         case 135: return abgr[index];
         case 136: return argb[index];
+        case 137: return grba[index];
         case 43: return bgra[index];
         default: return component;
     }

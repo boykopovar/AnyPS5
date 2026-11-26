@@ -41,6 +41,16 @@ bool ThrowsInvalidArgument(Fn&& fn) {
     }
 }
 
+template <typename Fn>
+bool ThrowsRuntimeError(Fn&& fn) {
+    try {
+        fn();
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+}
+
 constexpr int kErrAlreadySystemInitialized = static_cast<int>(0x80B80002);
 constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
 
@@ -96,6 +106,8 @@ static_assert(COMMON_DIALOG_ERROR_ARG_NULL == static_cast<int>(0x80B8000Du));
 int main() {
     Require(!sceCommonDialogIsUsed());
     Require(!CommonDialogSystemInitialized_nid_no_patch());
+    Require(!CommonDialogAcquire_nid_no_patch());
+    Require(!sceCommonDialogIsUsed());
     Require(sceCommonDialogInitialize() == COMMON_DIALOG_OK);
     Require(CommonDialogSystemInitialized_nid_no_patch());
     Require(!sceCommonDialogIsUsed());
@@ -186,6 +198,25 @@ int main() {
     Require(_ZNK3sce16CommonDialogUtil6Client19isInitializedStatusEv(client.data()) == 0);
     Require(_ZNK3sce16CommonDialogUtil6Client8isFinishEv(client.data()) == 0);
     Require(_ZNK3sce16CommonDialogUtil6Client10isCloseReqEv(client.data()) == 0);
+    errno = 71;
+    _ZN3sce16CommonDialogUtil6ClientD1Ev(client.data());
+    Require(errno == 71);
+    errno = 71;
+    _ZN3sce16CommonDialogUtil6ClientD2Ev(client.data());
+    Require(errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD1Ev(nullptr); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD1Ev(reinterpret_cast<void*>(std::uintptr_t{0x10})); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD2Ev(nullptr); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZN3sce16CommonDialogUtil6ClientD2Ev(reinterpret_cast<void*>(std::uintptr_t{0x10})); }) && errno == 71);
+    Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD0Ev(client.data()); }));
+    client[1] = 1;
+    Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD1Ev(client.data()); }));
+    Require(ThrowsRuntimeError([&] { _ZN3sce16CommonDialogUtil6ClientD2Ev(client.data()); }));
+    client[1] = 0;
     errno = 71;
     Require(libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch(client.data()) == kResult80B8000E && errno == 71);
     errno = 71;

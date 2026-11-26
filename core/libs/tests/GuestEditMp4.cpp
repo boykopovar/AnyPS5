@@ -104,6 +104,10 @@ int main() {
     errno = 71;
     Require(sceEditMp4Initialize(param.data(), &handleOut) == invalidParam);
     Require(errno == 71);
+    Require(sceEditMp4Initialize(reinterpret_cast<const void*>(std::uintptr_t{0x10}), &handleOut) == invalidParam);
+    Require(errno == 71);
+    Require(sceEditMp4Initialize(reinterpret_cast<const void*>(~std::uintptr_t{0}), &handleOut) == invalidParam);
+    Require(errno == 71);
     Require(handleOut == 0x1234);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);

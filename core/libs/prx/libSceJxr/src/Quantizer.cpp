@@ -1,5 +1,8 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -54,9 +57,11 @@ void APS5_VABI formatQuantizer_nid_postfix(void** quantizers, std::uint8_t mode,
     if (channels == 0) return;
     Require(quantizers != nullptr, __func__, "null quantizer table");
     Require(channels <= MaxChannels, __func__, "more than 16 channels");
+    std::array<void*, MaxChannels> table{};
+    Require(GuestCopyIn_nid_no_patch(table.data(), quantizers, channels * sizeof(void*)), __func__, "unreadable quantizer table");
     for (std::size_t channel = 0; channel < channels; ++channel)
-        Require(quantizers[channel] != nullptr, __func__, "null channel quantizer");
-    JxrFormatQuantizer_nid_no_patch(quantizers, mode, channels, position, shiftedUv, scaled);
+        Require(table[channel] != nullptr, __func__, "null channel quantizer");
+    JxrFormatQuantizer_nid_no_patch(table.data(), mode, channels, position, shiftedUv, scaled);
 }
 
 std::int32_t APS5_VABI getACPredMode_nid_postfix(void* macroblock, std::int32_t format) {
@@ -74,16 +79,26 @@ int APS5_VABI allocateQuantizer_nid_postfix(void** quantizers, std::size_t chann
 
     auto* const allocation = static_cast<QuantizerLayout*>(
         malloc_nid_postfix(quantizerCount * sizeof(QuantizerLayout) * channels));
-    quantizers[0] = allocation;
-    if (!allocation) return -1;
-    for (std::size_t channel = 1; channel < channels; ++channel)
-        quantizers[channel] = quantizerCount == 0 ? allocation : allocation + channel * quantizerCount;
-    return 0;
+    std::array<void*, MaxChannels> table{};
+    table[0] = allocation;
+    std::size_t entries = 1;
+    if (allocation) {
+        for (std::size_t channel = 1; channel < channels; ++channel)
+            table[channel] = quantizerCount == 0 ? allocation : allocation + channel * quantizerCount;
+        entries = channels == 0 ? 1 : channels;
+    }
+    if (!GuestCopyOut_nid_no_patch(quantizers, table.data(), entries * sizeof(void*))) {
+        if (allocation) free_nid_postfix(allocation);
+        throw std::invalid_argument(std::string(__func__) + ": unwritable quantizer table");
+    }
+    return allocation ? 0 : -1;
 }
 
 void APS5_VABI freeQuantizer_nid_postfix(void** quantizers) {
     Require(quantizers != nullptr, __func__, "null quantizer table");
-    if (quantizers[0]) free_nid_postfix(quantizers[0]);
+    void* first = nullptr;
+    Require(GuestCopyIn_nid_no_patch(&first, quantizers, sizeof(first)), __func__, "unreadable quantizer table");
+    if (first) free_nid_postfix(first);
 }
 
 } // extern "C"

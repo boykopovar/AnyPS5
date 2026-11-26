@@ -235,9 +235,15 @@ extern "C" {
 
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!IsMemoryValid(memory)) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemory probed{};
+    if (!Font::CopyInGuest(probed, memory) || !probed.iface) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemoryInterface iface{};
+    if (!Font::CopyInGuest(iface, probed.iface)) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemory validated = probed;
+    validated.iface = &iface;
+    if (!IsMemoryValid(&validated)) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (!pWritingLine || writingLineDetail || (writingForm != WRITING_FORM_HORIZONTAL_RTL && writingForm != WRITING_FORM_HORIZONTAL_LTR)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    void* allocation = memory->iface->alloc(memory->mspace_handle, sizeof(WritingLine));
+    void* allocation = iface.alloc(probed.mspace_handle, sizeof(WritingLine));
     if (!allocation) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     auto* line = std::construct_at(static_cast<WritingLine*>(allocation));
     line->memory = memory;
@@ -248,7 +254,7 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
             lines.insert(line);
         } catch (...) {
             std::destroy_at(line);
-            memory->iface->dealloc(memory->mspace_handle, allocation);
+            iface.dealloc(probed.mspace_handle, allocation);
             throw;
         }
     }
@@ -258,18 +264,21 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
             lines.erase(line);
         }
         std::destroy_at(line);
-        memory->iface->dealloc(memory->mspace_handle, allocation);
+        iface.dealloc(probed.mspace_handle, allocation);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
-    if (!pWritingLine || !*pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* line = static_cast<WritingLine*>(*pWritingLine);
+    if (!pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    void* handle = nullptr;
+    if (!Font::CopyInGuest(handle, pWritingLine) || !handle) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* line = static_cast<WritingLine*>(handle);
     {
         std::lock_guard lock(linesMutex);
         if (!lines.contains(line) || !IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_WRITING;
+        if (!Font::CopyOutGuest(pWritingLine, static_cast<void*>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
         lines.erase(line);
     }
     const FontMemory* memory = line->memory;
@@ -277,7 +286,6 @@ int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
     line->kind = 0;
     std::destroy_at(line);
     memory->iface->dealloc(memory->mspace_handle, line);
-    *pWritingLine = nullptr;
     return SCE_FONT_OK;
 }
 
@@ -304,9 +312,7 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
     if (!IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontWritingMetrics localMetrics{};
     if (writingMetrics) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localMetrics, writingMetrics, sizeof(localMetrics));
-        errno = savedErrno;
         if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (line->cursor) ResetOrders(*line);

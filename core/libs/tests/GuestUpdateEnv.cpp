@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <barrier>
 #include <csignal>
@@ -284,7 +285,7 @@ void DefaultEnvironment(const Environment* fallback) {
 int main(int argc,char** argv) {
     Require(argc==2 || argc==4,"expected libc path and optional trap bit/source");
 #ifdef _WIN32
-    const auto library=LoadLibraryA(argv[1]);
+    const auto library=LoadLibraryW(ArgumentPath(argv,1).c_str());
     Require(library!=nullptr,"load libc");
     updateEnvironment=reinterpret_cast<UpdateEnvironment>(GetProcAddress(library,"feupdateenv_nid_postfix"));
 #else

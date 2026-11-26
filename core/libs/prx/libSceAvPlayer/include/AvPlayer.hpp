@@ -33,11 +33,15 @@ constexpr std::int32_t EventWarningId = 0x20;
 
 constexpr std::uint32_t StreamTypeVideo = 1;
 constexpr std::uint32_t StreamTypeAudio = 0;
+constexpr std::uint32_t Ps4StreamTypeVideo = 0;
+constexpr std::uint32_t Ps4StreamTypeAudio = 1;
+constexpr std::uint32_t Ps5StreamTypeVideo = 1;
 constexpr std::uint32_t Ps5StreamTypeAudio = 2;
 constexpr std::uint32_t StreamTypeTimedText = 2;
 
 constexpr std::uint32_t SourceTypeUnknown = 0;
 constexpr std::uint32_t SourceTypeFileMp4 = 1;
+constexpr std::uint32_t SourceTypeWebm = 2;
 constexpr std::uint32_t SourceTypeHls = 8;
 
 constexpr std::uint32_t SyncModeDefault = 0;
@@ -100,9 +104,13 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 
 std::uint32_t DetectSourceType(std::string_view path);
 
+void SetBufferWaitObserverForTest(void (*observer)(std::uint64_t, std::uint64_t));
+
 extern "C" {
 
+void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t));
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
+std::int32_t GetAvPlayerTrickSpeedForTest_nid_no_patch(AvPlayerInternal* h);
 void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
 bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
 bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
@@ -140,6 +148,7 @@ public:
     bool GetAudioData(AvPlayerFrameInfo& info);
     bool IsActive();
     std::uint64_t CurrentTime();
+    std::int32_t TrickSpeedForTest();
     void SetClockTimeForTest(double milliseconds);
     void SetHoldAudioEofForTest(bool hold);
     bool AudioEofHeldForTest();
@@ -169,11 +178,13 @@ private:
     bool readyLocked() const;
     int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
+    std::uint32_t guestStreamType(std::uint32_t type) const;
 
     AvPlayerFileReplacement file{};
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
+    bool ps4Process = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 
@@ -183,6 +194,7 @@ private:
     State previous = State::Initial;
     bool looping = false;
     std::int32_t speed = NormalSpeed;
+    std::uint32_t activeSourceType = SourceTypeUnknown;
     std::uint32_t syncMode = SyncModeDefault;
     std::uint32_t demuxVideoBytes = 0;
 

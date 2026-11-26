@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [GPU-written sampled surfaces outside a host import](../../../core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp) (libSceAgcDriver) - a sampled lookup of a surface that has a pending GPU write, or that a host import already partly covers (a storage image or render target imported over part of it), now imports the whole surface (`HostImportJoinedFor`, joining the imports of adjacent allocations) so that it is viewed through its storage image. Only the full lookup asks for the import: a cache hit (`Revalidate`) over a surface no import covers stays a CPU snapshot until the next full lookup, and a join whose allocation run is more than two join windows (`SetHostImportWindow`) longer than the requested surface is still refused, so a view of a few layers of a surface that crosses allocations stays a snapshot until the whole surface is looked up. Such a surface is read on the CPU, so the dispatch pre-sync waits for every recorded batch before it.

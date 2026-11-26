@@ -41,15 +41,19 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <stdexcept>
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigC1Ev_nid_postfix(WebRtcAudioNetworkAdaptorConfig* config) {
-    if (!config)
+    if (!config || !GuestWritable_nid_no_patch(config, sizeof(*config)))
         throw std::invalid_argument("AudioNetworkAdaptorImpl::Config constructor requires a config");
-    config->eventLog = nullptr;
+    WebRtcAudioNetworkAdaptorConfig host{};
+    host.eventLog = nullptr;
+    if (!GuestPtr<WebRtcAudioNetworkAdaptorConfig>(config).CopyOut(host))
+        throw std::invalid_argument("AudioNetworkAdaptorImpl::Config constructor requires a config");
 }
 
 void APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigD1Ev_nid_postfix(WebRtcAudioNetworkAdaptorConfig*) {}

@@ -3,10 +3,12 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -16,12 +18,24 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
+template <typename TAction>
+void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, location);
+}
+
 const char Name[] = "test method";
 int liveBlocks = 0;
 int zeroedCallsBeforeFailure = -1;
 int written = 0;
 int destroyed = 0;
+int createFailed = 0;
 int payload = 0;
+const LibreSsl::BioMethod* observedMethod = nullptr;
 
 void* APS5_VABI Allocate(std::size_t bytes) {
     ++liveBlocks;
@@ -70,6 +84,13 @@ int APS5_VABI Create(LibreSsl::Bio* bio) {
     bio->initialized = 1;
     bio->data = &payload;
     return 1;
+}
+
+int APS5_VABI CreateFailure(LibreSsl::Bio* bio) {
+    ++createFailed;
+    observedMethod = bio ? bio->method : nullptr;
+    if (bio) bio->data = &payload;
+    return 0;
 }
 
 int APS5_VABI Destroy(LibreSsl::Bio*) {
@@ -140,5 +161,34 @@ int main() {
         Require(BIO_free_nid_postfix(bio) == 1 && destroyed == 1);
         BIO_meth_free_nid_postfix(method);
         Require(liveBlocks == 0);
+    }
+    {
+        destroyed = 0;
+        createFailed = 0;
+        observedMethod = nullptr;
+        payload = 42;
+        auto* method = BIO_meth_new_nid_postfix(8, Name);
+        Require(method && liveBlocks == 1);
+        Require(BIO_meth_set_create_nid_postfix(method, &CreateFailure) == 1 && method->create == &CreateFailure);
+        Require(BIO_meth_set_destroy_nid_postfix(method, &Destroy) == 1 && method->destroy == &Destroy);
+        Require(BIO_new_nid_postfix(method) == nullptr);
+        Require(createFailed == 1 && observedMethod == method && destroyed == 0 && payload == 42 && liveBlocks == 1);
+        Require(method->type == 8 && method->name == Name && method->create == &CreateFailure && method->destroy == &Destroy);
+        Require(BIO_meth_set_create_nid_postfix(method, &Create) == 1 && method->create == &Create);
+        auto* bio = BIO_new_nid_postfix(method);
+        Require(bio && bio->initialized == 1 && bio->data == &payload && destroyed == 0 && liveBlocks == 2);
+        Require(BIO_free_nid_postfix(bio) == 1 && destroyed == 1 && liveBlocks == 1);
+        BIO_meth_free_nid_postfix(method);
+        Require(liveBlocks == 0);
+    }
+    {
+        errno = 71;
+        auto* const unmapped = reinterpret_cast<LibreSsl::BioMethod*>(0x10);
+        RequireInvalidArgument([&] { BIO_meth_set_write_nid_postfix(unmapped, &Write); });
+        RequireInvalidArgument([&] { BIO_meth_set_read_nid_postfix(unmapped, &Read); });
+        RequireInvalidArgument([&] { BIO_meth_set_ctrl_nid_postfix(unmapped, &Control); });
+        RequireInvalidArgument([&] { BIO_meth_set_create_nid_postfix(unmapped, &Create); });
+        RequireInvalidArgument([&] { BIO_meth_set_destroy_nid_postfix(unmapped, &Destroy); });
+        Require(errno == 71 && liveBlocks == 0);
     }
 }

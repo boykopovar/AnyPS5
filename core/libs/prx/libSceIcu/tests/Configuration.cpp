@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "unicode/putil.h"
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -158,9 +159,18 @@ void TimeZoneDirectory() {
     Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/warn");
 
     u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
-    Require(status == 1);
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+    u_setTimeZoneFilesDirectory_nid_postfix("/warn", &status);
+    status = -124;
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
+    Require(status == -124 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
     status = 0;
-    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    UErrorCode bundled = U_ZERO_ERROR;
+    u_setTimeZoneFilesDirectory("bundled", &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "bundled");
+    u_setTimeZoneFilesDirectory(nullptr, &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "");
 
     u_setTimeZoneFilesDirectory_nid_postfix("/first", &status);
     u_setTimeZoneFilesDirectory_nid_postfix("", &status);
@@ -313,6 +323,15 @@ void UprvMemoryWithUserFunctions() {
     std::memset(g_arena, 0x55, sizeof(g_arena));
     char* empty = uprv_strndup_nid_postfix("abc", 0);
     Require(empty[0] == 0 && g_log.lastSize == 1);
+
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    RequireThrows([&] { uprv_strdup_nid_postfix(unreadable); });
+    RequireThrows([&] { uprv_strndup_nid_postfix(unreadable, 4); });
+    Require(errno == 71);
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* nothing = uprv_strndup_nid_postfix(unreadable, 0);
+    Require(nothing[0] == 0 && g_log.lastSize == 1);
 
     std::memset(g_arena, 0x55, sizeof(g_arena));
     const int before = g_log.allocations;
