@@ -145,6 +145,14 @@ def main():
         assert result.returncode == 0 and strict_output.exists(), (result.stdout, result.stderr)
         assert 'Strict filtering total: 1 -> 1; filtered=0' in result.stdout, result.stdout
         assert exports(strict_output.read_bytes())['absolute_function'] == 0x10030
+        crossing_symbols = [(name, info, visibility, section, value,
+                             0xfd1 if name == 'absolute_function' else size)
+                            for name, info, visibility, section, value, size in symbols]
+        result, crossing_output = convert('strict-crossing-absolute-root', crossing_symbols,
+                                          options=('--registry', 'unused-filter=2'), strict_import=True)
+        assert result.returncode == 0 and crossing_output.exists(), (result.stdout, result.stderr)
+        assert 'Strict filtering total: 1 -> 0; filtered=1' in result.stdout, result.stdout
+        assert 'absolute_function' not in exports(crossing_output.read_bytes())
         for label, changed, expected in (
                 ('conflict', symbols[:2] + [('alpha#C#B', 0x12, 0, 1, 0x4020, 6)], 'Conflicting executable exports after stripping #: alpha'),
                 ('unmapped', [('bad', 0x11, 0, 1, 0x9000, 6)], 'does not fit inside a PT_LOAD segment'),

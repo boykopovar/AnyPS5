@@ -68,7 +68,7 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
             const bool mapped = std::any_of(headers.begin(), headers.end(), [&](const auto& header) {
                 if (header.Type != 1 || (header.Flags & flags) != flags || symbol.Value < header.MappedAddress) return false;
                 const auto offset = symbol.Value - header.MappedAddress;
-                const auto segmentSize = functionRoot ? header.FileSize : header.MemorySize;
+                const auto segmentSize = type == 2 ? header.FileSize : header.MemorySize;
                 return offset < segmentSize && extent <= segmentSize - offset;
             });
             if (!mapped) continue;
