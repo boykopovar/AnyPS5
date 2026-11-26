@@ -27,9 +27,6 @@ int main() {
     VideoOutTestEnvironment environment;
     int reserved = 0;
     const std::uint32_t control = 1;
-    Require(sceVideoOutSetGlobalAlpha(-1, 1, 0x80) == InvalidHandle, "SetGlobalAlpha on an unknown handle");
-    Require(sceVideoOutSetAlphaControl(-1, 1, 0x80, &control, nullptr) == InvalidHandle, "SetAlphaControl on an unknown handle");
-    Require(sceVideoOutSetAlphaControl(-1, 1, 0x80, &control, &reserved) == InvalidOption, "the reserved argument was not checked before the handle");
 
     int handle = 0;
     try {
@@ -40,6 +37,10 @@ int main() {
         return 77;
     }
     Require(handle > 0, "sceVideoOutOpen failed");
+
+    Require(sceVideoOutSetGlobalAlpha(-1, 1, 0x80) == InvalidHandle, "SetGlobalAlpha on an unknown handle");
+    Require(sceVideoOutSetAlphaControl(-1, 1, 0x80, &control, nullptr) == InvalidHandle, "SetAlphaControl on an unknown handle");
+    Require(sceVideoOutSetAlphaControl(-1, 1, 0x80, &control, &reserved) == InvalidOption, "the reserved argument was not checked before the handle");
 
     Require(sceVideoOutSetGlobalAlpha(handle + 1, 1, 0x80) == InvalidHandle, "SetGlobalAlpha on a port that is not open");
     Require(sceVideoOutSetAlphaControl(handle + 1, 1, 0x80, &control, nullptr) == InvalidHandle, "SetAlphaControl on a port that is not open");
