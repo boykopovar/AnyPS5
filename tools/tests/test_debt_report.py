@@ -200,6 +200,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("no debt file: libSceMissing", errors.getvalue())
 
+    def test_unknown_label_is_a_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
+            self.run_main(["--label", "windwos"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("windwos", errors.getvalue())
+
+    def test_stale_link_filter_can_be_combined_with_another_label(self):
+        code, output = self.run_main(["--json", "--label", "no-test", "--label", "stale?"])
+        self.assertEqual(code, 0)
+        self.assertEqual([row["line"] for row in json.loads(output)], [7])
+
 
 class DebtFilesTests(unittest.TestCase):
     def tree(self, root):

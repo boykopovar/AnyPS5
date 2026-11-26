@@ -77,6 +77,7 @@ constexpr int GuestEagain = 35;
 constexpr int GuestErange = 34;
 constexpr std::int32_t GuestSiUser = 0x10001;
 constexpr std::int32_t GuestSiTimer = 0x10003;
+constexpr std::int32_t GuestSiAsyncio = 0x10004;
 constexpr std::int32_t GuestSiKernel = 0x10006;
 constexpr std::int32_t GuestSiLwp = 0x10007;
 struct GuestSiginfo {
@@ -162,6 +163,7 @@ struct QueuedSignal {
     std::int64_t value = 0;
     std::int32_t overrun = 0;
     std::int32_t error = 0;
+    std::uint64_t ticket = 0;
 };
 
 struct TimerOverrun {
@@ -457,7 +459,8 @@ bool FillSiginfo(GuestSiginfo* info, int guest, const QueuedSignal& entry) {
     GuestSiginfo local{};
     local.signo = guest;
     local.code = entry.code;
-    local.pid = local.code == GuestSiKernel || local.code == GuestSiTimer ? 0 : getpid_nid_postfix();
+    local.pid = local.code == GuestSiKernel || local.code == GuestSiTimer || local.code == GuestSiAsyncio ? 0 : getpid_nid_postfix();
+    if (local.code == GuestSiAsyncio) local.value = entry.value;
     if (local.code == GuestSiTimer) {
         local.error = entry.error;
         local.value = entry.value;
@@ -771,6 +774,67 @@ int TimerSignalOverrun(int timer) {
     return pending.timers[timer].last;
 }
 
+namespace {
+
+std::uint64_t QueueValueSignal(int guest, std::int32_t code, std::int64_t value) {
+    static std::uint64_t nextTicket = 0;
+    auto& pending = Pending();
+    std::uint64_t ticket = 0;
+    {
+        std::lock_guard lock(pending.lock);
+        auto& queued = pending.queued[guest];
+        const bool merged = code == GuestSiKernel && std::any_of(queued.begin(), queued.end(), [](const QueuedSignal& entry) { return entry.code == GuestSiKernel; });
+        if (merged) return 0;
+        ticket = ++nextTicket;
+        queued.push_back({code, -1, value, 0, 0, ticket});
+        pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
+    }
+    pending.changed.NotifyAll();
+    return ticket;
+}
+
+bool RemoveValueSignalLocked(int guest, std::uint64_t ticket) {
+    auto& pending = Pending();
+    auto& queued = pending.queued[guest];
+    const auto found = std::find_if(queued.begin(), queued.end(), [ticket](const QueuedSignal& entry) { return entry.ticket == ticket; });
+    if (found == queued.end()) return false;
+    queued.erase(found);
+    if (queued.empty()) pending.words[SignalWord(guest)].fetch_and(~SignalBit(guest), std::memory_order_relaxed);
+    return true;
+}
+
+}
+
+extern "C" int SendValueSignal_nid_no_patch(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed, std::uint64_t* ticket) {
+    *ticket = 0;
+    if (directed && !LiveGuestThreadExists(thread)) return SignalSendNoThread;
+    GuestSigaction action = Disposition(guest);
+    KqueueSignalSent(guest);
+    if (IgnoredOnSend(guest, action)) return SignalSendDone;
+    ThreadSignals* target = SignalThread(thread);
+    if (target == nullptr || !SignalBlocked(*target, guest)) return SignalSendUnblocked;
+    const std::uint64_t queued = QueueValueSignal(guest, code, value);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (queued == 0) return SignalSendDone;
+    if (SignalBlocked(*target, guest)) {
+        *ticket = queued;
+        return SignalSendDone;
+    }
+    auto& pending = Pending();
+    {
+        std::lock_guard lock(pending.lock);
+        if (!RemoveValueSignalLocked(guest, queued)) return SignalSendDone;
+    }
+    return IgnoredOnSend(guest, Disposition(guest)) ? SignalSendDone : SignalSendUnblocked;
+}
+
+extern "C" void TakeValueSignal_nid_no_patch(int guest, std::uint64_t ticket) {
+    if (ticket == 0) return;
+    auto& pending = Pending();
+    std::lock_guard lock(pending.lock);
+    RemoveValueSignalLocked(guest, ticket);
+}
+
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);
 namespace {
 constexpr int SsDisable = 4;
@@ -1046,6 +1110,40 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
 
 int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
     return sigsuspend_nid_postfix(set);
+}
+
+constexpr std::uintptr_t GuestSigHold = 3;
+
+int ChangeBlockedSignal(int how, int guest) {
+    GuestSignalSet set{};
+    set.bits[static_cast<std::size_t>(guest - 1) >> 5] = 1u << ((guest - 1) & 31);
+    return ChangeBlockedMask(how, &set, nullptr, true);
+}
+
+GuestHandler APS5_VABI sigset_nid_postfix(int guest, GuestHandler disposition) {
+    const auto hold = reinterpret_cast<GuestHandler>(GuestSigHold);
+    const auto invalid = reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1));
+    if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return invalid; }
+    const bool blocked = SignalBlocked(guest);
+    if (disposition == hold) {
+        if (blocked) return hold;
+        ChangeBlockedSignal(GuestSigblock, guest);
+        std::lock_guard lock(registration);
+        return reinterpret_cast<GuestHandler>(dispositions[guest].handler);
+    }
+    GuestSigaction action{reinterpret_cast<std::uintptr_t>(disposition), 0, {}};
+    GuestSigaction previous{};
+    if (sigaction_nid_postfix(guest, &action, &previous) != 0) return invalid;
+    const auto previousHandler = reinterpret_cast<GuestHandler>(previous.handler);
+    if (!blocked) return previousHandler;
+    ChangeBlockedSignal(GuestSigunblock, guest);
+    return hold;
+}
+
+int APS5_VABI sigpause_nid_postfix(int mask) {
+    GuestSignalSet set{};
+    set.bits[0] = static_cast<std::uint32_t>(mask);
+    return sigsuspend_nid_postfix(&set);
 }
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {

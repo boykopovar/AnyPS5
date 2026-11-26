@@ -163,6 +163,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "GetBufferSize accepted an unreadable count output");
+    Require(size == 0, "GetBufferSize modified size when count was unreadable");
     rejected = false;
     try {
         sceLibcBacktraceGetBufferSize_nid_postfix(1, &count, invalidSize);
@@ -170,6 +171,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "GetBufferSize accepted an unreadable size output");
+    Require(count == -1, "GetBufferSize modified count when size was unreadable");
     rejected = false;
     try {
         sceLibcBacktraceSelf_nid_postfix(1, invalidBuffer, 4096, &count);
@@ -177,6 +179,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "Self accepted an unreadable frame output");
+    Require(count == -1, "Self modified count when frame output was unreadable");
     std::vector<unsigned char> buffer(4096, Fill);
     rejected = false;
     try {
@@ -185,6 +188,7 @@ void CheckUnreadableOutputs() {
         rejected = true;
     }
     Require(rejected, "Self accepted an unreadable count output");
+    for (const auto byte : buffer) Require(byte == Fill, "Self modified buffer when count was unreadable");
 }
 
 #if defined(_WIN32)

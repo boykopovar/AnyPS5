@@ -2,12 +2,24 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <source_location>
 #include <span>
 #include <stdexcept>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -31,9 +43,87 @@ void Check(std::span<const unsigned char> bytes, int result, std::size_t consume
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
+void RejectsAnUnwritableOutputBeforeStoringAnything() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    void* base = VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(base != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* base = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(base != MAP_FAILED);
+#endif
+    int* slot = static_cast<int*>(base);
+    *slot = 7;
+#ifdef _WIN32
+    DWORD previous;
+    Require(VirtualProtect(base, page, PAGE_READONLY, &previous));
+#else
+    Require(mprotect(base, page, PROT_READ) == 0);
+#endif
+    const unsigned char bytes[]{4, 0};
+    const unsigned char* input = bytes;
+    std::int64_t length = 123;
+    int tag = 456;
+    bool threw = false;
+    try {
+        ASN1_get_object_nid_postfix(&input, &length, &tag, slot, 2);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && length == 123 && tag == 456 && input == bytes && *slot == 7);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page);
+#endif
+}
+
+void RejectsAnUnwritableCursorBeforeStoringAnything() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    void* base = VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(base != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* base = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(base != MAP_FAILED);
+#endif
+    const unsigned char bytes[]{4, 0};
+    auto** slot = static_cast<const unsigned char**>(base);
+    *slot = bytes;
+#ifdef _WIN32
+    DWORD previous;
+    Require(VirtualProtect(base, page, PAGE_READONLY, &previous));
+#else
+    Require(mprotect(base, page, PROT_READ) == 0);
+#endif
+    std::int64_t length = 123;
+    int tag = 456;
+    int tagClass = 789;
+    bool threw = false;
+    try {
+        ASN1_get_object_nid_postfix(slot, &length, &tag, &tagClass, 2);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && length == 123 && tag == 456 && tagClass == 789 && *slot == bytes);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page);
+#endif
+}
+
 }
 
 int main() {
+    RejectsAnUnwritableOutputBeforeStoringAnything();
+    RejectsAnUnwritableCursorBeforeStoringAnything();
     for (int identifier = 0; identifier < 256; ++identifier) {
         if ((identifier & 31) == 31) continue;
         for (int length = 0; length < 128; ++length) {
@@ -65,9 +155,9 @@ int main() {
     longest[0] = 4;
     longest[1] = 0xfe;
     Check(longest, 0, 128, 0, 4, 0);
-    for (int fault = 0; fault < 6; ++fault) {
+    for (int fault = 0; fault < 7; ++fault) {
         const unsigned char bytes[]{4, 0};
-        const unsigned char* input = fault == 5 ? nullptr : bytes;
+        const unsigned char* input = fault == 5 ? nullptr : fault == 6 ? reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 1) : bytes;
         std::int64_t length = 123;
         int tag = 456;
         int tagClass = 789;
