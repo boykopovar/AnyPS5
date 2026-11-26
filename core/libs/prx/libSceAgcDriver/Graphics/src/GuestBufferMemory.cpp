@@ -7652,8 +7652,10 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
                 const auto at = static_cast<std::size_t>(first - region.begin);
                 if (at > cursor) std::memset(target.data() + cursor, 0, at - cursor);
                 const auto piece = target.subspan(at, static_cast<std::size_t>(last - first));
-                if (!GuestMemory::Accessible(reinterpret_cast<const void*>(first), piece.size())) uploadGeneration = 0;
+                const auto mappings = GuestMemory::ForgetSerial();
+                const bool readable = GuestMemory::Accessible(reinterpret_cast<const void*>(first), piece.size());
                 GuestMemory::ReadCommitted(first, piece);
+                if (!readable || (mappings & 1u) != 0u || GuestMemory::ForgetSerial() != mappings) uploadGeneration = 0;
                 readBytes += piece.size();
                 if (written) region.uploaded.insert(region.uploaded.end(), piece.begin(), piece.end());
                 cursor = at + piece.size();
