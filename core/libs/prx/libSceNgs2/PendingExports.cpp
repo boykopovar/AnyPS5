@@ -1,7 +1,6 @@
 #include "prx/libSceNgs2/include/Api.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -14,20 +13,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-
-bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = saved;
-    return ok;
-}
-
-bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int saved = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = saved;
-    return ok;
-}
 
 template <typename T>
 void StoreValue(std::vector<std::uint8_t>& buffer, std::size_t offset, T value) {
@@ -149,9 +134,9 @@ int APS5_VABI sceNgs2FftInit(void* work, std::size_t size, int length, std::uint
         }
     }
 
-    if (!CopyOutPreservingErrno(work, image.data(), image.size())) return -1;
+    if (!GuestCopyOut_nid_no_patch(work, image.data(), image.size())) return -1;
     void* outHandle = work;
-    if (!CopyOutPreservingErrno(handle, &outHandle, sizeof(outHandle))) return -1;
+    if (!GuestCopyOut_nid_no_patch(handle, &outHandle, sizeof(outHandle))) return -1;
     return 0;
 }
 
@@ -161,8 +146,8 @@ int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float
     std::int32_t length = 0;
     std::uint32_t flags = 0;
     const auto* header = static_cast<const std::uint8_t*>(handle);
-    if (!CopyInPreservingErrno(&length, header + 0x10, sizeof(length)) ||
-        !CopyInPreservingErrno(&flags, header + 0x14, sizeof(flags)) ||
+    if (!GuestCopyIn_nid_no_patch(&length, header + 0x10, sizeof(length)) ||
+        !GuestCopyIn_nid_no_patch(&flags, header + 0x14, sizeof(flags)) ||
         static_cast<std::uint32_t>(length - 8) > 4u) {
         return -1;
     }
@@ -171,17 +156,17 @@ int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float
     if ((flags & 2u) == 0) {
         const std::size_t totalFloats = points * 2u;
         std::vector<float> dummyIn(totalFloats, 0.0f);
-        if (!CopyInPreservingErrno(dummyIn.data(), in, dummyIn.size() * sizeof(float))) return -1;
+        if (!GuestCopyIn_nid_no_patch(dummyIn.data(), in, dummyIn.size() * sizeof(float))) return -1;
         std::vector<float> copied(totalFloats, 0.0f);
-        if (work != nullptr && !CopyInPreservingErrno(copied.data(), work, copied.size() * sizeof(float))) return -1;
-        if (!CopyOutPreservingErrno(out, copied.data(), copied.size() * sizeof(float))) return -1;
+        if (work != nullptr && !GuestCopyIn_nid_no_patch(copied.data(), work, copied.size() * sizeof(float))) return -1;
+        if (!GuestCopyOut_nid_no_patch(out, copied.data(), copied.size() * sizeof(float))) return -1;
         return 0;
     }
 
     if (work != nullptr) {
         std::vector<float> scratch(points, 0.0f);
-        if (!CopyInPreservingErrno(scratch.data(), work, scratch.size() * sizeof(float)) ||
-            !CopyOutPreservingErrno(work, scratch.data(), scratch.size() * sizeof(float))) {
+        if (!GuestCopyIn_nid_no_patch(scratch.data(), work, scratch.size() * sizeof(float)) ||
+            !GuestCopyOut_nid_no_patch(work, scratch.data(), scratch.size() * sizeof(float))) {
             return -1;
         }
     }
@@ -189,7 +174,7 @@ int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float
     const float scale = 1.0f / static_cast<float>(points);
     if ((mode & 1u) != 0) {
         std::vector<float> input(points, 0.0f);
-        if (!CopyInPreservingErrno(input.data(), in, input.size() * sizeof(float))) return -1;
+        if (!GuestCopyIn_nid_no_patch(input.data(), in, input.size() * sizeof(float))) return -1;
         std::vector<std::complex<double>> spectrum(points);
         for (std::size_t n = 0; n < points; ++n) spectrum[n] = {static_cast<double>(input[n]), 0.0};
         Radix2Fft(spectrum, false);
@@ -213,12 +198,12 @@ int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float
                 for (std::size_t i = 0; i < points; ++i) output[i] *= scale;
             }
         }
-        if (!CopyOutPreservingErrno(out, output.data(), output.size() * sizeof(float))) return -1;
+        if (!GuestCopyOut_nid_no_patch(out, output.data(), output.size() * sizeof(float))) return -1;
         return 0;
     }
 
     std::vector<float> input(points, 0.0f);
-    if (!CopyInPreservingErrno(input.data(), in, input.size() * sizeof(float))) return -1;
+    if (!GuestCopyIn_nid_no_patch(input.data(), in, input.size() * sizeof(float))) return -1;
     std::vector<std::pair<float, float>> bins;
     if ((mode & 4u) != 0) {
         UnpackInternalOrder(input, points, bins);
@@ -245,7 +230,7 @@ int APS5_VABI sceNgs2FftProcess(void* handle, const float* in, float* out, float
         if ((mode & 8u) != 0) value *= scale;
         output[n] = value;
     }
-    if (!CopyOutPreservingErrno(out, output.data(), output.size() * sizeof(float))) return -1;
+    if (!GuestCopyOut_nid_no_patch(out, output.data(), output.size() * sizeof(float))) return -1;
     return 0;
 }
 
