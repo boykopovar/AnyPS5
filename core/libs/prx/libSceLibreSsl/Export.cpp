@@ -312,11 +312,6 @@ int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char*, void**, void**, v
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
