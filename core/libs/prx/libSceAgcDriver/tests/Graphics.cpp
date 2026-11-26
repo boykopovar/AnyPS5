@@ -10664,6 +10664,18 @@ void barycentricEmulationTests() {
             ValidateProvokingVertex(context, lastState, layeredShaders);
         }
     }
+    {
+        auto sparse = fragment;
+        sparse.fragmentParameters[0].sourceLocation = 6u;
+        auto sparseVertex = vertex;
+        sparseVertex.parameterExports = {6u};
+        static_cast<void>(BuildBarycentricGeometryShader(sparseVertex, sparse, target, limits, 0u));
+        expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(sparseVertex, sparse, target, GeometryStageLimits{16u, 128u, 256u, 1024u, 128u}, 0u)); }, "exceeds device limits");
+        static_cast<void>(BuildBarycentricTessellationShaders(sparseVertex, sparse, tessellationTarget, 128u, 0u));
+        auto narrow = tessellationTarget;
+        narrow.tessellation = TessellationTargetLimits{32u, 16u, 128u, 120u, 4096u, 128u, 128u};
+        expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(sparseVertex, sparse, narrow, 128u, 0u)); }, "exceeds device limits");
+    }
     vertex.parameterExports.clear();
     expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(vertex, fragment, tessellationTarget, 128u, 0u)); }, "not exported by the vertex shader");
     expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits, 0u)); }, "not exported by the vertex shader");

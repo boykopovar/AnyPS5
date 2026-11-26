@@ -32,6 +32,13 @@ EmulatedInterface CollectEmulatedInterface(const RecompileResult& vertex, const 
     return DescribeEmulatedInterface(fragment.fragmentParameters, fragment.barycentricEmulation);
 }
 
+std::uint32_t InputLocationExtent(const EmulatedInterface& emulated, const std::optional<VertexLayerOutput>& layer) {
+    std::uint32_t extent = layer ? layer->location + 1u : 0u;
+    for (const auto location : emulated.passed) extent = std::max(extent, location + 1u);
+    for (const auto& parameter : emulated.perVertex) extent = std::max(extent, parameter.sourceLocation + 1u);
+    return extent;
+}
+
 class BarycentricGeometryEmitter {
 public:
     explicit BarycentricGeometryEmitter(std::uint32_t version) : builder(version) {
@@ -474,7 +481,7 @@ RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, co
     const auto layer = FindVertexLayerOutput(vertex.spirv.Words());
     const auto inputComponents = 4u + 4u * emulated.sources + (layer ? 4u : 0u);
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
-    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
+    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && 4u * InputLocationExtent(emulated, layer) <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     BarycentricGeometryEmitter emitter(target.spirvVersion);
     RecompileResult result;
     result.spirv = emitter.Emit(emulated.passed, emulated.perVertex, emulated.layout, layer ? std::optional<std::uint32_t>(layer->location) : std::nullopt, provokingVertex);
@@ -502,7 +509,7 @@ BarycentricTessellationShaders BuildBarycentricTessellationShaders(const Recompi
     const auto evaluationOutputComponents = 4u + clipDistances + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
     const auto& limits = *target.tessellation;
-    require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
+    require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && 4u * InputLocationExtent(emulated, layer) <= std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents}) && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     std::set<std::uint32_t> sourceSet(emulated.passed.begin(), emulated.passed.end());
     for (const auto& parameter : emulated.perVertex) sourceSet.insert(parameter.sourceLocation);
     const std::vector<std::uint32_t> sources(sourceSet.begin(), sourceSet.end());
