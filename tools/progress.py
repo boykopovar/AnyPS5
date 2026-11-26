@@ -7,6 +7,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 import textwrap
+from concurrent.futures import ProcessPoolExecutor
 from fractions import Fraction
 from html import escape
 from pathlib import Path
@@ -853,7 +854,12 @@ def summarize(groups):
 
 
 def collect_libraries():
-    return summarize([scan_library(p) for p in sorted(PRX.iterdir()) if p.is_dir()])
+    dirs = [p for p in sorted(PRX.iterdir()) if p.is_dir()]
+    workers = min(os.cpu_count() or 1, len(dirs))
+    if workers > 1 and len(dirs) > 2:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            return summarize(list(executor.map(scan_library, dirs)))
+    return summarize([scan_library(p) for p in dirs])
 
 
 def select_libraries(libraries, modules):
@@ -1567,6 +1573,11 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        for field in ("done", "total"):
+            if field in data and (type(data[field]) is not int or data[field] < 0):
+                raise ValueError(f"{section}.{field} must be a non-negative integer")
+        if "done" in data and "total" in data and data["done"] > data["total"]:
+            raise ValueError(f"{section}.done must not exceed total")
         seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
@@ -1581,10 +1592,18 @@ def validate_snapshot(snapshot):
                 for field in ("done", "todo"):
                     if field in group and (type(group[field]) is not int or group[field] < 0):
                         raise ValueError(f"{location}.{field} must be a non-negative integer")
+            symbols = {}
             for field in ("done_names", "todo_names", "inert_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
                     raise ValueError(f"{location}.{field} must be a list of strings")
+                symbols[field] = set(values)
+                if len(symbols[field]) != len(values):
+                    raise ValueError(f"{location}.{field} contains duplicate symbols")
+            if symbols["done_names"] & symbols["todo_names"]:
+                raise ValueError(f"{location} lists symbols as both done and todo")
+            if "done_names" in group and not symbols["inert_names"] <= symbols["done_names"]:
+                raise ValueError(f"{location}.inert_names must be a subset of done_names")
 
 
 def regenerate_isa_forms(xml):

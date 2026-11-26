@@ -533,10 +533,32 @@ void CheckKeylogCallback() {
 
 } // namespace
 
+extern "C" void* APS5_VABI libreSsl3NewContext_nid_no_patch(const void* method);
+
+void CheckContextConstruction() {
+    bool refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_method");
+    refused = false;
+    try {
+        libreSsl3NewContext_nid_no_patch(TLS_server_method_nid_postfix());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "SSL_CTX_new refuses the libSceLibreSsl3 TLS_server_method");
+    auto* context = static_cast<LibreSslCtx*>(libreSsl3NewContext_nid_no_patch(TLS_client_method_nid_postfix()));
+    Require(context != nullptr, "SSL_CTX_new still builds a context from a libSceLibreSsl method");
+    SSL_CTX_free_nid_postfix(context);
+}
+
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
-    CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
+    CheckRetain<LibreSslSsl>(SSL_up_ref_nid_postfix, 168);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionName();
     CheckInfoCallback();
@@ -545,6 +567,7 @@ int main() {
     CheckClientRandom();
     CheckContextTimeout();
     CheckContextQuicMethod();
+    CheckContextConstruction();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckTlsMethod();
     CheckX509Version();

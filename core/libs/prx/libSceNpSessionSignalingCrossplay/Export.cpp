@@ -42,13 +42,11 @@ struct ErrnoGuard {
 
 template <typename T>
 bool CopyGuestIn(T* destination, const T* source) {
-    const ErrnoGuard errnoGuard;
     return GuestCopyIn_nid_no_patch(destination, source, sizeof(T));
 }
 
 template <typename T>
 bool CopyGuestOut(T* destination, const T& source) {
-    const ErrnoGuard errnoGuard;
     return GuestCopyOut_nid_no_patch(destination, &source, sizeof(T));
 }
 

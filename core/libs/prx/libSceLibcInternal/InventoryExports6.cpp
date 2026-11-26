@@ -39,11 +39,6 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEED1Ev_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE9underflowEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -183,9 +178,8 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9underflowEv_nid_postfix() {
@@ -265,9 +259,8 @@ int APS5_VABI sceLibcInternalMemoryGetWakeAddr_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI __atomic_load_n_nid_postfix() {
@@ -303,11 +296,6 @@ APS5_EXPORT("bY9Y0J3GGbA", sceLibcInternalUnknown6_086_bY9Y0J3GGbA_nid_no_patch)
 
 void APS5_VABI _ZNSt8messagesIwED0Ev_nid_postfix(void* self) {
     _ZdlPv_nid_postfix(self);
-}
-
-int APS5_VABI _ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceLibcInternalUnknown6_089_djHbPEpTFIo_nid_no_patch() {
@@ -418,9 +406,8 @@ int APS5_VABI sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch() {
 }
 APS5_EXPORT("xFva4yxsVW8", sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch);
 
-int APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 
 int APS5_VABI _ZNSt6_MutexC1Ev_nid_postfix() {
@@ -448,11 +435,6 @@ int APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix() {
 }
 
 int APS5_VABI _ZNSt10moneypunctIwLb0EEC1Em_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

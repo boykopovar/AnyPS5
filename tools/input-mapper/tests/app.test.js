@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {setImmediate} from 'node:timers/promises';
+import {settings as settingDefinitions} from '../validation.js';
 
 class MockElement extends EventTarget {
     children = [];
@@ -106,6 +107,7 @@ async function setup(t, name) {
             querySelectorAll: selector => selector.startsWith('[data-i18n') || selector === '[data-view]' ? [] : root.querySelectorAll(selector)
         },
         window: Object.assign(new EventTarget(), {scrollTo() {}}),
+        navigator: {clipboard: {}},
         location: {hash: ''},
         history: {pushState() {}},
         localStorage: {getItem() { return null; }, setItem() {}},
@@ -304,6 +306,84 @@ test('replacing a built-in search result keeps the new binding reachable until i
     assert.equal(app.get('preview').value, 'Screenshot = KEY:K\n');
 });
 
+for (const result of ['success', 'failure']) {
+    test(`a late clipboard ${result} leaves a newer import saved`, async t => {
+        const app = await setup(t, `late-copy-${result}`);
+        const clipboard = Promise.withResolvers();
+        const writes = [];
+        navigator.clipboard.writeText = text => {
+            writes.push(text);
+            return clipboard.promise;
+        };
+        const preview = app.get('preview');
+        preview.select = () => {};
+        await app.importFile('first.ini', 'Cross = KEY:F\n');
+        app.get('copy').click();
+        assert.deepEqual(writes, ['Cross = KEY:F\n']);
+        await app.importFile('second.ini', 'Cross = KEY:J\n');
+        const status = app.get('status').textContent;
+
+        if (result === 'success') clipboard.resolve();
+        else clipboard.reject(new Error('Clipboard unavailable'));
+        await setImmediate();
+
+        assert.equal(preview.value, 'Cross = KEY:J\n');
+        assert.equal(app.get('status').textContent, status);
+        assert.equal(preview.focused, false);
+        assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+    });
+}
+
+test('a late clipboard failure leaves focus on a newer import report', async t => {
+    const app = await setup(t, 'late-copy-report');
+    const clipboard = Promise.withResolvers();
+    navigator.clipboard.writeText = () => clipboard.promise;
+    const preview = app.get('preview');
+    preview.select = () => {};
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    app.get('copy').click();
+    await app.importFile('broken.ini', 'NotAnAction = KEY:Space\n');
+    const status = app.get('status').textContent;
+
+    clipboard.reject(new Error('Clipboard unavailable'));
+    await setImmediate();
+
+    assert.equal(document.activeElement, app.get('import-report'));
+    assert.equal(preview.focused, false);
+    assert.equal(app.get('status').textContent, status);
+});
+
+for (const [failure, detail, size, read] of [
+    ['size', 'INI file must be smaller than 1 MiB.', 1024 * 1024 + 1, () => assert.fail('Unexpected file read')],
+    ['read', 'The file could not be read.', 1, () => { throw new Error('The file could not be read.'); }],
+    ['encoding', 'The file must be valid UTF-8 text.', 1, () => Uint8Array.of(0xff).buffer]
+]) {
+    for (const result of ['success', 'failure']) {
+        test(`a late clipboard ${result} preserves an import ${failure} error`, async t => {
+            const app = await setup(t, `late-copy-import-${failure}-${result}`);
+            const clipboard = Promise.withResolvers();
+            navigator.clipboard.writeText = () => clipboard.promise;
+            const preview = app.get('preview');
+            preview.select = () => {};
+            await app.importFile('first.ini', 'Cross = KEY:F\n');
+            app.get('copy').click();
+            const input = app.get('file');
+            input.files = [{name: 'second.ini', size, arrayBuffer: read}];
+            input.dispatchEvent(new Event('change'));
+            await setImmediate();
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+
+            if (result === 'success') clipboard.resolve();
+            else clipboard.reject(new Error('Clipboard unavailable'));
+            await setImmediate();
+
+            assert.equal(app.get('status').textContent, `Import failed: ${detail}`);
+            assert.equal(preview.focused, false);
+            assert.equal(preview.value, 'Cross = KEY:F\n');
+        });
+    }
+}
+
 test('a chord search result stays visible while changing its buttons in the open picker', async t => {
     const app = await setup(t, 'search-edit-chord');
     await app.importFile('input.ini', 'Screenshot = PAD:L1+R1\n');
@@ -325,4 +405,132 @@ test('a chord search result stays visible while changing its buttons in the open
     picker.dispatchEvent(new Event('toggle'));
     assert.equal(action.hidden, true);
     assert.equal(document.activeElement, search);
+});
+
+test('controller overrides can be added, edited, disabled and inherited alongside imported settings', async t => {
+    const app = await setup(t, 'controller-remaps');
+    const control = name => {
+        const row = app.get('controller-remaps').children.find(item => item.querySelector('span').textContent === `SDLButton:${name}`);
+        assert.ok(row, name);
+        return row.querySelector('select');
+    };
+    const assign = (name, destination) => {
+        const select = control(name);
+        select.value = destination;
+        select.dispatchEvent(new Event('change'));
+    };
+    const settings = 'Square = KEY:J\nMouseSensitivity = 2\n';
+    await app.importFile('game.ini', settings + 'SDLButton:b = Cross\n');
+    assert.equal(control('b').value, 'Cross');
+    assert.equal(control('a').value, '');
+    assign('a', 'Circle');
+    assign('b', 'None');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:b = None\nSDLButton:a = Circle\n');
+    assign('b', '');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:a = Circle\n');
+    await app.importFile('empty.ini', '');
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(control('a').value, 'Circle');
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(control('a').value, '');
+    assert.equal(app.get('preview').value, '');
+});
+
+function inputSetting(app, name) {
+    const row = app.get('input-setting-values').children.find(item => item.querySelector('span').textContent === name);
+    assert.ok(row, name);
+    return row.querySelector('input') ?? row.querySelector('select');
+}
+
+function editInputSetting(app, name, value) {
+    const field = inputSetting(app, name);
+    field.value = value;
+    field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input'));
+}
+
+test('settings can be added, validated, and removed without touching bindings', async t => {
+    const app = await setup(t, 'edit-input-settings');
+    assert.deepEqual(app.get('input-setting-values').children.map(row => row.querySelector('span').textContent),
+        settingDefinitions.map(setting => setting.name));
+    const original = 'Cross = KEY:J\nSDLButton:b = Cross\n';
+    await app.importFile('anyps5-input.ini', original);
+    editInputSetting(app, 'LeftStickDeadzone', '12');
+    assert.equal(app.get('preview').value, 'Cross = KEY:J\nLeftStickDeadzone = 12\nSDLButton:b = Cross\n');
+    editInputSetting(app, 'LeftStickDeadzone', '91');
+    assert.equal(app.get('preview').value, '');
+    assert.equal(app.get('copy').disabled, true);
+    assert.equal(app.get('download').disabled, true);
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').getAttribute('aria-invalid'), 'true');
+    assert.match(app.get('validation').querySelector('li').textContent, /whole percentage from 0 to 90/u);
+    editInputSetting(app, 'LeftStickDeadzone', '');
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').getAttribute('aria-invalid'), 'false');
+    assert.equal(app.get('copy').disabled, false);
+    assert.equal(app.get('download').disabled, false);
+    assert.equal(app.get('preview').value, original);
+});
+
+test('settings preserve imported spellings and keep edits across locale changes', async t => {
+    const app = await setup(t, 'localized-input-settings');
+    const original = 'LeftStickDeadzone = -00\nMouseSensitivity = 1e0\nMouseStickTarget = RIGHT\nToggleActions = r2 ,cross, R2\n';
+    await app.importFile('anyps5-input.PPSA01234.ini', original);
+    assert.equal(app.get('profile-title-id').value, 'PPSA01234');
+    assert.equal(inputSetting(app, 'MouseSensitivity').value, '1e0');
+    assert.equal(inputSetting(app, 'MouseStickTarget').value, 'Right');
+    assert.equal(app.get('preview').value, original);
+    editInputSetting(app, 'MouseStickTarget', 'Left');
+    editInputSetting(app, 'ToggleActions', 'R2, L1');
+    const select = app.get('language-control').querySelector('select');
+    select.value = 'ar-EG';
+    select.dispatchEvent(new Event('change'));
+    assert.equal(document.documentElement.dir, 'rtl');
+    assert.equal(inputSetting(app, 'MouseSensitivity').dir, 'ltr');
+    assert.equal(inputSetting(app, 'MouseStickTarget').value, 'Left');
+    assert.equal(inputSetting(app, 'ToggleActions').value, 'R2, L1');
+    const expected = 'LeftStickDeadzone = -00\nMouseSensitivity = 1e0\nMouseStickTarget = Left\nToggleActions = R2, L1\n';
+    assert.equal(app.get('preview').value, expected);
+    let copied = '';
+    navigator.clipboard.writeText = async text => { copied = text; };
+    app.get('copy').click();
+    await setImmediate();
+    assert.equal(copied, expected);
+});
+
+test('reset ignores restored settings order but prompts for an invalid draft', async t => {
+    const app = await setup(t, 'restored-input-settings');
+    const original = 'LeftStickDeadzone = 12\nMouseSensitivity = 2\n';
+    await app.importFile('anyps5-input.ini', original);
+
+    editInputSetting(app, 'LeftStickDeadzone', '91');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(inputSetting(app, 'LeftStickDeadzone').value, '91');
+
+    editInputSetting(app, 'LeftStickDeadzone', '');
+    editInputSetting(app, 'LeftStickDeadzone', '12');
+    assert.equal(app.get('preview').value, original);
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(app.get('preview').value, '');
+});
+
+test('invalid imports and canceled resets preserve edited settings', async t => {
+    const app = await setup(t, 'input-settings-reset');
+    editInputSetting(app, 'MouseDecayMs', '50');
+    await app.importFile('anyps5-input.ini', 'MouseDecayMs = 0\n');
+    assert.equal(app.get('import-report').hidden, false);
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '50');
+    assert.equal(app.get('preview').value, 'MouseDecayMs = 50\n');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '50');
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(inputSetting(app, 'MouseDecayMs').value, '');
+    assert.equal(app.get('preview').value, '');
 });
