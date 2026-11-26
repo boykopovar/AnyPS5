@@ -27,6 +27,7 @@ static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
+static constexpr int SCE_NP_ERROR_REQUEST_MAX = static_cast<int>(0x80550013);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
 static constexpr int SCE_NP_ERROR_INVALID_ID = static_cast<int>(0x80550015);
 static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
@@ -40,7 +41,10 @@ static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
-static std::atomic<int> g_nextRequest{1};
+static constexpr int NP_FIRST_REQUEST_ID = 0x20000001;
+static constexpr int NP_LAST_REQUEST_ID = 0x2ffffffe;
+static constexpr std::size_t NP_MAX_LIVE_REQUESTS = 32;
+static constexpr std::uint64_t NP_ASYNC_REQUEST_PARAMETER_SIZE = 0x18;
 
 static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
     const auto preserved = errno;
@@ -65,6 +69,16 @@ const void* g_asmClient = nullptr;
 std::array<char, 16> g_asmTitleId = {};
 std::set<const void*> g_asmConnections;
 std::set<const void*> g_asmRequests;
+}
+
+static bool AsmInitialized() {
+    std::lock_guard lock(g_asmMutex);
+    return g_asmInitialized;
+}
+
+static bool AsmClientInitialized() {
+    std::lock_guard lock(g_asmMutex);
+    return g_asmClientInitialized;
 }
 
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
@@ -95,16 +109,19 @@ InGameMessageContext* FindInGameMessageContext(std::int32_t libCtxId) {
 
 namespace {
 std::mutex reachabilityMutex;
-void* reachabilityCallback = nullptr;
+NpReachabilityStateCallback reachabilityCallback = nullptr;
 void* reachabilityUserdata = nullptr;
+bool reachabilityPending = false;
 std::mutex requestMutex;
 std::unordered_set<int> liveRequests;
 
 int AddRequest() {
-    const int reqId = g_nextRequest.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(requestMutex);
-    liveRequests.insert(reqId);
-    return reqId;
+    if (liveRequests.size() >= NP_MAX_LIVE_REQUESTS) return SCE_NP_ERROR_REQUEST_MAX;
+    for (int reqId = NP_FIRST_REQUEST_ID; reqId <= NP_LAST_REQUEST_ID; ++reqId) {
+        if (liveRequests.insert(reqId).second) return reqId;
+    }
+    return SCE_NP_ERROR_REQUEST_MAX;
 }
 
 std::mutex idMapperMutex;
@@ -172,34 +189,42 @@ int APS5_VABI sceNpAsmClientAbortRequest(void) {
     return 0;
 }
 int APS5_VABI sceNpAsmClientClearNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientClearNpTitleTokenA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateRequest2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateResourceContext(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientCreateResourceContext2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteRequest(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteResourceContext(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientDeleteResourceContext2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -208,86 +233,107 @@ int APS5_VABI sceNpAsmClientGetAppId(void) {
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetCacheControlMaxAge(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameNpTitleInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetGameTitleBanInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo2A(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo3(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpComInfo4(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleId(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleToken(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleToken2(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetNpTitleTokenA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIds(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIdsA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetRelatedGameNpTitleIdsResult(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrl(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlWithNpTitleId(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceBaseUrlWithNpTitleIdA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceIdInfo(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmClientGetServiceIdInfoA(void) {
+    if (!AsmClientInitialized()) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -349,30 +395,37 @@ int APS5_VABI sceNpAsmDeleteRequest(void* request) {
     return 0;
 }
 int APS5_VABI sceNpAsmGenerateNpTitleToken(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGenerateNpTitleToken2(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetNpCommInfo(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetNpCommInfo2(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetRelatedGameNpTitleIds(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetServiceBaseUrl(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpAsmGetServiceIdInfo(void) {
+    if (!AsmInitialized()) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -417,9 +470,7 @@ int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* s
 int APS5_VABI sceNpGetGamePresenceStatusA(int userId, uint32_t* status) {
     if (!status || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
     const uint32_t presence = NP_GAME_PRESENCE_STATUS_OFFLINE;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &presence, sizeof(presence));
-    errno = savedErrno;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
@@ -735,7 +786,8 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
 }
 int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
     if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    std::memset(npEnv, 0, 0x18);
+    constexpr std::array<std::uint8_t, 0x18> cleared{};
+    if (!CopyGuestOut(npEnv, cleared.data(), cleared.size())) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
@@ -882,6 +934,7 @@ int APS5_VABI sceNpManagerIntLoginGetAccessToken(void) {
 }
 
 int APS5_VABI sceNpAbortRequest(int req_id) {
+    if (req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     return liveRequests.count(req_id) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
@@ -904,12 +957,24 @@ int APS5_VABI sceNpCheckCallback(void) {
         if (entry.pending) entry.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, entry.userdata);
     }
     if (toolkit.pending && toolkit.callback) toolkit.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, toolkit.userdata);
+    NpReachabilityStateCallback reachability = nullptr;
+    void* reachabilityArgument = nullptr;
+    {
+        std::lock_guard lock(reachabilityMutex);
+        if (reachabilityPending) {
+            reachability = reachabilityCallback;
+            reachabilityArgument = reachabilityUserdata;
+            reachabilityPending = false;
+        }
+    }
+    if (reachability) reachability(USER_SERVICE_INITIAL_USER_ID, NP_REACHABILITY_STATE_UNAVAILABLE, reachabilityArgument);
     return 0;
 }
 
 int APS5_VABI sceNpCheckNpAvailability(std::int32_t requestId, const NpOnlineId* onlineId, std::uint8_t* available) {
  if (requestId == 0 || onlineId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
- if (available != nullptr) *available = 0;
+ const std::uint8_t unavailable = 0;
+ if (available != nullptr && !CopyGuestOut(available, &unavailable, sizeof(unavailable))) return SCE_NP_ERROR_INVALID_ARGUMENT;
  return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
@@ -927,7 +992,13 @@ int APS5_VABI sceNpCheckPremium(int req_id, const NpCheckPremiumParameter* param
 }
 
 int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param) {
-    (void)param;
+    if (!param) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (size != NP_ASYNC_REQUEST_PARAMETER_SIZE) return SCE_NP_ERROR_INVALID_SIZE;
     return AddRequest();
 }
 
@@ -936,6 +1007,7 @@ int APS5_VABI sceNpCreateRequest(void) {
 }
 
 int APS5_VABI sceNpDeleteRequest(int req_id) {
+    if (req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     liveRequests.erase(req_id);
@@ -989,6 +1061,11 @@ int APS5_VABI sceNpNotifyPlusFeature(const void* param) {
 
 int APS5_VABI sceNpGetAccountId(const NpOnlineId* online_id, uint64_t* account_id) {
     if (!online_id || !account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    NpOnlineId localId{};
+    const auto preserved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, online_id, sizeof(localId));
+    errno = preserved;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
@@ -1018,14 +1095,12 @@ int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
 }
 
 int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
-    (void)user_id;
-    (void)account_id;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
-    (void)user_id;
-    if (!np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
@@ -1038,8 +1113,7 @@ int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
 }
 
 int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
-    (void)user_id;
-    if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id == USER_SERVICE_USER_ID_INVALID || !online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
@@ -1060,7 +1134,7 @@ int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
-    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!result || req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     constexpr int val = SCE_NP_ERROR_SIGNED_OUT;
@@ -1069,7 +1143,7 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
 }
 
 int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
-    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!result || req_id <= 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     constexpr int val = SCE_NP_ERROR_SIGNED_OUT;
@@ -1111,8 +1185,9 @@ int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* use
     if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(reachabilityMutex);
     if (reachabilityCallback) return SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED;
-    reachabilityCallback = callback;
+    reachabilityCallback = reinterpret_cast<NpReachabilityStateCallback>(callback);
     reachabilityUserdata = userdata;
+    reachabilityPending = true;
     return 0;
 }
 
@@ -1121,6 +1196,7 @@ int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void) {
     if (!reachabilityCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
     reachabilityCallback = nullptr;
     reachabilityUserdata = nullptr;
+    reachabilityPending = false;
     return 0;
 }
 
@@ -1258,9 +1334,7 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
     std::array<char, 0x50> localInfo{};
     std::memcpy(localInfo.data(), Platform, sizeof(Platform));
     std::memcpy(localInfo.data() + 0x28, Environment, sizeof(Environment));
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(sandbox_info, localInfo.data(), localInfo.size());
-    errno = savedErrno;
     if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }

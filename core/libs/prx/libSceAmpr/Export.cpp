@@ -222,6 +222,10 @@ static bool ValidRead(const void* destination, std::uint64_t length, std::uint64
     return ValidReadLength(length) && address <= userLimit && length <= userLimit - address && ValidReadOffset(offset);
 }
 
+static std::uint32_t ReadFileBytes(std::uint64_t offset) {
+    return offset < 0x100000000ull ? 20u : 24u;
+}
+
 static int AppendRead(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint32_t fileId, const void* destination, std::uint64_t size, std::uint64_t offset) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (opcode != Apr::Opcode::ReadFile && (buffer->recording & Apr::ScatterGatherValid) == 0u) return SCE_KERNEL_ERROR_EINVAL;
@@ -363,8 +367,6 @@ static int RecordWriteAddressFromCounterPair(Apr::CommandBufferObject* buffer, v
     return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounterPair, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter, counter + 1u});
 }
 
-static std::atomic_flag sharedPtrSpinLock;
-
 static_assert(sizeof(AmmUsageStatsData) == 0x18);
 static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
 static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
@@ -467,7 +469,49 @@ int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject* buffer, 
     (void)gatherState;
     (void)scatterState;
     if (!ValidRead(destination, size, offset)) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendRead(buffer, Apr::Opcode::ReadFile, fileId, destination, size, offset);
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    struct RestoreErrno {
+        int saved = errno;
+        ~RestoreErrno() { errno = saved; }
+    } restoreErrno;
+    const auto* function = __func__;
+    const auto field = [buffer](std::size_t member) {
+        return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(buffer) + member);
+    };
+    const auto load = [&](auto& value, std::size_t member) {
+        if (!GuestCopyIn_nid_no_patch(&value, field(member), sizeof(value))) NotImplemented_nid_no_patch(function);
+    };
+    const auto store = [&](const auto& value, std::size_t member) {
+        if (!GuestCopyOut_nid_no_patch(field(member), &value, sizeof(value))) NotImplemented_nid_no_patch(function);
+    };
+    std::uintptr_t base;
+    load(base, offsetof(Apr::CommandBufferObject, base));
+    if (base == 0) return SCE_KERNEL_ERROR_EPERM;
+    std::uint32_t current;
+    std::uint32_t capacity;
+    load(current, offsetof(Apr::CommandBufferObject, offset));
+    load(capacity, offsetof(Apr::CommandBufferObject, size));
+    const auto bytes = ReadFileBytes(offset);
+    if (capacity < bytes || current > capacity - bytes) return SCE_KERNEL_ERROR_EBUSY;
+    std::uint32_t count;
+    load(count, offsetof(Apr::CommandBufferObject, numCommands));
+    if (count > 0x7ffffffeu) return SCE_KERNEL_ERROR_EINVAL;
+    const auto address = reinterpret_cast<std::uintptr_t>(destination);
+    const std::array<std::uint32_t, 6> command{
+        (bytes == 20u ? 0x428u : 0x528u) | (static_cast<std::uint32_t>(offset) & 0x3ffffu) << 12u,
+        static_cast<std::uint32_t>(size - 1u), fileId & 0x7fffffffu,
+        static_cast<std::uint32_t>(address),
+        (static_cast<std::uint32_t>(offset) & 0xfffc0000u) | static_cast<std::uint32_t>(address >> 32u),
+        static_cast<std::uint32_t>(offset >> 32u)
+    };
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(base + current), command.data(), bytes)) NotImplemented_nid_no_patch(function);
+    load(count, offsetof(Apr::CommandBufferObject, numCommands));
+    store(count + 1u, offsetof(Apr::CommandBufferObject, numCommands));
+    store(current + bytes, offsetof(Apr::CommandBufferObject, offset));
+    std::uint32_t flags;
+    load(flags, 0);
+    store(flags | 0x10000u, 0);
+    return 0;
 }
 
 int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject* buffer, std::uint64_t* mapState, std::uint64_t* scatterGatherState, std::uint64_t size, std::uint64_t offset) {
@@ -751,8 +795,10 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*
     return MeasureMarker(text);
 }
 
-uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(void) {
-    return sizeof(Apr::ReadFileCommand);
+uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(std::uint32_t fileId, const void* destination, std::uint64_t size, std::uint64_t offset) {
+    (void)fileId;
+    if (!ValidRead(destination, size, offset)) return static_cast<std::uint32_t>(SCE_KERNEL_ERROR_EINVAL);
+    return ReadFileBytes(offset);
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGather(std::uint64_t size, std::uint64_t offset) {
@@ -1049,21 +1095,6 @@ int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id) {
     return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
-void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
-    sharedPtrSpinLock.clear(std::memory_order_release);
-}
-
-int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
-    constexpr std::size_t objectNameLimit = 32;
-    constexpr int guestNameTooLong = 63;
-    constexpr int threadError = 4;
-    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
-        errno = guestNameTooLong;
-        return threadError;
-    }
-    return _Cnd_init_nid_postfix(handle);
-}
-
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1072,15 +1103,6 @@ int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3get
 int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
-}
-
-void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
-    while (sharedPtrSpinLock.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
-}
-
-[[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException) {
-
-    __cxa_call_terminate_nid_postfix(unwindException);
 }
 
 APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
@@ -1130,7 +1152,7 @@ void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int err
 
 APS5_EXPORT("sZLrjx-yEx4", sceAmprWcstombsS);
 int APS5_VABI sceAmprWcstombsS(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit) {
-    return wcstombs_s_nid_postfix(result, destination, capacity, source, limit);
+    return WideToMultibyteChecked_nid_no_patch(result, destination, capacity, source, limit);
 }
 
 APS5_EXPORT("VUzjXknPPBs", sceAmprMbstowcs);

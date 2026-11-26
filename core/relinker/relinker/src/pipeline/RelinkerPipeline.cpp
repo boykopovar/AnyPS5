@@ -1,9 +1,11 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <algorithm>
 #include <iterator>
 #include <sstream>
@@ -28,6 +30,20 @@ constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
 constexpr std::uint16_t kEtSceDynExec = 0xfe10;
 constexpr std::uint16_t kEtSceDynamic = 0xfe18;
+
+const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs) {
+    const NidReference* candidate = nullptr;
+    for (const auto& ref : nidRefs) {
+        if (ref.Addend != 0 || !IsPathconfImportLibrary(ref.Library) || !IsPathconfImportSymbolType(ref.SymbolType) || !IsPathconfImportName(ref.Nid))
+            continue;
+        const unsigned rank = PathconfRelocationRank(ref.RelocationTypeValue);
+        if (rank == 0)
+            continue;
+        if (!candidate || rank > PathconfRelocationRank(candidate->RelocationTypeValue))
+            candidate = &ref;
+    }
+    return candidate;
+}
 
 }
 
@@ -339,13 +355,20 @@ RelinkResult RelinkerPipeline::Relink() {
         neededLibraries.push_back(snd);
     }
 
-    std::map<std::uint64_t, std::string> importModules;
+    std::vector<std::uint64_t> moduleImports;
+    std::vector<std::uint64_t> ps4ModuleImports;
     std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
         if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
-        if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
-            throw RelinkerException("Duplicate import module ID");
+        else if (tag.Tag == 0x61000045) moduleImports.push_back(tag.Value);
+        else if (tag.Tag == 0x6100000f) ps4ModuleImports.push_back(tag.Value);
     }
+    if (!moduleImports.empty() && !ps4ModuleImports.empty())
+        throw RelinkerException("Executable mixes PS4 and PS5 needed-module tags");
+    std::map<std::uint64_t, std::string> importModules;
+    for (const auto value : moduleImports.empty() ? ps4ModuleImports : moduleImports)
+        if (!importModules.emplace(value >> 48, readCStr(value & 0xffffffffu)).second)
+            throw RelinkerException("Duplicate import module ID");
 
     auto relaEntryPos = [&](const FileByteOffset relaOff, const ByteCount off) -> FileByteOffset {
         if (relaOff > raw.size() || off > raw.size() - relaOff || relaEntSize > raw.size() - relaOff - off)
@@ -454,8 +477,8 @@ RelinkResult RelinkerPipeline::Relink() {
             const auto name = readCStr(nameOff);
             std::uint16_t section = 0;
             std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
-            if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) != STB_WEAK && (raw[symOff + 5] & 3) != 0)
-                throw RelinkerException("Undefined non-weak symbol has non-default visibility: " + name, symOff);
+            if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) == STB_LOCAL && (raw[symOff + 5] & 3) != 0)
+                throw RelinkerException("Undefined local symbol has non-default visibility: " + name, symOff);
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
@@ -476,18 +499,29 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
     const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
     const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
+    std::vector<UnusedNidFilter::StrictCodeRegion> unwindFunctions;
     if (hasEhFrame) {
-        const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
-        for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
+        unwindFunctions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
+        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
         if (sceImage)
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
                 static_cast<void>(segmentFileOffset);
-                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, unwindFunctions, gotVAddr, dynJmpRelSize))
                     segment.resize(*codeEnd - segmentVAddr);
-                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
+                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, unwindFunctions);
             }
+    }
+
+    std::vector<std::vector<ReplacedPltStub>> replacedStubs;
+    for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
+        static_cast<void>(segmentFileOffset);
+        for (const auto& stub : replacedStubs.emplace_back(FindReplacedPltStubs(segment, segmentVAddr, gotVAddr, dynJmpRelSize))) {
+            const auto import = std::find_if(nidRefs.begin(), nidRefs.end(), [&](const NidReference& reference) { return reference.RelocationTypeValue == R_X86_64_JUMP_SLOT && reference.RelocationAddress == stub.GotEntry; });
+            const std::string_view name = import == nidRefs.end() ? std::string_view{} : std::string_view{import->Nid};
+            progress.Message(DescribeReplacedPltStub(stub, {}, name.substr(0, name.find('#'))));
+        }
     }
 
     std::vector<std::vector<std::uint8_t>> scanSegments;
@@ -502,12 +536,66 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
-        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index])) {
+        std::vector<RoutedSyscallStub> segmentRoutedStubs;
+        std::vector<std::size_t> syscallTraps;
+        try {
+            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs);
+        } catch (const RelinkerException& error) {
+            const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
+            if (cause.empty()) throw;
+            RelinkerException explained(error.what() + cause, error.FailureOffset);
+            explained.InputPath = error.InputPath;
+            throw explained;
+        }
+        for (const auto offset : syscallTraps) {
             if (offset > segment.size() || segment.size() - offset < 2u)
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
             segment[offset] = scanSegment[offset] = 0x0F;
             segment[offset + 1] = scanSegment[offset + 1] = 0x0B;
             syscallPatches.push_back({segmentFileOffset + offset, {0x0F, 0x0B}});
+        }
+
+        for (const auto& routed : segmentRoutedStubs) {
+            if (routed.SyscallNumber == 191) {
+                const auto* pathconfRef = FindPathconfImport(nidRefs);
+                if (pathconfRef != nullptr) {
+                    const VirtualAddress stubVAddr = segmentVAddr + routed.StubOffset;
+                    if (routed.StubOffset + routed.StubLength > segment.size())
+                        throw RelinkerException("Syscall route patch exceeds executable segment", stubVAddr);
+                    const VirtualAddress targetAddr = pathconfRef->RelocationAddress;
+                    const VirtualAddress ripAfterDisp = stubVAddr + 6;
+                    const std::int64_t disp = static_cast<std::int64_t>(targetAddr) - static_cast<std::int64_t>(ripAfterDisp);
+                    if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                        throw RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+                    const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+                    std::vector<std::uint8_t> patchBytes = {
+                        0xFF, 0x25,
+                        static_cast<std::uint8_t>(disp32 & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 8) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 16) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 24) & 0xFF),
+                        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                    };
+                    std::copy(patchBytes.begin(), patchBytes.end(), segment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    std::copy(patchBytes.begin(), patchBytes.end(), scanSegment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    if (index == 0 && !textSection.empty() && routed.StubOffset + patchBytes.size() <= textSection.size())
+                        std::copy(patchBytes.begin(), patchBytes.end(), textSection.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    syscallPatches.push_back({segmentFileOffset + routed.StubOffset, std::move(patchBytes)});
+                } else if (syscallScanner->TrapsSdkStubs()) {
+                    const std::size_t opcodeOffset = routed.StubOffset + 10u;
+                    if (opcodeOffset > segment.size() || segment.size() - opcodeOffset < 2u)
+                        throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + opcodeOffset);
+                    segment[opcodeOffset] = scanSegment[opcodeOffset] = 0x0F;
+                    segment[opcodeOffset + 1] = scanSegment[opcodeOffset + 1] = 0x0B;
+                    if (index == 0 && !textSection.empty() && opcodeOffset + 2u <= textSection.size()) {
+                        textSection[opcodeOffset] = 0x0F;
+                        textSection[opcodeOffset + 1] = 0x0B;
+                    }
+                    syscallPatches.push_back({segmentFileOffset + opcodeOffset, {0x0F, 0x0B}});
+                } else {
+                    throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import", segmentVAddr + routed.StubOffset);
+                }
+            }
         }
     }
 
@@ -572,6 +660,9 @@ RelinkResult RelinkerPipeline::Relink() {
             if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
+    }
+    for (const auto& function : unwindFunctions) {
+        for (const auto target : function.ExtraTargets) exportedFunctions.push_back(target);
     }
 
     progress.Report({Domain::ProgressStage::Imports, {}, 0, 1});
@@ -679,7 +770,14 @@ RelinkResult RelinkerPipeline::Relink() {
                 throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
-            const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));
+            std::int64_t addend = 0;
+            if (relType != R_X86_64_DTPMOD64) {
+                if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("TLS addend overflow", pos);
+                if (rAddend > 0 && offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() - rAddend))
+                    throw RelinkerException("TLS addend overflow", pos);
+                addend = static_cast<std::int64_t>(offset) + rAddend;
+            }
             appendRela(dynSection.RelaData, rOffset, static_cast<std::uint64_t>(relType), addend);
         }
     };

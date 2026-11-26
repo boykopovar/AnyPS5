@@ -38,12 +38,6 @@ std::optional<CandidateHeader> TryReadCandidateHeader(const std::filesystem::pat
     return result;
 }
 
-CandidateHeader ReadCandidateHeader(const std::filesystem::path& path) {
-    const auto header = TryReadCandidateHeader(path);
-    if (!header) throw Domain::RelinkerException("Cannot read guest candidate: " + Io::Utf8Path(path));
-    return *header;
-}
-
 std::string FoldedName(std::string name, const bool foldCase) {
     if (foldCase) for (auto& character : name) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
     return name;
@@ -79,6 +73,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     if (hasPrx) directories.push_back(prx);
     const auto automaticDirectories = directories.size();
     std::vector<std::filesystem::path> runtimeDirectories;
+    const auto canonicalRoot = std::filesystem::canonical(root);
     for (const auto& name : moduleDirectories) {
         const auto relative = Io::NativePath(name).lexically_normal();
         if (relative.empty() || relative.has_root_path() || *relative.begin() == "..")
@@ -86,6 +81,9 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
         auto directory = (root / relative).lexically_normal();
         if (!directory.has_filename()) directory = directory.parent_path();
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
+        const auto actualRelative = std::filesystem::canonical(directory).lexically_relative(canonicalRoot);
+        if (actualRelative.empty() || *actualRelative.begin() == "..")
+            throw Domain::RelinkerException("--module-dir must be a directory inside the guest module parent directory: " + name);
         const auto duplicate = std::find_if(directories.begin(), directories.end(), [&](const auto& existing) { return SameDirectory(existing, directory); });
         if (duplicate != directories.end()) {
             const bool automatic = static_cast<std::size_t>(duplicate - directories.begin()) < automaticDirectories;
@@ -107,9 +105,13 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
                 continue;
             }
             if (Io::SameFile(entry.path(), inputPath)) continue;
-            const auto header = ReadCandidateHeader(entry.path());
-            if (header.Elf) paths.push_back(entry.path());
-            else if (header.Self)
+            const auto header = TryReadCandidateHeader(entry.path());
+            if (!header) {
+                std::cout << "Skipping unreadable file: " << entry.path().lexically_relative(root).generic_string() << '\n';
+                continue;
+            }
+            if (header->Elf) paths.push_back(entry.path());
+            else if (header->Self)
                 std::cout << "Skipping SELF container: " << entry.path().lexically_relative(root).generic_string()
                           << " (unwrap it before relinking)\n";
         }
@@ -121,8 +123,8 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     result.Directories = std::move(directories);
     result.RuntimeDirectories = std::move(runtimeDirectories);
     for (const auto& path : paths) result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(path))});
-    for (const auto& [copy, kept] : RemoveBackupCopies(result.Modules))
-        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (same SONAME as "
+    for (const auto& [copy, kept, match] : RemoveBackupCopies(result.Modules))
+        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (" << match << " as "
                   << kept.lexically_relative(root).generic_string() << ")\n";
     return result;
 }
@@ -159,6 +161,7 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
         })) continue;
         for (const auto& name : stem->second) found.push_back({entry->path().lexically_relative(modules.Root), name, header->Self});
     }
+    if (error) out << "Warning: the scan of " << Io::Utf8Path(modules.Root) << " stopped early: " << error.message() << '\n';
     std::sort(found.begin(), found.end(), [](const auto& left, const auto& right) { return std::tie(left.Relative, left.Name) < std::tie(right.Relative, right.Name); });
     for (const auto& [relative, name, self] : found) {
         const auto directory = relative.parent_path().generic_string();

@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Unknown function info
+
+- [webrtc::rtcp::Remb constructor and destructor](../../../core/libs/prx/libwebrtc/src/RtcpRemb.cpp) (libwebrtc) - the vtable (D1, D0, `BlockLength`, `Create`), the `rtc::FunctionView` passed as two pointers and the 48-byte layout are not checked on a console; the local vtable has no type information for `typeid` or `dynamic_cast`. Where release upstream calls a null callback, `Create` throws; null arguments throw. `Create` writes a negative bitrate as its unsigned value, as upstream does. Adapted from [remb.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/remb.cc), [psfb.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/psfb.cc) and [rtcp_packet.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet.cc). Closes when: compared with the console.

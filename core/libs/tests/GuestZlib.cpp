@@ -7,10 +7,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <latch>
+#include <semaphore>
 #include <source_location>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
@@ -22,6 +25,80 @@ template<typename TAction>
 static void RequireThrows(TAction action) {
     try { action(); } catch (const std::runtime_error&) { return; }
     std::abort();
+}
+
+static std::uint32_t Adler32(const std::uint8_t* data, std::size_t length) {
+    std::uint32_t s1 = 1, s2 = 0;
+    for (std::size_t i = 0; i < length; ++i) {
+        s1 = (s1 + data[i]) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
+}
+
+static std::vector<std::uint8_t> MakeStoredZlib(const std::uint8_t* payload, std::size_t payloadLen, std::size_t trailingEmptyBlocks = 0) {
+    std::vector<std::uint8_t> out;
+    out.push_back(0x78);
+    out.push_back(0x01);
+    std::size_t offset = 0;
+    while (offset < payloadLen || offset == 0) {
+        const std::size_t blockLen = std::min<std::size_t>(payloadLen - offset, 65535);
+        const bool isLastPayload = (offset + blockLen >= payloadLen);
+        const bool isFinal = isLastPayload && (trailingEmptyBlocks == 0);
+        out.push_back(isFinal ? 0x01 : 0x00);
+        out.push_back(static_cast<std::uint8_t>(blockLen & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((blockLen >> 8) & 0xFF));
+        const std::uint16_t nlen = static_cast<std::uint16_t>(~static_cast<std::uint16_t>(blockLen));
+        out.push_back(static_cast<std::uint8_t>(nlen & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((nlen >> 8) & 0xFF));
+        out.insert(out.end(), payload + offset, payload + offset + blockLen);
+        offset += blockLen;
+        if (isLastPayload) break;
+    }
+    for (std::size_t b = 0; b < trailingEmptyBlocks; ++b) {
+        const bool isFinal = (b + 1 == trailingEmptyBlocks);
+        out.push_back(isFinal ? 0x01 : 0x00);
+        out.push_back(0x00);
+        out.push_back(0x00);
+        out.push_back(0xFF);
+        out.push_back(0xFF);
+    }
+    const std::uint32_t checksum = Adler32(payload, payloadLen);
+    out.push_back(static_cast<std::uint8_t>((checksum >> 24) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((checksum >> 16) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((checksum >> 8) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>(checksum & 0xFF));
+    return out;
+}
+
+static void TestConcurrentWaiters(const void* source, std::uint32_t sourceLength) {
+    constexpr std::size_t capacity = 8192;
+    alignas(2048) std::array<std::uint8_t, 2 * capacity> output{};
+    std::array<std::uint64_t, 2> submitted{}, observed{};
+    std::array<std::int32_t, 2> statuses{};
+    std::latch started{2};
+    std::counting_semaphore<2> finished{0};
+    auto wait = [&](std::size_t index) {
+        std::uint32_t timeout = 10000000;
+        started.count_down();
+        statuses[index] = sceZlibWaitForDone(&observed[index], &timeout);
+        finished.release();
+    };
+    std::jthread first(wait, 0), second(wait, 1);
+    started.wait();
+    for (std::size_t index = 0; index < submitted.size(); ++index) {
+        Require(sceZlibInflate(source, sourceLength, output.data() + index * capacity, capacity, &submitted[index]) == 0);
+        Require(finished.try_acquire_for(std::chrono::seconds(3)));
+    }
+    first.join();
+    second.join();
+    Require(statuses[0] == 0 && statuses[1] == 0);
+    Require(submitted[0] < submitted[1]);
+    std::ranges::sort(observed);
+    Require(observed == submitted);
+    std::uint64_t remaining = 0;
+    std::uint32_t poll = 0;
+    Require(sceZlibWaitForDone(&remaining, &poll) == static_cast<std::int32_t>(0x81120027));
 }
 
 int main() {
@@ -138,6 +215,22 @@ int main() {
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     waiter.join();
     Require(completed == id);
+    TestConcurrentWaiters(compressed.data(), compressed.size());
+    {
+        constexpr auto invalid = static_cast<std::int32_t>(0x81120016);
+        Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
+        std::uint32_t poll = 0;
+        Require(sceZlibWaitForDone(reinterpret_cast<std::uint64_t*>(0x10), &poll) == invalid);
+        std::int32_t retryStatus{};
+        std::uint64_t retried{};
+        std::thread retry([&] {
+            std::uint32_t retryPoll = 1000000;
+            retryStatus = sceZlibWaitForDone(&retried, &retryPoll);
+        });
+        retry.join();
+        Require(retryStatus == 0 && retried == id);
+        Require(sceZlibWaitForDone(&retried, &poll) == static_cast<std::int32_t>(0x81120027));
+    }
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     Require(sceZlibFinalize() == 0);
     Require(sceZlibInitialize(nullptr, 0) == 0);
@@ -169,4 +262,54 @@ int main() {
     Require(sceZlibFinalize() == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibInflate(nullptr, 0, nullptr, 0, nullptr) == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibInitialize(nullptr, 0) == 0);
+    {
+        constexpr std::uint32_t bigPayloadLen = 20480;
+        std::vector<std::uint8_t> bigPayload(bigPayloadLen);
+        for (std::uint32_t i = 0; i < bigPayloadLen; ++i) bigPayload[i] = static_cast<std::uint8_t>(i & 0xFF);
+        const auto bigStream = MakeStoredZlib(bigPayload.data(), bigPayloadLen);
+        Require(bigStream.size() > 16384);
+        decode(bigStream.data(), static_cast<std::uint32_t>(bigStream.size()), 65536, 0);
+        Require(produced == bigPayloadLen);
+        Require(std::memcmp(output, bigPayload.data(), bigPayloadLen) == 0);
+    }
+    {
+        constexpr std::uint32_t exactMultiChunkLen = 2048;
+        std::vector<std::uint8_t> exactPayload(exactMultiChunkLen);
+        for (std::uint32_t i = 0; i < exactMultiChunkLen; ++i) exactPayload[i] = static_cast<std::uint8_t>((i * 7) & 0xFF);
+        auto exactMultiChunk = MakeStoredZlib(exactPayload.data(), exactMultiChunkLen, 3000);
+        Require(exactMultiChunk.size() > 16384);
+        decode(exactMultiChunk.data(), static_cast<std::uint32_t>(exactMultiChunk.size()), 2048, 0);
+        Require(produced == exactMultiChunkLen);
+        Require(std::memcmp(output, exactPayload.data(), exactMultiChunkLen) == 0);
+
+        exactMultiChunk.back() ^= 1;
+        decode(exactMultiChunk.data(), static_cast<std::uint32_t>(exactMultiChunk.size()),
+               2048, static_cast<std::int32_t>(0x811200FF));
+        Require(produced == exactMultiChunkLen);
+    }
+    {
+        constexpr std::uint32_t oneByteOverflowLen = 4097;
+        std::vector<std::uint8_t> overflowPayload(oneByteOverflowLen, 0xAB);
+        const auto overflowStream = MakeStoredZlib(overflowPayload.data(), oneByteOverflowLen);
+        decode(overflowStream.data(), static_cast<std::uint32_t>(overflowStream.size()),
+               4096, static_cast<std::int32_t>(0x8112001C));
+        Require(produced == 4096);
+
+        const auto multiChunkOverflow = MakeStoredZlib(overflowPayload.data(), 2049, 3000);
+        Require(multiChunkOverflow.size() > 16384);
+        decode(multiChunkOverflow.data(), static_cast<std::uint32_t>(multiChunkOverflow.size()),
+               2048, static_cast<std::int32_t>(0x8112001C));
+        Require(produced == 2048);
+    }
+    {
+        constexpr std::uint32_t truncPayloadLen = 4096;
+        std::vector<std::uint8_t> truncPayload(truncPayloadLen, 0xCD);
+        auto truncStream = MakeStoredZlib(truncPayload.data(), truncPayloadLen);
+        truncStream.resize(truncStream.size() - 4);
+        decode(truncStream.data(), static_cast<std::uint32_t>(truncStream.size()),
+               4096, static_cast<std::int32_t>(0x811200FF));
+        Require(produced == 4096);
+    }
+    Require(sceZlibFinalize() == 0);
 }

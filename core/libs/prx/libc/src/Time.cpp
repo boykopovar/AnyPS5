@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <exception>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -38,6 +39,20 @@ extern "C" int64_t timezone_nid_postfix;
 namespace {
 
 std::atomic<ClockGetresFn_nid_no_patch> registeredClockGetres{nullptr};
+
+bool ReadRealtimeMicroseconds(std::int64_t& micros) {
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const std::uint64_t ticks = (static_cast<std::uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    micros = static_cast<std::int64_t>(ticks / 10) - 11644473600000000LL;
+#else
+    timespec now{};
+    if (::clock_gettime(CLOCK_REALTIME, &now) != 0) return false;
+    micros = static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+#endif
+    return true;
+}
 
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -171,8 +186,10 @@ bool utcCalendarFields(std::int64_t time, GuestTm& result) {
 namespace {
 
 const bool timeZoneFixed = [] {
+    const int savedErrno = errno;
     if (std::getenv("TZ") == nullptr) ::setenv("TZ", ":/etc/localtime", 0);
     ::tzset();
+    errno = savedErrno;
     return true;
 }();
 
@@ -612,6 +629,7 @@ void APS5_VABI tzset_nid_postfix(void) {
     GuestTm universal{};
     GuestTm local{};
     gmtime_s_nid_postfix(&now, &universal);
+    universal.tm_isdst = 0;
     localtime_s_nid_postfix(&now, &local);
 
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
@@ -643,16 +661,21 @@ int64_t APS5_VABI time_nid_postfix(int64_t* timer) {
 }
 
 int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
-#ifdef _WIN32
-    FILETIME ft{};
-    GetSystemTimePreciseAsFileTime(&ft);
-    const uint64_t t = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
-    return static_cast<int64_t>(t / 10);
-#else
-    timespec now{};
-    clock_gettime(CLOCK_REALTIME, &now);
-    return static_cast<int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
-#endif
+    std::int64_t micros{};
+    ReadRealtimeMicroseconds(micros);
+    return micros;
+}
+
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept {
+    std::int64_t micros{};
+    if (!ReadRealtimeMicroseconds(micros)) std::terminate();
+    return micros;
+}
+
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds) {
+    std::int64_t value{};
+    if (!GuestCopyIn_nid_no_patch(&value, microseconds, sizeof(value))) throw std::invalid_argument("system_clock::to_time_t: unreadable time point");
+    return value / 1000000;
 }
 
 int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
@@ -688,8 +711,9 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
-    if (timer == nullptr) return nullptr;
-    return gmtime_s_nid_postfix(timer, &result);
+    if (timer == nullptr || gmtime_s_nid_postfix(timer, &result) == nullptr) return nullptr;
+    result.tm_isdst = 0;
+    return &result;
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
@@ -751,6 +775,7 @@ GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
         return nullptr;
     }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
+    result->tm_isdst = -1;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
     return result;
@@ -899,6 +924,26 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     const bool copied = GuestCopyOut_nid_no_patch(str, local.get(), buffer.written * sizeof(std::uint16_t));
     errno = resultError;
     return copied && fits ? buffer.offset : 0;
+}
+
+static std::atomic<std::uint64_t (APS5_VABI*)()> g_monotonicTimeSource{nullptr};
+
+void LibcSetMonotonicTimeSource_nid_no_patch(std::uint64_t (APS5_VABI* source)()) {
+    g_monotonicTimeSource.store(source, std::memory_order_release);
+}
+
+std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept {
+    if (const auto source = g_monotonicTimeSource.load(std::memory_order_acquire)) {
+        return static_cast<std::int64_t>(source());
+    }
+#ifdef _WIN32
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
+    timespec now{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) std::terminate();
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(now.tv_sec) * 1000000000ULL + now.tv_nsec);
+#endif
 }
 
 static std::atomic<std::uint64_t (APS5_VABI*)()> g_processTimeSource{nullptr};

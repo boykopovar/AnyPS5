@@ -193,6 +193,28 @@ void CheckSharedBlock() {
     if (!Watched(outside, unwatched.size())) Require(StoredOver(outside, unwatched.size(), TrackerGeneration()), "an unwatched range reads as not stored over");
 }
 
+void CheckDriverStoredOver() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWrites(base, 2 * Block);
+    Require(synced != 0, "the driver-store fixture is not collected");
+    Require(!DriverStoredOver(base + 0x100, 8, synced), "a range nothing stored over reads as stored over by the driver");
+    const auto stamped = MarkWritten(base + 0x100, 8);
+    Require(DriverStoredOver(base + 0x100, 8, synced), "a driver store over the range is not seen");
+    Require(!DriverStoredOver(base + 0x200, 8, synced), "a driver store beside the range counts for it");
+    Require(!DriverStoredOver(base + 0x100, 8, stamped), "a driver store older than the generation is seen");
+    const auto beforeCpu = CollectWrites(base, 2 * Block);
+    static_cast<volatile std::uint8_t*>(memory)[0x300] = 0x22;
+    CollectWritesUncached(base, 2 * Block);
+    Require(StoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store is not seen as stored over");
+    Require(!DriverStoredOver(base + 0x300, 8, beforeCpu), "a collected CPU store counts as a driver store");
+    Require(DriverStoredOver(base + 0x100, 8, 0), "a zero generation reads as not stored over by the driver");
+    std::array<std::uint8_t, 64> unwatched{};
+    const auto outside = reinterpret_cast<std::uint64_t>(unwatched.data());
+    if (!Watched(outside, unwatched.size())) Require(DriverStoredOver(outside, unwatched.size(), TrackerGeneration()), "a range outside the write watch reads as not stored over by the driver");
+}
+
 void CheckStoredOverUsesPageEvidence() {
     constexpr std::size_t Page = 4096;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(2 * Block));
@@ -1909,13 +1931,48 @@ void CheckImportWindow() {
     Require(changed[1] == BlockWritten && WrittenSince(base + Block, Block, synced) && cpu[1] == 1, "a store of new bytes within an import window was missed");
     Require(changed[2] == BlockUnchanged && cpu[2] == 0, "a block the import window did not touch reads as written");
     Require(cpu[0] == 1, "a page an import window resolved no longer counts as possibly touched by the CPU");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(!StoredOver(base, 4096, synced), "a neighbouring store made an unchanged import-window page read as stored");
+    Require(StoredOver(base + 0x2000, 4096, synced), "a store beside an unchanged import-window page was missed");
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "an unchanged import-window page lost its possible CPU touch");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(StoredOver(base, 4096, synced), "a same-value CPU store after an import-window touch was missed");
     const auto after = CollectWritesUncached(base, 3 * Block);
     bytes[0x100] = 0x33;
     static_cast<void>(CollectWritesUncached(base, 3 * Block));
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
-#ifdef __APPLE__
+void CheckImportWindowTouchIsNotAStore() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWritesUncached(base, 2 * Block);
+    Require(synced != 0, "the import window touch block is not collected");
+    Require(ImportWatched(base, 2 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[Block + 0x100] = 0x22;
+        return true;
+    }, true, false), "the import window touch import failed");
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "a page an import window resolved no longer counts as possibly touched by the CPU");
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a page an import window resolved without changing its bytes reads as stored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "pages the import window did not touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + Block, 4096, synced), "a store of new bytes within an import window reads as unstored");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a store to another page of its block made an import window touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + 0x2000, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x2010, 1, synced), "a store beside an import window touch reads as unstored");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!StoreUnchangedSinceLastCollect(base, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a same-value store after an import window touch reads as unstored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x3000, Block - 0x3000, synced), "a store after the import window marked other pages as stored");
+}
+
+#if defined(__APPLE__) || defined(__linux__)
 void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     const std::lock_guard held(GpuMutex());
     std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
@@ -1952,6 +2009,27 @@ void CheckImportOverReadTraps() {
     reader.join();
     Require(seen == 0x33, "a read after the import did not see the bytes its trap stores");
 }
+
+#if defined(__linux__)
+void CheckImportKeepsReadTraps() {
+    ::alarm(20);
+    constexpr std::size_t bytes = 4 * Block;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    Require(CollectWritesUncached(base, bytes) != 0, "the read-trapped import range is not collected");
+    Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes), "cannot set a read trap on the import range");
+    std::size_t trappedInside = 0;
+    Require(ImportWatched(base, bytes, [&] {
+        trappedInside = TrappedBytes(base, bytes);
+        return true;
+    }, false), "the import over a read-trapped range failed");
+    Require(trappedInside == bytes, "an import took the read traps off its range");
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(base, bytes);
+    Require(static_cast<const volatile std::uint8_t*>(memory)[0] == 0x11, "an import ran the read trap resolver on the importing thread, which holds the write tracker lock the resolver's store takes");
+}
+#endif
 #endif
 
 void CheckImportWindowOtherThread() {
@@ -2666,12 +2744,19 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
         if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
             CheckImportOverReadTraps();
             std::cout << "import over read traps test passed\n";
             return 0;
         }
+#if defined(__linux__)
+        if (argc == 2 && std::string_view(argv[1]) == "--import-keeps-read-traps") {
+            CheckImportKeepsReadTraps();
+            std::cout << "import keeps read traps test passed\n";
+            return 0;
+        }
+#endif
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
             CheckMarkPossiblyWrittenOrder();
@@ -2723,6 +2808,7 @@ int main(int argc, char** argv) {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckDriverStoredOver();
         CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
@@ -2753,6 +2839,7 @@ int main(int argc, char** argv) {
         CheckWidenedCollectBesideUncommittedPages();
 #endif
         CheckImportWindow();
+        CheckImportWindowTouchIsNotAStore();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();

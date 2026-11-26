@@ -1,0 +1,9 @@
+# libSceLibreSsl3
+
+## change [o2i_ECPublicKey]
+
+- [o2i_ECPublicKey](../../../core/libs/prx/libSceLibreSsl3/src/EcAsn1.cpp) (libSceLibreSsl3) - nothing is checked on the console. A failed decode queues only `ERR_R_EC_LIB`, because libSceLibreSsl's `EC_POINT_oct2point` queues no reason where [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ec/ec_asn1.c) queues the decoder's. Otherwise it follows `ec_asn1.c`: a missing key or group queues `ERR_R_PASSED_NULL_PARAMETER`, and success stores the first octet without its low bit as the conversion form and advances `*in` by the bytes validated. Unlike LibreSSL, a failed or faulting decode leaves the key, its point and `*in` unchanged, and a point of another curve is replaced. The allocation-failure path of the new point queues `ERR_R_MALLOC_FAILURE` and is not exercised by a test. A null `in` throws. It works only on libSceLibreSsl keys.
+
+## change [ASN.1 integer decoding]
+
+- [ASN.1 integer decoding](../../../core/libs/prx/libSceLibreSsl3/src/IntegerDecoder.cpp) - nothing is checked on a console, and the console's application-heap ABI is unverified. Rejections, allocation failures and their error codes follow [13.42 native-PC evidence](https://github.com/boykopovar/AnyPS5/pull/10948#issuecomment-6412137728) from a recording allocator; a staging-buffer failure also queues `ERR_R_MALLOC_FAILURE` and returns null, and no test reaches it. That evidence frees an existing output integer when a decode fails; here a failed or faulting decode leaves `*input` and `*output` unchanged and a valid decode frees the old output last. Nonnegative null input throws here. A negative old-output length throws. Other error combinations and content over `INT_MAX` bytes follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1). Closes when: compared with the console.

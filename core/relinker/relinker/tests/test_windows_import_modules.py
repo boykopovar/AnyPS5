@@ -593,6 +593,218 @@ def run_with_standard_pipes(executable_path, capture_stdout, capture_stderr):
             kernel32.CloseHandle(handle)
 
 
+def elf_dynamic_tags(image):
+    phoff, = struct.unpack_from('<Q', image, 32)
+    phsize, phcount = struct.unpack_from('<HH', image, 54)
+    loads = []
+    dynamic = None
+    for index in range(phcount):
+        header = struct.unpack_from('<IIQQQQQQ', image, phoff + index * phsize)
+        if header[0] == 1:
+            loads.append(header)
+        elif header[0] == 2:
+            dynamic = header
+    assert dynamic is not None
+    tags = []
+    for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from('<qQ', image, position)
+        if tag == 0:
+            break
+        tags.append((tag, value))
+    return loads, dynamic, tags
+
+
+def elf_file_offset(loads, address):
+    for header in loads:
+        if header[3] <= address < header[3] + header[5]:
+            return header[2] + address - header[3]
+    raise AssertionError(f'Unmapped address: {address:#x}')
+
+
+def elf_symbol_name(image, loads, tag_map, index):
+    strings = elf_file_offset(loads, tag_map[5])
+    name, = struct.unpack_from('<I', image, elf_file_offset(loads, tag_map[6]) + index * 24)
+    return image[strings + name:image.index(0, strings + name)].decode()
+
+
+def elf_exported_symbols(image):
+    loads, _, tags = elf_dynamic_tags(image)
+    tag_map = {}
+    for tag, value in tags:
+        tag_map.setdefault(tag, value)
+    count, = struct.unpack_from('<I', image, elf_file_offset(loads, tag_map[4]) + 4)
+    return [elf_symbol_name(image, loads, tag_map, index) for index in range(1, count)]
+
+
+def elf_imported_symbols(image):
+    loads, _, tags = elf_dynamic_tags(image)
+    tag_map = {}
+    for tag, value in tags:
+        tag_map.setdefault(tag, value)
+    names = set()
+    for address, size in ((7, 8), (23, 2)):
+        if address not in tag_map or tag_map.get(size, 0) == 0:
+            continue
+        table = elf_file_offset(loads, tag_map[address])
+        for position in range(table, table + tag_map[size], 24):
+            info, = struct.unpack_from('<Q', image, position + 8)
+            if info >> 32:
+                names.add(elf_symbol_name(image, loads, tag_map, info >> 32))
+    return names
+
+
+def patch_executable_needed_modules(image, entries, strsz_delta=0):
+    out = bytearray(image)
+    loads, dynamic, tags = elf_dynamic_tags(out)
+    patched = []
+    for tag, value in tags:
+        if tag == 0x61000045:
+            continue
+        if tag == 10 and strsz_delta:
+            value += strsz_delta
+        patched.append((tag, value))
+    patched.extend(entries)
+    patched.append((0, 0))
+    new_size = len(patched) * 16
+    strtab = elf_file_offset(loads, dict(tags)[5])
+    if dynamic[2] < strtab:
+        assert dynamic[2] + new_size <= strtab
+    if new_size > dynamic[5]:
+        assert not any(out[dynamic[2] + dynamic[5]:dynamic[2] + new_size])
+        phoff, = struct.unpack_from('<Q', out, 32)
+        phsize, phcount = struct.unpack_from('<HH', out, 54)
+        dyn_header = next(phoff + index * phsize for index in range(phcount)
+                          if struct.unpack_from('<I', out, phoff + index * phsize)[0] == 2)
+        struct.pack_into('<QQ', out, dyn_header + 32, new_size, new_size)
+    for index, (tag, value) in enumerate(patched):
+        struct.pack_into('<qQ', out, dynamic[2] + index * 16, tag, value)
+    return bytes(out)
+
+
+def find_dynstr_offset(image, value):
+    loads, _, tags = elf_dynamic_tags(image)
+    tag_map = dict(tags)
+    strtab = elf_file_offset(loads, tag_map[5])
+    strsz = tag_map[10]
+    return strsz, bytes(image[strtab:strtab + strsz]).index(value + b'\0')
+
+
+def check_ps4_import_modules(work, relinker):
+    guest_providers = {}
+    for label, tag, symbol, owner, extra, module_name, module_id, version, target in [
+            ('ps5-b-prx', 0x61000045, 'shared#A#B', 'a.prx', ('b.prx',), None, 1, 0x1234, b'b.prx'),
+            ('ps4-b-prx', 0x6100000f, 'shared#A#B', 'a.prx', ('b.prx',), None, 1, 0x1234, b'b.prx'),
+            ('ps5-alias-id2', 0x61000045, 'shared#A#C', 'a.prx', ('alias.prx',), 'alias', 2, 0x4321, b'alias'),
+            ('ps4-alias-id2', 0x6100000f, 'shared#A#C', 'a.prx', ('alias.prx',), 'alias', 2, 0x4321, b'alias')]:
+        base = executable(owner, symbol, module_name, extra_dependencies=extra)
+        _, mod_offset = find_dynstr_offset(base, target)
+        image = patch_executable_needed_modules(base, [(tag, (module_id << 48) | (version << 32) | mod_offset)])
+        for target_mode in ('win', 'lin'):
+            case = work / f'needed-tag-{label}-{target_mode}'
+            modules = case / 'prx'
+            modules.mkdir(parents=True)
+            (modules / 'a.prx').write_bytes(provider(11))
+            (modules / 'b.prx').write_bytes(provider(22, 'alias.prx'))
+            source = case / 'input.elf'
+            source.write_bytes(image)
+            output = case / ('output.exe' if target_mode == 'win' else 'output.elf')
+            args = [str(relinker)] + (['--windows'] if target_mode == 'win' else []) + [str(source), str(output)]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (label, target_mode, result.stdout, result.stderr)
+            if target_mode == 'win':
+                if os.name == 'nt':
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert run.returncode == 22, (label, run.returncode, run.stdout, run.stderr)
+                if label == 'ps4-b-prx':
+                    guest_providers['a'] = (case / 'app0' / 'prx' / 'a.prx.guest.prx').read_bytes()
+                    guest_providers['b'] = (case / 'app0' / 'prx' / 'b.prx.guest.prx').read_bytes()
+            else:
+                a_aliases = [name for name in elf_exported_symbols((case / 'app0' / 'prx' / 'a.prx.guest.prx').read_bytes())
+                             if name.startswith('shared#module') and name.endswith('#guest')]
+                b_aliases = [name for name in elf_exported_symbols((case / 'app0' / 'prx' / 'b.prx.guest.prx').read_bytes())
+                             if name.startswith('shared#module') and name.endswith('#guest')]
+                assert len(a_aliases) == 1 and len(b_aliases) == 1 and a_aliases[0] != b_aliases[0], (a_aliases, b_aliases)
+                assert elf_imported_symbols(output.read_bytes()) == {b_aliases[0]}, (label, elf_imported_symbols(output.read_bytes()))
+
+    for label, tag in (('ps5-native', 0x61000045), ('ps4-native', 0x6100000f)):
+        case = work / f'needed-tag-{label}'
+        (case / 'prx').mkdir(parents=True)
+        libs = case / 'libs'
+        libs.mkdir()
+        (libs / 'a.prx').write_bytes(guest_providers['a'])
+        (libs / 'b.prx').write_bytes(guest_providers['b'])
+        base = executable('a.prx', 'shared#A#C', module_name='b', extra_dependencies=('b.prx',))
+        _, mod_offset = find_dynstr_offset(base, b'b')
+        source = case / 'input.elf'
+        source.write_bytes(patch_executable_needed_modules(base, [(tag, (2 << 48) | (0x0201 << 32) | mod_offset)]))
+        output = case / 'output.exe'
+        result = subprocess.run([str(relinker), '--windows', str(source), str(output)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (label, result.stdout, result.stderr)
+        assert 'libs\\b.prx\0'.encode('utf-16le') in output.read_bytes(), (label, output)
+        if os.name == 'nt':
+            run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+            assert run.returncode == 22, (label, run.returncode, run.stdout, run.stderr)
+
+    for label, tag in (('ps5-disjoint', 0x61000045), ('ps4-disjoint', 0x6100000f)):
+        base = executable('a.prx', 'shared#A#B', extra_dependencies=('b.prx',))
+        _, b_offset = find_dynstr_offset(base, b'b.prx')
+        image = patch_executable_needed_modules(base, [(tag, (1 << 48) | b_offset)])
+        for target_mode in ('win', 'lin'):
+            case = work / f'needed-tag-{label}-{target_mode}'
+            modules = case / 'prx'
+            modules.mkdir(parents=True)
+            (modules / 'a.prx').write_bytes(provider(11))
+            other = provider(22)
+            other[0x800:0x80c] = b'\0other#A#B\0\0'
+            (modules / 'b.prx').write_bytes(other)
+            source = case / 'input.elf'
+            source.write_bytes(image)
+            output = case / ('output.exe' if target_mode == 'win' else 'output.elf')
+            args = [str(relinker)] + (['--windows'] if target_mode == 'win' else []) + [str(source), str(output)]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (label, target_mode, result.stdout, result.stderr)
+            if target_mode == 'win':
+                if os.name == 'nt':
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert run.returncode & 0xffffffff == 0xc0000139 and 'unresolved ELF import shared from b.prx' in run.stderr, (
+                        label, hex(run.returncode & 0xffffffff), run.stdout, run.stderr)
+            else:
+                assert elf_imported_symbols(output.read_bytes()) == {'shared'}, (label, elf_imported_symbols(output.read_bytes()))
+
+    base = executable('a.prx', 'shared#A#B', extra_dependencies=('b.prx',))
+    strsz, a_offset = find_dynstr_offset(base, b'a.prx')
+    _, b_offset = find_dynstr_offset(base, b'b.prx')
+    unterminated_base = executable('a.prx', 'shared#A#B', module_name='libBad', extra_dependencies=('b.prx',))
+    _, bad_offset = find_dynstr_offset(unterminated_base, b'libBad')
+    unknown_base = executable('a.prx', 'shared#A#C', extra_dependencies=('b.prx',))
+    _, unknown_b_offset = find_dynstr_offset(unknown_base, b'b.prx')
+
+    error_cases = [
+        ('ps4-duplicate-id', base, [(0x6100000f, (1 << 48) | a_offset), (0x6100000f, (1 << 48) | (0x0101 << 32) | b_offset)], 0, 'Duplicate import module ID'),
+        ('ps4-ps5-mixed-forward', base, [(0x61000045, (1 << 48) | a_offset), (0x6100000f, (2 << 48) | b_offset)], 0, 'mixes PS4 and PS5 needed-module tags'),
+        ('ps4-ps5-mixed-reverse', base, [(0x6100000f, (1 << 48) | a_offset), (0x61000045, (2 << 48) | b_offset)], 0, 'mixes PS4 and PS5 needed-module tags'),
+        ('ps4-str-oob-end', base, [(0x6100000f, (1 << 48) | strsz)], 0, 'Dynamic string offset is outside DT_STRSZ'),
+        ('ps4-str-oob-max', base, [(0x6100000f, (1 << 48) | 0xffffffff)], 0, 'Dynamic string offset is outside DT_STRSZ'),
+        ('ps4-str-unterminated', unterminated_base, [(0x6100000f, (1 << 48) | bad_offset)], -1, 'Dynamic string is not NUL-terminated within DT_STRSZ'),
+        ('ps4-unknown-id', unknown_base, [(0x6100000f, (1 << 48) | unknown_b_offset)], 0, 'Unknown import module ID'),
+    ]
+    for label, template, entries, strsz_delta, message in error_cases:
+        image = patch_executable_needed_modules(template, entries, strsz_delta)
+        for target_mode in ('win', 'lin'):
+            case = work / f'needed-tag-{label}-{target_mode}'
+            modules = case / 'prx'
+            modules.mkdir(parents=True)
+            (modules / 'a.prx').write_bytes(provider(11))
+            (modules / 'b.prx').write_bytes(provider(22))
+            source = case / 'input.elf'
+            source.write_bytes(image)
+            output = case / ('output.exe' if target_mode == 'win' else 'output.elf')
+            args = [str(relinker)] + (['--windows'] if target_mode == 'win' else []) + [str(source), str(output)]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 2 and message in result.stderr, (label, target_mode, result.returncode, result.stderr)
+            assert not output.exists(), (label, target_mode, output)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-import-modules-') as directory:
@@ -658,6 +870,23 @@ def main():
             run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
             assert run.returncode != 0 and 'Failed to load module:' in run.stderr and 'unused.prx' in run.stderr and 'GetLastError: 126' in run.stderr, (run.returncode, run.stdout, run.stderr)
             assert 'nothing is imported from it' not in run.stderr, run.stderr
+
+        for needed, host_library in (('libSceGnmDriver_padebug.prx', 'libSceGnmDriver'), ('libSceGnmDriver_padebug.sprx', 'libSceGnmDriver'),
+                                     ('libSceSsl2.prx', 'libSceSsl'), ('libSceSsl2.sprx', 'libSceSsl')):
+            case = work / ('alias-' + needed)
+            (case / 'libs').mkdir(parents=True)
+            (case / 'libs' / (host_library + '.prx')).write_bytes(native_provider.read_bytes())
+            source = case / 'input.elf'
+            source.write_bytes(executable(needed, 'shared#A#B', module_name=host_library))
+            output = case / 'output.exe'
+            result = subprocess.run([str(relinker), '--windows', '--skip-sce-module', str(source), str(output)], capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            image = output.read_bytes()
+            assert ('libs\\' + host_library + '.prx\0').encode('utf-16le') in image, needed
+            assert needed.rsplit('.', 1)[0].encode('utf-16le') not in image, needed
+            if os.name == 'nt':
+                run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                assert run.returncode == 22, (needed, run.returncode, run.stdout, run.stderr)
 
         check_internal_guest_libc(convert, work, relinker)
 
@@ -832,8 +1061,8 @@ def main():
                     assert not log.exists(), (runtime, log)
 
                     image = executable('a.prx', 'shared', extra_symbols=('absent#A#B',))
-                    image[0x4000:0x400d] = (b'\xff\x15' + struct.pack('<i', 0x4a20 - 0x4006)
-                                            + b'\xff\x15' + struct.pack('<i', 0x4a28 - 0x400c) + b'\xc3')
+                    image[0x4000:0x4015] = (b'\x48\x83\xec\x08\xff\x15' + struct.pack('<i', 0x4a20 - 0x400a)
+                                            + b'\xff\x15' + struct.pack('<i', 0x4a28 - 0x4010) + b'\x48\x83\xc4\x08\xc3')
                     executable_path, log = convert_stdio_case(f'gui-dll-{runtime}-preloaded-runtime-stub-after-crt',
                                                               image=image, lazy_binding=True)
                     log.write_text('stale previous run', encoding='utf-8')
@@ -915,6 +1144,8 @@ def main():
             if os.name == 'nt':
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == 11 and 'unused.prx' not in run.stderr, (symbol, module_name, run.returncode, run.stdout, run.stderr)
+
+        check_ps4_import_modules(work, relinker)
 
     print('Windows module-scoped import tests passed')
 

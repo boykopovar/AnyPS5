@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_compile
@@ -28,6 +28,7 @@ class CheckCompilePreprocessorTests(unittest.TestCase):
             self.skipTest("needs a C compiler")
         with tempfile.TemporaryDirectory(prefix="syntax check ") as folder:
             root = Path(folder).resolve()
+            flavor = PureWindowsPath if os.name == "nt" else Path
             source = root / "unit source.c"
             dependency = root / "unit deps.d"
             object_file = root / "unit.o"
@@ -54,12 +55,14 @@ class CheckCompilePreprocessorTests(unittest.TestCase):
                                 self.assertIn("syntax_check_must_fail", diagnostics)
                             for path, content in preserved.items():
                                 self.assertEqual(path.read_bytes(), content, str(path))
-                            self.assertEqual(set(root.iterdir()), {source, dependency, object_file})
+                            self.assertEqual({flavor(str(path)) for path in root.iterdir()},
+                                             {flavor(str(path)) for path in (source, dependency, object_file)})
                         dependency.unlink()
                         object_file.unlink()
                         source.write_text(valid, encoding="utf-8")
                         self.assertEqual(check_compile.check_source((source, source.name, root, [entry]))[:2], (1, 0))
-                        self.assertEqual(set(root.iterdir()), {source})
+                        self.assertEqual({flavor(str(path)) for path in root.iterdir()},
+                                         {flavor(str(path)) for path in (source,)})
 
     def test_dependency_only_arguments_are_removed(self):
         source = Path("unit.c").resolve()
@@ -76,7 +79,10 @@ class CheckCompilePreprocessorTests(unittest.TestCase):
         source = Path("unit.c").resolve()
         for flag, expected in (("-Wp,-DNAME=value,-MD,unit.d,-I,include files", "-Wp,-DNAME=value,-I,include files"),
                                ("-Wp,-include,-MD,-MMD,unit.d", "-Wp,-include,-MD"),
-                               ("-Wp,--include,-MD,--write-dependencies,unit.d", "-Wp,--include,-MD")):
+                               ("-Wp,--include,-MD,--write-dependencies,unit.d", "-Wp,--include,-MD"),
+                               ("-Wp,-iprefix,prefix,-iwithprefix,include", "-Wp,-iprefix,prefix,-iwithprefix,include"),
+                               ("-Wp,-isystem,-E,-iframework,Frameworks", "-Wp,-isystem,-E,-iframework,Frameworks"),
+                               ("-Wp,--define-macro,VALUE=1,--undefine-macro,VALUE", "-Wp,--define-macro,VALUE=1,--undefine-macro,VALUE")):
             with self.subTest(flag=flag):
                 self.assertEqual(check_compile.syntax_arguments(["cc", flag, str(source)], Path.cwd(), source),
                                  ["cc", "-fsyntax-only", expected, str(source)])

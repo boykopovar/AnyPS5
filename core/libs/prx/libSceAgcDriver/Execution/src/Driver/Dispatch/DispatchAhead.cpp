@@ -82,9 +82,9 @@ bool InCode(const ShaderRecompiler::MemoryRegion& region, const std::shared_ptr<
     return !code->header.empty() && region.guestAddress >= code->headerAddress && region.guestAddress < code->headerAddress + code->header.size();
 }
 
-bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code) {
+bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code, const PreparedShaderState::UserDataLink* linking) {
     for (const auto& region : regions) {
-        if (InCode(region, code)) continue;
+        if (InCode(region, code) && (linking == nullptr || !linking->Overlaps(region.guestAddress, region.bytes.size()))) continue;
         for (const auto& [begin, end] : ranges) {
             if (begin < region.guestAddress + region.bytes.size() && region.guestAddress < end) return true;
         }
@@ -123,10 +123,10 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
     if (!allQueues && submission.queue == 0) return;
+    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& resolved = resolvedAhead();
     const auto localDevice = device.Load();
     if (resolved.contains(from) || localDevice == nullptr) return;
-    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& stats = groupCaptureStats();
     const auto begin = std::chrono::steady_clock::now();
     ++stats.runs;
@@ -294,7 +294,8 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     ++stats.labelOverlaps;
                     break;
                 }
-                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader)) {
+                const auto* linking = found->second.linking != nullptr ? found->second.linking.get() : found->second.keepVariant != nullptr ? found->second.keepVariant->linking.get() : nullptr;
+                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader, linking)) {
                     resolved.erase(found);
                     ++stats.writtenBefore;
                     break;
@@ -308,11 +309,11 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     const auto& snapshot = *found->second.registeredShader;
                     std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
                     if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
-                    auto lap = std::chrono::steady_clock::now();
+                    auto lap = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                     std::array<double, DriverPhaseCount> phaseMs{};
                     auto phaseLap = lap;
                     DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
-                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming);
+                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming, found->second.linking);
                 }
                 bool bounded = false;
                 const auto itemWrites = DispatchWriteRanges(*found->second.compiledResult, bounded);

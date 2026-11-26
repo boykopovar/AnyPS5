@@ -1,11 +1,13 @@
 #include "prx/libharfbuzz/include/Layout.hpp"
 #include "FreeTypeGuestOutputFixture.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb-ot.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,12 +17,15 @@
 #include <limits>
 #include <source_location>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -272,13 +277,86 @@ static void CheckProtected(const Api& api, hb_face_t* face, const FreeTypeTest::
 }
 #endif
 
+struct ReadOnlyPage {
+    void* address = nullptr;
+    std::size_t size = 0;
+
+    explicit ReadOnlyPage(unsigned initialCount) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        address = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(address != nullptr);
+        std::memcpy(address, &initialCount, sizeof(initialCount));
+        DWORD previous = 0;
+        Require(VirtualProtect(address, size, PAGE_READONLY, &previous) != 0);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        size = static_cast<std::size_t>(page);
+        address = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(address != MAP_FAILED);
+        std::memcpy(address, &initialCount, sizeof(initialCount));
+        Require(mprotect(address, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!address) return;
+#ifdef _WIN32
+        VirtualFree(address, 0, MEM_RELEASE);
+#else
+        munmap(address, size);
+#endif
+    }
+};
+
+template <typename TCall>
+void ExpectThrowsPreservingErrno(TCall&& call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, location);
+}
+
+void CheckInvalidGuestPointers(const Api& api, hb_face_t* guest) {
+    auto* badCount = reinterpret_cast<unsigned*>(std::uintptr_t{0x10});
+    auto* badTags = reinterpret_cast<hb_tag_t*>(std::uintptr_t{0x10});
+    const ReadOnlyPage roPage(2);
+    auto* roCount = static_cast<unsigned*>(roPage.address);
+    auto* roTags = static_cast<hb_tag_t*>(roPage.address);
+
+    ExpectThrowsPreservingErrno([&] { api.scripts(guest, HB_OT_TAG_GSUB, 0, badCount, nullptr); });
+    ExpectThrowsPreservingErrno([&] { api.scripts(guest, HB_OT_TAG_GSUB, 0, roCount, roTags); });
+    unsigned count = 2;
+    ExpectThrowsPreservingErrno([&] { api.scripts(guest, HB_OT_TAG_GSUB, 0, &count, badTags); });
+    Require(count == 2);
+    ExpectThrowsPreservingErrno([&] { api.scripts(guest, HB_OT_TAG_GSUB, 0, &count, roTags); });
+    Require(count == 2);
+
+    ExpectThrowsPreservingErrno([&] { api.languages(guest, HB_OT_TAG_GSUB, 1, 0, badCount, nullptr); });
+    ExpectThrowsPreservingErrno([&] { api.languages(guest, HB_OT_TAG_GSUB, 1, 0, roCount, roTags); });
+    ExpectThrowsPreservingErrno([&] { api.languages(guest, HB_OT_TAG_GSUB, 1, 0, &count, badTags); });
+    Require(count == 2);
+    ExpectThrowsPreservingErrno([&] { api.languages(guest, HB_OT_TAG_GSUB, 1, 0, &count, roTags); });
+    Require(count == 2);
+
+    ExpectThrowsPreservingErrno([&] { api.feature(guest, HB_OT_TAG_GSUB, 1, 0, HB_TAG('l', 'i', 'g', 'a'), badCount); });
+    ExpectThrowsPreservingErrno([&] { api.feature(guest, HB_OT_TAG_GSUB, 1, 0, HB_TAG('l', 'i', 'g', 'a'), roCount); });
+}
+
 int main(int argc, char** argv) {
     Require(argc == 4);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
-    auto kernel = LoadLibraryW(std::filesystem::path(argv[3]).c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
+    auto kernel = LoadLibraryW(ArgumentPath(argv, 3).c_str());
     Require(kernel != nullptr);
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
@@ -311,6 +389,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     CheckProtected(api, guest, kernelApi);
 #endif
+    CheckInvalidGuestPointers(api, guest);
     hb_face_destroy(guest);
     hb_face_destroy(native);
     for (const auto length : std::array<std::size_t, 8>{0, 1, 4, 9, 10, 11, 21, 23}) {

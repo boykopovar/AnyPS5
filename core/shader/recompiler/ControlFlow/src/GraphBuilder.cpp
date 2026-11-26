@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <bitset>
 #include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -382,7 +384,7 @@ bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, Bo
 
 bool pairOverlapsRegister(const RdnaOperand& operand, std::uint32_t linkRegister, std::uint32_t count = 1u) {
     const std::uint32_t slot = scalarIndex(operand);
-    return slot != NoScalarRegister && slot <= linkRegister + 1u && linkRegister < slot + count;
+    return count != 0u && slot != NoScalarRegister && slot <= linkRegister + 1u && linkRegister < slot + count;
 }
 
 bool readsLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkRegister) {
@@ -404,7 +406,7 @@ bool readsLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkReg
         case RdnaInstructionFamily::MTBUF: source1Count = 4u; break;
         case RdnaInstructionFamily::MIMG:
             source1Count = instruction.imageR128 ? 4u : 8u;
-            source2Count = 4u;
+            source2Count = instruction.imageSampler ? 4u : 0u;
             break;
         case RdnaInstructionFamily::FLAT:
             source0Count = 2u;
@@ -652,7 +654,7 @@ bool readsScalarDword(const RdnaInstruction& instruction, std::uint32_t reg, std
         case RdnaInstructionFamily::MTBUF: source1Count = 4u; break;
         case RdnaInstructionFamily::MIMG:
             source1Count = instruction.imageR128 ? 4u : 8u;
-            source2Count = 4u;
+            source2Count = instruction.imageSampler ? 4u : 0u;
             break;
         case RdnaInstructionFamily::FLAT:
             source0Count = 2u;
@@ -1343,7 +1345,10 @@ bool loadedDword(const RdnaProgram& program, std::uint32_t reg, std::uint32_t be
     return false;
 }
 
-bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize) {
+enum class Definition { None, Writes, Unknown };
+
+template <typename TDefines>
+bool reachingDefinition(const RdnaProgram& program, std::uint32_t reader, const TDefines& defines, std::uint32_t& writer) {
     std::multimap<std::uint32_t, std::uint32_t> branches;
     std::set<std::uint32_t> callTargets;
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
@@ -1374,7 +1379,9 @@ bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initi
         const auto& instruction = program.instructions[index];
         std::uint32_t target = 0;
         if (instruction.op == RdnaOpcode::SCallB64 || (instruction.op == RdnaOpcode::SSwappcB64 && resolveSetpcTarget(program, index, target))) return false;
-        if (std::ranges::any_of(indices, [&](std::uint32_t reg) { return writesScalar(instruction, reg, waveSize); })) {
+        const auto definition = defines(instruction);
+        if (definition == Definition::Unknown) return false;
+        if (definition == Definition::Writes) {
             if (found.has_value() && *found != index) return false;
             found = index;
             continue;
@@ -1383,6 +1390,79 @@ bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initi
     }
     if (!found.has_value()) return false;
     writer = *found;
+    return true;
+}
+
+bool reachingWriter(const RdnaProgram& program, std::uint32_t reader, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer, std::uint32_t waveSize) {
+    return reachingDefinition(program, reader, [&](const RdnaInstruction& instruction) {
+        return std::ranges::any_of(indices, [&](std::uint32_t reg) { return writesScalar(instruction, reg, waveSize); }) ? Definition::Writes : Definition::None;
+    }, writer);
+}
+
+bool mayWriteVector(const RdnaInstruction& instruction, std::uint32_t reg) {
+    const auto near = [&](const RdnaOperand& operand, std::uint32_t width) { return operand.kind == RdnaOperandKind::VectorRegister && operand.reg <= reg && reg - operand.reg < width; };
+    switch (instruction.op) {
+        case RdnaOpcode::VMovreldB32:
+        case RdnaOpcode::VMovrelsdB32:
+        case RdnaOpcode::VMovrelsd2B32:
+        case RdnaOpcode::VSwaprelB32: return true;
+        default: break;
+    }
+    switch (instruction.family) {
+        case RdnaInstructionFamily::MUBUF:
+        case RdnaInstructionFamily::MTBUF:
+        case RdnaInstructionFamily::FLAT:
+        case RdnaInstructionFamily::DS:
+        case RdnaInstructionFamily::MIMG: {
+            const auto width = std::max(instruction.dataDwordCount, 1u) + 1u;
+            return near(instruction.destination, width) || near(instruction.destination2, width);
+        }
+        case RdnaInstructionFamily::VOP1:
+        case RdnaInstructionFamily::VOP2:
+        case RdnaInstructionFamily::VOP3:
+        case RdnaInstructionFamily::VOP3P:
+        case RdnaInstructionFamily::VOPC:
+        case RdnaInstructionFamily::VINTRP: {
+            const auto width = instruction.op == RdnaOpcode::VMqsadU32U8 ? 4u : readsVectorSources64(instruction.op) || instruction.op == RdnaOpcode::VQsadPkU16U8 || instruction.op == RdnaOpcode::VMqsadPkU16U8 ? 2u : 1u;
+            return near(instruction.destination, width) || near(instruction.destination2, width) || (instruction.op == RdnaOpcode::VSwapB32 && near(instruction.source0, 1u));
+        }
+        case RdnaInstructionFamily::Unknown: return true;
+        default: return false;
+    }
+}
+
+bool laneOf(const RdnaOperand& operand, std::uint32_t& lane) {
+    return operand.kind == RdnaOperandKind::IntegerInlineConstant && isImmediate(operand, lane) && lane < 32u;
+}
+
+bool restoreLaneSpill(const RdnaProgram& program, std::uint32_t reader, std::uint32_t first, std::uint32_t count, std::uint32_t waveSize, std::uint32_t& source, std::uint32_t& writer) {
+    std::optional<std::uint32_t> vector, firstLane, firstSource, load;
+    for (std::uint32_t offset = 0u; offset < count; ++offset) {
+        std::uint32_t read = 0u, lane = 0u, spill = 0u, written = 0u;
+        if (!reachingWriter(program, reader, {first + offset}, read, waveSize)) return false;
+        const auto& restore = program.instructions[read];
+        if (restore.op != RdnaOpcode::VReadlaneB32 || !isScalar(restore.destination, first + offset) || restore.source0.kind != RdnaOperandKind::VectorRegister || !laneOf(restore.source1, lane)) return false;
+        if (vector.has_value() && (restore.source0.reg != *vector || lane != *firstLane + offset)) return false;
+        vector = restore.source0.reg;
+        if (!firstLane.has_value()) firstLane = lane;
+        const auto spilled = [&](const RdnaInstruction& instruction) {
+            std::uint32_t target = 0u;
+            if (instruction.op == RdnaOpcode::VWritelaneB32 && instruction.destination.kind == RdnaOperandKind::VectorRegister && instruction.destination.reg == *vector) {
+                if (!laneOf(instruction.source1, target)) return Definition::Unknown;
+                return target == lane ? Definition::Writes : Definition::None;
+            }
+            return mayWriteVector(instruction, *vector) ? Definition::Unknown : Definition::None;
+        };
+        if (!reachingDefinition(program, read, spilled, spill)) return false;
+        const auto saved = scalarIndex(program.instructions[spill].source0);
+        if (saved == NoScalarRegister || (firstSource.has_value() && saved != *firstSource + offset)) return false;
+        if (!firstSource.has_value()) firstSource = saved;
+        if (!reachingWriter(program, spill, {saved}, written, waveSize) || (load.has_value() && written != *load)) return false;
+        load = written;
+    }
+    if (!firstSource.has_value() || !load.has_value()) return false;
+    source = *firstSource;
+    writer = *load;
     return true;
 }
 
@@ -1475,19 +1555,59 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
     return calls;
 }
 
+namespace {
+
+std::optional<std::size_t> userDataTailIndex(const RdnaProgram& program) {
+    std::size_t end = program.instructions.size();
+    while (end > 0u && program.instructions[end - 1u].op == RdnaOpcode::SCodeEnd) --end;
+    if (end == 0u) return std::nullopt;
+    if (end < program.instructions.size() && program.instructions[end - 1u].op == RdnaOpcode::SSetpcB64) return end - 1u;
+    if (program.instructions[end - 1u].op != RdnaOpcode::SEndpgm) return std::nullopt;
+    for (std::size_t index = end - 1u; index-- > 0u;) {
+        const auto op = program.instructions[index].op;
+        if (op == RdnaOpcode::SSetpcB64) return index;
+        if (IsDirectBranchOpcode(op) || op == RdnaOpcode::SCallB64 || op == RdnaOpcode::SSwappcB64 || op == RdnaOpcode::SGetpcB64 ||
+            op == RdnaOpcode::SEndpgm || op == RdnaOpcode::SCodeEnd) return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::uint32_t userDataTailEnd(const RdnaProgram& program) {
+    std::size_t end = program.instructions.size();
+    while (end > 0u && program.instructions[end - 1u].op == RdnaOpcode::SCodeEnd) --end;
+    return instructionEndProgramCounter(program.instructions[end - 1u]);
+}
+
+}
+
 std::optional<UserDataTail> FindUserDataTail(const RdnaProgram& program, std::uint32_t userDataBase, std::uint32_t userDataCount) {
-    if (program.instructions.size() < 2u || program.instructions.back().op != RdnaOpcode::SCodeEnd) return std::nullopt;
-    const auto& tail = program.instructions[program.instructions.size() - 2u];
-    if (tail.op != RdnaOpcode::SSetpcB64 || tail.source0.kind != RdnaOperandKind::ScalarRegister) return std::nullopt;
+    const auto tailIndex = userDataTailIndex(program);
+    if (!tailIndex) return std::nullopt;
+    const auto& tail = program.instructions[*tailIndex];
+    if (tail.source0.kind != RdnaOperandKind::ScalarRegister) return std::nullopt;
+    const auto trailingBegin = instructionEndProgramCounter(tail);
+    const auto trailingEnd = userDataTailEnd(program);
     const auto reg = tail.source0.reg;
-    if (reg % 2u != 0u || reg < userDataBase || reg - userDataBase >= userDataCount) return std::nullopt;
+    const auto userData = [&](std::uint32_t candidate) { return candidate >= userDataBase && candidate - userDataBase < userDataCount; };
+    if (reg % 2u != 0u) return std::nullopt;
     bool highUnchanged = true;
     std::optional<std::uint32_t> constantHigh;
+    std::optional<std::uint32_t> copiedLow;
+    bool trailingReached = false;
     for (const auto& instruction : program.instructions) {
         if (instruction.programCounter >= tail.programCounter) break;
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SCallB64 || instruction.op == RdnaOpcode::SSwappcB64 ||
-            instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd ||
-            writesScalar(instruction, reg)) return std::nullopt;
+        if (IsDirectBranchOpcode(instruction.op)) {
+            if (trailingBegin == trailingEnd || instruction.branchTarget < trailingBegin || instruction.branchTarget >= trailingEnd) return std::nullopt;
+            trailingReached = true;
+        }
+        if (instruction.op == RdnaOpcode::SCallB64 || instruction.op == RdnaOpcode::SSwappcB64 ||
+            instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) return std::nullopt;
+        if (writesScalar(instruction, reg)) {
+            const auto source = scalarIndex(instruction.source0);
+            if (copiedLow.has_value() || instruction.op != RdnaOpcode::SMovB32 || !isScalar(instruction.destination, reg) || source == NoScalarRegister || !userData(source) ||
+                !unchangedUntil(program, source, static_cast<std::uint32_t>(&instruction - program.instructions.data()), 64u)) return std::nullopt;
+            copiedLow = source;
+        }
         if (writesScalar(instruction, reg + 1u)) {
             highUnchanged = false;
             std::uint32_t value;
@@ -1495,6 +1615,12 @@ std::optional<UserDataTail> FindUserDataTail(const RdnaProgram& program, std::ui
             else constantHigh.reset();
         }
     }
+    if (trailingBegin != trailingEnd && !trailingReached) return std::nullopt;
+    if (copiedLow) {
+        if (!constantHigh) return std::nullopt;
+        return UserDataTail{tail.programCounter, *copiedLow, constantHigh};
+    }
+    if (!userData(reg)) return std::nullopt;
     if (!constantHigh && (!highUnchanged || reg - userDataBase + 1u >= userDataCount)) return std::nullopt;
     return UserDataTail{tail.programCounter, reg, constantHigh};
 }
@@ -1506,8 +1632,13 @@ std::vector<std::uint32_t> LinkUserDataTail(const RdnaProgram& program, const Us
         if (instruction.op == RdnaOpcode::SGetpcB64) throw std::invalid_argument("user-data tail continuation reads its program counter, which a linked copy does not keep");
     }
     const auto words = tail.programCounter / 4u;
+    const auto trailingBegin = words + 1u;
+    const auto trailingEnd = userDataTailEnd(program) / 4u;
+    const auto trailingWords = trailingEnd - trailingBegin;
+    if (trailingWords > 0x7fffu) throw std::invalid_argument("user-data tail's trailing code is too long to branch over");
     std::vector<std::uint32_t> linked(program.code.begin(), program.code.begin() + words);
-    linked.push_back(0xbf820000u);
+    linked.push_back(0xbf820000u | trailingWords);
+    linked.insert(linked.end(), program.code.begin() + trailingBegin, program.code.begin() + trailingEnd);
     linked.insert(linked.end(), continuation.code.begin(), continuation.code.end());
     return linked;
 }
@@ -1524,17 +1655,17 @@ std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t>
             throw;
         }
         word += instruction.wordCount;
-        const auto at = " at callee offset " + toHexString(programCounter);
-        if (instruction.op == RdnaOpcode::SGetpcB64 && !allowGetpc) throw std::invalid_argument("user-data callee reads its program counter" + at + ", which a linked copy does not keep");
-        if (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) throw std::invalid_argument("user-data callee makes a call" + at);
-        if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) throw std::invalid_argument("user-data callee ends the program" + at + " before it returns");
+        const auto at = [&] { return " at callee offset " + toHexString(programCounter); };
+        if (instruction.op == RdnaOpcode::SGetpcB64 && !allowGetpc) throw std::invalid_argument("user-data callee reads its program counter" + at() + ", which a linked copy does not keep");
+        if (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) throw std::invalid_argument("user-data callee makes a call" + at());
+        if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) throw std::invalid_argument("user-data callee ends the program" + at() + " before it returns");
         if (IsDirectBranchOpcode(instruction.op)) {
-            if (instruction.branchTarget >= 0x80000000u) throw std::invalid_argument("user-data callee branches before its start" + at);
+            if (instruction.branchTarget >= 0x80000000u) throw std::invalid_argument("user-data callee branches before its start" + at());
             furthest = std::max(furthest, instruction.branchTarget / 4u);
         }
         if (instruction.op != RdnaOpcode::SSetpcB64) continue;
-        if (!isScalar(instruction.source0, linkRegister)) throw std::invalid_argument("user-data callee jumps through another register pair than its link s[" + std::to_string(linkRegister) + "]" + at);
-        if (furthest >= word) throw std::invalid_argument("user-data callee returns" + at + " before code it branches to");
+        if (!isScalar(instruction.source0, linkRegister)) throw std::invalid_argument("user-data callee jumps through another register pair than its link s[" + std::to_string(linkRegister) + "]" + at());
+        if (furthest >= word) throw std::invalid_argument("user-data callee returns" + at() + " before code it branches to");
         return word;
     }
     return std::nullopt;
@@ -1604,24 +1735,26 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
                 if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
                 userDataStride = 1u << shift;
             }
-            calls.push_back({instruction.programCounter, link, target, descriptor, 0u, load.memoryOffset + lowDword * 4u, userDataStride, std::nullopt, true});
+            calls.push_back({instruction.programCounter, link, target, descriptor, 0u, load.memoryOffset + lowDword * 4u, userDataStride, std::nullopt, 0u, 0u, true});
             continue;
         }
         std::uint32_t descriptorLoad = 0;
         const bool sameBlockWriter = findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize, reader) && sameBlock(descriptorLoad, index);
         if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
+        auto spilledDescriptor = descriptor;
+        if (program.instructions[descriptorLoad].op == RdnaOpcode::VReadlaneB32 && !restoreLaneSpill(program, lowLoad, descriptor, 4u, swappc.waveSize, spilledDescriptor, descriptorLoad)) continue;
         std::optional<std::uint32_t> nestedDescriptorOffset;
-        auto tableDescriptor = descriptor;
+        auto tableDescriptor = spilledDescriptor;
         if (const auto& inner = program.instructions[descriptorLoad]; isScalarBufferLoad(inner.op)) {
             const auto innerLoaded = scalarIndex(inner.destination);
             const auto outer = scalarIndex(inner.source0);
-            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || descriptor < innerLoaded ||
-                descriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
+            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || spilledDescriptor < innerLoaded ||
+                spilledDescriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
             std::uint32_t outerLoad = 0;
             const auto innerIndex = descriptorLoad;
             const bool outerInBlock = findLastWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize, reader) && sameBlock(outerLoad, innerIndex);
             if (!outerInBlock && !reachingWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize)) continue;
-            nestedDescriptorOffset = inner.memoryOffset + (descriptor - innerLoaded) * 4u;
+            nestedDescriptorOffset = inner.memoryOffset + (spilledDescriptor - innerLoaded) * 4u;
             tableDescriptor = outer;
             descriptorLoad = outerLoad;
         }
@@ -1632,6 +1765,8 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             (tableDescriptor - loaded) % 4u != 0u || tableDescriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
             table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
         std::optional<std::uint64_t> constantPointer;
+        std::uint32_t constantPointerLowProgramCounter = 0;
+        std::uint32_t constantPointerHighProgramCounter = 0;
         if (!(userData(pointer) && userData(pointer + 1u) && unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) && unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize))) {
             std::uint32_t lowWriter = 0, highWriter = 0, low = 0, high = 0;
             if (!findLastWriter(program, descriptorLoad, {pointer}, lowWriter, swappc.waveSize, reader) || !findLastWriter(program, descriptorLoad, {pointer + 1u}, highWriter, swappc.waveSize, reader) ||
@@ -1641,6 +1776,8 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (lowMove.op != RdnaOpcode::SMovB32 || highMove.op != RdnaOpcode::SMovB32 || !isScalar(lowMove.destination, pointer) || !isScalar(highMove.destination, pointer + 1u) ||
                 !isImmediate(lowMove.source0, low) || !isImmediate(highMove.source0, high)) continue;
             constantPointer = static_cast<std::uint64_t>(high) << 32u | low;
+            constantPointerLowProgramCounter = lowMove.programCounter;
+            constantPointerHighProgramCounter = highMove.programCounter;
         }
         std::uint32_t stride = 0;
         if (load.source1.kind != RdnaOperandKind::Null) {
@@ -1651,9 +1788,32 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, false, nestedDescriptorOffset});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, constantPointerLowProgramCounter, constantPointerHighProgramCounter, false, nestedDescriptorOffset});
     }
     return calls;
+}
+
+std::optional<std::vector<std::uint32_t>> RetargetTableCallPointer(std::span<const std::uint32_t> code, const RdnaProgram& program, const TableCall& call, std::uint64_t address) {
+    if (!call.constantPointer) return std::nullopt;
+    std::vector<std::uint32_t> patched(code.begin(), code.end());
+    const auto rewrite = [&](std::uint32_t programCounter, std::uint32_t value) {
+        const auto* instruction = FindInstructionAtProgramCounter(program, programCounter);
+        if (instruction == nullptr || instruction->op != RdnaOpcode::SMovB32) return false;
+        const auto word = programCounter / 4u;
+        if (instruction->source0.kind == RdnaOperandKind::LiteralConstant) {
+            if (word + 1u >= patched.size()) return false;
+            patched[word + 1u] = value;
+            return true;
+        }
+        if (instruction->source0.kind == RdnaOperandKind::IntegerInlineConstant && value <= 64u) {
+            patched[word] = (patched[word] & ~0xffu) | (128u + value);
+            return true;
+        }
+        return false;
+    };
+    if (!rewrite(call.constantPointerLowProgramCounter, static_cast<std::uint32_t>(address))) return std::nullopt;
+    if (!rewrite(call.constantPointerHighProgramCounter, static_cast<std::uint32_t>(address >> 32u))) return std::nullopt;
+    return patched;
 }
 
 LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,
@@ -1740,6 +1900,717 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
     }
     linked.push_back(0xbf9f0000u);
     return {std::move(linked), std::move(fallbacks)};
+}
+
+namespace {
+
+constexpr std::uint32_t SplitScalarRegisters = 108u;
+constexpr std::uint32_t SplitM0 = 124u;
+constexpr std::uint32_t SplitScc = 127u;
+using SplitRegisters = std::bitset<128>;
+
+bool operandIs(const RdnaInstruction& instruction, RdnaOperandKind kind) {
+    return instruction.source0.kind == kind || instruction.source1.kind == kind || instruction.source2.kind == kind || instruction.source3.kind == kind;
+}
+
+bool splitReadsScc(const RdnaInstruction& instruction) {
+    switch (instruction.op) {
+        case RdnaOpcode::SCbranchScc0:
+        case RdnaOpcode::SCbranchScc1:
+        case RdnaOpcode::SCselectB32:
+        case RdnaOpcode::SCselectB64:
+        case RdnaOpcode::SCmovB32:
+        case RdnaOpcode::SCmovB64:
+        case RdnaOpcode::SCmovkI32:
+        case RdnaOpcode::SAddcU32:
+        case RdnaOpcode::SSubbU32: return true;
+        default: return operandIs(instruction, RdnaOperandKind::Scc);
+    }
+}
+
+bool splitReadsM0(const RdnaInstruction& instruction) {
+    if (instruction.family == RdnaInstructionFamily::DS || instruction.family == RdnaInstructionFamily::VINTRP) return true;
+    switch (instruction.op) {
+        case RdnaOpcode::SMovrelsB32:
+        case RdnaOpcode::SMovrelsB64:
+        case RdnaOpcode::SMovreldB32:
+        case RdnaOpcode::SMovreldB64:
+        case RdnaOpcode::SMovrelsd2B32:
+        case RdnaOpcode::VMovreldB32:
+        case RdnaOpcode::VMovrelsB32:
+        case RdnaOpcode::VMovrelsdB32:
+        case RdnaOpcode::VMovrelsd2B32:
+        case RdnaOpcode::SSendmsg:
+        case RdnaOpcode::SSendmsghalt: return true;
+        default: return operandIs(instruction, RdnaOperandKind::M0);
+    }
+}
+
+SplitRegisters splitReads(const RdnaInstruction& instruction, std::uint32_t waveSize) {
+    SplitRegisters reads;
+    for (std::uint32_t reg = 0; reg < SplitScalarRegisters; ++reg) reads[reg] = readsScalarDword(instruction, reg, waveSize);
+    reads[SplitM0] = splitReadsM0(instruction);
+    reads[SplitScc] = splitReadsScc(instruction);
+    return reads;
+}
+
+bool splitOverwritesScc(const RdnaInstruction& instruction) {
+    if (instruction.family == RdnaInstructionFamily::SOPC) return true;
+    switch (instruction.op) {
+        case RdnaOpcode::SAddU32:
+        case RdnaOpcode::SSubU32:
+        case RdnaOpcode::SAddI32:
+        case RdnaOpcode::SSubI32:
+        case RdnaOpcode::SAddcU32:
+        case RdnaOpcode::SSubbU32:
+        case RdnaOpcode::SMinI32:
+        case RdnaOpcode::SMinU32:
+        case RdnaOpcode::SMaxI32:
+        case RdnaOpcode::SMaxU32:
+        case RdnaOpcode::SAndB32:
+        case RdnaOpcode::SAndB64:
+        case RdnaOpcode::SOrB32:
+        case RdnaOpcode::SOrB64:
+        case RdnaOpcode::SXorB32:
+        case RdnaOpcode::SXorB64:
+        case RdnaOpcode::SAndn2B32:
+        case RdnaOpcode::SAndn2B64:
+        case RdnaOpcode::SOrn2B32:
+        case RdnaOpcode::SOrn2B64:
+        case RdnaOpcode::SNandB32:
+        case RdnaOpcode::SNandB64:
+        case RdnaOpcode::SNorB32:
+        case RdnaOpcode::SNorB64:
+        case RdnaOpcode::SXnorB32:
+        case RdnaOpcode::SXnorB64:
+        case RdnaOpcode::SLshlB32:
+        case RdnaOpcode::SLshlB64:
+        case RdnaOpcode::SLshrB32:
+        case RdnaOpcode::SLshrB64:
+        case RdnaOpcode::SAshrI32:
+        case RdnaOpcode::SAshrI64:
+        case RdnaOpcode::SBfeU32:
+        case RdnaOpcode::SBfeI32:
+        case RdnaOpcode::SBfeU64:
+        case RdnaOpcode::SBfeI64:
+        case RdnaOpcode::SAbsdiffI32:
+        case RdnaOpcode::SNotB32:
+        case RdnaOpcode::SNotB64:
+        case RdnaOpcode::SAbsI32:
+        case RdnaOpcode::SAndSaveexecB32:
+        case RdnaOpcode::SOrSaveexecB32:
+        case RdnaOpcode::SAndSaveexecB64:
+        case RdnaOpcode::SOrSaveexecB64:
+        case RdnaOpcode::SXorSaveexecB64:
+        case RdnaOpcode::SAndn2SaveexecB64: return true;
+        default: return false;
+    }
+}
+
+SplitRegisters splitKills(const RdnaInstruction& instruction, std::uint32_t waveSize) {
+    SplitRegisters kills;
+    for (std::uint32_t reg = 0; reg < SplitScalarRegisters; ++reg) kills[reg] = overwritesScalar(instruction, reg, waveSize);
+    kills[SplitM0] = instruction.destination.kind == RdnaOperandKind::M0 && (instruction.op == RdnaOpcode::SMovB32 || instruction.op == RdnaOpcode::SMovkI32);
+    kills[SplitScc] = splitOverwritesScc(instruction);
+    return kills;
+}
+
+SplitRegisters splitWrites(const RdnaInstruction& instruction) {
+    SplitRegisters writes;
+    for (std::uint32_t reg = 0; reg < SplitScalarRegisters; ++reg) writes[reg] = writesScalar(instruction, reg);
+    writes[SplitM0] = instruction.destination.kind == RdnaOperandKind::M0 || instruction.destination2.kind == RdnaOperandKind::M0 || instruction.op == RdnaOpcode::SMovreldB32 || instruction.op == RdnaOpcode::SMovreldB64 || instruction.op == RdnaOpcode::SMovrelsd2B32;
+    writes[SplitScc] = true;
+    return writes;
+}
+
+using SplitVectors = std::bitset<256>;
+
+void splitVectorWrites(const RdnaInstruction& instruction, SplitVectors& writes) {
+    if (instruction.op == RdnaOpcode::VMovreldB32 || instruction.op == RdnaOpcode::VMovrelsdB32 || instruction.op == RdnaOpcode::VMovrelsd2B32 || instruction.op == RdnaOpcode::VMovrelsB32) {
+        writes.set();
+        return;
+    }
+    const bool memory = instruction.family == RdnaInstructionFamily::MUBUF || instruction.family == RdnaInstructionFamily::MTBUF || instruction.family == RdnaInstructionFamily::FLAT || instruction.family == RdnaInstructionFamily::DS || instruction.family == RdnaInstructionFamily::MIMG;
+    const auto mark = [&](const RdnaOperand& operand, std::uint32_t count) {
+        if (operand.kind != RdnaOperandKind::VectorRegister) return;
+        for (auto reg = operand.reg; reg < operand.reg + count && reg < writes.size(); ++reg) writes.set(reg);
+    };
+    mark(instruction.destination, memory ? std::max(instruction.dataDwordCount, 2u) + 1u : 2u);
+    mark(instruction.destination2, 2u);
+}
+
+bool repeatsVisibly(const RdnaInstruction& instruction) {
+    if (instruction.family == RdnaInstructionFamily::EXP || instruction.gds) return true;
+    switch (instruction.op) {
+        case RdnaOpcode::BufferAtomicAdd:
+        case RdnaOpcode::BufferAtomicAddX2:
+        case RdnaOpcode::BufferAtomicAnd:
+        case RdnaOpcode::BufferAtomicAndX2:
+        case RdnaOpcode::BufferAtomicCmpswap:
+        case RdnaOpcode::BufferAtomicCmpswapX2:
+        case RdnaOpcode::BufferAtomicCsub:
+        case RdnaOpcode::BufferAtomicDec:
+        case RdnaOpcode::BufferAtomicDecX2:
+        case RdnaOpcode::BufferAtomicFcmpswap:
+        case RdnaOpcode::BufferAtomicFcmpswapX2:
+        case RdnaOpcode::BufferAtomicFmax:
+        case RdnaOpcode::BufferAtomicFmaxX2:
+        case RdnaOpcode::BufferAtomicFmin:
+        case RdnaOpcode::BufferAtomicFminX2:
+        case RdnaOpcode::BufferAtomicInc:
+        case RdnaOpcode::BufferAtomicIncX2:
+        case RdnaOpcode::BufferAtomicOr:
+        case RdnaOpcode::BufferAtomicOrX2:
+        case RdnaOpcode::BufferAtomicSmax:
+        case RdnaOpcode::BufferAtomicSmaxX2:
+        case RdnaOpcode::BufferAtomicSmin:
+        case RdnaOpcode::BufferAtomicSminX2:
+        case RdnaOpcode::BufferAtomicSub:
+        case RdnaOpcode::BufferAtomicSubX2:
+        case RdnaOpcode::BufferAtomicSwap:
+        case RdnaOpcode::BufferAtomicSwapX2:
+        case RdnaOpcode::BufferAtomicUmax:
+        case RdnaOpcode::BufferAtomicUmaxX2:
+        case RdnaOpcode::BufferAtomicUmin:
+        case RdnaOpcode::BufferAtomicUminX2:
+        case RdnaOpcode::BufferAtomicXor:
+        case RdnaOpcode::BufferAtomicXorX2:
+        case RdnaOpcode::BufferStoreByte:
+        case RdnaOpcode::BufferStoreByteD16Hi:
+        case RdnaOpcode::BufferStoreDword:
+        case RdnaOpcode::BufferStoreDwordx2:
+        case RdnaOpcode::BufferStoreDwordx3:
+        case RdnaOpcode::BufferStoreDwordx4:
+        case RdnaOpcode::BufferStoreFormatD16HiX:
+        case RdnaOpcode::BufferStoreFormatD16X:
+        case RdnaOpcode::BufferStoreFormatD16Xy:
+        case RdnaOpcode::BufferStoreFormatD16Xyz:
+        case RdnaOpcode::BufferStoreFormatD16Xyzw:
+        case RdnaOpcode::BufferStoreFormatX:
+        case RdnaOpcode::BufferStoreFormatXy:
+        case RdnaOpcode::BufferStoreFormatXyz:
+        case RdnaOpcode::BufferStoreFormatXyzw:
+        case RdnaOpcode::BufferStoreShort:
+        case RdnaOpcode::BufferStoreShortD16Hi:
+        case RdnaOpcode::DsGwsBarrier:
+        case RdnaOpcode::DsGwsInit:
+        case RdnaOpcode::DsGwsSemaBr:
+        case RdnaOpcode::DsGwsSemaP:
+        case RdnaOpcode::DsGwsSemaReleaseAll:
+        case RdnaOpcode::DsGwsSemaV:
+        case RdnaOpcode::DsOrderedCount:
+        case RdnaOpcode::FlatAtomicAdd:
+        case RdnaOpcode::FlatAtomicAddX2:
+        case RdnaOpcode::FlatAtomicAnd:
+        case RdnaOpcode::FlatAtomicAndX2:
+        case RdnaOpcode::FlatAtomicCmpswap:
+        case RdnaOpcode::FlatAtomicCmpswapX2:
+        case RdnaOpcode::FlatAtomicDec:
+        case RdnaOpcode::FlatAtomicDecX2:
+        case RdnaOpcode::FlatAtomicFcmpswap:
+        case RdnaOpcode::FlatAtomicFcmpswapX2:
+        case RdnaOpcode::FlatAtomicFmax:
+        case RdnaOpcode::FlatAtomicFmaxX2:
+        case RdnaOpcode::FlatAtomicFmin:
+        case RdnaOpcode::FlatAtomicFminX2:
+        case RdnaOpcode::FlatAtomicInc:
+        case RdnaOpcode::FlatAtomicIncX2:
+        case RdnaOpcode::FlatAtomicOr:
+        case RdnaOpcode::FlatAtomicOrX2:
+        case RdnaOpcode::FlatAtomicSmax:
+        case RdnaOpcode::FlatAtomicSmaxX2:
+        case RdnaOpcode::FlatAtomicSmin:
+        case RdnaOpcode::FlatAtomicSminX2:
+        case RdnaOpcode::FlatAtomicSub:
+        case RdnaOpcode::FlatAtomicSubX2:
+        case RdnaOpcode::FlatAtomicSwap:
+        case RdnaOpcode::FlatAtomicSwapX2:
+        case RdnaOpcode::FlatAtomicUmax:
+        case RdnaOpcode::FlatAtomicUmaxX2:
+        case RdnaOpcode::FlatAtomicUmin:
+        case RdnaOpcode::FlatAtomicUminX2:
+        case RdnaOpcode::FlatAtomicXor:
+        case RdnaOpcode::FlatAtomicXorX2:
+        case RdnaOpcode::FlatStoreByte:
+        case RdnaOpcode::FlatStoreByteD16Hi:
+        case RdnaOpcode::FlatStoreDword:
+        case RdnaOpcode::FlatStoreDwordx2:
+        case RdnaOpcode::FlatStoreDwordx3:
+        case RdnaOpcode::FlatStoreDwordx4:
+        case RdnaOpcode::FlatStoreShort:
+        case RdnaOpcode::FlatStoreShortD16Hi:
+        case RdnaOpcode::GlobalAtomicCsub:
+        case RdnaOpcode::GlobalStoreDwordAddtid:
+        case RdnaOpcode::ImageAtomicAdd:
+        case RdnaOpcode::ImageAtomicAnd:
+        case RdnaOpcode::ImageAtomicCmpswap:
+        case RdnaOpcode::ImageAtomicDec:
+        case RdnaOpcode::ImageAtomicFcmpswap:
+        case RdnaOpcode::ImageAtomicFmax:
+        case RdnaOpcode::ImageAtomicFmin:
+        case RdnaOpcode::ImageAtomicInc:
+        case RdnaOpcode::ImageAtomicOr:
+        case RdnaOpcode::ImageAtomicSmax:
+        case RdnaOpcode::ImageAtomicSmin:
+        case RdnaOpcode::ImageAtomicSub:
+        case RdnaOpcode::ImageAtomicSwap:
+        case RdnaOpcode::ImageAtomicUmax:
+        case RdnaOpcode::ImageAtomicUmin:
+        case RdnaOpcode::ImageAtomicXor:
+        case RdnaOpcode::ImageStore:
+        case RdnaOpcode::ImageStoreBy2:
+        case RdnaOpcode::ImageStoreBy4:
+        case RdnaOpcode::ImageStoreMip:
+        case RdnaOpcode::ImageStoreMipBy2:
+        case RdnaOpcode::ImageStoreMipBy4:
+        case RdnaOpcode::ImageStoreMipPck:
+        case RdnaOpcode::ImageStoreMipPck2:
+        case RdnaOpcode::ImageStoreMipPck4:
+        case RdnaOpcode::ImageStorePck:
+        case RdnaOpcode::ImageStorePck2:
+        case RdnaOpcode::ImageStorePck4:
+        case RdnaOpcode::SGetregB32:
+        case RdnaOpcode::SMemrealtime:
+        case RdnaOpcode::SMemtime:
+        case RdnaOpcode::SSendmsg:
+        case RdnaOpcode::SSendmsghalt:
+        case RdnaOpcode::TbufferStoreFormatD16X:
+        case RdnaOpcode::TbufferStoreFormatD16Xy:
+        case RdnaOpcode::TbufferStoreFormatD16Xyz:
+        case RdnaOpcode::TbufferStoreFormatD16Xyzw:
+        case RdnaOpcode::TbufferStoreFormatX:
+        case RdnaOpcode::TbufferStoreFormatXy:
+        case RdnaOpcode::TbufferStoreFormatXyz:
+        case RdnaOpcode::TbufferStoreFormatXyzw:
+            return true;
+        default: return false;
+    }
+}
+
+std::optional<std::string> splitCalleeRefusal(const TableCallee& callee, const TableCall& call, SplitRegisters& written, SplitVectors& vectors) {
+    const auto at = "callee " + toHexString(callee.target);
+    if (callee.code.empty()) return at + " has no code";
+    std::vector<RdnaInstruction> instructions;
+    for (std::uint32_t word = 0; word < callee.code.size();) {
+        auto instruction = DecodeRdnaInstruction(word * 4u, callee.code, word);
+        word += std::max(instruction.wordCount, 1u);
+        instructions.push_back(std::move(instruction));
+    }
+    for (std::size_t index = 0; index < instructions.size(); ++index) {
+        const auto& instruction = instructions[index];
+        const bool last = index + 1u == instructions.size();
+        if (instruction.family == RdnaInstructionFamily::DS) return at + " accesses LDS at program counter " + toHexString(instruction.programCounter);
+        if (instruction.op == RdnaOpcode::SBarrier) return at + " holds an s_barrier";
+        if (instruction.op == RdnaOpcode::SEndpgm) return at + " ends the program";
+        if (instruction.op == RdnaOpcode::SSwappcB64) return at + " calls another function";
+        if (instruction.op == RdnaOpcode::SSetpcB64 && !last) return at + " returns before its last instruction";
+        if (last && (instruction.op != RdnaOpcode::SSetpcB64 || instruction.source0.kind != RdnaOperandKind::ScalarRegister || instruction.source0.reg != call.linkRegister)) return at + " does not end with s_setpc_b64 to its link register";
+        written |= splitWrites(instruction);
+        splitVectorWrites(instruction, vectors);
+    }
+    return std::nullopt;
+}
+
+std::string splitRegisterName(std::uint32_t reg) {
+    switch (reg) {
+        case 106u: return "vcc_lo";
+        case 107u: return "vcc_hi";
+        case SplitM0: return "m0";
+        case SplitScc: return "scc";
+        default: return "s" + std::to_string(reg);
+    }
+}
+
+std::optional<std::uint32_t> calleeRegisterReadAfterCall(const RdnaProgram& program, std::uint32_t callIndex, const SplitRegisters& written, std::uint32_t waveSize) {
+    const auto size = static_cast<std::uint32_t>(program.instructions.size());
+    std::vector<SplitRegisters> reads(size), kills(size), live(size);
+    std::vector<std::array<std::uint32_t, 2>> next(size, {size, size});
+    for (std::uint32_t index = 0; index < size; ++index) {
+        const auto& instruction = program.instructions[index];
+        reads[index] = splitReads(instruction, waveSize);
+        kills[index] = splitKills(instruction, waveSize);
+        if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) continue;
+        if (IsDirectBranchOpcode(instruction.op)) {
+            const auto target = instructionIndexOfProgramCounter(program, instruction.branchTarget);
+            next[index][0] = target < size ? target : size + 1u;
+            if (IsConditionalBranchOpcode(instruction.op)) next[index][1] = index + 1u;
+        } else {
+            next[index][0] = index + 1u;
+        }
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto index = size; index-- > 0u;) {
+            SplitRegisters out;
+            for (const auto successor : next[index]) {
+                if (successor < size) out |= live[successor];
+                if (successor == size + 1u) out.set();
+            }
+            const auto in = reads[index] | (out & ~kills[index]);
+            if (in != live[index]) {
+                live[index] = in;
+                changed = true;
+            }
+        }
+    }
+    if (callIndex + 1u >= size) return std::nullopt;
+    const auto clobbered = live[callIndex + 1u] & written;
+    for (std::uint32_t reg = 0; reg < clobbered.size(); ++reg) {
+        if (clobbered[reg]) return reg;
+    }
+    return std::nullopt;
+}
+
+}
+
+std::optional<TableCallSplit> SplitTableCall(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, std::uint32_t waveSize, std::string& refusal) {
+    const auto refuse = [&](std::string reason) -> std::optional<TableCallSplit> {
+        refusal = std::move(reason);
+        return std::nullopt;
+    };
+    const auto callIndex = instructionIndexOfProgramCounter(program, call.programCounter);
+    if (callIndex == InvalidControlFlowId || program.instructions[callIndex].op != RdnaOpcode::SSwappcB64) return refuse("the table call does not name an s_swappc_b64");
+    std::optional<std::uint32_t> backIndex;
+    for (auto index = callIndex + 1u; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (instruction.op == RdnaOpcode::SCbranchExecnz && instruction.branchTarget <= call.programCounter) {
+            backIndex = index;
+            break;
+        }
+        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64) break;
+    }
+    if (!backIndex) return refuse("the table call is not followed by the s_cbranch_execnz of a waterfall loop");
+    const auto& back = program.instructions[*backIndex];
+    const auto loopIndex = instructionIndexOfProgramCounter(program, back.branchTarget);
+    if (loopIndex == InvalidControlFlowId) return refuse("the waterfall loop branches back into the middle of an instruction");
+    std::optional<std::uint32_t> pickIndex;
+    for (auto index = loopIndex; index <= *backIndex; ++index) {
+        const auto& instruction = program.instructions[index];
+        if (index != callIndex && (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm)) return refuse("the waterfall loop holds another call, return or end at program counter " + toHexString(instruction.programCounter));
+        if (index != *backIndex && IsDirectBranchOpcode(instruction.op)) return refuse("the waterfall loop branches at program counter " + toHexString(instruction.programCounter));
+        if (instruction.op == RdnaOpcode::SBarrier) return refuse("the waterfall loop holds an s_barrier");
+        switch (instruction.family) {
+        case RdnaInstructionFamily::MUBUF:
+        case RdnaInstructionFamily::MTBUF:
+        case RdnaInstructionFamily::FLAT:
+        case RdnaInstructionFamily::DS:
+        case RdnaInstructionFamily::MIMG:
+        case RdnaInstructionFamily::EXP:
+            return refuse("the waterfall loop accesses vector or LDS memory at program counter " + toHexString(instruction.programCounter));
+        default:
+            break;
+        }
+        if (instruction.op == RdnaOpcode::VReadfirstlaneB32 && index < callIndex && !pickIndex) pickIndex = index;
+    }
+    if (!pickIndex) return refuse("the waterfall loop does not pick a lane's value with v_readfirstlane_b32 before the call");
+    const auto& pick = program.instructions[*pickIndex];
+    const bool scalarPick = pick.destination.kind == RdnaOperandKind::ScalarRegister || pick.destination.kind == RdnaOperandKind::VccLo || pick.destination.kind == RdnaOperandKind::VccHi || pick.destination.kind == RdnaOperandKind::M0;
+    if (!scalarPick || pick.source0.kind != RdnaOperandKind::VectorRegister) return refuse("the waterfall loop's v_readfirstlane_b32 does not read a VGPR into a scalar register");
+    const auto narrows = [&](const RdnaInstruction& instruction) {
+        if (instruction.family != RdnaInstructionFamily::VOPC && instruction.family != RdnaInstructionFamily::VOP3) return false;
+        const auto reads = [&](const RdnaOperand& scalar, const RdnaOperand& vector) {
+            return scalar.kind == pick.destination.kind && (scalar.kind != RdnaOperandKind::ScalarRegister || scalar.reg == pick.destination.reg) && vector.kind == RdnaOperandKind::VectorRegister && vector.reg == pick.source0.reg;
+        };
+        return reads(instruction.source0, instruction.source1) || reads(instruction.source1, instruction.source0);
+    };
+    if (std::none_of(program.instructions.begin() + *pickIndex + 1, program.instructions.begin() + callIndex, narrows)) return refuse("the waterfall loop does not compare the picked value with its VGPR before the call");
+    if (*backIndex + 1u >= program.instructions.size()) return refuse("the waterfall loop is the end of the program");
+    if (callees.empty()) return refuse("the call table holds no callee");
+    SplitRegisters written;
+    SplitVectors vectors;
+    for (const auto& callee : callees) {
+        if (auto reason = splitCalleeRefusal(callee, call, written, vectors)) return refuse(std::move(*reason));
+    }
+    for (auto index = loopIndex; index <= *backIndex; ++index) splitVectorWrites(program.instructions[index], vectors);
+    const auto exitIndex = *backIndex + 1u;
+    const auto loopProgramCounter = program.instructions[loopIndex].programCounter;
+    const auto exitProgramCounter = program.instructions[exitIndex].programCounter;
+    if (loopIndex == 0u) return refuse("the waterfall loop starts the program");
+    const auto& before = program.instructions[loopIndex - 1u];
+    if (IsDirectBranchOpcode(before.op) || before.op == RdnaOpcode::SEndpgm || before.op == RdnaOpcode::SSetpcB64 || before.op == RdnaOpcode::SSwappcB64 || before.op == RdnaOpcode::SCallB64) return refuse("the waterfall loop is not entered by falling through from the instruction before it");
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (index != callIndex && (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SCallB64)) return refuse("the program calls or jumps through a register at program counter " + toHexString(instruction.programCounter));
+        if (!IsDirectBranchOpcode(instruction.op) || index == *backIndex) continue;
+        const auto target = instruction.branchTarget;
+        if (target >= loopProgramCounter && target < exitProgramCounter) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " enters the waterfall loop");
+        if (index < loopIndex && target > exitProgramCounter) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " skips the end of the waterfall loop");
+        if (index >= exitIndex && target < loopProgramCounter) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " runs the waterfall loop again");
+    }
+    for (std::uint32_t index = 0; index < loopIndex; ++index) {
+        if (repeatsVisibly(program.instructions[index])) return refuse("the instruction at program counter " + toHexString(program.instructions[index].programCounter) + " before the waterfall loop writes memory or reads a value that changes between dispatches, and every part runs it again");
+    }
+    if (const auto reg = calleeRegisterReadAfterCall(program, callIndex, written, waveSize)) return refuse("a callee writes " + splitRegisterName(*reg) + ", which the program may read after the table call before writing it, so its value would depend on the order the waterfall loop serves its lanes in");
+    TableCallSplit split{loopProgramCounter, call.programCounter, exitProgramCounter, {}};
+    for (std::uint32_t reg = 0; reg < vectors.size(); ++reg) {
+        if (vectors[reg]) split.vectors.push_back(reg);
+    }
+    return split;
+}
+
+namespace {
+
+constexpr std::uint32_t NopWord = 0xbf800000u;
+constexpr std::uint32_t EndProgramWord = 0xbf810000u;
+
+void replaceInstruction(std::vector<std::uint32_t>& words, const RdnaProgram& program, std::uint32_t programCounter, std::uint32_t word) {
+    const auto index = instructionIndexOfProgramCounter(program, programCounter);
+    if (index == InvalidControlFlowId) throw std::logic_error("split program counter " + toHexString(programCounter) + " does not start an instruction");
+    const auto end = instructionEndProgramCounter(program.instructions[index]) / 4u;
+    for (auto at = programCounter / 4u; at < end; ++at) words[at] = NopWord;
+    words[programCounter / 4u] = word;
+}
+
+SplitTableCallProgram splitProgram(std::vector<std::uint32_t> code, const TableCall& call, std::span<const std::uint32_t> vectors, std::uint64_t selectedTarget, std::initializer_list<SplitStateAbi::Point> points) {
+    const std::vector<SplitStateAbi::Point> stored(points);
+    return {std::move(code), SplitStateAbi::Encode({stored, vectors, static_cast<std::uint32_t>(vectors.size()), call.targetRegister, selectedTarget})};
+}
+
+}
+
+SplitTableCallPrograms BuildSplitTableCallPrograms(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallSplit& split, std::uint32_t vectorCount) {
+    using SplitStateAbi::Action;
+    using SplitStateAbi::Area;
+    const auto loopIndex = instructionIndexOfProgramCounter(program, split.loopProgramCounter);
+    if (loopIndex == InvalidControlFlowId || loopIndex == 0u) throw std::logic_error("split loop does not follow an instruction");
+    const auto end = instructionEndProgramCounter(program.instructions.back()) / 4u;
+    const std::vector<std::uint32_t> words(program.code.begin(), program.code.begin() + end);
+    std::vector<std::uint32_t> vectors;
+    for (const auto reg : split.vectors) {
+        if (reg < vectorCount) vectors.push_back(reg);
+    }
+    SplitTableCallPrograms programs;
+    programs.stateVectors = static_cast<std::uint32_t>(vectors.size());
+    auto entry = words;
+    replaceInstruction(entry, program, split.callProgramCounter, NopWord);
+    replaceInstruction(entry, program, split.exitProgramCounter, EndProgramWord);
+    programs.entry = splitProgram(std::move(entry), call, vectors, 0u, {
+        {0u, false, Action::ClearTarget, Area::Exit},
+        {split.callProgramCounter, false, Action::SaveTarget, Area::Exit},
+        {split.exitProgramCounter, false, Action::Save, Area::Exit},
+    });
+    auto replay = words;
+    replaceInstruction(replay, program, split.exitProgramCounter, EndProgramWord);
+    const auto replayProgram = RdnaInstructionDecoder{}.Decode(replay);
+    const std::vector<TableCall> calls{call};
+    for (const auto& callee : callees) {
+        const std::vector<std::vector<TableCallee>> linkedCallees{{callee}};
+        auto linked = LinkCalls(replayProgram, {}, {}, calls, linkedCallees);
+        for (const auto fallback : linked.fallbacks) linked.code[fallback / 4u] = NopWord;
+        programs.callees.push_back(splitProgram(std::move(linked.code), call, vectors, callee.target, {
+            {split.exitProgramCounter, false, Action::SaveSelected, Area::Exit},
+        }));
+    }
+    auto resume = words;
+    replaceInstruction(resume, program, split.callProgramCounter, NopWord);
+    programs.resume = splitProgram(std::move(resume), call, vectors, 0u, {
+        {split.exitProgramCounter, false, Action::Load, Area::Exit},
+    });
+    return programs;
+}
+
+namespace {
+
+bool endsFlow(RdnaOpcode op) {
+    return op == RdnaOpcode::SBranch || op == RdnaOpcode::SEndpgm || op == RdnaOpcode::SSetpcB64 || op == RdnaOpcode::SSwappcB64;
+}
+
+bool relocatable(const RdnaInstruction& instruction) {
+    return !IsDirectBranchOpcode(instruction.op) && !endsFlow(instruction.op) && instruction.op != RdnaOpcode::SGetpcB64 && instruction.op != RdnaOpcode::SCallB64;
+}
+
+constexpr std::uint32_t ContinuationStubWords = 64u;
+constexpr std::uint32_t BranchWord = 0xbf820000u;
+constexpr std::uint32_t BranchSccOneWord = 0xbf850000u;
+constexpr std::uint32_t CompareNotZeroWord = 0xbf078000u;
+
+std::uint32_t branchWord(std::uint32_t base, std::uint32_t from, std::uint32_t to) {
+    const auto offset = static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from) - 1;
+    if (offset < std::numeric_limits<std::int16_t>::min() || offset > std::numeric_limits<std::int16_t>::max()) throw std::logic_error("continuation branch from dword " + std::to_string(from) + " to dword " + std::to_string(to) + " is out of range");
+    return base | (static_cast<std::uint32_t>(offset) & 0xffffu);
+}
+
+std::vector<std::uint32_t> instructionWords(const RdnaProgram& program, std::uint32_t index) {
+    const auto& instruction = program.instructions[index];
+    return {program.code.begin() + instruction.programCounter / 4u, program.code.begin() + instructionEndProgramCounter(instruction) / 4u};
+}
+
+}
+
+std::optional<TableCallContinuation> ContinueTableCall(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, std::uint32_t vectorCount, std::string& refusal) {
+    const auto refuse = [&](std::string reason) -> std::optional<TableCallContinuation> {
+        refusal = std::move(reason);
+        return std::nullopt;
+    };
+    const auto callIndex = instructionIndexOfProgramCounter(program, call.programCounter);
+    if (callIndex == InvalidControlFlowId || program.instructions[callIndex].op != RdnaOpcode::SSwappcB64) return refuse("the table call does not name an s_swappc_b64");
+    if (callIndex + 1u >= program.instructions.size()) return refuse("the table call is the end of the program");
+    if (callees.empty()) return refuse("the call table holds no callee");
+    if (call.targetRegister + 1u >= SplitStateAbi::ScalarRegisters) return refuse("the table call's target is not in an SGPR pair");
+    const auto end = instructionEndProgramCounter(program.instructions.back()) / 4u;
+    if (end + ContinuationStubWords > static_cast<std::uint32_t>(std::numeric_limits<std::int16_t>::max())) return refuse("the program holds " + std::to_string(end) + " dwords, too many for a branch from its start to a stub after its end");
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (index != callIndex && (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SCallB64)) return refuse("the program calls or jumps through a register at program counter " + toHexString(instruction.programCounter));
+        if (instruction.family == RdnaInstructionFamily::DS) return refuse("the program accesses LDS at program counter " + toHexString(instruction.programCounter) + ", which does not outlive a dispatch");
+        if (instruction.op == RdnaOpcode::SBarrier) return refuse("the program holds an s_barrier at program counter " + toHexString(instruction.programCounter));
+    }
+    auto first = callIndex;
+    while (first > 0u && !endsFlow(program.instructions[first - 1u].op)) --first;
+    const bool trampoline = first != 0u;
+    std::uint32_t low = callIndex;
+    std::uint32_t high = callIndex;
+    if (trampoline) {
+        const auto firstProgramCounter = program.instructions[first].programCounter;
+        low = std::numeric_limits<std::uint32_t>::max();
+        high = 0;
+        for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+            const auto& instruction = program.instructions[index];
+            if ((index >= first && index <= callIndex) || !IsDirectBranchOpcode(instruction.op)) continue;
+            if (instruction.branchTarget < firstProgramCounter || instruction.branchTarget > call.programCounter) continue;
+            low = std::min(low, index);
+            high = std::max(high, index);
+        }
+        if (low > high) return refuse("no branch reaches the table call");
+    }
+    const auto returnsFromTrampoline = [&](std::uint32_t index) {
+        return trampoline && index == callIndex + 1u && program.instructions[index].op == RdnaOpcode::SBranch;
+    };
+    for (bool grown = true; grown;) {
+        grown = false;
+        for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+            const auto& instruction = program.instructions[index];
+            if (returnsFromTrampoline(index) || !IsDirectBranchOpcode(instruction.op) || instruction.branchTarget > instruction.programCounter) continue;
+            const auto target = instructionIndexOfProgramCounter(program, instruction.branchTarget);
+            if (target == InvalidControlFlowId) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " lands inside an instruction");
+            if (index < low || target > high) continue;
+            if (target < low || index > high) {
+                low = std::min(low, target);
+                high = std::max(high, index);
+                grown = true;
+            }
+        }
+    }
+    if (low < 2u) return refuse("the loop around the table call starts at the beginning of the program");
+    if (!relocatable(program.instructions[0]) || !relocatable(program.instructions[low - 1u])) return refuse("the first instruction or the one before the loop around the table call branches or reads the program counter");
+    const auto lowProgramCounter = program.instructions[low].programCounter;
+    const auto highProgramCounter = program.instructions[high].programCounter;
+    for (std::uint32_t index = 0; index < low; ++index) {
+        const auto& instruction = program.instructions[index];
+        if (repeatsVisibly(instruction)) return refuse("the instruction at program counter " + toHexString(instruction.programCounter) + " before the loop around the table call writes memory or reads a value that changes between dispatches, and every round runs it again");
+        if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget >= lowProgramCounter && instruction.branchTarget <= highProgramCounter) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " enters the loop around the table call");
+    }
+    for (auto index = low; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget < lowProgramCounter) return refuse("the branch at program counter " + toHexString(instruction.programCounter) + " leaves the loop around the table call for an earlier instruction");
+    }
+    SplitRegisters calleeWritten;
+    SplitVectors vectors;
+    for (const auto& callee : callees) {
+        if (auto reason = splitCalleeRefusal(callee, call, calleeWritten, vectors)) return refuse(std::move(*reason));
+    }
+    SplitRegisters callerWritten;
+    for (auto index = low; index < program.instructions.size(); ++index) {
+        callerWritten |= splitWrites(program.instructions[index]);
+        splitVectorWrites(program.instructions[index], vectors);
+    }
+    SplitRegisters prefixWritten;
+    for (std::uint32_t index = 0; index < low; ++index) prefixWritten |= splitWrites(program.instructions[index]);
+    const auto written = calleeWritten | callerWritten;
+    auto replay = callIndex;
+    while (replay > low && relocatable(program.instructions[replay - 1u]) && !repeatsVisibly(program.instructions[replay - 1u])) --replay;
+    for (const auto& instruction : program.instructions) {
+        if (!IsDirectBranchOpcode(instruction.op)) continue;
+        const auto target = instructionIndexOfProgramCounter(program, instruction.branchTarget);
+        if (target != InvalidControlFlowId && target > replay && target <= callIndex) replay = target;
+    }
+    TableCallContinuation continuation{lowProgramCounter, program.instructions[replay].programCounter, call.programCounter, {}, {}};
+    SplitRegisters replayReads;
+    SplitRegisters replayWrites;
+    for (auto index = replay; index < callIndex; ++index) {
+        replayReads |= splitReads(program.instructions[index], 64u) & ~replayWrites;
+        replayWrites |= splitWrites(program.instructions[index]);
+    }
+    for (std::uint32_t reg = 0; reg < vectorCount && reg < vectors.size(); ++reg) {
+        if (vectors[reg]) continuation.registers.push_back(reg);
+    }
+    for (std::uint32_t reg = 0; reg < SplitStateAbi::ScalarRegisters; ++reg) {
+        if (!written[reg]) continue;
+        continuation.registers.push_back(SplitStateAbi::ScalarBase + reg);
+        if (!callerWritten[reg] && prefixWritten[reg] && replayReads[reg]) continuation.assumed.push_back(SplitStateAbi::ScalarBase + reg);
+    }
+    continuation.registers.insert(continuation.registers.end(), {SplitStateAbi::ExecRegister, SplitStateAbi::VccRegister, SplitStateAbi::SccRegister, SplitStateAbi::M0Register});
+    return continuation;
+}
+
+SplitTableCallPrograms BuildTableCallContinuation(const RdnaProgram& program, const TableCall& call, std::span<const TableCallee> callees, const TableCallContinuation& continuation) {
+    using SplitStateAbi::Action;
+    using SplitStateAbi::Area;
+    const auto callIndex = instructionIndexOfProgramCounter(program, continuation.callProgramCounter);
+    const auto headerIndex = instructionIndexOfProgramCounter(program, continuation.headerProgramCounter);
+    const auto replayIndex = instructionIndexOfProgramCounter(program, continuation.replayProgramCounter);
+    if (callIndex == InvalidControlFlowId || headerIndex == InvalidControlFlowId || replayIndex == InvalidControlFlowId || headerIndex < 2u || replayIndex < headerIndex || replayIndex > callIndex || callIndex + 1u >= program.instructions.size()) throw std::logic_error("table call continuation does not match its program");
+    const auto end = instructionEndProgramCounter(program.instructions.back()) / 4u;
+    const std::vector<std::uint32_t> words(program.code.begin(), program.code.begin() + end);
+    const auto returnProgramCounter = program.instructions[callIndex + 1u].programCounter;
+    auto relocated = words;
+    const auto startStub = static_cast<std::uint32_t>(relocated.size());
+    relocated.insert(relocated.end(), {CompareNotZeroWord | call.targetRegister, 0u, CompareNotZeroWord | (call.targetRegister + 1u), 0u, EndProgramWord});
+    const auto startResume = static_cast<std::uint32_t>(relocated.size());
+    relocated[startStub + 1u] = branchWord(BranchSccOneWord, startStub + 1u, startResume);
+    relocated[startStub + 3u] = branchWord(BranchSccOneWord, startStub + 3u, startResume);
+    const auto first = instructionWords(program, 0u);
+    relocated.insert(relocated.end(), first.begin(), first.end());
+    relocated.push_back(branchWord(BranchWord, static_cast<std::uint32_t>(relocated.size()), program.instructions[1].programCounter / 4u));
+    replaceInstruction(relocated, program, 0u, branchWord(BranchWord, 0u, startStub));
+    const auto headerStub = static_cast<std::uint32_t>(relocated.size());
+    const auto before = instructionWords(program, headerIndex - 1u);
+    relocated.insert(relocated.end(), before.begin(), before.end());
+    const auto go = static_cast<std::uint32_t>(relocated.size());
+    relocated.insert(relocated.end(), {NopWord, EndProgramWord});
+    const auto beforeProgramCounter = program.instructions[headerIndex - 1u].programCounter;
+    replaceInstruction(relocated, program, beforeProgramCounter, branchWord(BranchWord, beforeProgramCounter / 4u, headerStub));
+    const auto slots = SplitStateAbi::SlotCount(continuation.registers);
+    const auto plan = [&](std::vector<std::uint32_t> code, std::uint64_t selected, std::initializer_list<SplitStateAbi::Point> points, std::span<const std::uint32_t> assumed = {}) {
+        const std::vector<SplitStateAbi::Point> stored(points);
+        return SplitTableCallProgram{std::move(code), SplitStateAbi::Encode({stored, continuation.registers, slots, call.targetRegister, selected, assumed})};
+    };
+    SplitTableCallPrograms programs;
+    programs.continuation = true;
+    programs.stateVectors = slots;
+    auto entry = words;
+    replaceInstruction(entry, program, continuation.callProgramCounter, EndProgramWord);
+    programs.entry = plan(std::move(entry), 0u, {
+        {0u, false, Action::ClearTarget, Area::Exit},
+        {continuation.replayProgramCounter, false, Action::SaveState, Area::Exit},
+        {continuation.callProgramCounter, false, Action::StoreTarget, Area::Exit},
+    });
+    auto resume = relocated;
+    resume[go] = branchWord(BranchWord, go, returnProgramCounter / 4u);
+    replaceInstruction(resume, program, continuation.callProgramCounter, EndProgramWord);
+    programs.resume = plan(std::move(resume), 0u, {
+        {startStub * 4u, false, Action::LoadTarget, Area::Exit},
+        {go * 4u, false, Action::LoadState, Area::Exit},
+        {go * 4u, false, Action::ClearTarget, Area::Exit},
+        {continuation.replayProgramCounter, false, Action::SaveState, Area::Exit},
+        {continuation.callProgramCounter, false, Action::StoreTarget, Area::Exit},
+    });
+    auto served = relocated;
+    served[go] = branchWord(BranchWord, go, continuation.replayProgramCounter / 4u);
+    const auto servedProgram = RdnaInstructionDecoder{}.Decode(served);
+    const std::vector<TableCall> calls{call};
+    for (const auto& callee : callees) {
+        const std::vector<std::vector<TableCallee>> linkedCallees{{callee}};
+        auto linked = LinkCalls(servedProgram, {}, {}, calls, linkedCallees);
+        for (const auto fallback : linked.fallbacks) linked.code[fallback / 4u] = EndProgramWord;
+        replaceInstruction(linked.code, program, returnProgramCounter, EndProgramWord);
+        programs.callees.push_back(plan(std::move(linked.code), callee.target, {
+            {startStub * 4u, false, Action::LoadTarget, Area::Exit},
+            {go * 4u, false, Action::LoadState, Area::Exit},
+            {returnProgramCounter, false, Action::SaveState, Area::Exit},
+        }, continuation.assumed));
+    }
+    return programs;
 }
 
 ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {

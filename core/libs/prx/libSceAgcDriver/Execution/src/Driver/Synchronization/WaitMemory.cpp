@@ -22,23 +22,16 @@ namespace AgcDriver::DriverDetail {
 
 void PollSleep() {
 #ifdef _WIN32
-    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    if (timer != nullptr) {
-        LARGE_INTEGER due{};
-        due.QuadPart = -2000;
-        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
-    }
-#endif
+    PreciseSleepWaitableTimerWithHandle(PreciseWaitThreadTimer(), 2000);
+#else
     std::this_thread::sleep_for(std::chrono::microseconds(200));
+#endif
 }
 
 bool OwnStoreRejects(std::span<const std::uint32_t> packet, std::uint64_t awaited, std::size_t bytes, std::uint32_t queue) {
     const auto own = Graphics::Recorder::UnlandedOwnLabel(awaited, bytes, queue);
     if (own.mask == 0) return false;
-    const std::uint64_t memory = bytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+    const std::uint64_t memory = Pm4::LoadLabel(awaited, bytes);
     return !Pm4::WaitComparesValue(packet, (memory & ~own.mask) | own.value);
 }
 
@@ -136,13 +129,24 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool warned = false;
 
     struct EpochPoint {
+        Driver* driver;
+        std::uint32_t queue;
         std::uint64_t address;
         std::size_t bytes;
+        std::span<const std::uint32_t> packet;
+        std::uint64_t received;
+        bool inherit = true;
         bool bump = true;
+        std::uint64_t since = 0;
         ~EpochPoint() {
-            if (bump) bumpWaitEpoch(address, bytes);
+            if (bump && since == 0 && inherit) since = driver->storeOrderingSince(packet, address, bytes, received, queue);
+            if (bump) bumpWaitEpoch(address, bytes, since);
         }
-    } epochPoint{awaited, awaitedBytes};
+    } epochPoint{this, queue, awaited, awaitedBytes, packet, received, !requireMemory};
+    const auto orderedBy = [&](std::uint32_t writer) {
+        if (writer == queue) epochPoint.bump = false;
+        else epochPoint.since = storeOrderingSince(packet, awaited, awaitedBytes, received, queue);
+    };
     bool ownStoreUnlanded = false;
     const auto memorySatisfied = [&] {
         ownStoreUnlanded = false;
@@ -151,22 +155,25 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         ownStoreUnlanded = true;
         return false;
     };
-    const auto storedByOwnLabel = [&] {
+    const auto orderByStore = [&] {
         std::uint32_t writer = queue;
-        return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
+        if (!requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) orderedBy(writer);
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x waits 0x%llx == 0x%x (now 0x%x)\n", TraceMs(), queue, static_cast<unsigned long long>(awaited), packet[4],
-                               *reinterpret_cast<const volatile std::uint32_t*>(awaited));
+                               static_cast<std::uint32_t>(Pm4::LoadLabel(awaited, 4)));
     if (memorySatisfied()) {
         ++outcomes.atEntry;
-        if (storedByOwnLabel()) epochPoint.bump = false;
+        orderByStore();
         return;
     }
-    if (heldAtSubmit) return;
+    if (heldAtSubmit) {
+        epochPoint.inherit = false;
+        return;
+    }
     if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
         if (writer != queue) notePendingWait(packet, queue, received);
-        else epochPoint.bump = false;
+        orderedBy(writer);
         return;
     }
 
@@ -193,6 +200,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             return false;
         }
         if (hit->late) {
+            epochPoint.inherit = false;
             if (hit->generation == refusedGeneration) return false;
             if (!GuestMemory::UnchangedSinceCollected(awaited, awaitedBytes, hit->generation)) {
                 ++outcomes.lateRefusedCpuStore;
@@ -210,6 +218,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             if (!hit->late) epochPoint.bump = false;
         } else {
             notePendingWait(packet, queue, received);
+            if (!hit->late) epochPoint.since = storeOrderingSince(packet, awaited, awaitedBytes, received, queue);
         }
         return true;
     };
@@ -364,7 +373,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
-            else epochPoint.bump = false;
+            orderedBy(writer);
             return;
         }
         ++polls;
@@ -415,7 +424,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
             const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
             const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
-            const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+            const std::uint64_t current = Pm4::LoadLabel(awaited, awaitedBytes);
             std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
                          static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
             const auto address = awaited;
@@ -441,7 +450,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
     }
     ++outcomes.polled;
-    if (storedByOwnLabel()) epochPoint.bump = false;
+    orderByStore();
 }
 
 }

@@ -25,6 +25,8 @@
 #include <windows.h>
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
+#else
+#include <unistd.h>
 #endif
 
 #include "prx/libc/include/SonyCrt.hpp"
@@ -492,6 +494,7 @@ void LibcRegisterClosedDescriptors_nid_no_patch(void* (*begin)(int), void (*end)
 }
 
 void* BeginClosingDescriptor_nid_no_patch(int descriptor) {
+    AppArchiveDetach_nid_no_patch(descriptor);
     return g_beginClosingDescriptor ? g_beginClosingDescriptor(descriptor) : nullptr;
 }
 
@@ -613,6 +616,41 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
       catch (const std::filesystem::filesystem_error&) { errno = 5; return nullptr; }
 }
 
+static std::optional<FileStream*> OpenArchivedStream(const std::filesystem::path& path, const GuestFileMode& parsed) {
+    if (!AppArchiveOnly_nid_no_patch(path)) return std::nullopt;
+    AppArchiveNode node{};
+    if (!AppArchiveLookup_nid_no_patch(path, &node)) throw std::logic_error("fopen: " + path.string() + " left app0.zar while opening");
+    if (parsed.exclusive) { errno = 17; return nullptr; }
+    if (parsed.writes) { errno = 30; return nullptr; }
+    if (node.Directory) NotImplemented_nid_no_patch(("fopen of the app0.zar directory " + path.string()).c_str());
+    const int descriptor = AppArchiveMaterialize_nid_no_patch(node, 0, node.Size);
+#ifdef _WIN32
+    std::FILE* native = ::_fdopen(descriptor, "rb");
+#else
+    std::FILE* native = ::fdopen(descriptor, "r");
+#endif
+    if (!native) {
+        const int error = errno;
+#ifdef _WIN32
+        ::_close(descriptor);
+#else
+        ::close(descriptor);
+#endif
+        errno = error;
+        return nullptr;
+    }
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(native, std::fclose);
+#ifdef _WIN32
+    const int attached = ::_fileno(native);
+#else
+    const int attached = ::fileno(native);
+#endif
+    AppArchiveAttachMaterialized_nid_no_patch(attached, node);
+    auto stream = std::make_unique<FileStream>(handle.get(), true);
+    handle.release();
+    return stream.release();
+}
+
 FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
     if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
     const auto parsed = ParseFileMode(mode);
@@ -630,7 +668,8 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
         return stream.release();
     }
     std::filesystem::path fpath;
-    if (const int error = ResolvePathError_nid_no_patch(filename, fpath)) { errno = error; return nullptr; }
+    if (const int error = ResolvePathError_nid_no_patch(filename, fpath, false, true)) { errno = error; return nullptr; }
+    if (const auto archived = OpenArchivedStream(fpath, *parsed)) return *archived;
     std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(OpenNative(fpath, parsed->native), std::fclose);
     if (!handle) {
         const int hostError = errno;
@@ -716,7 +755,12 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     }
     GetStreamHandle(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
-    return stream->Close();
+    const int previousError = errno;
+    errno = 0;
+    const int result = stream->Close();
+    const int nativeError = errno;
+    errno = result != 0 && nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
+    return result;
 }
 
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection) {
@@ -786,6 +830,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     errno = 0;
     const auto result = std::fwrite(buffer, size, count, handle);
     const int nativeError = errno;
+    if (result < count) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -940,6 +985,7 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     errno = 0;
     const int result = std::fputs(str, native);
     const int nativeError = errno;
+    if (result == EOF) stream->DropFailedUnbufferedWrite();
     stream->SyncStatus();
     errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
@@ -1158,13 +1204,18 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
 void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count,
     size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!count) throw std::invalid_argument("lfind: null element count");
-    if (*count == 0) return nullptr;
-    if (!key || !base || !compare || size == 0)
+    size_t elements = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument("lfind: unreadable element count");
+    if (elements == 0 || size == 0) return nullptr;
+    if (!key || !base || !compare)
         throw std::invalid_argument("lfind: invalid arguments");
-    if (*count > std::numeric_limits<size_t>::max() / size)
+    if (elements > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lfind: array size overflow");
     const auto* bytes = static_cast<const unsigned char*>(base);
-    for (size_t index = 0; index < *count; ++index) {
+    for (size_t index = 0; index < elements; ++index) {
         const auto* element = bytes + index * size;
         if (compare(key, element) == 0) return const_cast<unsigned char*>(element);
     }
@@ -1174,20 +1225,32 @@ void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* cou
 void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
     size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (!count) throw std::invalid_argument("lsearch: null element count");
-    if (!key || !base || !compare || size == 0)
+    if (size != 0 && (!key || !base || !compare))
         throw std::invalid_argument("lsearch: invalid arguments");
-    if (*count > std::numeric_limits<size_t>::max() / size)
-        throw std::overflow_error("lsearch: array size overflow");
+    size_t elements = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&elements, count, sizeof(elements));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument("lsearch: unreadable element count");
     auto* bytes = static_cast<unsigned char*>(base);
-    for (size_t index = 0; index < *count; ++index) {
-        auto* element = bytes + index * size;
-        if (compare(key, element) == 0) return element;
+    if (size != 0) {
+        if (elements > std::numeric_limits<size_t>::max() / size)
+            throw std::overflow_error("lsearch: array size overflow");
+        for (size_t index = 0; index < elements; ++index) {
+            auto* element = bytes + index * size;
+            if (compare(key, element) == 0) return element;
+        }
+        if (elements >= std::numeric_limits<size_t>::max() / size)
+            throw std::overflow_error("lsearch: append capacity overflow");
     }
-    if (*count >= std::numeric_limits<size_t>::max() / size)
-        throw std::overflow_error("lsearch: append capacity overflow");
-    auto* tail = bytes + *count * size;
+    const size_t appended = elements + 1;
+    const int appendErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(count, &appended, sizeof(appended));
+    errno = appendErrno;
+    if (!writable) throw std::invalid_argument("lsearch: unwritable element count");
+    if (size == 0) return base;
+    auto* tail = bytes + elements * size;
     std::memcpy(tail, key, size);
-    ++*count;
     return tail;
 }
 
@@ -1212,12 +1275,11 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
 }
 
 void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*)) {
+    if (count <= 1 || (size == 0 && count < 7)) return;
     if (!compare) throw std::invalid_argument("qsort_r: null comparator");
     if (size == 0) throw std::invalid_argument("qsort_r: zero element size");
-    if (count == 0) return;
     if (!base) throw std::invalid_argument("qsort_r: null base");
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort_r: array size overflow");
-    if (count == 1) return;
 
     ReentrantSortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
 }
