@@ -1,6 +1,9 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "ucnv_io.h"
+#include "udataswp.h"
 #include "unicode/ucnv.h"
+#include "unicode/udata.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -8,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -239,10 +244,126 @@ void NameQueries() {
                         "standard: unreadable standard throws");
 }
 
+void AliasTableQueries() {
+    static_assert(std::is_same_v<decltype(&ucnv_io_countKnownConverters_nid_postfix),
+                  std::uint16_t (APS5_VABI*)(std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&ucnv_io_getConverterName_nid_postfix),
+                  const char* (APS5_VABI*)(const char*, std::int8_t*, std::int32_t*)>);
+    const std::string longName(UCNV_MAX_CONVERTER_NAME_LENGTH + 1, 'a');
+    const char* aliases[] = {nullptr, "", "UTF-8", "x-u*T@f08", "ISO-2022-JP", "no-such-converter", longName.c_str()};
+    for (std::int32_t initial : {0, -128, 15}) {
+        auto nativeStatus = static_cast<UErrorCode>(initial);
+        const auto expectedCount = ucnv_io_countKnownConverters(&nativeStatus);
+        auto status = initial;
+        Require(ucnv_io_countKnownConverters_nid_postfix(&status) == expectedCount && status == nativeStatus,
+                "known converter count and status match bundled ICU");
+        for (const char* alias : aliases) {
+            for (const bool withOption : {false, true}) {
+                nativeStatus = static_cast<UErrorCode>(initial);
+                UBool expectedOption = 73;
+                auto* nativeOutput = withOption ? &expectedOption : nullptr;
+                const char* expected = ucnv_io_getConverterName(alias, nativeOutput, &nativeStatus);
+                status = initial;
+                std::int8_t option = 73;
+                const char* actual = ucnv_io_getConverterName_nid_postfix(alias, withOption ? &option : nullptr, &status);
+                Require(status == nativeStatus && option == expectedOption, "lookup status and option match bundled ICU");
+                Require((actual == nullptr) == (expected == nullptr), "lookup result presence matches bundled ICU");
+                if (actual) Require(CheckedString(actual) == expected, "canonical name matches bundled ICU");
+            }
+        }
+    }
+    const auto* unreadableAlias = reinterpret_cast<const char*>(std::uintptr_t{1});
+    auto* unwritableOption = reinterpret_cast<std::int8_t*>(std::uintptr_t{1});
+    std::int32_t failed = U_BUFFER_OVERFLOW_ERROR;
+    Require(!ucnv_io_getConverterName_nid_postfix(unreadableAlias, unwritableOption, &failed) &&
+            failed == U_BUFFER_OVERFLOW_ERROR, "prefailed lookup returns before reading alias or writing option");
 }
 
-int main() {
+std::vector<char> LoadAliasTable(const char* path) {
+    std::ifstream file(path, std::ios::binary);
+    Require(file.is_open(), "open the bundled alias data fixture");
+    const std::vector<char> input((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    Require(!input.empty() && input.size() <= INT32_MAX, "read the bundled alias data fixture");
+    const auto size = static_cast<std::int32_t>(input.size());
+    UErrorCode status = U_ZERO_ERROR;
+    auto* swapper = udata_openSwapperForInputData(input.data(), size, U_IS_BIG_ENDIAN, U_CHARSET_FAMILY, &status);
+    Require(swapper && U_SUCCESS(status), "open a swapper for the alias fixture");
+    std::vector<char> output(input.size());
+    const auto written = ucnv_swapAliases(swapper, input.data(), size, output.data(), &status);
+    udata_closeSwapper(swapper);
+    Require(written > 0 && written <= size && U_SUCCESS(status), "convert the alias fixture to native byte order");
+    output.resize(static_cast<std::size_t>(written));
+    return output;
+}
+
+std::vector<char> AliasPackage(const std::vector<char>& aliases) {
+    struct DataHeader {
+        std::uint16_t headerSize;
+        std::uint8_t magic1;
+        std::uint8_t magic2;
+        UDataInfo info;
+    };
+    static_assert(sizeof(DataHeader) == 24);
+    constexpr std::uint32_t headerSize = 32;
+    constexpr DataHeader header{
+        headerSize, 0xda, 0x27,
+        {sizeof(UDataInfo), 0, U_IS_BIG_ENDIAN, U_CHARSET_FAMILY, U_SIZEOF_UCHAR, 0,
+         {'C', 'm', 'n', 'D'}, {1, 0, 0, 0}, {0, 0, 0, 0}},
+    };
+    constexpr char name[] = U_ICUDATA_NAME "/cnvalias.icu";
+    constexpr char trailingName[] = U_ICUDATA_NAME "/zz-test-end.icu";
+    constexpr std::uint32_t nameOffset = 5 * sizeof(std::uint32_t);
+    constexpr std::uint32_t trailingNameOffset = nameOffset + sizeof(name);
+    constexpr std::uint32_t dataOffset = (trailingNameOffset + sizeof(trailingName) + 15u) & ~15u;
+    const auto trailingDataOffset = (dataOffset + static_cast<std::uint32_t>(aliases.size()) + 15u) & ~15u;
+    const std::uint32_t toc[] = {2, nameOffset, dataOffset, trailingNameOffset, trailingDataOffset};
+    std::vector<char> package(headerSize + trailingDataOffset + aliases.size());
+    std::memcpy(package.data(), &header, sizeof(header));
+    auto* contents = package.data() + headerSize;
+    std::memcpy(contents, toc, sizeof(toc));
+    std::memcpy(contents + nameOffset, name, sizeof(name));
+    std::memcpy(contents + trailingNameOffset, trailingName, sizeof(trailingName));
+    std::memcpy(contents + dataOffset, aliases.data(), aliases.size());
+    std::memcpy(contents + trailingDataOffset, aliases.data(), aliases.size());
+    return package;
+}
+
+void AliasTableData(const char* path) {
+    static const auto package = AliasPackage(LoadAliasTable(path));
+    UErrorCode nativeStatus = U_ZERO_ERROR;
+    udata_setCommonData(package.data(), &nativeStatus);
+    std::int32_t status = U_ZERO_ERROR;
+    udata_setCommonData_nid_postfix(package.data(), &status);
+    Require(U_SUCCESS(nativeStatus) && status <= 0, "install the alias table on both sides");
+
+    AliasTableQueries();
+    status = U_ZERO_ERROR;
+    Require(ucnv_io_countKnownConverters_nid_postfix(&status) > 0 && status == U_ZERO_ERROR,
+            "the installed table has known converters");
+    std::int8_t option = 73;
+    const char* name = ucnv_io_getConverterName_nid_postfix("UTF-8", &option, &status);
+    Require(name && CheckedString(name) == "UTF-8" && option == 0 && status == U_ZERO_ERROR,
+            "a UTF-8 lookup writes a false option flag");
+    name = ucnv_io_getConverterName_nid_postfix("ISO-2022-JP", &option, &status);
+    Require(name && CheckedString(name).find(',') != std::string::npos && option == 1 && status <= 0,
+            "an option-bearing converter writes a true option flag");
+    auto* unwritableOption = reinterpret_cast<std::int8_t*>(std::uintptr_t{1});
+    status = U_ZERO_ERROR;
+    RequireRuntimeError([&] { ucnv_io_getConverterName_nid_postfix("UTF-8", unwritableOption, &status); },
+                        "successful lookup rejects an unwritable option");
+    Require(!ucnv_io_getConverterName_nid_postfix("no-such-converter", unwritableOption, &status),
+            "a missing lookup leaves the option pointer untouched");
+}
+
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1) {
+        AliasTableData(argv[1]);
+        return 0;
+    }
     Parity();
     GuestPointers();
     NameQueries();
+    AliasTableQueries();
 }

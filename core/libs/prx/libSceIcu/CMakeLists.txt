@@ -685,9 +685,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_icu_converter_aliases_tests PRIVATE libSceIcu libc icu_common)
     configure_windows_unwind(guest_icu_converter_aliases_tests)
     add_test(NAME guest_icu_converter_aliases COMMAND guest_icu_converter_aliases_tests)
-    set_tests_properties(guest_icu_converter_aliases PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_icu_converter_aliases_data COMMAND guest_icu_converter_aliases_tests
+        "${PROJECT_SOURCE_DIR}/3rdparty/icu/icu4j/main/charset/src/main/resources/com/ibm/icu/impl/data/icudata/cnvalias.icu")
+    set_tests_properties(guest_icu_converter_aliases guest_icu_converter_aliases_data PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_icu_converter_aliases PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_converter_aliases guest_icu_converter_aliases_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
     add_test_executable(guest_icu_converter_helpers_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConverterHelpers.cpp)
