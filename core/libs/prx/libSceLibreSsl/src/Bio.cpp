@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdarg>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -434,6 +436,35 @@ int LibreSslBioWrite_nid_no_patch(LibreSsl::Bio* bio, const void* source, int si
     const int result = bio->method->write(bio, static_cast<const char*>(source), size);
     if (result > 0) bio->bytesWritten += static_cast<std::uint64_t>(result);
     return callback ? static_cast<int>(callback(bio, 0x83, static_cast<const char*>(source), size, 0, result)) : result;
+}
+
+int APS5_VABI BIO_printf_nid_postfix(LibreSsl::Bio* bio, const char* format, ...) {
+    if (!bio) APS5_INVALID_ARG_EX;
+    if (!format) throw std::invalid_argument("BIO_printf: null format");
+    va_list arguments;
+    va_start(arguments, format);
+    va_list measured;
+    va_copy(measured, arguments);
+    const int needed = std::vsnprintf(nullptr, 0, format, measured);
+    va_end(measured);
+    if (needed < 0) {
+        va_end(arguments);
+        return -1;
+    }
+    auto* buffer = static_cast<char*>(malloc_nid_postfix(static_cast<std::size_t>(needed) + 1));
+    if (!buffer) {
+        va_end(arguments);
+        return -1;
+    }
+    const int written = std::vsnprintf(buffer, static_cast<std::size_t>(needed) + 1, format, arguments);
+    va_end(arguments);
+    if (written != needed) {
+        free_nid_postfix(buffer);
+        return -1;
+    }
+    const int result = LibreSslBioWrite_nid_no_patch(bio, buffer, needed);
+    free_nid_postfix(buffer);
+    return result == needed ? needed : -1;
 }
 
 int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source) {

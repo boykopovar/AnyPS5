@@ -170,11 +170,6 @@ static_assert(offsetof(X509Extension, value) == 16);
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_printf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size) {
     return LibreSslBioWrite_nid_no_patch(bio, source, size);
 }
@@ -490,11 +485,6 @@ int APS5_VABI SSL_library_init_nid_postfix(void) {
 void APS5_VABI SSL_load_error_strings_nid_postfix(void) {}
 
 int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_set_bio_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
