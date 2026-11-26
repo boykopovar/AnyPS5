@@ -1316,7 +1316,7 @@ class TraceDigestTests(unittest.TestCase):
 
     def test_interval_input_rejects_capture_summary(self):
         path = Path(self.directory.name) / "intervals.jsonl"
-        path.write_text("", encoding="utf-8")
+        path.write_text("invalid interval input", encoding="utf-8")
         summary = Path(self.directory.name) / "capture.jsonl"
         summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
         for output in ([], ["--json"]):

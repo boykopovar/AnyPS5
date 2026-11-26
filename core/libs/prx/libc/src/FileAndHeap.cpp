@@ -755,7 +755,12 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     }
     GetStreamHandle(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
-    return stream->Close();
+    const int previousError = errno;
+    errno = 0;
+    const int result = stream->Close();
+    const int nativeError = errno;
+    errno = result != 0 && nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
+    return result;
 }
 
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection) {

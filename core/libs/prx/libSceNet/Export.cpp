@@ -159,6 +159,8 @@ constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
 constexpr std::uint32_t NET_IF_LO0 = 0;
+constexpr std::uint32_t NET_IFF_LO0_DEFAULT =
+    NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
 constexpr std::array<const char*, 10> NET_INTERFACE_NAMES = {
     "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
 
@@ -470,6 +472,7 @@ bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
 std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
+std::atomic<std::uint32_t> g_lo0_flags{NET_IFF_LO0_DEFAULT};
 
 int* errno_slot() {
     static thread_local int e = 0;
@@ -1204,6 +1207,11 @@ const KernelSocketPoll::Forwards g_socketForwards{
     },
     [](int descriptor, void* address, std::uint32_t* length) {
         return ErrorOf(sceNetGetsockname(descriptor, address, length));
+    },
+    [](int descriptor, void* address, std::uint32_t* length, int* error) {
+        const int accepted = sceNetAccept(descriptor, address, length);
+        *error = ErrorOf(accepted);
+        return accepted;
     },
     [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
         const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
@@ -4109,7 +4117,7 @@ int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* f
     if (flags == nullptr) return NET_CONFIG_ERROR_INVALID_ADDRESS;
     if (interfaceId >= 10) return -1;
     if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
-    constexpr std::uint32_t result = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    const std::uint32_t result = g_lo0_flags.load(std::memory_order_relaxed);
     return GuestCopyOut_nid_no_patch(flags, &result, sizeof(result)) ? 0 : NET_CONFIG_ERROR_INVALID_ADDRESS;
 }
 
@@ -4129,7 +4137,8 @@ int APS5_VABI sceNetConfigDelIfaddr(int interfaceId) {
 }
 
 int APS5_VABI sceNetConfigDownInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (interfaceId != static_cast<int>(NET_IF_LO0)) NotImplemented_nid_no_patch(__func__);
+    g_lo0_flags.fetch_and(~NET_IFF_UP, std::memory_order_relaxed);
     return 0;
 }
 
@@ -4154,7 +4163,8 @@ int APS5_VABI sceNetConfigSetIfLinkLocalAddr6(std::uint32_t interfaceId) {
 }
 
 int APS5_VABI sceNetConfigUpInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (interfaceId != static_cast<int>(NET_IF_LO0)) NotImplemented_nid_no_patch(__func__);
+    g_lo0_flags.fetch_or(NET_IFF_UP, std::memory_order_relaxed);
     return 0;
 }
 

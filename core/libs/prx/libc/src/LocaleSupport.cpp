@@ -1064,7 +1064,19 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateTransform),
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
-std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {};
+std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&NumpunctDestroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&NumpunctDelete_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_groupingEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_truenameEv_nid_postfix),
+};
 std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {
     0,
     0,
@@ -2292,6 +2304,124 @@ GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestL
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctTruename_nid_no_patch(result, self);
+}
+
+namespace {
+
+struct NumpunctLocinfo {
+    explicit NumpunctLocinfo(const char* name) { _ZNSt8_LocinfoC1EPKc_nid_postfix(&storage, name); }
+    ~NumpunctLocinfo() { _ZNSt8_LocinfoD1Ev_nid_postfix(&storage); }
+    NumpunctLocinfo(const NumpunctLocinfo&) = delete;
+    NumpunctLocinfo& operator=(const NumpunctLocinfo&) = delete;
+
+    GuestLocale::LocinfoStorage storage;
+};
+
+char* MakeNumpunctString(const char* text) {
+    const std::size_t count = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(_Znam_nid_postfix(count));
+    if (copy == nullptr) throw std::bad_alloc();
+    std::memcpy(copy, text, count);
+    return copy;
+}
+
+void ConstructNumpunctBase(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    self->base.vtable = reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt8numpunctIcE_nid_postfix[2]);
+    self->base.references = static_cast<std::uint32_t>(references);
+}
+
+}
+
+void APS5_VABI NumpunctTidy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    _ZdaPv_nid_postfix(const_cast<char*>(self->grouping));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->falsename));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->truename));
+}
+
+void APS5_VABI NumpunctInit_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage*, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    self->grouping = nullptr;
+    self->falsename = nullptr;
+    self->truename = nullptr;
+    try {
+        self->grouping = MakeNumpunctString(isDefault ? "" : conventions->grouping);
+        self->falsename = MakeNumpunctString("false");
+        self->truename = MakeNumpunctString("true");
+    } catch (...) {
+        NumpunctTidy_nid_no_patch(self);
+        throw;
+    }
+    if (isDefault) {
+        self->decimalPoint = '.';
+        self->thousandsSep = ',';
+    } else {
+        self->decimalPoint = conventions->decimal_point[0];
+        self->thousandsSep = conventions->thousands_sep[0];
+    }
+}
+
+void APS5_VABI NumpunctConstruct_nid_no_patch(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo("C");
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, false);
+    if (self->thousandsSep == 0) self->thousandsSep = ',';
+}
+
+void APS5_VABI NumpunctConstructFromLocinfo_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+APS5_EXPORT("Cb1hI+w9nyU", NumpunctConstructFromLocinfo_nid_no_patch);
+
+void APS5_VABI NumpunctConstructNamed_nid_no_patch(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo(name);
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, isDefault);
+}
+APS5_EXPORT("WK24j1F3rCU", NumpunctConstructNamed_nid_no_patch);
+
+void APS5_VABI NumpunctDestroy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+APS5_EXPORT("xFva4yxsVW8", NumpunctDestroy_nid_no_patch);
+
+void APS5_VABI NumpunctDelete_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
+    _ZdlPv_nid_postfix(self);
+}
+APS5_EXPORT("Lf6h5krl2fA", NumpunctDelete_nid_no_patch);
+
+void APS5_VABI _ZNSt8numpunctIcE5_InitERKSt8_Locinfob_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault) {
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcE5_TidyEv_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1ERKSt8_Locinfomb_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    NumpunctConstructFromLocinfo_nid_no_patch(self, locinfo, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2EPKcmb_nid_postfix(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    NumpunctConstructNamed_nid_no_patch(self, name, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcED1Ev_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
