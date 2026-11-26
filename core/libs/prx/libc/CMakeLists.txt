@@ -255,6 +255,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxPlainMutex.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/NumericLimits.cpp
 )
 
 find_package(Git QUIET)
@@ -2744,6 +2745,18 @@ if(BUILD_TESTING)
     add_test(NAME guest_locale COMMAND guest_locale_tests)
     if(WIN32)
         set_tests_properties(guest_locale PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(guest_numpunct_facet_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestNumpunctFacet.cpp)
+target_include_directories(guest_numpunct_facet_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_numpunct_facet_tests PRIVATE libc)
+configure_windows_unwind(guest_numpunct_facet_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_numpunct_facet_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_numpunct_facet COMMAND guest_numpunct_facet_tests)
+    if(WIN32)
+        set_tests_properties(guest_numpunct_facet PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
