@@ -77,7 +77,7 @@ Keep screenshot requests outside a timed comparison window: readback and PNG enc
 |---|---|---|
 | Exit code | shell | Linux: 124 time cap, 134 uncaught exception, 139 segfault, 137 killed. Windows: the exception code, `0xc0000005` access violation, `0xc0000409` uncaught exception or `abort()` (the log ends with `FATAL: abort() (SIGABRT) on thread N`) (PowerShell shows it signed, -1073740791) |
 | Last lines | `run.log` or `anyps5.log` | `terminate called`, `what()`, `presentation failed`, `ASSERT`, `FATAL:` crash report |
-| Frames | `[present] N presents over 10 s` | Steady N above 0 means frames are moving |
+| Presents | `[present] N presents over 10 s` | A positive count records presents; verify visible animation or a scene transition before claiming gameplay progress |
 | Memory | `[texture] N storage images (X MiB)` | Growth before a `vkAllocateMemory ... -2` error |
 | Queue waits | `[packets] ... WAIT_REG_MEM_64 ...` | A queue spending the window waiting on the GPU |
 | Milestones | `Level has started: <name>` | How far the title got |
