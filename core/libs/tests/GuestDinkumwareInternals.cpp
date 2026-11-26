@@ -598,6 +598,15 @@ void TestDoubleHelpers() {
     CheckFExp(-0x1.fd4b92p+5f, 1.0f, -3, 0x1.1d1806p-95f, Finite, 0, FE_INEXACT, "_FExp rounds a scaled small result as titles do");
     CheckFExp(0x1.5e147ap+4f, 2.0f, 3, 0x1.7b078cp+35f, Finite, 0, FE_INEXACT, "_FExp rounds a large product as titles do");
     CheckFExp(0x1.0644b8p-24f, 0.25f, 2, 0x1.000002p+0f, Finite, 0, FE_INEXACT, "_FExp evaluates arguments above half an epsilon");
+    const auto requireInvalidArgument = [](auto&& action, const char* label) {
+        bool threw = false;
+        try { action(); } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw, label);
+    };
+    requireInvalidArgument([] { _Exp_nid_postfix(nullptr, 1.0, 0); }, "_Exp rejects null value");
+    requireInvalidArgument([] { _Exp_nid_postfix(reinterpret_cast<double*>(0x10), 1.0, 0); }, "_Exp rejects unreadable value");
+    requireInvalidArgument([] { _FExp_nid_postfix(nullptr, 1.0f, 0); }, "_FExp rejects null value");
+    requireInvalidArgument([] { _FExp_nid_postfix(reinterpret_cast<float*>(0x10), 1.0f, 0); }, "_FExp rejects unreadable value");
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
