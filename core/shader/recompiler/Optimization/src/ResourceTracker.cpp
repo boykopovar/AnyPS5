@@ -1326,6 +1326,9 @@ private:
         if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || handle.Parent() == nullptr) {
             return false;
         }
+        if (observed != nullptr && observed->Parent() != nullptr && !AvailableBefore(*observed, handle)) {
+            return false;
+        }
         const auto& memoryInfo = m_program.Resources().memoryInfo;
         std::array<LaneTableRead, 8> reads {};
         const MemoryInfo* first = nullptr;
