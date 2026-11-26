@@ -283,10 +283,10 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     if (!TryRead(c, frame.cieEnd, version)) return false;
     if (version != 1 && version != 3 && version != 4) return false;
     augmentation = reinterpret_cast<const char*>(c);
-    while (true) {
-        if (c >= frame.cieEnd) return false;
-        if (!*c++) break;
-    }
+    while (c < frame.cieEnd && *c != 0) ++c;
+    if (c >= frame.cieEnd) return false;
+    const char* const augmentationEnd = reinterpret_cast<const char*>(c);
+    ++c;
     if (version == 4) {
         Byte addressSize {}, segmentSize {};
         if (!TryRead(c, frame.cieEnd, addressSize) || !TryRead(c, frame.cieEnd, segmentSize)) return false;
@@ -310,12 +310,12 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
     frame.returnRegister = static_cast<unsigned>(returnReg);
     Byte pointerEncoding = 0;
     lsdaEncoding = 255;
-    if (*augmentation == 'z') {
+    if (augmentation < augmentationEnd && *augmentation == 'z') {
         Word size {};
         if (!TryUleb(c, frame.cieEnd, size)) return false;
         if (size > static_cast<Word>(frame.cieEnd - c)) return false;
         const Byte* end = c + size;
-        for (const char* a = augmentation + 1; *a; ++a) {
+        for (const char* a = augmentation + 1; a < augmentationEnd; ++a) {
             switch (*a) {
             case 'R': if (!TryRead(c, end, pointerEncoding)) return false; break;
             case 'L': if (!TryRead(c, end, lsdaEncoding)) return false; break;
@@ -330,7 +330,7 @@ inline bool DecodeRange(Frame& frame, const Lookup& query, const Byte*& p, const
             }
         }
         c = end;
-    } else if (*augmentation) return false;
+    } else if (augmentation < augmentationEnd) return false;
     frame.cieBegin = c;
     if (!TryEncoded(p, frame.end, pointerEncoding, frame.start, query.data, 0, query.text)) return false;
     if (!TryEncoded(p, frame.end, pointerEncoding & 15, frame.length)) return false;

@@ -501,6 +501,23 @@ void UnwindBounds() {
         LibcUnwind::Lookup shortLsdaQuery{targetPc + 4, &shortLsdaBuf[24], 0, 0, 0, &shortLsdaBuf[52], shortLsdaBuf.data()};
         Require(LibcUnwind::DecodeRange(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeRange failed before LSDA bounds check");
         Require(!LibcUnwind::DecodeFdeAugmentation(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation accepted truncated LSDA inside FDE augmentation");
+
+        std::array<LibcUnwind::Byte, 32> unterminatedAugBuf = {
+            0x07, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R',
+            0x10, 0x00, 0x00, 0x00,
+            0x0f, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00
+        };
+        LibcUnwind::Lookup unterminatedAugQuery{0x1000, &unterminatedAugBuf[11], 0, 0, 0, unterminatedAugBuf.data() + 31, unterminatedAugBuf.data(), unterminatedAugBuf.data(), &unterminatedAugBuf[11]};
+        Require(!LibcUnwind::DecodeRange(badFrame, unterminatedAugQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an unterminated CIE augmentation string reaching cieEnd");
+
+        LibcUnwind::Lookup unterminatedAugNoSectionEndQuery{0x1000, &unterminatedAugBuf[11], 0, 0, 0, unterminatedAugBuf.data() + 31, unterminatedAugBuf.data()};
+        Require(!LibcUnwind::DecodeRange(badFrame, unterminatedAugNoSectionEndQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an unterminated CIE augmentation string reaching CIE record end");
     }
 }
 
