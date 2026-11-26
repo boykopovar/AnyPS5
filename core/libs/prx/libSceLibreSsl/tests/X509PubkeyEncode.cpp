@@ -91,6 +91,37 @@ void Run() {
     }
     Require(threw, "an unsupported parameter throws");
     parameter.type = 5;
+
+    LibreSslAsn1TypeValue integerParameter{};
+    integerParameter.type = 2;
+    unsigned char integerBytes[] = {0x80};
+    Asn1String integerValue{1, 2, integerBytes, 0};
+    integerParameter.value.pointer = &integerValue;
+    algor.parameter = &integerParameter;
+    const std::vector<unsigned char> expectedInteger = {
+        0x30, 0x17, 0x30, 0x0f, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+        0x01, 0x01, 0x01, 0x02, 0x02, 0x00, 0x80, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03};
+    std::array<unsigned char, 32> integerBuffer{};
+    unsigned char* integerCursor = integerBuffer.data();
+    Require(i2d_X509_PUBKEY_nid_postfix(&key, &integerCursor) == static_cast<int>(expectedInteger.size()),
+            "an integer parameter is encoded");
+    Require(std::memcmp(integerBuffer.data(), expectedInteger.data(), expectedInteger.size()) == 0,
+            "an integer parameter keeps its sign byte");
+
+    LibreSslAsn1TypeValue booleanParameter{};
+    booleanParameter.type = 1;
+    booleanParameter.value.pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    algor.parameter = &booleanParameter;
+    const std::vector<unsigned char> expectedBoolean = {
+        0x30, 0x13, 0x30, 0x0b, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+        0x01, 0x01, 0x01, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03};
+    std::array<unsigned char, 32> booleanBuffer{};
+    unsigned char* booleanCursor = booleanBuffer.data();
+    Require(i2d_X509_PUBKEY_nid_postfix(&key, &booleanCursor) == static_cast<int>(expectedBoolean.size()),
+            "an absent boolean parameter is omitted");
+    Require(std::memcmp(booleanBuffer.data(), expectedBoolean.data(), expectedBoolean.size()) == 0,
+            "the omitted boolean changes the DER");
+    algor.parameter = &parameter;
     Require(allocations == baseline, "the heap returns to its baseline");
 }
 
