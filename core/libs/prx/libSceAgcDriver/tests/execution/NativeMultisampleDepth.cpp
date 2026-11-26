@@ -2336,7 +2336,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
-enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, UnmappedPartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst, StencilSameValueStore, StencilOtherValueStore };
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, UnmappedPartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst, StencilSameValueStore, StencilOtherValueStore, UnmappedPartialHtileFill };
 enum class PlaneFill { None, Htile, Stencil, Both };
 
 void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, PlaneFill fill, PlaneFault fault = PlaneFault::None, bool pipeAligned = true) {
@@ -2429,6 +2429,12 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         sample(fetch, &hit, 0.25f, 0.25f);
         sample(bareFetch, nullptr, 0.0f, 0.25f);
     }
+    if (fault == PlaneFault::UnmappedPartialHtileFill) {
+        RetireUnmappedDepth_nid_no_patch(target.htileAddress, metadataBytes);
+        NoteDepthMetadataFill(target.htileAddress, metadataBytes - 4u, clearWord);
+        Require(CachedSampledTexture(context, words) == texture, "a fill over an unmapped HTILE plane replaced the sampled view");
+        sample(fetch, nullptr, 0.0f, 0.25f);
+    }
     const bool htileFill = fill == PlaneFill::Htile || fill == PlaneFill::Both;
     const bool stencilFill = fill == PlaneFill::Stencil || fill == PlaneFill::Both;
     const std::uint8_t stencilValue = one ? 0x11u : 0u;
@@ -2446,7 +2452,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
             if (fault == PlaneFault::StencilFillStoredFirst) storeStencil();
             if (fault == PlaneFault::UnmappedPartialStencilFill) RetireUnmappedDepth_nid_no_patch(stencil.Address(), stencilBytes);
             NoteDepthMetadataFill(stencil.Address(), fillBytes, pattern);
-            if (fault != PlaneFault::StencilFillUnstored && fault != PlaneFault::StencilFillStoredFirst) storeStencil();
+            if (fault != PlaneFault::StencilFillUnstored && fault != PlaneFault::StencilFillStoredFirst && fault != PlaneFault::UnmappedPartialStencilFill) storeStencil();
             if (fault == PlaneFault::StencilFillCpuWrite) stencil.Data()[stencilBytes - 1u] ^= std::byte{0x01};
         }
         Require(CachedSampledTexture(context, words) == texture, "a whole-plane fill replaced the sampled view of a target with a separate stencil plane");
@@ -2460,7 +2466,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         sample(fetch, &other, 0.375f, 0.25f);
         sample(bareFetch, nullptr, 0.0f, 0.25f);
     }
-    if (stencilFill && fault == PlaneFault::UnmappedPartialStencilFill) Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes / 2u, [&](auto value) { return value == std::byte{stencilValue}; }) && std::equal(imported.begin() + stencilBytes / 2u, imported.end(), stencil.Data() + stencilBytes / 2u), "a fill over an unmapped stencil plane changed guest bytes it did not store");
+    if (stencilFill && fault == PlaneFault::UnmappedPartialStencilFill) Require(std::equal(imported.begin(), imported.end(), stencil.Data()), "a fill over an unmapped stencil plane changed the guest stencil bytes");
     else if (stencilFill) Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [&](auto value) { return value == std::byte{stencilValue}; }), "native depth sampling with a separate stencil plane changed the filled guest stencil plane");
     else Require(std::equal(imported.begin(), imported.end(), stencil.Data()), "native depth sampling with a separate stencil plane changed the guest stencil plane");
     bare.reset();
@@ -5891,6 +5897,8 @@ int main(int argc, char** argv) {
             std::puts("Native depth with a separate stencil plane accepted a fill stored before its note");
             CheckSeparateStencilTarget(context, 4u, true, PlaneFill::Stencil, PlaneFault::UnmappedPartialStencilFill, false);
             std::puts("Native depth with a separate stencil plane ignored a partial fill over its unmapped stencil plane");
+            CheckSeparateStencilTarget(context, 4u, true, PlaneFill::None, PlaneFault::UnmappedPartialHtileFill, false);
+            std::puts("Native depth with a separate stencil plane ignored a partial fill over its unmapped HTILE");
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!supported(samples)) { unavailable += 4u; continue; }
                 for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote, GhostFill::QueuedBeforeNote, GhostFill::QueuedNotedTwice}) { CheckGhostSequence(context, samples, path); ++checked; }
