@@ -674,6 +674,32 @@ void RawCallAfterLookupKeepsOrder() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0", "draw 3 1 0 0", "draw 4 1 0 0"}}}, "a raw call after a lookup inside a window");
 }
 
+class StalledReplay {
+public:
+    StalledReplay() {
+        CommandEncoder::SetDelayForTesting([this] { closed.wait(true, std::memory_order_acquire); });
+        CommandEncoder::SetBlockedHookForTesting([this] {
+            closed.store(false, std::memory_order_release);
+            closed.notify_all();
+        });
+    }
+
+    StalledReplay(const StalledReplay&) = delete;
+    StalledReplay& operator=(const StalledReplay&) = delete;
+
+    ~StalledReplay() {
+        closed.store(false, std::memory_order_release);
+        closed.notify_all();
+        CommandEncoder::SetBlockedHookForTesting({});
+        CommandEncoder::SetDelayForTesting({});
+    }
+
+    void StallNextPost() { closed.store(true, std::memory_order_release); }
+
+private:
+    std::atomic<bool> closed{false};
+};
+
 const CommandEncoder::SiteWaits* SiteOf(const std::vector<CommandEncoder::SiteWaits>& sites, const CommandEncoder::WaitSite& site) {
     const auto wanted = CommandEncoder::Describe(site);
     const CommandEncoder::SiteWaits* found = nullptr;
@@ -691,7 +717,6 @@ void RequireSite(const std::vector<CommandEncoder::SiteWaits>& sites, const Comm
     Require(entry != nullptr, "no waits were attributed to " + name + "; sites:" + CommandEncoder::Report(sites, sites.size()));
     Require(entry->waits == waits, name + " waited " + std::to_string(entry->waits) + " times, expected " + std::to_string(waits));
     Require(entry->flushes == flushes, name + " flushed " + std::to_string(entry->flushes) + " chunks, expected " + std::to_string(flushes));
-    Require(entry->waitNs >= waits * 1'000'000ull, name + " reported " + std::to_string(entry->waitNs) + " ns for " + std::to_string(waits) + " waits on a 2 ms replay");
 }
 
 void SetEnvironment(const char* name, const char* value) {
@@ -710,12 +735,12 @@ void SitesAreCountedOnlyWhenProfiled() {
     const auto attached = Attached(device, table);
     auto& encoder = *attached;
     const auto commands = Handle<VkCommandBuffer>(0x1800);
-    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    StalledReplay replay;
     encoder.Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
+    replay.StallNextPost();
     encoder.Quiesce();
     encoder.Close();
-    CommandEncoder::SetDelayForTesting({});
     Require(!encoder.ProfilesSites(), "the encoder profiles its wait sites with APS5_PROFILE_ENCODER=0");
     Require(encoder.Counts().waits == 1, "the encoder's wait total is not kept without APS5_PROFILE_ENCODER");
     Require(encoder.WaitsBySite().empty(), "wait sites were counted without APS5_PROFILE_ENCODER:" + CommandEncoder::Report(encoder.WaitsBySite(), CommandEncoder::TrackedSites));
@@ -735,7 +760,7 @@ void WaitsAreAttributedToTheirCallSites() {
     const auto second = Handle<VkCommandBuffer>(0x1580);
     const VkMemoryBarrier link{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     const VkMemoryBarrier chainedBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, &link, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};
-    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+    StalledReplay replay;
     const auto repeated = std::source_location::current();
     const auto once = std::source_location::current();
     const auto lookup = std::source_location::current();
@@ -744,24 +769,29 @@ void WaitsAreAttributedToTheirCallSites() {
     encoder.Open(first, RecordingOf(first));
     for (int round = 0; round < 2; ++round) {
         table.cmdDraw(first, 1, 1, 0, 0);
+        replay.StallNextPost();
         encoder.Quiesce(repeated);
     }
     table.cmdDraw(first, 2, 1, 0, 0);
+    replay.StallNextPost();
     encoder.Quiesce(once);
     table.cmdDraw(first, 3, 1, 0, 0);
+    replay.StallNextPost();
     table.cmdPipelineBarrier(first, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &chainedBarrier, 0, nullptr, 0, nullptr);
     table.cmdDraw(first, 4, 1, 0, 0);
+    replay.StallNextPost();
     AgcDriver::Graphics::BeforeCommandLookup(device, lookup);
     table.cmdDraw(first, 5, 1, 0, 0);
+    replay.StallNextPost();
     encoder.Close();
     table.cmdDraw(first, 6, 1, 0, 0);
     encoder.Open(first, RecordingOf(first));
     table.cmdDraw(first, 7, 1, 0, 0);
+    replay.StallNextPost();
     encoder.Close();
     encoder.Open(second, RecordingOf(second), opened);
     encoder.Close();
     encoder.Quiesce(idle);
-    CommandEncoder::SetDelayForTesting({});
     const auto sites = encoder.WaitsBySite();
     RequireSite(sites, Site::At(Wait::Quiesce, repeated), 2, 2);
     RequireSite(sites, Site::At(Wait::Quiesce, once), 1, 1);

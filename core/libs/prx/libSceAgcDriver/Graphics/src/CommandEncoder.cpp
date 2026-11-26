@@ -83,6 +83,11 @@ TestDelay& testDelay() {
     return value;
 }
 
+TestDelay& testBlocked() {
+    static TestDelay value;
+    return value;
+}
+
 bool sameSite(const CommandEncoder::WaitSite& left, const CommandEncoder::WaitSite& right) {
     if (left.kind != right.kind || left.line != right.line) return false;
     if (left.detail == right.detail) return true;
@@ -814,6 +819,10 @@ void CommandEncoder::await(const WaitSite& site, bool flushed) noexcept {
         if (flushed) note(site, 0, false, true);
         return;
     }
+    if (auto& hook = testBlocked(); hook.set.load(std::memory_order_relaxed)) [[unlikely]] {
+        std::lock_guard hookLock(hook.mutex);
+        if (hook.delay) hook.delay();
+    }
     const auto start = std::chrono::steady_clock::now();
     if (!SpinUntil(HandoffSpinWindow(), [&] { return executed.load(std::memory_order_acquire) >= through; })) {
         for (auto seen = executed.load(std::memory_order_acquire); seen < through; seen = executed.load(std::memory_order_acquire)) executed.wait(seen, std::memory_order_acquire);
@@ -996,6 +1005,13 @@ void CommandEncoder::SetDelayForTesting(std::function<void()> delay) {
     auto& hook = testDelay();
     std::lock_guard lock(hook.mutex);
     hook.delay = std::move(delay);
+    hook.set.store(static_cast<bool>(hook.delay), std::memory_order_release);
+}
+
+void CommandEncoder::SetBlockedHookForTesting(std::function<void()> blocked) {
+    auto& hook = testBlocked();
+    std::lock_guard lock(hook.mutex);
+    hook.delay = std::move(blocked);
     hook.set.store(static_cast<bool>(hook.delay), std::memory_order_release);
 }
 

@@ -214,6 +214,7 @@ public:
     std::vector<SiteWaits> WaitsBySite() const;
     bool ProfilesSites() const { return profiled; }
     static void SetDelayForTesting(std::function<void()> delay);
+    static void SetBlockedHookForTesting(std::function<void()> blocked);
     static void FailNextWorkerStartsForTest(unsigned count);
     static std::size_t LiveChunks();
     class UnwindQuiesce {
