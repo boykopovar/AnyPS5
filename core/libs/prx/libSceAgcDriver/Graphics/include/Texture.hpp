@@ -654,6 +654,7 @@ private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
+    VkClearColorValue imageClearValue(VkClearColorValue value) const;
     void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
     void captureGuestBytes(const std::vector<bool>* layers, bool keepWritten = false);

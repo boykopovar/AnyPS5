@@ -1829,11 +1829,16 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     return texture;
 }
 
-void StorageTexture::clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range) {
+VkClearColorValue StorageTexture::imageClearValue(VkClearColorValue value) const {
     if (imageFormat == VK_FORMAT_R8G8B8A8_UINT && storageFormat == VK_FORMAT_R32_UINT) {
         const auto bits = value.uint32[0];
         for (std::uint32_t component = 0; component < 4; ++component) value.uint32[component] = (bits >> (8 * component)) & 0xffu;
     }
+    return value;
+}
+
+void StorageTexture::clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range) {
+    value = imageClearValue(value);
     clearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
 }
 
@@ -7440,6 +7445,8 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
         refusal = "no recorder";
         return false;
     }
+    const auto target = Image(level);
+    const auto physicalLevel = ImageMipLevel(level);
     bool aliasedKeys = false;
     {
         auto& live = Live();
@@ -7460,10 +7467,10 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
     Recorder::CountBarriers(Recorder::CommandClass::FillClear, 2);
     if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
     if (Recorder::BarrierValidate()) {
-        const std::pair<VkImage, bool> cleared{image, true};
+        const std::pair<VkImage, bool> cleared{target, true};
         recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
-    VkImageSubresourceRange subresource{VK_IMAGE_ASPECT_COLOR_BIT, level, 1u, 0u, 1u};
+    VkImageSubresourceRange subresource{VK_IMAGE_ASPECT_COLOR_BIT, physicalLevel, 1u, 0u, 1u};
     VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -7471,10 +7478,11 @@ bool StorageTexture::ClearMip(const std::array<std::byte, 16>& texel, std::uint3
     toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toClear.image = image;
+    toClear.image = target;
     toClear.subresourceRange = subresource;
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toClear);
-    clearImage(commands, clearValue, subresource);
+    clearValue = imageClearValue(clearValue);
+    context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearValue, 1u, &subresource);
     VkImageMemoryBarrier toGeneral = toClear;
     toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;

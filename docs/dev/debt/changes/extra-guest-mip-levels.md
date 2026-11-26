@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [Mip levels past the full chain](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureTiling.cpp): sampled textures and block/depth copies expose only the physical root chain; filtered samples/gathers beyond it read its last level. Unsupported shader accesses retain the refusals in [shader](shader.md); console LOD selection remains unmeasured. Storage textures back each extra 1x1x1 level separately, preserving layers and guest offsets through uploads, storage/color views and writeback. Ownership, pending writes and accounting cover the whole surface. Whole-surface fill/copy optimizations retain their extra-level refusal and use guest-memory operations; tracking remains per layer. Uniform DCC uploads/clears reach all backed levels. Guest tiling and DCC console equivalence remain unverified.
+- [Mip levels past the full chain](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureTiling.cpp): sampled textures and block/depth copies expose only the physical root chain; filtered samples/gathers beyond it read its last level. Unsupported shader accesses retain the refusals in [shader](shader.md); console LOD selection remains unmeasured. Storage textures back each extra 1x1x1 level separately, preserving layers and guest offsets through uploads, storage/color views and writeback. Ownership, pending writes and accounting cover the whole surface. Whole-surface fill/copy optimizations retain their extra-level refusal and use guest-memory operations; tracking remains per layer. Uniform DCC uploads/clears reach all backed levels. Admitted single-mip clears select only their own backing; packed-tail mip clears still refuse. Guest tiling and DCC console equivalence remain unverified.
 
 # shader
 
