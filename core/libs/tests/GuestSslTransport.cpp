@@ -46,6 +46,7 @@ constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorSocketClosed = static_cast<int>(0x8095170d);
+constexpr int ErrorOutOfMemory = static_cast<int>(0x809517d5);
 constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
@@ -312,9 +313,14 @@ struct Server {
 struct Sockets {
     bool net;
 
-    int Open(std::uint16_t port) const {
+    int Create() const {
         const int descriptor = net ? sceNetSocket("ssl", 2, 1, 6) : socket_nid_postfix(2, 1, 6);
         Require(descriptor >= 0, "create guest socket");
+        return descriptor;
+    }
+
+    int Open(std::uint16_t port) const {
+        const int descriptor = Create();
         std::array<std::uint8_t, 16> address{16, 2, static_cast<std::uint8_t>(port >> 8), static_cast<std::uint8_t>(port), 127, 0, 0, 1};
         Require((net ? sceNetConnect(descriptor, address.data(), 16) : connect_nid_postfix(descriptor, address.data(), 16)) == 0,
             "connect guest socket");
@@ -367,6 +373,7 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Future);
         if (sockets.net) server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
+        server.Serve(Serve::Close, false);
     });
 
     Require(sceSslInit_nid_postfix(0) == static_cast<int>(0x80020016), "an empty pool was accepted");
@@ -407,6 +414,13 @@ int main(int argc, char** argv) {
     Require(Throws([&] { sceSslGetSubjectName(empty, accepting.leaf); }), "a peer certificate handle outlived its connection");
     Require(sceSslTerm_nid_postfix(empty) == 0, "release the context without CA");
     Require(sceSslTerm_nid_postfix(empty) == ErrorInvalidId, "a second context termination did not report an invalid id");
+
+    const int small = sceSslInit_nid_postfix(16 * 1024);
+    const int smallSocket = sockets.Create();
+    const int smallConnection = sceSslCreateConnection(small, smallSocket, "localhost");
+    Require(sceSslConnect(smallConnection) == ErrorOutOfMemory, "an exhausted pool did not report out of memory from connect");
+    Require(sceSslDeleteConnection(smallConnection) == 0 && sockets.Close(smallSocket) == 0, "release the connection whose pool was exhausted");
+    Require(sceSslTerm_nid_postfix(small) == 0, "release the context whose pool was exhausted");
 
     const int context = sceSslInit_nid_postfix(1024 * 1024);
     std::string root = RootPem;
@@ -597,6 +611,17 @@ int main(int argc, char** argv) {
     }
     for (auto& client : clients) client.join();
     Require(InUse(context) == loaded, "parallel connections did not return their pool memory");
+
+    const int bounded = sceSslInit_nid_postfix(256 * 1024);
+    std::string boundedRoot = RootPem;
+    SceSsl::Data boundedAuthority{reinterpret_cast<std::uint8_t*>(boundedRoot.data()), boundedRoot.size()};
+    auto* boundedAuthorities = &boundedAuthority;
+    Require(sceSslLoadCert(bounded, 1, &boundedAuthorities, nullptr, nullptr) == 0, "load the fixture root into a 256 KiB pool");
+    const int boundedSocket = sockets.Open(server.port);
+    const int boundedConnection = sceSslCreateConnection(bounded, boundedSocket, "localhost");
+    Require(sceSslConnect(boundedConnection) == 0, "a 256 KiB pool did not hold the connection");
+    Require(sceSslDeleteConnection(boundedConnection) == 0 && sockets.Close(boundedSocket) == 0, "release the 256 KiB connection");
+    Require(sceSslTerm_nid_postfix(bounded) == 0, "release the 256 KiB context");
 
     serving.join();
     Require(server.failure.empty(), server.failure.c_str());

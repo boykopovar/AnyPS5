@@ -88,6 +88,7 @@ constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorSocketClosed = static_cast<int>(0x8095170d);
+constexpr int ErrorOutOfMemory = static_cast<int>(0x809517d5);
 constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
@@ -1070,7 +1071,11 @@ extern "C" {
 
 int APS5_VABI sceSslConnect(int sslConnectionId) {
     std::shared_ptr<Session> session;
-    return Establish(__func__, sslConnectionId, session);
+    try {
+        return Establish(__func__, sslConnectionId, session);
+    } catch (const std::bad_alloc&) {
+        return ErrorOutOfMemory;
+    }
 }
 
 int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) {
