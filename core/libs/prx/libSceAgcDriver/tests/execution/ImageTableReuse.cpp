@@ -260,6 +260,35 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
 }
 
+void RunUntrackedImageTableMutation(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    alignas(256) static std::array<std::array<float, Width * Height>, Records> pixels;
+    for (std::uint32_t record = 0; record < Records; ++record) {
+        auto& image = pixels[record];
+        for (std::size_t i = 0; i < image.size(); ++i) image[i] = static_cast<float>(record * image.size() + i);
+        Require(AgcDriver::GuestMemory::CollectWrites(AddressOf(image.data()), sizeof(image)) == 0, "image table mutation: the source unexpectedly has a write generation");
+        SetRecord(block, record, record);
+        const auto entry = Image(image.data());
+        std::copy(entry.begin(), entry.end(), block.Table() + record * (Stride / 4u) + 4);
+        Keys[record] = record;
+    }
+    const auto table = Buffer(block.Table(), Records * Stride);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(table.begin(), table.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    SetOutput(Output.data());
+    const auto result = Compile(device, block);
+    constexpr std::uint32_t changed = 13;
+    constexpr std::uint32_t neighbor = changed + 1;
+    const auto original = Row(pixels[changed].data());
+    Require(Dispatch(device, result, changed) == original, "image table mutation: the first sample of the untracked source was wrong");
+    Require(Dispatch(device, result, changed) == original, "image table mutation: an unchanged source returned different texels");
+    for (auto& texel : pixels[changed]) texel += 0.5f;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(AgcDriver::GuestMemory::CollectWrites(AddressOf(pixels[changed].data()), sizeof(pixels[changed])) == 0, "image table mutation: the CPU store unexpectedly supplied a write generation");
+    Require(Dispatch(device, result, changed) == Row(pixels[changed].data()), "image table mutation: reusing the descriptor returned stale texels after an untracked CPU write");
+    Require(Dispatch(device, result, neighbor) == Row(pixels[neighbor].data()), "image table mutation: an adjacent descriptor returned the changed image");
+}
+
 bool RunEntryMemo(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
     using AgcDriver::Graphics::ShaderResources;
     namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
@@ -774,6 +803,14 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
 int main(int argc, char** argv) {
     try {
         const std::string selected = argc > 1 ? argv[1] : "";
+        if (selected == "--untracked-mutation") {
+            GuestBlock block;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            RunUntrackedImageTableMutation(*device, block);
+            std::puts("untracked image table mutation test passed");
+            return 0;
+        }
         if (selected == "--retaken-depth-surface" || selected == "--retaken-cleared-depth-surface" || selected == "--retaken-mirrored-depth-surface" || selected == "--retired-depth-surface") {
             GuestBlock block(UnimportableBytes);
             const auto device = OpenVulkanTestDevice();
