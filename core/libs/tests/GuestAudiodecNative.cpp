@@ -132,11 +132,11 @@ int main(int argc, char** argv) {
 
     bool termNullCaught = false;
     try {
-        sceAudiodecTerminate(nullptr);
+        static_cast<void>(sceAudiodecTerminate(nullptr));
     } catch (const std::runtime_error&) {
         termNullCaught = true;
     }
-    Require(termNullCaught, "Terminate null context reaches service");
+    Require(!termNullCaught, "Terminate null context returns before service");
 
     Require(sceAudiodecRegisterCodec(nullptr, 1) == ErrorArgument, "RegisterCodec null context");
     for (std::uint32_t invalidType : {0u, 5u, 7u, 8u, 9u, 13u, 100u}) {

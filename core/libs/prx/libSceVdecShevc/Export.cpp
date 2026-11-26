@@ -49,7 +49,7 @@ std::uint64_t ReadQuad(const void* source, std::size_t offset, const char* funct
 }
 
 bool HasNoDecoder(const void* handle, const char* function) {
-    return handle == nullptr || ReadQuad(handle, 0, function) == 0;
+    return handle == nullptr || ReadQuad(handle, 0, function) == 0 || ReadQuad(handle, 0x10, function) == 0;
 }
 
 LevelLimits LevelLimitsFor(std::uint8_t levelIdc) {
