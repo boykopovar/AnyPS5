@@ -1815,6 +1815,11 @@ int main() {
     PadData earlyPadData{};
     Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    for (const int earlyHandle : {earlyPad, 0x999}) {
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, &earlyPadData, 0) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 0) == PAD_ERROR_NOT_INITIALIZED);
+    }
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     for (const int earlyHandle : {earlyPad, 0x999}) {
