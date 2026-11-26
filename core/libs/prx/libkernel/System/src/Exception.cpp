@@ -180,19 +180,19 @@ bool SiginfoFault(int signum) {
     return (signum == SignalSegmentation || signum == SignalBus) && SiginfoFaultHandlerInstalled(signum);
 }
 
-std::int32_t SiginfoCode(int signum, const Trap& trap) {
-    if (signum == SignalSegmentation) return (trap.error & PageProtection) != 0 ? 2 : 1;
+std::int32_t SiginfoCode(int signum, const Trap& trap, std::int32_t hostCode) {
+    if (signum == SignalSegmentation) return hostCode != 0 ? hostCode : (trap.error & PageProtection) != 0 ? 2 : 1;
     return trap.number == TrapAlignment ? 1 : 3;
 }
 
-void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}, bool siginfo = false) {
+void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucontext, const Trap& trap = {}, bool siginfo = false, std::int32_t hostCode = 0) {
     auto& m = ucontext.mcontext;
     m.trapno = trap.number;
     m.addr = trap.address;
     m.err = trap.error;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
-    if (siginfo) RunSiginfoFaultHandler(signum, SiginfoCode(signum, trap), trap.number == TrapPage ? trap.address : m.rip, trap.number, &ucontext);
+    if (siginfo) RunSiginfoFaultHandler(signum, SiginfoCode(signum, trap, hostCode), trap.number == TrapPage ? trap.address : m.rip, trap.number, &ucontext);
     else handler(signum, &ucontext);
     SetFpWord(m, MxcsrOffset, FpWord(m, MxcsrOffset) & (mxcsrMask != 0 ? mxcsrMask : DefaultMxcsrMask));
     SetFpWord(m, MxcsrMaskOffset, mxcsrMask);
@@ -1279,7 +1279,8 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     }
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
-    CallHandler(handler, fault.signum, ucontext, fault.trap, siginfo);
+    const bool hostClassified = hostSignal == SIGSEGV && fault.signum == SignalSegmentation && (info->si_code == SEGV_MAPERR || info->si_code == SEGV_ACCERR);
+    CallHandler(handler, fault.signum, ucontext, fault.trap, siginfo, hostClassified ? info->si_code : 0);
     ToHost(ucontext.mcontext, host);
 }
 

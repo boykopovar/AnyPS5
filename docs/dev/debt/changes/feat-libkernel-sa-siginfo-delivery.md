@@ -10,7 +10,7 @@
 
 ## add Functional
 
-- [SA_SIGINFO fault handlers](../../../core/libs/prx/libkernel/System/src/Exception.cpp) (libkernel) - an `SA_SIGINFO` handler on `SIGSEGV` or `SIGBUS` runs for a host fault in guest code only on Windows and Linux, not on macOS, and only while no `sceKernelInstallExceptionHandler` handler is set for the signal and it is not blocked. Only `si_signo`, `si_code` (`SEGV_MAPERR`, `SEGV_ACCERR`, `BUS_ADRALN` or `BUS_OBJERR`), `si_addr` (the instruction for a fault that is not a page fault) and the trap number at offset 40 are written; the `ucontext_t` is the one `sceKernelInstallExceptionHandler` handlers get. `SA_ONSTACK` is not applied, so a fault from a stack overflow is not delivered. The console's values for these fields are not measured.
+- [SA_SIGINFO fault handlers](../../../core/libs/prx/libkernel/System/src/Exception.cpp) (libkernel) - an `SA_SIGINFO` handler on `SIGSEGV` or `SIGBUS` runs for a host fault in guest code only on Windows and Linux, while no `sceKernelInstallExceptionHandler` handler is set for the signal and it is not blocked. `SA_ONSTACK` is not applied, so a stack overflow fault is not delivered. On Linux, once the signal is back to its default disposition, the host fault handler is not installed again and a later handler does not run, as for `sceKernelInstallExceptionHandler`. Only `si_signo`, `si_code`, `si_addr` (the instruction for a fault that is not a page fault) and the trap number at offset 40 are written; `si_code` is the host's on Linux and, on Windows, `SEGV_ACCERR` for a committed page. The `ucontext_t` is the exception handlers' one, with `uc_sigmask` set to the thread mask and applied on return. The console's values are not measured.
 
 # libc
 

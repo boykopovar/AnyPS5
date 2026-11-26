@@ -68,6 +68,19 @@ static constexpr std::uintptr_t NullAddress = 0x10;
 static constexpr std::uint64_t Resumed = 0x600dcafe0000beefULL;
 static constexpr std::uint64_t Stored = 0x0123456789abcdefULL;
 static constexpr std::size_t PageBytes = 4096;
+static constexpr std::uint64_t AnyErr = ~0ULL;
+static constexpr int GuestSigalrm = 14;
+static constexpr int GuestSigusr1 = 30;
+static constexpr int GuestSigblock = 1;
+static constexpr int GuestSigsetmask = 3;
+
+static std::uint32_t SignalBit(int guest) { return 1u << (guest - 1); }
+
+static std::uint32_t BlockedWord() {
+    std::uint32_t blocked[4]{};
+    Require(sigprocmask_nid_postfix(GuestSigblock, nullptr, blocked) == 0);
+    return blocked[0];
+}
 
 template <typename TValue>
 static TValue Field(const void* base, std::size_t offset) {
@@ -87,6 +100,7 @@ struct Expected {
     std::uintptr_t site;
     std::uintptr_t resume;
     std::uint64_t err;
+    bool editMask;
 };
 
 static Expected expected{};
@@ -122,7 +136,11 @@ static void APS5_VABI SiginfoHandler(int signum, void* info, void* context) {
     Require(Field<std::int32_t>(info, InfoTrap) == static_cast<std::int32_t>(TrapPage));
     Require(Field<std::uint32_t>(context, TrapnoOffset) == TrapPage);
     Require(Field<std::uint64_t>(context, AddrOffset) == expected.address);
-    Require((Field<std::uint64_t>(context, ErrOffset) & (PageProtection | PageWrite)) == expected.err);
+    if (expected.err != AnyErr) Require((Field<std::uint64_t>(context, ErrOffset) & (PageProtection | PageWrite)) == expected.err);
+    if (expected.editMask) {
+        Require((Field<std::uint32_t>(context, 0) & SignalBit(GuestSigalrm)) != 0);
+        SetField<std::uint32_t>(context, 0, Field<std::uint32_t>(context, 0) | SignalBit(GuestSigusr1));
+    }
     Require(Field<std::uint64_t>(context, RipOffset) == expected.site);
     if (expected.resume != 0) {
         SetField<std::uint64_t>(context, RipOffset, expected.resume);
@@ -144,7 +162,7 @@ static void Install() {
 
 static void TestUnmappedRead() {
     calls.store(0);
-    expected = {SegvMaperr, NullAddress, reinterpret_cast<std::uintptr_t>(&SiginfoTestReadSite), reinterpret_cast<std::uintptr_t>(&SiginfoTestReadResume), 0};
+    expected = {SegvMaperr, NullAddress, reinterpret_cast<std::uintptr_t>(&SiginfoTestReadSite), reinterpret_cast<std::uintptr_t>(&SiginfoTestReadResume), 0, false};
     Require(SiginfoTestRead(NullAddress) == Resumed);
     Require(calls.load() == 1);
 }
@@ -153,15 +171,40 @@ static void TestWriteToReadOnly() {
     calls.store(0);
     readOnlyPage = ReadOnlyPage();
     const auto address = reinterpret_cast<std::uintptr_t>(readOnlyPage);
-    expected = {SegvAccerr, address, reinterpret_cast<std::uintptr_t>(&SiginfoTestWriteSite), 0, PageProtection | PageWrite};
+    Require(*static_cast<volatile const std::uint64_t*>(readOnlyPage) == 0);
+    expected = {SegvAccerr, address, reinterpret_cast<std::uintptr_t>(&SiginfoTestWriteSite), 0, PageProtection | PageWrite, false};
     Require(SiginfoTestWrite(address, Stored) == Stored);
     Require(calls.load() == 1);
+}
+
+static void TestWriteToUntouchedReadOnly() {
+    calls.store(0);
+    readOnlyPage = ReadOnlyPage();
+    const auto address = reinterpret_cast<std::uintptr_t>(readOnlyPage);
+    expected = {SegvAccerr, address, reinterpret_cast<std::uintptr_t>(&SiginfoTestWriteSite), 0, AnyErr, false};
+    Require(SiginfoTestWrite(address, Stored) == Stored);
+    Require(calls.load() == 1);
+}
+
+static void TestContextMask() {
+    std::uint32_t original[4]{};
+    Require(sigprocmask_nid_postfix(GuestSigblock, nullptr, original) == 0);
+    std::uint32_t alarm[4]{SignalBit(GuestSigalrm), 0, 0, 0};
+    Require(sigprocmask_nid_postfix(GuestSigblock, alarm, nullptr) == 0);
+    calls.store(0);
+    expected = {SegvMaperr, NullAddress, reinterpret_cast<std::uintptr_t>(&SiginfoTestReadSite), reinterpret_cast<std::uintptr_t>(&SiginfoTestReadResume), 0, true};
+    Require(SiginfoTestRead(NullAddress) == Resumed);
+    Require(calls.load() == 1);
+    Require((BlockedWord() & (SignalBit(GuestSigalrm) | SignalBit(GuestSigusr1))) == (SignalBit(GuestSigalrm) | SignalBit(GuestSigusr1)));
+    Require(sigprocmask_nid_postfix(GuestSigsetmask, original, nullptr) == 0);
 }
 
 int main() {
     Install();
     TestUnmappedRead();
     TestWriteToReadOnly();
+    TestWriteToUntouchedReadOnly();
+    TestContextMask();
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigsegv, &reset, nullptr) == 0);
     std::puts("guest siginfo fault tests passed");

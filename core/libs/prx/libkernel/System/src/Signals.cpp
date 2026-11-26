@@ -972,10 +972,18 @@ void RunSiginfoFaultHandler(int guest, std::int32_t code, std::uintptr_t address
     info.code = code;
     info.address = address;
     info.timerid = static_cast<std::int32_t>(trap);
+    auto& context = *static_cast<UserUcontext*>(ucontext);
+    auto& self = CurrentSignals();
+    GuestSignalSet interrupted{};
+    for (int word = 0; word < 4; ++word) interrupted.bits[word] = BlockedWord(self, word);
+    std::memcpy(context.sigmask, interrupted.bits, sizeof(context.sigmask));
     HoldDuring(guest, handlerFlags[guest].load(), [&] {
         handler(guest, &info, ucontext);
         return 0;
     });
+    if (std::memcmp(context.sigmask, interrupted.bits, sizeof(context.sigmask)) == 0) return;
+    const GuestSignalSet restored = ContextMask(context);
+    sigprocmask_nid_postfix(GuestSigsetmask, &restored, nullptr);
 }
 
 extern "C" int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet) {
