@@ -804,7 +804,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslMethod.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslBio.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslLifecycle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslIo.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SslMethod.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslBio.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslLifecycle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SslIo.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyGet.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_ssl_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslSslLifecycle.cpp)
@@ -930,6 +930,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_x509_name_print_ex PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_x509_name_print_ex PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_x509_get_pubkey_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509GetPubkey.cpp)
+    target_include_directories(guest_libressl_x509_get_pubkey_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_x509_get_pubkey_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_x509_get_pubkey_tests)
+    add_test(NAME guest_libressl_x509_get_pubkey COMMAND guest_libressl_x509_get_pubkey_tests)
+    set_tests_properties(guest_libressl_x509_get_pubkey PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl_x509_get_pubkey PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()
