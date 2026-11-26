@@ -260,6 +260,16 @@ class CliTests(FeatureRequired):
                 self.assertIn("error:", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_cli_identifies_the_file_of_a_corrupt_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "corrupt-memory.log"
+            path.write_text("[memory] unmap invalid\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(path.name, result.stderr)
+            self.assertIn("line 1", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

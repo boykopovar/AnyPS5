@@ -2154,7 +2154,10 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         }
     }
     for (std::size_t index = 0; index < info.buffers.size(); ++index) {
-        mix(BaseFormattedReadExtent(info.buffers[index], BufferSpecializationFields(snapshot.buffers.at(index), substitutes, index).word3, snapshot));
+        const auto& buffer = info.buffers[index];
+        if (!buffer.baseFormattedReads) continue;
+        const auto fields = BufferSpecializationFields(snapshot.buffers.at(index), substitutes, index);
+        mix(BaseFormattedReadExtent(buffer, fields.word3, snapshot));
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);

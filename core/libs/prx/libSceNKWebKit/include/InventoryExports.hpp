@@ -79,10 +79,7 @@ int APS5_VABI WKBundleNodeHandleGetElementBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds();
 int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled();
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType();
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType();
 int APS5_VABI WKBundleNodeHandleGetRenderRect();
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType();
 int APS5_VABI WKBundlePageAddUserScript();
 int APS5_VABI WKBundlePageAddUserScriptInWorld();
 int APS5_VABI WKBundlePageAddUserStyleSheet();
@@ -345,7 +342,6 @@ int APS5_VABI WKPageValidateCommand();
 int APS5_VABI WKPreferencesGetQTKitEnabled();
 int APS5_VABI WKRegistrableDomainCreate();
 
-int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo();
 int APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
 int APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
 int APS5_VABI WKViewAccessibilityFocusedObject();

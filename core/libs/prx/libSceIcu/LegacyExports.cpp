@@ -1132,7 +1132,16 @@ int APS5_VABI ures_getVersionNumberInternal_nid_postfix() {
 }
 
 void APS5_VABI uprv_deleteUObject_nid_postfix(void* object) {
-    uprv_deleteUObject(object);
+    using DeletingDestructor = void (APS5_VABI*)(void*);
+    constexpr std::size_t DeletingDestructorSlot = 1;
+    if (!object) return;
+    std::uintptr_t vtable = 0;
+    if (!GuestCopyIn_nid_no_patch(&vtable, object, sizeof(vtable))) throw std::invalid_argument(std::string(__func__) + ": unreadable object");
+    DeletingDestructor destroy = nullptr;
+    const auto slot = reinterpret_cast<const void*>(vtable + DeletingDestructorSlot * sizeof(destroy));
+    if (!GuestCopyIn_nid_no_patch(&destroy, slot, sizeof(destroy))) throw std::invalid_argument(std::string(__func__) + ": unreadable vtable");
+    if (!destroy) throw std::invalid_argument(std::string(__func__) + ": null deleting destructor");
+    destroy(object);
 }
 
 int APS5_VABI sceIcuLegacyUnknown_5tc_plus_6cE9fAc_nid_no_patch() {

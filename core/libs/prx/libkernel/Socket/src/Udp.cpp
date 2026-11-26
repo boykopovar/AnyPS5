@@ -2061,6 +2061,19 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (address && !GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        constexpr std::uint32_t peerCapacity = 28;
+        unsigned char peer[peerCapacity]{};
+        auto size = peerCapacity;
+        int error = 0;
+        const int accepted = forwards->accept(descriptor, address ? peer : nullptr, address ? &size : nullptr, &error);
+        if (accepted < 0) return Fail(error);
+        const auto copied = std::min({capacity, size, peerCapacity});
+        if (!address || ReportAddress(address, length, peer, copied)) return accepted;
+        int closeError = 0;
+        KernelCloseSocket_nid_no_patch(accepted, &closeError);
+        return Fail(14);
+    }
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
     if (listener->type != 1) return Fail(22);
