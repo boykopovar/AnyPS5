@@ -116,6 +116,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Process pool context settings and maintenance](../../../core/libs/prx/libSceNKWebKit/src/ContextSettings.cpp) (libSceNKWebKit) - WKContextGetCacheModel, WKContextSetCacheModel, WKContextGetAccessibilityEnabled, WKContextSetAccessibilityEnabled, WKContextSetAlwaysUsesComplexTextCodePath, WKContextSetMemoryCacheDisabled, WKContextSetHTTPPipeliningEnabled, WKContextSetShouldUseFontSmoothing, WKContextJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptConfigurationFileEnabled, WKContextSetJavaScriptGarbageCollectorTimerEnabled, WKContextGarbageCollectJavaScriptObjects and WKContextSetStorageAccessAPIEnabled inspect and configure process pool settings and maintenance in host memory. Subprocess IPC and console execution are unmodeled.
 - [Process pool process termination and visited links](../../../core/libs/prx/libSceNKWebKit/src/ContextTermination.cpp) (libSceNKWebKit) - `WKContextDisableProcessTermination`, `WKContextEnableProcessTermination`, `WKContextAddVisitedLink` and `WKContextClearVisitedLinks` control process termination policy and visited link cache on the process pool in host memory.
 - [Context configuration settings](../../../core/libs/prx/libSceNKWebKit/src/ContextConfiguration.cpp) (libSceNKWebKit) - WKContextConfigurationCopyCookieStoragePath, WKContextConfigurationSetCookieStoragePath, WKContextConfigurationProcessSwapsOnWindowOpenWithOpener and WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener configure cookie storage path and window open opener process swap policy on the process pool configuration in host memory; disk persistence and multi-process swaps are unmodeled.
+- [Website data stores](../../../core/libs/prx/libSceNKWebKit/src/WebsiteDataStore.cpp) (libSceNKWebKit) - WKWebsiteDataStoreCreateNonPersistentDataStore and WKWebsiteDataStoreGetDefaultDataStore build the same object; neither persistence nor a session is modelled, so the two differ only in object identity. The default store singleton is leaked intentionally to avoid destructor-order issues. The HTTPCookieStore holds no cookies. WKWebsiteDataStoreCreateWithConfiguration keeps a shared reference to the caller's configuration instead of copying it. Console module ABI and behaviour are unverified. Closes when: compared with a console module.
 - [User media permission requests](../../../core/libs/prx/libSceNKWebKit/src/UserMediaPermissionRequest.cpp) (libSceNKWebKit) - `WKUserMediaPermissionRequestAllow` and `WKUserMediaPermissionRequestDeny` record user media permission decisions in host memory; UI prompt interaction is unmodeled.
 - [Frame state queries and accessors](../../../core/libs/prx/libSceNKWebKit/src/Frame.cpp) (libSceNKWebKit) - WKFrameCanProvideSource, WKFrameIsDisplayingMarkupDocument, WKFrameIsDisplayingStandaloneImageDocument, WKFrameIsMainFrame, WKFrameCopyURL, WKFrameCopyTitle, WKFrameCopyMIMEType, WKFrameCopyProvisionalURL, WKFrameCopyUnreachableURL, WKFrameCreateFrameHandle and WKFrameGetFrameLoadState query frame properties and load state from host WKFrame instances following [WebFrameProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebFrameProxy.cpp#L189-L192) and [WKFrame.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKFrame.cpp). URLs return a retained copy when set and null when unset; the title and MIME type return a retained copy, empty when unset (as the source does); a new frame reports Finished. Unmatched pointers throw.
 - [Page navigation queries](../../../core/libs/prx/libSceNKWebKit/src/PageNavigation.cpp) (libSceNKWebKit) - `WKPageCanGoBack` and `WKPageCanGoForward` return false for every page until page navigation is implemented; no export creates or navigates a page yet.
@@ -669,18 +670,14 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewValueChangedForPopupMenu` | `rr8g0GkA+GE` |
 | `WKWebsiteDataStoreClearAppBoundSession` | `YujMtLJPOok` |
 | `WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess` | `Mrp3OVQ9jI4` |
-| `WKWebsiteDataStoreCreateNonPersistentDataStore` | `hzBAQGt4hMw` |
-| `WKWebsiteDataStoreCreateWithConfiguration` | `gJCqCiXkwDU` |
 | `WKWebsiteDataStoreDisableNetworkProxySettings` | `k2niR5Rxn84` |
 | `WKWebsiteDataStoreDoesStatisticsDomainIDExistInDatabase` | `QYz4VP6wsuQ` |
 | `WKWebsiteDataStoreDumpResourceLoadStatistics` | `9gda3JloLFE` |
 | `WKWebsiteDataStoreEnableCustomNetworkProxySettings` | `rmT-cQv3G4I` |
 | `WKWebsiteDataStoreEnableDefaultNetworkProxySettings` | `iXGeleOV-c8` |
 | `WKWebsiteDataStoreGetAllStorageAccessEntries` | `A4dOumHPyNQ` |
-| `WKWebsiteDataStoreGetDefaultDataStore` | `1Y6ds6X6q+8` |
 | `WKWebsiteDataStoreGetFetchCacheOrigins` | `W2jeMfa3etw` |
 | `WKWebsiteDataStoreGetFetchCacheSizeForOrigin` | `hZS58BxCAV8` |
-| `WKWebsiteDataStoreGetHTTPCookieStore` | `hOXOdd6Lp5g` |
 | `WKWebsiteDataStoreGetResourceLoadStatisticsEnabled` | `2H0q+W0RyYk` |
 | `WKWebsiteDataStoreIsStatisticsEphemeral` | `TzInlmRQcHw` |
 | `WKWebsiteDataStoreIsStatisticsGrandfathered` | `Ud+1jEz8LWc` |
