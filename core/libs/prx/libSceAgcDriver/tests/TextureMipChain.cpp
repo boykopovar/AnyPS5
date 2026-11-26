@@ -52,6 +52,8 @@ struct MockDevice {
     };
     std::vector<Blit> blits;
     std::vector<std::pair<VkImage, VkImageSubresourceRange>> clears;
+    std::map<VkQueryPool, std::vector<std::uint64_t>> timestamps;
+    std::uint64_t nextTimestamp = 0;
     std::map<VkBuffer, VkDeviceSize> bufferSizes;
     std::map<VkDeviceMemory, std::vector<std::byte>> memories;
     std::map<VkImage, VkDeviceMemory> imageMemories;
@@ -245,8 +247,45 @@ VKAPI_ATTR void VKAPI_CALL cmdBindDescriptorSets(VkCommandBuffer, VkPipelineBind
 VKAPI_ATTR void VKAPI_CALL cmdPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {}
 VKAPI_ATTR void VKAPI_CALL cmdDispatch(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
+VKAPI_ATTR VkResult VKAPI_CALL createQueryPool(VkDevice, const VkQueryPoolCreateInfo* info, const VkAllocationCallbacks*, VkQueryPool* pool) {
+    Require(info->queryType == VK_QUERY_TYPE_TIMESTAMP, "mock query pool only supports timestamps");
+    *pool = newHandle<VkQueryPool>();
+    mock.timestamps.emplace(*pool, std::vector<std::uint64_t>(info->queryCount));
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroyQueryPool(VkDevice, VkQueryPool pool, const VkAllocationCallbacks*) {
+    Require(mock.timestamps.erase(pool) == 1, "mock query pool destroyed twice");
+}
+
+VKAPI_ATTR void VKAPI_CALL resetQueryPool(VkCommandBuffer, VkQueryPool pool, std::uint32_t first, std::uint32_t count) {
+    auto& stamps = mock.timestamps.at(pool);
+    Require(first <= stamps.size() && count <= stamps.size() - first, "mock query reset exceeds pool");
+    std::fill_n(stamps.begin() + first, count, 0);
+}
+
+VKAPI_ATTR void VKAPI_CALL writeTimestamp(VkCommandBuffer, VkPipelineStageFlagBits, VkQueryPool pool, std::uint32_t query) {
+    mock.timestamps.at(pool).at(query) = ++mock.nextTimestamp;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL queryPoolResults(VkDevice, VkQueryPool pool, std::uint32_t first, std::uint32_t count, std::size_t size, void* data, VkDeviceSize stride, VkQueryResultFlags flags) {
+    Require(flags == VK_QUERY_RESULT_64_BIT, "mock timestamps only support nonblocking 64-bit results");
+    const auto& stamps = mock.timestamps.at(pool);
+    Require(first <= stamps.size() && count <= stamps.size() - first, "mock query read exceeds pool");
+    Require(stride >= sizeof(std::uint64_t) && (count == 0 || (size >= sizeof(std::uint64_t) && count - 1 <= (size - sizeof(std::uint64_t)) / stride)), "mock query results exceed destination");
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (stamps[first + index] == 0) return VK_NOT_READY;
+    }
+    for (std::uint32_t index = 0; index < count; ++index) std::memcpy(static_cast<std::byte*>(data) + index * stride, &stamps[first + index], sizeof(std::uint64_t));
+    return VK_SUCCESS;
+}
 PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
+        {"vkCreateQueryPool", reinterpret_cast<PFN_vkVoidFunction>(createQueryPool)},
+        {"vkDestroyQueryPool", reinterpret_cast<PFN_vkVoidFunction>(destroyQueryPool)},
+        {"vkCmdResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(resetQueryPool)},
+        {"vkCmdWriteTimestamp", reinterpret_cast<PFN_vkVoidFunction>(writeTimestamp)},
+        {"vkGetQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(queryPoolResults)},
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(createImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements)},
         {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements2)},
@@ -325,6 +364,7 @@ Context mockContext() {
     context.memory.memoryHeapCount = 2;
     context.memory.memoryHeaps[0] = {std::uint64_t{1} << 32u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
     context.memory.memoryHeaps[1] = {std::uint64_t{1} << 32u, 0};
+    context.limits.timestampPeriod = 1.0f;
     context.limits.maxMemoryAllocationCount = 4096;
     context.limits.nonCoherentAtomSize = 64;
     context.limits.minStorageBufferOffsetAlignment = 16;
@@ -912,6 +952,13 @@ void TestShaderLevelsPastTheView(const Context& context, TextureDetiler& detiler
     Require(!accepts(ShaderRecompiler::ImageLevelUseLodQuery, ShaderRecompiler::NoTable, cases[0].words), "image_get_lod of a T# whose levels reach past its chain must be refused");
     Require(!accepts(ShaderRecompiler::ImageLevelUseQuery, 0u, cases[0].words), "image_get_resinfo through an image table of a T# whose levels reach past its chain must be refused");
     Require(accepts(ShaderRecompiler::ImageLevelUseMipLoad | ShaderRecompiler::ImageLevelUseLodQuery | ShaderRecompiler::ImageLevelUseLoad, ShaderRecompiler::NoTable, imageWords(13, 64, 64, 4, 0, 6, 6)), "a full 64x64 chain must be served to every access");
+    const ShaderRecompiler::DescriptorValue extraBase{{0x30a72300u, 0xc4b00000u, 0x0007c007u, 0xd0966facu, 0x0000003fu, 0x00700070u, 0u, 0u}, 8u};
+    const auto decoded = DecodeTextureResource(extraBase.dwords);
+    Require(decoded.baseAddress == 0x30a7230000u && decoded.format == 75u && decoded.width == 32u && decoded.height == 32u && decoded.dimension == TextureDimension::k2DArray && decoded.depthOrLastArray == 63u && decoded.mipCount == 8u && decoded.baseLevel == 6u && decoded.lastLevel == 6u, "a single extra-base array view decoded to another surface");
+    const auto pastBase = ShaderRecompiler::ResourceMaterializer::LevelsPastChain(extraBase);
+    Require(pastBase.levels == 0u && pastBase.base, "a single extra-base view lost its unrepresented base");
+    Require(!accepts(ShaderRecompiler::ImageLevelUseLoad, ShaderRecompiler::NoTable, extraBase), "a plain load at an unrepresented array base must still be refused");
+    Require(accepts(ShaderRecompiler::ImageLevelUseQuery, ShaderRecompiler::NoTable, extraBase), "a size-only query at an extra array base must retain its one level");
     const auto single = imageWords(13, 28, 1, 4, 7, 7, 9);
     Require(accepts(ShaderRecompiler::ImageLevelUseQuery, ShaderRecompiler::NoTable, single), "a single-level query past the chain must retain its one level");
     Require(accepts(ShaderRecompiler::ImageLevelUseQuery, 0u, single), "a single-level image table query past the chain needs no missing-level metadata");
@@ -940,5 +987,6 @@ void RunTextureMipChainTests() {
         TestShaderLevelsPastTheView(context, detiler);
         TestSrgbLevelsPastTheFullChain(context);
     }
+    Require(mock.timestamps.empty(), "mip-chain recorder leaked a timing query pool");
     mock = MockDevice{};
 }
