@@ -295,6 +295,50 @@ void CheckDraw(AgcDriver::VulkanDevice& device, bool recorded, std::uint32_t lay
     std::printf("extra-mip actual draw passed: recorded=%u first-array-slice=%u mip=%u physical=%u\n", recorded ? 1u : 0u, layer, mip, geometry.imageLevels);
 }
 
+void CheckPartialMipClears(AgcDriver::VulkanDevice& device) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const auto width : {4u, 1u}) {
+        GuestTextureResource descriptor{};
+        descriptor.width = width;
+        descriptor.height = width == 4u ? 2u : 1u;
+        descriptor.mipCount = width == 4u ? 5u : 3u;
+        descriptor.lastLevel = descriptor.mipCount - 1u;
+        descriptor.format = 20u;
+        descriptor.tileMode = TextureTileMode::kLinear;
+        descriptor.dimension = TextureDimension::k2D;
+        const auto geometry = DescribeSurface(descriptor);
+        Require(geometry.imageLevels < descriptor.mipCount, "mip clear fixture needs separate backing images");
+        GuestBlock block(static_cast<std::size_t>(geometry.guestBytes));
+        descriptor.baseAddress = reinterpret_cast<std::uintptr_t>(block.Surface());
+        auto expected = std::vector<std::byte>(block.registered, block.registered + block.bytes);
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto texture = StorageTexture::Create(context, *context.detiler, descriptor, 0u);
+        Recorder recorder(context);
+        recorder.Activate();
+        for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+            const auto& mip = geometry.mips[level];
+            Require(!mip.tail, "linear mip clear fixture unexpectedly has a packed tail");
+            const std::uint32_t value = 0x71352000u + level;
+            std::array<std::byte, 16> texel{};
+            std::memcpy(texel.data(), &value, sizeof(value));
+            const char* refusal = nullptr;
+            Require(texture->ClearMip(texel, level, false, refusal), "a backed mip clear was refused");
+            recorder.Sync();
+            texture->WriteBack();
+            recorder.Sync();
+            for (std::uint32_t y = 0; y < mip.height; ++y) {
+                for (std::uint32_t x = 0; x < mip.width; ++x) {
+                    const auto offset = 65536u + geometry.GuestOffset(0u, mip) + y * mip.pitchBytes + x * sizeof(value);
+                    std::memcpy(expected.data() + offset, &value, sizeof(value));
+                }
+            }
+            Require(std::equal(expected.begin(), expected.end(), block.registered), "partial mip clear changed a sibling, padding or allocation boundary");
+        }
+        texture.reset();
+        std::printf("partial mip clears passed: %ux%u guest=%u physical=%u; siblings and guard bytes preserved\n", descriptor.width, descriptor.height, descriptor.mipCount, geometry.imageLevels);
+    }
+}
+
 struct ReadbackCopy {
     VkImage image;
     VkBufferImageCopy region;
@@ -394,10 +438,11 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
 int main(int argc, char** argv) {
     try {
         const std::string mode = argc == 2 ? argv[1] : "";
-        Require(argc == 1 || mode == "--recorded" || mode == "--immediate" || mode == "--readback", "unknown extra-mip fixture mode");
+        Require(argc == 1 || mode == "--recorded" || mode == "--immediate" || mode == "--readback" || mode == "--clearmip", "unknown extra-mip fixture mode");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (mode == "--readback") { CheckReadback(*device); return 0; }
+        if (mode == "--clearmip") { CheckPartialMipClears(*device); return 0; }
         if (mode == "--recorded" || mode == "--immediate") {
             CheckDraw(*device, mode == "--recorded", 1u);
             CheckDraw(*device, mode == "--recorded", 3u);

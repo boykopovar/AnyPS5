@@ -42,6 +42,7 @@ struct MockDevice {
     std::vector<std::pair<VkImage, VkImageSubresourceLayers>> copies;
     std::vector<std::pair<VkImage, VkImageSubresourceLayers>> uploads;
     std::vector<std::pair<VkImage, VkImageSubresourceRange>> barriers;
+    std::vector<VkImageMemoryBarrier> transitions;
     std::vector<std::pair<VkImage, VkImageSubresourceRange>> views;
     std::vector<std::pair<VkImage, VkImageSubresourceLayers>> readbacks;
     struct Blit {
@@ -203,7 +204,10 @@ VKAPI_ATTR VkResult VKAPI_CALL resetFences(VkDevice, std::uint32_t, const VkFenc
 VKAPI_ATTR VkResult VKAPI_CALL queueWaitIdle(VkQueue) { return VK_SUCCESS; }
 
 VKAPI_ATTR void VKAPI_CALL cmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t count, const VkImageMemoryBarrier* barriers) {
-    for (std::uint32_t index = 0; index < count; ++index) mock.barriers.emplace_back(barriers[index].image, barriers[index].subresourceRange);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        mock.barriers.emplace_back(barriers[index].image, barriers[index].subresourceRange);
+        mock.transitions.push_back(barriers[index]);
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL cmdCopyBuffer(VkCommandBuffer, VkBuffer, VkBuffer, std::uint32_t, const VkBufferCopy*) {}
@@ -359,6 +363,7 @@ void clearRecords() {
     mock.copies.clear();
     mock.uploads.clear();
     mock.barriers.clear();
+    mock.transitions.clear();
     mock.views.clear();
     mock.readbacks.clear();
     mock.blits.clear();
@@ -711,6 +716,48 @@ void TestStoragePartialMipClears(const Context& context, TextureDetiler& detiler
     }
 }
 
+void TestStorageExtraMipClears(const Context& context, TextureDetiler& detiler) {
+    for (const auto tile : {TextureTileMode::kLinear, TextureTileMode::kStandard64KB}) {
+        for (const auto width : {1u, 256u}) {
+            auto descriptor = storageSurface(width, width, width == 1u ? 3u : 11u);
+            descriptor.tileMode = tile;
+            const auto geometry = DescribeSurface(descriptor);
+            GuestSurface memory(static_cast<std::size_t>(geometry.guestBytes));
+            descriptor.baseAddress = memory.Address();
+            clearRecords();
+            const auto texture = StorageTexture::Create(context, detiler, descriptor, 0u);
+            Require(geometry.imageLevels < descriptor.mipCount, "partial clear fixture needs extra images");
+            const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            recorder.Activate();
+            for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+                const auto clearsBefore = mock.clears.size();
+                const auto barriersBefore = mock.transitions.size();
+                const char* refusal = nullptr;
+                const auto accepted = texture->ClearMip({}, level, false, refusal);
+                if (geometry.mips[level].tail) {
+                    Require(!accepted && refusal != nullptr && std::string_view(refusal) == "tail", "a packed-tail mip clear lost its refusal");
+                    Require(mock.clears.size() == clearsBefore && mock.transitions.size() == barriersBefore, "a refused mip clear recorded GPU commands");
+                    continue;
+                }
+                Require(accepted, "a separately backed partial mip clear was refused");
+                const auto image = texture->Image(level);
+                const auto physicalLevel = texture->ImageMipLevel(level);
+                Require(mock.clears.size() == clearsBefore + 1u && mock.clears.back().first == image, "a partial clear touched a sibling image");
+                const auto& range = mock.clears.back().second;
+                Require(range.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT && range.baseMipLevel == physicalLevel && range.levelCount == 1u && range.baseArrayLayer == 0u && range.layerCount == 1u, "a separately backed mip clear used the wrong range");
+                Require(mock.transitions.size() == barriersBefore + 2u, "a separately backed mip clear transitioned siblings");
+                for (auto index = barriersBefore; index < mock.transitions.size(); ++index) {
+                    const auto& barrier = mock.transitions[index];
+                    Require(barrier.image == image && barrier.subresourceRange.baseMipLevel == physicalLevel && barrier.subresourceRange.levelCount == 1u && barrier.subresourceRange.baseArrayLayer == 0u && barrier.subresourceRange.layerCount == 1u, "a partial mip clear barrier targeted the wrong backing");
+                    Require(barrier.oldLayout == (index == barriersBefore ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) && barrier.newLayout == (index == barriersBefore ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL), "a partial mip clear used the wrong layout transitions");
+                }
+                checkInsideImage(image, mock.images.at(image), "a separately backed mip clear");
+            }
+        }
+    }
+}
+
 void TestStorageFullChainIsUnchanged(const Context& context, TextureDetiler& detiler) {
     auto descriptor = storageSurface(64, 32, 7);
     GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
@@ -887,6 +934,7 @@ void RunTextureMipChainTests() {
         TestStorageLevelsPastTheFullChain(context, detiler, 3u);
         TestStorageFullChainIsUnchanged(context, detiler);
         TestStoragePartialMipClears(context, detiler);
+        TestStorageExtraMipClears(context, detiler);
         TestShaderLevelsPastTheView(context, detiler);
         TestSrgbLevelsPastTheFullChain(context);
     }
