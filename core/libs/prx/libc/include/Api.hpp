@@ -1891,6 +1891,8 @@ void* APS5_VABI _ZNSt3__19to_stringEi_nid_postfix(void* string, std::int32_t val
 void* APS5_VABI _ZNSt3__19to_stringEj_nid_postfix(void* string, std::uint32_t value);
 void* APS5_VABI _ZNSt3__19to_stringEm_nid_postfix(void* string, std::uint64_t value);
 void* APS5_VABI _ZNSt3__19to_stringEx_nid_postfix(void* string, std::int64_t value);
+void* APS5_VABI _ZNSt3__14__fs10filesystem10__absoluteERKNS1_4pathEPNS_10error_codeE_nid_postfix(
+    void* result, const void* path, void* error);
 std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds);

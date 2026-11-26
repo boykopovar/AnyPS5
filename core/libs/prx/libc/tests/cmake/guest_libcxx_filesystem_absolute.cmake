@@ -1,0 +1,10 @@
+add_test_executable(guest_libcxx_filesystem_absolute_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxFilesystemAbsolute.cpp)
+target_include_directories(guest_libcxx_filesystem_absolute_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libcxx_filesystem_absolute_tests PRIVATE libc)
+configure_windows_unwind(guest_libcxx_filesystem_absolute_tests)
+add_test(NAME guest_libcxx_filesystem_absolute COMMAND guest_libcxx_filesystem_absolute_tests)
+set_tests_properties(guest_libcxx_filesystem_absolute PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_libcxx_filesystem_absolute PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
