@@ -655,12 +655,48 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
     return MixedKeyClear{clearKeys, *pattern, hash, std::move(fillRuns)};
 }
 
+enum class SliceKeys { Unreadable, Uniform, Differ };
+SliceKeys uniformSliceKeys(const GuestTextureResource& resource, std::span<const DccSlice> slices, std::uint8_t& byte) {
+    const auto elementBytes = BytesPerElement(resource.format);
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    std::uint64_t keyCursor = 0;
+    bool first = true;
+    std::vector<std::uint8_t> raw;
+    for (const auto& slice : slices) {
+        const auto count = DccKeyCount(resource.tileMode, elementBytes, slice.width, slice.height, slice.byteSize);
+        const auto meta = resource.dccAddress + keyCursor;
+        keyCursor += count;
+        if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return SliceKeys::Unreadable;
+        raw.resize(count);
+        GuestMemory::ReadCommitted(meta, std::as_writable_bytes(std::span(raw)));
+        if (first) {
+            byte = raw.front();
+            first = false;
+        }
+        if (!AllKeysEqual(raw.data(), raw.size(), byte)) return SliceKeys::Differ;
+    }
+    return first ? SliceKeys::Unreadable : SliceKeys::Uniform;
+}
+
 DccKeyState textureClearKeyState(const GuestTextureResource& resource, std::uint64_t guestBytes, bool& memoized) {
     memoized = false;
     if (resource.dccAddress == 0) return {};
     DccKeys keys;
-    if (const auto known = WaitForKeyWriters(resource, guestBytes)) keys = *known;
-    else keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
+    bool fromWriters = false;
+    if (const auto known = WaitForKeyWriters(resource, guestBytes)) {
+        keys = *known;
+        fromWriters = true;
+    } else {
+        keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
+    }
+    if (keys != DccKeys::Mixed && keys != DccKeys::Unreadable && !memoized && !fromWriters && resource.dccPipeAligned && MixedKeyClearEnabled() && resource.width != 0 && resource.height != 0 && !IsBlockCompressed(resource.format)) {
+        if (const auto slices = DccSlices(resource); slices.size() > 1) {
+            std::uint8_t byte = 0;
+            const auto sliced = uniformSliceKeys(resource, slices, byte);
+            if (sliced == SliceKeys::Differ) keys = DccKeys::Mixed;
+            else if (sliced == SliceKeys::Uniform) keys = ByteKeys(byte);
+        }
+    }
     if (keys == DccKeys::Mixed && MixedKeyClearEnabled()) {
         if (memoized) return {};
         if (const auto mixed = MixedKeyClearRuns(resource, guestBytes)) return {DccKeys::Uncompressed, mixed->signature};
