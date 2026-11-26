@@ -316,12 +316,20 @@ def open_prs(base):
     for attempt in range(2):
         try:
             rows = {}
+            previous = []
             for found in open_pr_pages(url):
-                for pr in found:
+                numbers = [pr["number"] for pr in found]
+                shifted = 0
+                while shifted < len(numbers) and numbers[shifted] in rows:
+                    shifted += 1
+                if shifted and numbers[:shifted] != previous[-shifted:]:
+                    raise PaginationChanged(f"duplicate pull request #{numbers[0]} in paginated results")
+                for pr in found[shifted:]:
                     number = pr["number"]
                     if number in rows:
                         raise PaginationChanged(f"duplicate pull request #{number} in paginated results")
                     rows[number] = pr
+                previous = numbers
             break
         except PaginationChanged as error:
             if attempt:

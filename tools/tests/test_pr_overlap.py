@@ -84,6 +84,26 @@ class OpenPullRequestsTests(unittest.TestCase):
                 pr_overlap.open_prs("main")
         self.assertEqual(page.call_count, 6)
 
+    def test_pull_request_closed_during_the_scan_is_not_a_duplicate(self):
+        requested = []
+
+        def page(url):
+            number = int(parse_qs(urlsplit(url).query)["page"][0])
+            opened = [item for item in range(1, 251) if item != 150 or len(requested) < 2]
+            requested.append(number)
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in opened[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(requested, [1, 3, 2, 1])
+        self.assertEqual(set(found), set(range(1, 251)) - {150})
+
     def test_closing_first_pull_request_does_not_skip_pull_request_101(self):
         requested = []
 
