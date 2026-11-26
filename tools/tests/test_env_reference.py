@@ -64,6 +64,16 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
+    def test_computed_names_use_the_exclusive_loop_bound(self):
+        for start, bound, expected in ((2, 4, {"ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"}),
+                                       (2, 2, set()), (0, 0, set())):
+            with self.subTest(start=start, bound=bound):
+                root = self.fixture(f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                self.assertEqual(set(env_reference.reads([root / "core"], BOTH)), expected)
+
     def test_a_computed_name_no_reader_uses_is_not_a_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
@@ -72,6 +82,21 @@ class ComputedEnvironmentTests(unittest.TestCase):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_SERIAL" + suffix;\n'
                             'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
         self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
+
+    def test_computed_names_resolve_binary_and_suffixed_integer_literals(self):
+        for start, bound, offset, constants in (
+            ("0u", "0b10UL", "1u", ""),
+            ("0b0", "Count", "0b1", "constexpr std::size_t Count = 0b1'0ULL;\n"),
+            ("0ULL", "items.size()", "0x1u",
+             "using Items = std::array<int, 0b10U>;\nItems items;\n"),
+        ):
+            with self.subTest(start=start, bound=bound, offset=offset):
+                root = self.fixture(constants + f'for (std::size_t slot = {start}; slot < {bound}; ++slot) {{\n'
+                                    f'    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + {offset}) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
 
     def test_a_loop_bound_through_a_constant_array_size_resolves_every_slot(self):
         root = self.fixture('inline constexpr std::size_t Slots = 4;\n'
@@ -85,6 +110,20 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL",
                                       "ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_4_SERIAL"][0][1], 6)
+
+    def test_computed_names_do_not_treat_bound_expression_prefixes_as_literals(self):
+        for expression, bound, declarations in (
+            ("2 * 2", "Slots", ""),
+            ("1 << 2", "serials.size()", "using Serials = std::array<int, Slots>;\nSerials serials;\n"),
+        ):
+            with self.subTest(expression=expression, bound=bound):
+                root = self.fixture(f'constexpr std::size_t Slots = {expression};\n' + declarations
+                                    + f'for (std::size_t slot = 0; slot < {bound}; ++slot) {{\n'
+                                    '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                                    '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                                    '}\n')
+                names = env_reference.reads([root / "core"], BOTH)
+                self.assertEqual(set(names), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
 
     def test_a_computed_name_without_a_loop_is_an_undetermined_read(self):
         root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
@@ -265,7 +304,10 @@ class EnvReferenceTests(unittest.TestCase):
                  ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
                  ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
                  ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
-                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"),
+                 ('std::getenv("ANYPS5_K") ? 1 : -1L', "string", "-1"),
+                 ('std::getenv("ANYPS5_L") ? 1 : - 0x20', "string", "-0x20"),
+                 ('std::getenv("ANYPS5_M") ? 1 : +64', "string", "+64"))
         source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
         found = env_reference.reads([root / "core"])
         for index, (line, kind, default) in enumerate(lines):

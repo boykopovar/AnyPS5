@@ -389,6 +389,28 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
                     base = options[-1] if options else "refs/remotes/upstream/main"
                     self.assertIn(f"0 ahead and 1 behind {base}", result.stdout)
 
+    def test_fetch_reports_main_when_a_submodule_remote_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "dependency"
+            dependency.mkdir()
+            Repo(dependency)
+            self.repo.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(dependency), "dep")
+            self.repo.commit("add dependency")
+            upstream = root / "upstream"
+            self.repo.git("clone", "-q", ".", str(upstream))
+            (upstream / "upstream.txt").write_text("new upstream commit\n", encoding="utf-8")
+            self.repo.git("-C", str(upstream), "add", "upstream.txt")
+            self.repo.git("-C", str(upstream), "commit", "-qm", "upstream change")
+            self.repo.git("remote", "add", "upstream", str(upstream))
+            self.repo.git("-C", "dep", "remote", "set-url", "origin", str(root / "missing"))
+            self.repo.git("config", "fetch.recurseSubmodules", "true")
+
+            result = run_tool(self.repo.path, "--base", "upstream/main", "--fetch", "--strict")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):
         def missing_run(*args, **kwargs):
