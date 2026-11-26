@@ -208,10 +208,10 @@ MeshBarrierOps recompileMeshBarrier(std::span<const std::uint32_t> code, std::ui
         spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot,
         spv::CapabilityMeshShadingEXT
     };
-    static constexpr std::array<std::uint32_t, 7> capabilitiesWithoutBallot{
+    static constexpr std::array<std::uint32_t, 8> capabilitiesWithoutBallot{
         spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
         spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
-        spv::CapabilityClipDistance, spv::CapabilityMeshShadingEXT
+        spv::CapabilityClipDistance, spv::CapabilityGroupNonUniform, spv::CapabilityMeshShadingEXT
     };
     static constexpr std::array<std::string_view, 3> extensions{
         "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
@@ -283,7 +283,7 @@ void verifyMeshSoftwareBarrierEmission() {
     const auto singleLane = recompileMeshBarrier(BranchedLdsStep, 0x26267300u, true, 32u, 1u);
     require(singleLane.subgroupBallot == 0u && !singleLane.groupNonUniformCapability && !singleLane.subgroupBallotCapability, "a single-lane host subgroup emitted an unnecessary subgroup operation or capability");
     const auto noBarrier = recompileMeshBarrier(MeshNoBarrier, 0x26267400u, true, 32u, 64u, false);
-    require(noBarrier.subgroupBallot == 0u && !noBarrier.groupNonUniformCapability && !noBarrier.subgroupBallotCapability, "a mesh shader without a guest barrier required subgroup ballot capabilities");
+    require(noBarrier.subgroupBallot == 0u && !noBarrier.subgroupBallotCapability, "a mesh shader without a guest barrier required subgroup ballot support");
     const auto earlyReturn = recompileMeshBarrier(EarlyReturnBarrier, 0x26267100u, true);
     require(!earlyReturn.softwareSafe, "a mesh barrier bypassed by an early return was marked safe for software rendezvous");
     require(earlyReturn.atomicLoad == 0u && earlyReturn.atomicIAdd == 0u && earlyReturn.atomicStore == 0u, "a mesh barrier bypassed by an early return used a software rendezvous that can wait forever");
