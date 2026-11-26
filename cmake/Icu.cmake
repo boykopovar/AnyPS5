@@ -127,13 +127,17 @@ target_sources(icu_common PRIVATE
     ${ICU_SOURCE_DIR}/common/locresdata.cpp
     ${ICU_SOURCE_DIR}/common/lsr.cpp
     ${ICU_SOURCE_DIR}/common/resource.cpp
+    ${ICU_SOURCE_DIR}/common/sharedobject.cpp
+    ${ICU_SOURCE_DIR}/common/static_unicode_sets.cpp
     ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
     ${ICU_SOURCE_DIR}/common/uloc.cpp
     ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
     ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
+    ${ICU_SOURCE_DIR}/common/unifiedcache.cpp
     ${ICU_SOURCE_DIR}/common/uresbund.cpp
     ${ICU_SOURCE_DIR}/common/uresdata.cpp
     ${ICU_SOURCE_DIR}/common/ustrenum.cpp
+    ${ICU_SOURCE_DIR}/common/util_props.cpp
     ${ICU_SOURCE_DIR}/common/utypes.cpp)
 if(WIN32)
     target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)
@@ -171,4 +175,25 @@ target_sources(icu_i18n PRIVATE
     ${ICU_SOURCE_DIR}/i18n/ufieldpositer.cpp
     ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
     ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
-    ${ICU_SOURCE_DIR}/i18n/fphdlimp.cpp)
+    ${ICU_SOURCE_DIR}/i18n/fphdlimp.cpp
+    ${ICU_SOURCE_DIR}/i18n/decContext.cpp
+    ${ICU_SOURCE_DIR}/i18n/decNumber.cpp
+    ${ICU_SOURCE_DIR}/i18n/displayoptions.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-bignum.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-bignum-dtoa.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-cached-powers.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-double-to-string.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-fast-dtoa.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-string-to-double.cpp
+    ${ICU_SOURCE_DIR}/i18n/double-conversion-strtod.cpp
+    ${ICU_SOURCE_DIR}/i18n/formatted_string_builder.cpp
+    ${ICU_SOURCE_DIR}/i18n/formattedval_sbimpl.cpp
+    ${ICU_SOURCE_DIR}/i18n/formattedvalue.cpp
+    ${ICU_SOURCE_DIR}/i18n/measunit.cpp
+    ${ICU_SOURCE_DIR}/i18n/number_decimalquantity.cpp
+    ${ICU_SOURCE_DIR}/i18n/number_output.cpp
+    ${ICU_SOURCE_DIR}/i18n/number_utils.cpp
+    ${ICU_SOURCE_DIR}/i18n/numrange_fluent.cpp
+    ${ICU_SOURCE_DIR}/i18n/pluralranges.cpp
+    ${ICU_SOURCE_DIR}/i18n/plurrule.cpp
+    ${ICU_SOURCE_DIR}/i18n/standardplural.cpp)

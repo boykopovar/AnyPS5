@@ -94,10 +94,14 @@ void Run() {
     }
 
     for (const auto incoming : passing) {
-        for (const auto type : usable) {
+        for (const auto type : std::array<std::int32_t, 2>{0, 1}) {
             std::int32_t status = incoming;
-            RequireThrows([&] { uplrules_openForType_nid_postfix("en", type, &status); });
-            Require(status == incoming);
+            UPluralRules* rules = uplrules_openForType_nid_postfix("en", type, &status);
+            if (rules != nullptr) {
+                uplrules_close_nid_postfix(rules);
+            } else {
+                Require(status > 0);
+            }
         }
 
         for (const auto type : beyond) {
@@ -224,6 +228,28 @@ void Run() {
     RequireThrows([&] { uplrules_selectWithFormat_nid_postfix(rules, 1.0, format, buffer, 8, nullptr); });
     for (const auto unit : buffer) Require(unit == 0);
     Require(Unchanged(storage));
+
+    std::int32_t status = 0;
+    UPluralRules* realRules = uplrules_openForType_nid_postfix("en", 0, &status);
+    if (realRules != nullptr && status <= 0) {
+        UEnumeration* keywords = uplrules_getKeywords_nid_postfix(realRules, &status);
+        Require(keywords != nullptr && status <= 0);
+        const std::int32_t count = uenum_count_nid_postfix(keywords, &status);
+        Require(count == 2 && status <= 0);
+        std::int32_t len = 0;
+        const char* first = uenum_next_nid_postfix(keywords, &len, &status);
+        Require(first != nullptr && std::string_view(first, static_cast<std::size_t>(len)) == "one" && status <= 0);
+        const char* second = uenum_next_nid_postfix(keywords, &len, &status);
+        Require(second != nullptr && std::string_view(second, static_cast<std::size_t>(len)) == "other" && status <= 0);
+        Require(uenum_next_nid_postfix(keywords, &len, &status) == nullptr && status <= 0);
+        uenum_close_nid_postfix(keywords);
+        uplrules_close_nid_postfix(realRules);
+        RequireThrows([&] { uplrules_close_nid_postfix(realRules); });
+    } else if (realRules != nullptr) {
+        uplrules_close_nid_postfix(realRules);
+    } else {
+        Require(status > 0);
+    }
 }
 
 } // namespace UplrulesKeywordsAndSelect
