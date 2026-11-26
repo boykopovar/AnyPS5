@@ -26,6 +26,8 @@ struct Recorder {
     void* lastFreed = nullptr;
     bool fail = false;
     int failAt = 0;
+    GuestGlyphSlotRec* rejectedSlot = nullptr;
+    bool internalClearedBeforeSlotFree = false;
 };
 
 Recorder* Owner(GuestMemoryRec* memory) {
@@ -46,6 +48,7 @@ void APS5_VABI RecordFree(GuestMemoryRec* memory, void* block) {
     auto* recorder = Owner(memory);
     ++recorder->frees;
     recorder->lastFreed = block;
+    if (block == recorder->rejectedSlot) recorder->internalClearedBeforeSlotFree = recorder->rejectedSlot->internal == nullptr;
     std::free(block);
 }
 
@@ -236,6 +239,8 @@ int APS5_VABI RecordInitSlot(GuestGlyphSlotRec* slot) {
 void APS5_VABI RecordDoneSlot(GuestGlyphSlotRec* slot) {
     ++calls.dones;
     calls.doneSlot = slot;
+    auto* face = static_cast<GuestFaceRec*>(slot->face);
+    Owner(static_cast<GuestMemoryRec*>(face->memory))->rejectedSlot = slot;
 }
 
 GuestGlyphSlotRec* gCorruptTargetSlot = nullptr;
@@ -351,18 +356,24 @@ void NewSlotFailures() {
         DriverFixture partial;
         partial.recorder.failAt = failAt;
         slot = &sentinel;
+        errno = 71;
         Require(FT_New_GlyphSlot_nid_postfix(&partial.face, &slot) == 0x40 && slot == &sentinel, "a failed slot initialisation returns Out_Of_Memory");
         Require(calls.inits == 0 && calls.dones == 1 && partial.recorder.frees == failAt - 1, "a failed slot initialisation calls done_slot and frees what it allocated");
         Require(!partial.face.glyph, "a failed slot initialisation does not link the slot");
+        Require(partial.recorder.internalClearedBeforeSlotFree, "failed initialisation clears slot->internal before the allocator frees the slot");
+        Require(errno == 71, "failed initialisation preserves errno while clearing slot->internal");
     }
     DriverFixture rejected;
     calls.initResult = 0x24;
     calls.fillOnInit = true;
     slot = &sentinel;
+    errno = 71;
     Require(FT_New_GlyphSlot_nid_postfix(&rejected.face, &slot) == 0x24 && slot == &sentinel, "New_GlyphSlot returns the init_slot error");
     Require(calls.inits == 1 && calls.dones == 1 && calls.doneSlot == calls.initSlot, "a rejected slot is passed to done_slot");
     Require(rejected.recorder.allocs == 6 && rejected.recorder.frees == 6 && !rejected.face.glyph, "a rejected slot frees its bitmap, loader arrays, loader, internal record and slot");
     Require(rejected.recorder.lastFreed == calls.initSlot, "a rejected slot is freed last");
+    Require(rejected.recorder.internalClearedBeforeSlotFree, "init_slot failure clears slot->internal before the allocator frees the slot");
+    Require(errno == 71, "init_slot failure preserves errno while clearing slot->internal");
 }
 
 void GuestPointers() {
