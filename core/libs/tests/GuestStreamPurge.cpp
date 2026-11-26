@@ -97,6 +97,19 @@ void CheckPushbackReadByFread() {
     Require(fgetc_nid_postfix(&file.stream) == 'b', "a pushback read by fread does not come back");
 }
 
+void CheckRepeatedPurge() {
+    BufferedStream file;
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare repeated-purge input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind repeated-purge input");
+    Require(fgetc_nid_postfix(&file.stream) == 'a', "read before repeated purge");
+    Require(ungetc_nid_postfix('Q', &file.stream) == 'Q', "push back before repeated purge");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fpurge_nid_postfix(&file.stream) == 0, "purge pending pushback twice");
+    Require(fgetc_nid_postfix(&file.stream) == 'Q', "the pending byte survives repeated purges");
+    Require(fgetc_nid_postfix(&file.stream) == 'b', "resume input after repeated purges");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after consuming the restored byte");
+    Require(fgetc_nid_postfix(&file.stream) == 'c', "a consumed byte does not return after repeated purges");
+}
+
 void CheckUnbuffered() {
     BufferedStream file;
     Require(std::setvbuf(file.native, nullptr, _IONBF, 0) == 0, "disable buffering");
@@ -164,6 +177,7 @@ int main() {
     CheckOutput();
     CheckInput();
     CheckPushbackReadByFread();
+    CheckRepeatedPurge();
     CheckUnbuffered();
     CheckLineBuffered();
     CheckPipe();
