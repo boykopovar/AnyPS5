@@ -404,7 +404,7 @@ class Check:
         if checked:
             for path in sorted(checked - self.submodules()):
                 self.report("system-dependency", path, 0, "submodule without a url in .gitmodules")
-        for path, (added, deleted) in self.numstat.items():
+        for path, (added, _deleted) in self.numstat.items():
             if path.startswith("3rdparty/"):
                 continue
             if self.modes.get(path) == "160000":
