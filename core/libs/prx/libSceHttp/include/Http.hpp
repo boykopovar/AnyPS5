@@ -108,7 +108,7 @@ int APS5_VABI sceHttpDbgShowStat(void);
 int APS5_VABI sceHttpGetMemoryPoolStats(int contextId, HttpMemoryPoolStats* stats);
 int APS5_VABI sceHttpDbgShowConnectionStat(void);
 int APS5_VABI sceHttpDbgShowRequestStat(void);
-int APS5_VABI sceHttpDbgShowMemoryPoolStat(void);
+void APS5_VABI sceHttpDbgShowMemoryPoolStat(void);
 int APS5_VABI sceHttpDbgGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat);
 int APS5_VABI sceHttpDbgGetRequestStat(std::int32_t requestId, HttpRequestStat* stat);
 int APS5_VABI sceHttpAddRequestHeaderRaw(int id, const char* header, int mode);

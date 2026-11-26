@@ -7,6 +7,7 @@
 #include <windows.h>
 #endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHttp/src/Cookies.hpp"
 #include "prx/libSceHttp/src/GuestAccess.hpp"
@@ -699,9 +700,11 @@ int APS5_VABI sceHttpDbgShowRequestStat(void) {
     return 0;
 }
 
-int APS5_VABI sceHttpDbgShowMemoryPoolStat(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceHttpDbgShowMemoryPoolStat(void) {
+    HttpMemoryPoolStats stats{};
+    sceHttpGetMemoryPoolStats(0, &stats);
+    puts_nid_postfix(" current      max");
+    printf_nid_postfix("%8x %8x\n", static_cast<unsigned int>(stats.usedSize), static_cast<unsigned int>(stats.peakUsedSize));
 }
 
 int APS5_VABI sceHttpDbgGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat) {

@@ -25,6 +25,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_http_debug_memory_pool_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpDebugMemoryPool.cpp)
+    target_include_directories(guest_http_debug_memory_pool_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http_debug_memory_pool_tests PRIVATE libSceHttp libc)
+    configure_windows_unwind(guest_http_debug_memory_pool_tests)
+    add_test(NAME guest_http_debug_memory_pool COMMAND guest_http_debug_memory_pool_tests)
+    set_tests_properties(guest_http_debug_memory_pool PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_http_debug_memory_pool PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
+    endif()
+
     add_test_executable(guest_http_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp.cpp)
     target_include_directories(guest_http_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_http_tests PRIVATE libSceHttp libc)
