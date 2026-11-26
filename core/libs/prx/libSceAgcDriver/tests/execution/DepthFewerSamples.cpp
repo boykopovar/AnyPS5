@@ -28,7 +28,6 @@ constexpr std::uint32_t Height = 4;
 constexpr std::uint8_t DrawnStencil = 0x5a;
 constexpr std::uint8_t BaseStencil = 0x25;
 constexpr std::uint8_t Untouched = 0xc3;
-constexpr std::uint8_t ReferenceKept = 0x40;
 constexpr float TestShift = -8.0f;
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
@@ -40,7 +39,6 @@ alignas(256) std::array<std::uint32_t, 11> StorePixelCode{};
 alignas(256) std::array<std::uint32_t, 4> StoreTarget{};
 constexpr std::size_t CopyPitch = 256;
 alignas(256) std::array<std::uint8_t, CopyPitch * Height> CopyTarget{};
-alignas(256) std::array<std::uint8_t, Width * Height * 4> Reference{};
 alignas(256) std::array<std::uint8_t, Width * Height * 4> Unused{};
 constexpr std::size_t PlaneBytes = 65536;
 std::array<std::byte, PlaneBytes * 3> PlaneStorage{};
@@ -98,13 +96,11 @@ struct DrawOptions {
     std::uint32_t stencilOperations = 0;
     std::uint32_t stencilRefMask = 0;
     float shiftX = 0.0f;
-    float shiftY = 0.0f;
     bool coverAll = false;
     std::uint32_t aaConfig = 0;
     std::uint32_t eqaa = 0;
     std::uint32_t locations = 0;
     bool msaaEnable = true;
-    bool depthTarget = true;
     const std::uint32_t* pixel = WhitePixelCode.data();
     std::uint32_t shaderControl = 0x800;
 };
@@ -131,14 +127,14 @@ void AppendDraw(std::vector<std::uint32_t>& commands, const DrawOptions& options
         {0x90, 0x80000000}, {0x91, (Height << 16u) | Width},
         {0x94, 0x80000000}, {0x95, (Height << 16u) | Width},
         {0x10f, std::bit_cast<std::uint32_t>(options.coverAll ? static_cast<float>(Width) : Width / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>((options.coverAll ? static_cast<float>(Width) : Width / 2.0f) + options.shiftX)},
-        {0x111, std::bit_cast<std::uint32_t>(options.coverAll ? -64.0f : -(Height / 2.0f))}, {0x112, std::bit_cast<std::uint32_t>((options.coverAll ? Height - 64.0f : Height / 2.0f) + options.shiftY)},
+        {0x111, std::bit_cast<std::uint32_t>(options.coverAll ? -64.0f : -(Height / 2.0f))}, {0x112, std::bit_cast<std::uint32_t>(options.coverAll ? Height - 64.0f : Height / 2.0f)},
         {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0},
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
         {0x2fe, options.locations}, {0x302, options.locations}, {0x306, options.locations}, {0x30a, options.locations},
         {0x318, static_cast<std::uint32_t>(options.color >> 8u)}, {0x390, static_cast<std::uint32_t>(options.color >> 40u)}, {0x292, multisampled ? 3u : 2u},
         {0x000, options.renderControl}, {0x002, 0}, {0x007, ((Height - 1u) << 16u) | (Width - 1u)},
         {0x008, 0}, {0x009, std::bit_cast<std::uint32_t>(1.0f)}, {0x00a, 0}, {0x00b, 0},
-        {0x010, options.depthTarget ? 0x80000187u : 0u}, {0x011, options.depthTarget ? 0x20000181u : 0u},
+        {0x010, 0x80000187u}, {0x011, 0x20000181u},
         {0x012, static_cast<std::uint32_t>(depth >> 8u)}, {0x014, static_cast<std::uint32_t>(depth >> 8u)},
         {0x013, static_cast<std::uint32_t>(stencil >> 8u)}, {0x015, static_cast<std::uint32_t>(stencil >> 8u)},
         {0x01a, static_cast<std::uint32_t>(depth >> 40u)}, {0x01c, static_cast<std::uint32_t>(depth >> 40u)},
@@ -160,28 +156,33 @@ std::array<int, 2> Location(std::uint32_t locations, std::uint32_t sample) {
     return {static_cast<int>(bits & 7u) - static_cast<int>(bits & 8u), static_cast<int>((bits >> 4u) & 7u) - static_cast<int>((bits >> 4u) & 8u)};
 }
 
+bool InsideTestDraw(std::uint32_t column, std::uint32_t row, int x, int y, const std::string& what) {
+    const auto sampleX = 32 * static_cast<int>(column) + 16 + 2 * x;
+    const auto sampleY = 32 * static_cast<int>(row) + 16 + 2 * y;
+    const auto left = 32 * static_cast<int>(TestShift);
+    const auto bottom = 32 * static_cast<int>(Height);
+    const auto edge = sampleX - left - 16 * sampleY;
+    Require(sampleX != left && sampleY != bottom && edge != 0, what + ": coverage sample (" + std::to_string(x) + ", " + std::to_string(y) + ")/16 of texel " + std::to_string(row * Width + column) + " lies on an edge of the four-sample draw");
+    return sampleX > left && sampleY < bottom && edge < 0;
+}
+
 void StoredSamplesFollowLeadingCoverage(std::uint32_t locations, const std::string& what) {
     std::array<std::size_t, 2> drawn{};
     for (std::uint32_t sample = 0; sample < 2; ++sample) {
         const auto [x, y] = Location(locations, sample);
         std::fill(PlaneStorage.begin(), PlaneStorage.end(), std::byte{0});
         CopyTarget.fill(Untouched);
-        Reference.fill(ReferenceKept);
         std::vector<std::uint32_t> commands;
         AppendDraw(commands, {.color = reinterpret_cast<std::uintptr_t>(Unused.data()), .targetMask = 0, .depthControl = StencilEnable | Always, .stencilOperations = ReplaceWithTest, .stencilRefMask = BaseStencil | 0xff00u | 0xff0000u, .coverAll = true, .aaConfig = TwoSamples, .locations = StandardTwoSampleLocations});
         AppendDraw(commands, {.color = reinterpret_cast<std::uintptr_t>(Unused.data()), .targetMask = 0, .depthControl = StencilEnable | Always, .stencilOperations = ReplaceWithTest, .stencilRefMask = DrawnStencil | 0xff00u | 0xff0000u, .shiftX = TestShift, .aaConfig = FourSamples, .eqaa = EqaaAnchors, .locations = locations});
         AppendDraw(commands, {.color = reinterpret_cast<std::uintptr_t>(CopyTarget.data()), .colorInfo = R8Uint, .targetMask = 1, .renderControl = 0x08u | (sample << 8u), .coverAll = true, .aaConfig = TwoSamples, .msaaEnable = false});
-        AppendDraw(commands, {.color = reinterpret_cast<std::uintptr_t>(Reference.data()), .shiftX = TestShift - static_cast<float>(x) / 16.0f, .shiftY = -static_cast<float>(y) / 16.0f, .depthTarget = false});
         Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-        Require(sceAgcDriverSubmitDcb(&packet) == 0, what + ": the stencil fill, the four-sample stencil draw, the DB stencil copy of sample " + std::to_string(sample) + " and the reference draw were not submitted");
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, what + ": the stencil fill, the four-sample stencil draw and the DB stencil copy of sample " + std::to_string(sample) + " were not submitted");
         AgcDriverWaitIdle_nid_postfix();
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(CopyTarget.data()), sizeof(CopyTarget));
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Reference.data()), sizeof(Reference));
         std::size_t base = 0;
         for (std::size_t index = 0; index < Width * Height; ++index) {
-            const auto reference = Reference[index * 4u];
-            Require(reference == 0xffu || reference == ReferenceKept, what + ": the reference draw wrote " + std::to_string(reference) + " at texel " + std::to_string(index));
-            const bool covered = reference == 0xffu;
+            const bool covered = InsideTestDraw(static_cast<std::uint32_t>(index % Width), static_cast<std::uint32_t>(index / Width), x, y, what);
             const auto expected = covered ? DrawnStencil : BaseStencil;
             const auto copy = CopyTarget[(index / Width) * CopyPitch + index % Width];
             Require(copy == expected, what + ": stored stencil sample " + std::to_string(sample) + " holds " + std::to_string(copy) + " at texel " + std::to_string(index) + ", expected " + std::to_string(expected) + (covered ? " (coverage sample " + std::to_string(sample) + " at (" + std::to_string(x) + ", " + std::to_string(y) + ")/16 is inside the four-sample draw)" : " (coverage sample " + std::to_string(sample) + " is outside the four-sample draw)"));
