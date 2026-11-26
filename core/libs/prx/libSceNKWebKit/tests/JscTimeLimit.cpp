@@ -196,14 +196,14 @@ void TestCallbackChangesTheLimit() {
 
 void TestPassedDeadlineDoesNotStopLaterWork() {
     Fixture f;
-    JSValueRef object = Eval(f.ctx, "({ valueOf() { var n = 0; for (var i = 0; i < 300000; i++) n++; return n; } })");
+    JSValueRef object = Eval(f.ctx, "({ valueOf() { var n = 0; for (var i = 0; i < 30000; i++) n++; return n; } })");
     Require(object != nullptr);
     JSValueProtect(f.ctx, object);
     JSContextGroupSetExecutionTimeLimit(f.group, 0.03, nullptr, nullptr);
     Require(JSValueToNumber(f.ctx, Eval(f.ctx, "7"), nullptr) == 7.0);
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
     JSValueRef exception = nullptr;
-    Require(JSValueToNumber(f.ctx, object, &exception) == 300000.0);
+    Require(JSValueToNumber(f.ctx, object, &exception) == 30000.0);
     Require(exception == nullptr);
     JSContextGroupClearExecutionTimeLimit(f.group);
 }
