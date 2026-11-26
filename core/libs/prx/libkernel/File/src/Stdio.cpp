@@ -1486,11 +1486,10 @@ int APS5_VABI sceKernelCheckReachability(const char* path) {
     if (path == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
-    path = copy.c_str();
     if (copy.empty()) return SCE_KERNEL_ERROR_ENOENT;
-    if (std::strlen(path) > 255) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (copy.size() > 255) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
+    if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), native, true, true)) return SceKernelError(error);
     if (AppArchiveOnly_nid_no_patch(native)) return 0;
 #ifdef _WIN32
     std::error_code pathError;
