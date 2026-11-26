@@ -4437,7 +4437,7 @@ void printExitVerification() {
 }
 
 void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false, bool concurrent = false, bool worked = false) {
-    (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
+    if (!failed) (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
     if (!verified) return;
     auto& verification = exitVerification();
     if (failed) verification.failures.fetch_add(1, std::memory_order_relaxed);
@@ -4946,7 +4946,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         if (counted) trace.emplace();
         std::uint64_t flushBreaks = 0;
         const bool ok = revalidateFull(shaders, report, counted ? &flushBreaks : nullptr, counted ? &*trace : nullptr);
-        noteEpochProof(false, false, false);
+        noteEpochProof(false, false, !ok);
         proved = stamp;
         mappingsClean = mappings;
         recordFlushRanges();

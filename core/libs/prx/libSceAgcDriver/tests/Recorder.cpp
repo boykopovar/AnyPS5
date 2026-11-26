@@ -5267,13 +5267,18 @@ bool importedEpochReuseTests(const Device& device, Recorder& recorder) {
     }
     const auto importAfter = HostImportFor(context, element, elementBytes);
     const auto exitBefore = EpochProofCounts().resourceReuses.Sum();
+    const auto provedBefore = EpochProofCounts().resourceProofs.Sum();
     const bool exitProved = resources->Revalidate(compute);
     const bool exited = EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    const auto provedAfterExit = EpochProofCounts().resourceProofs.Sum();
     AgcDriver::GuestMemory::BreakProofs();
     const bool fullProved = resources->Revalidate(compute);
+    const auto provedAfterFull = EpochProofCounts().resourceProofs.Sum();
     std::cout << "imported epoch reuse: after the block's import was retired and remade the exit " << (exited ? "was taken and " : "was not taken and ") << (exitProved ? "proved" : "refused") << " the build, the full proof " << (fullProved ? "proved" : "refused") << " it\n";
     Require(importAfter != nullptr, "the block's import was not remade after its allocation was added again");
     Require(!exitProved || fullProved, "the epoch exit reused a build bound to an import the full proof refuses");
+    Require(exited || exitProved || provedAfterExit == provedBefore, "a refused resource proof was counted as proved");
+    Require(fullProved || provedAfterFull == provedAfterExit, "a refused full resource proof was counted as proved");
     resources.reset();
     {
         GuestAllocations::Mutation mutation;
