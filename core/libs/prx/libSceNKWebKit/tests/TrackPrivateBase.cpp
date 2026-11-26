@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <stdexcept>
 
 using NKWebKit::WtfAbi::AtomString;
 using NKWebKit::WtfAbi::String;
@@ -87,6 +88,17 @@ void TestStartTimeVariance() {
     Require(fromNull.m_timeValue == 0 && fromNull.m_timeScale == 1 && fromNull.m_timeFlags == WTF::MediaTime::Valid);
 }
 
+void TestConstructorNullSelf() {
+    bool threw = false;
+    try {
+        _ZN7WebCore16TrackPrivateBaseC2Ev(nullptr);
+    } catch (const std::invalid_argument& e) {
+        threw = true;
+        Require(std::strcmp(e.what(), "WebCore::TrackPrivateBase::TrackPrivateBase: null object") == 0);
+    }
+    Require(threw);
+}
+
 void TestConstructor() {
     alignas(8) std::array<std::uint8_t, 32> object;
     object.fill(0xa5);
@@ -139,6 +151,7 @@ void TestConstructor() {
 }
 
 int main() {
+    TestConstructorNullSelf();
     TestConstructor();
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase2idEv);
     TestEmptyAtom(_ZNK7WebCore16TrackPrivateBase5labelEv);

@@ -1,11 +1,12 @@
 add_library(libSceGvMp4Parser SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceGvMp4Parser PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceGvMp4Parser PRIVATE libkernel libc)
 configure_windows_unwind(libSceGvMp4Parser)
 
 if(BUILD_TESTING)
     add_test_executable(guest_gvmp4_parser_tests ${LIBS_INCLUDE_DIR}/tests/GuestGvMp4Parser.cpp)
     target_include_directories(guest_gvmp4_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_gvmp4_parser_tests PRIVATE libSceGvMp4Parser libc)
+    target_link_libraries(guest_gvmp4_parser_tests PRIVATE libSceGvMp4Parser libkernel libc)
     configure_windows_unwind(guest_gvmp4_parser_tests)
     add_test(NAME guest_gvmp4_parser COMMAND guest_gvmp4_parser_tests)
     if(WIN32)
