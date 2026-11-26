@@ -3825,6 +3825,27 @@ bool CountingReadWords(void* context, std::uint64_t address, std::uint32_t* valu
     return true;
 }
 
+struct HoleMemory {
+    std::uint64_t hole = 0;
+};
+
+bool HoleAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
+    const auto& memory = *static_cast<const HoleMemory*>(context);
+    return address + bytes <= memory.hole || address >= memory.hole + sizeof(std::uint32_t);
+}
+
+bool HoleRead(void* context, std::uint64_t address, std::uint32_t* value) {
+    if (!HoleAccessible(context, address, sizeof(*value))) return false;
+    std::memcpy(value, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), sizeof(*value));
+    return true;
+}
+
+bool HoleReadWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count) {
+    if (!HoleAccessible(context, address, count * sizeof(std::uint32_t))) return false;
+    std::memcpy(values, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), static_cast<std::size_t>(count) * sizeof(std::uint32_t));
+    return true;
+}
+
 void verifyImageTableBulkReads() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -7149,6 +7170,21 @@ void verifyLaneImageTable() {
     require(ResourceMaterializer::ResolveImageTablesShared(modeInfo, independentModes, ModeMemo)->map == independent->map, "lane image table: a shared-mode fault contaminated independent-mode resolution reuse");
     records[1] = TableT(textures[1].bytes.data(), TableFormat8888UNorm, TableType2D);
     require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::Count, "lane image table: records of one mode under an LOD query faulted");
+
+    const auto holeRequest = request(TableWaterfallCode, 2u);
+    HoleMemory hole{reinterpret_cast<std::uintptr_t>(records[0].data() + 3u)};
+    SrtRuntime holeRuntime;
+    holeRuntime.userData = holeRequest.context.userData;
+    holeRuntime.shaderBase = holeRequest.shader.codeAddress;
+    holeRuntime.userContext = &hole;
+    holeRuntime.readMemory = &HoleRead;
+    holeRuntime.readSpecializationMemory = &HoleRead;
+    holeRuntime.accessible = &HoleAccessible;
+    holeRuntime.readWords = &HoleReadWords;
+    const auto holeCapture = CaptureResources(holeRequest, holeRuntime);
+    const auto& holeSnapshot = holeCapture->snapshot.tables.tables.at(0);
+    const auto holePoison = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
+    require(holeSnapshot.keys == 2u && holeSnapshot.codes.at(0) == holePoison && (holeSnapshot.codes.at(1) & Abi::PoisonFlag) == 0u, "lane image table: an inaccessible middle dword was not Unmapped poison");
     records = {};
 }
 

@@ -872,10 +872,7 @@ private:
     }
 
     bool AddressAccessible(std::uint64_t address) {
-        const auto page = address & ~(PageBytes - 1u);
-        const auto [found, inserted] = wholePages.try_emplace(page, false);
-        if (inserted) found->second = Accessible(page, PageBytes);
-        const bool accessible = found->second || Accessible(address, sizeof(std::uint32_t));
+        const bool accessible = WholePageAccessible(address) || Accessible(address, sizeof(std::uint32_t));
         if (accessible) {
             ++accessibleChecks;
         } else {
@@ -1131,7 +1128,17 @@ private:
             }
             const auto address = records.base + byte;
             const auto tail = records.base + tailByte;
-            if (!AddressAccessible(address) || !AddressAccessible(tail)) {
+            bool accessible = WholePageAccessible(address) && WholePageAccessible(tail);
+            if (!accessible) {
+                accessible = true;
+                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                    if (!AddressAccessible(address + static_cast<std::uint64_t>(dword) * sizeof(std::uint32_t))) {
+                        accessible = false;
+                        break;
+                    }
+                }
+            }
+            if (!accessible) {
                 records.states[record] = RecordState::Unmapped;
                 continue;
             }
