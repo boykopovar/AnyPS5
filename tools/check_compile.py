@@ -43,35 +43,7 @@ FORWARDED_SAFE = ("-fno-spell-checking", "-fno-caret-diagnostics", "-fno-color-d
                   "-fno-diagnostics-show-option")
 FORWARDED_SAFE_JOINED = ("-D", "-U", "-I", "-F", "-W", "-include", "--include", "-imacros", "--imacros",
                          "-isystem", "-iquote", "-idirafter", "-isysroot")
-COMPILER_WRAPPERS = {
-    "ccache": {
-        "management": frozenset(("-s", "--show-stats", "-C", "--clear", "-c", "--cleanup", "-z", "--zero-stats",
-                                 "-p", "--show-config", "-k", "--get-config", "-o", "--set-config",
-                                 "--disable", "--enable", "--checksum", "--remote-only",
-                                 "--skip-second-preprocessor", "--run-second-preprocessor")),
-        "management_joined": ("--get-config=", "--set-config=", "--max-files=", "--max-size=", "--batch-size=",
-                              "--compiler=", "--compiler-check=", "--compiler-type=", "--config-path=",
-                              "--namespace=", "--remote-storage=", "--file-stat-cache="),
-        "flags": frozenset(),
-        "values": frozenset(),
-        "joined": (),
-    },
-    "sccache": {
-        "management": frozenset(("--show-stats", "--show-adv-stats", "--start-server", "--stop-server",
-                                 "--zero-stats", "--dist-auth", "--dist-status", "--server-startup-timeout")),
-        "management_joined": ("--server-startup-timeout=",),
-        "flags": frozenset(),
-        "values": frozenset(),
-        "joined": (),
-    },
-    "distcc": {
-        "management": frozenset(("--help", "--version", "--show-hosts", "--scan-includes")),
-        "management_joined": (),
-        "flags": frozenset(("--verbose", "--no-fork")),
-        "values": frozenset(("-j", "--jobs", "--log-level", "--log-file", "--pid-file", "--listen", "--allow")),
-        "joined": ("--log-level=", "--log-file=", "--pid-file=", "--listen=", "--allow="),
-    },
-}
+COMPILER_WRAPPERS = frozenset(("ccache", "sccache", "distcc"))
 MAX_RESPONSE_FILE_DEPTH = 20
 
 
@@ -431,34 +403,13 @@ def launcher_prefix(arguments):
         if index == len(arguments):
             raise ValueError("cmake -E env launcher has no command")
         return arguments[:index]
-    wrapper = COMPILER_WRAPPERS.get(executable)
-    if wrapper is None:
+    if executable not in COMPILER_WRAPPERS:
         return []
-    index = 1
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument == "--":
-            index += 1
-            break
-        if argument in wrapper["management"] or argument.startswith(wrapper["management_joined"]):
-            raise ValueError(f"{executable} management option {argument} has no compiler")
-        if argument in wrapper["flags"]:
-            index += 1
-            continue
-        if argument in wrapper["values"]:
-            if index + 1 == len(arguments):
-                raise ValueError(f"missing operand for {argument}")
-            index += 2
-            continue
-        if argument.startswith(wrapper["joined"]):
-            index += 1
-            continue
-        if argument.startswith("-"):
-            raise ValueError(f"unsupported {executable} option {argument}")
-        break
-    if index == len(arguments):
+    if len(arguments) < 2:
         raise ValueError(f"{executable} launcher has no command")
-    return arguments[:index]
+    if arguments[1].startswith("-"):
+        raise ValueError(f"{executable} launcher options are not supported")
+    return arguments[:1]
 
 
 def syntax_arguments(arguments, directory, source):
