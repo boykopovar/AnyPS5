@@ -41,13 +41,16 @@ constexpr std::uint32_t Format16Snorm = 8;
 constexpr std::uint32_t Format16Uint = 11;
 constexpr std::uint32_t Format16Sint = 12;
 constexpr std::uint32_t Format16Sfloat = 13;
+constexpr std::uint32_t Format8_8Unorm = 14;
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format8_8Srgb = 129;
 constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t TypeCube = 11;
 constexpr std::uint32_t Type2DArray = 13;
 constexpr std::uint32_t TileLinear = 0;
 constexpr std::uint32_t TileStandard256B = 1;
 constexpr std::uint32_t TileZ64KBX = 0x18;
-constexpr std::size_t BlockBytes = 2u << 20u;
+constexpr std::size_t BlockBytes = 3u << 20u;
 constexpr std::size_t StencilOffset = 1u << 16u;
 constexpr std::size_t OutputOffset = 2u << 16u;
 constexpr std::size_t MultisampledOffset = 4u << 16u;
@@ -67,6 +70,9 @@ constexpr std::size_t ForcedRefusalOffset = 24u << 16u;
 constexpr std::size_t ForcedFallbackOffset = 25u << 16u;
 constexpr std::size_t RetiredAliasSfloatOffset = 26u << 16u;
 constexpr std::size_t RetiredAliasSnormOffset = 27u << 16u;
+constexpr std::size_t RetiredAliasRg8Offset = 28u << 16u;
+constexpr std::size_t Raw16UsageViewOffset = 29u << 16u;
+constexpr std::size_t Raw16UsageCubeOffset = 32u << 16u;
 constexpr std::uint32_t ArrayLayers = 3;
 
 struct FormatFilter {
@@ -76,6 +82,8 @@ struct FormatFilter {
     VkFormat hiddenA = VK_FORMAT_UNDEFINED;
     VkFormat hiddenB = VK_FORMAT_UNDEFINED;
     bool refuseAliasImages = false;
+    bool rejectCubeColorAttachment = false;
+    bool requireR16UintStorageOnly = false;
 };
 
 FormatFilter formatFilter;
@@ -87,6 +95,8 @@ VKAPI_ATTR void VKAPI_CALL FilteredFormat(VkPhysicalDevice, VkFormat format, VkF
 
 VKAPI_ATTR VkResult VKAPI_CALL ForwardImageFormat(VkPhysicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
     if (formatFilter.refuseAliasImages && (format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R16_SINT || format == VK_FORMAT_R16_SFLOAT)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    if (formatFilter.rejectCubeColorAttachment && (flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0u && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0u) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    if (formatFilter.requireR16UintStorageOnly && format == VK_FORMAT_R16_UINT && usage != VK_IMAGE_USAGE_STORAGE_BIT) return VK_ERROR_FORMAT_NOT_SUPPORTED;
     return formatFilter.image(formatFilter.real, format, type, tiling, usage, flags, properties);
 }
 
@@ -551,6 +561,8 @@ AgcDriver::Graphics::Context ForcedContext(AgcDriver::VulkanDevice& device, VkFo
     formatFilter.hiddenA = hiddenA;
     formatFilter.hiddenB = hiddenB;
     formatFilter.refuseAliasImages = refuseAliasImages;
+    formatFilter.rejectCubeColorAttachment = false;
+    formatFilter.requireR16UintStorageOnly = false;
     return context;
 }
 
@@ -709,9 +721,16 @@ void RetiredRaw16AliasSampledAsUnormCase(AgcDriver::VulkanDevice& device, const 
         const auto pending = AgcDriver::Graphics::StorageTexture::FindPending(address, Width * Height * sizeof(std::uint16_t));
         Require(pending != nullptr, "retiring the depth surface dropped its pending raw16 alias");
         const auto unormTexture = TextureDescriptor(texels, Format16Unorm, Type2DArray, TileLinear);
-        const auto unormResource = AgcDriver::Graphics::DecodeTextureResource(unormTexture);
         if (context.imageFormatList && pending->ImageFormat() != VK_FORMAT_R16_UINT) {
-            Require(!AgcDriver::Graphics::Texture::CanCopyFrom(*pending, unormResource), "a format-list-restricted raw16 alias admitted an R16_UNORM sampled view");
+            const std::uint32_t opposite = format == Format16Sfloat ? Format16Snorm : Format16Sfloat;
+            for (const std::uint32_t rejected : {Format16Unorm, Format16Sint, Format8_8Unorm, Format8_8Srgb, opposite}) {
+                const auto rejectedResource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels, rejected, Type2DArray, TileLinear));
+                Require(!AgcDriver::Graphics::Texture::CanCopyFrom(*pending, rejectedResource), "a format-list-restricted raw16 alias admitted out-of-list guest format " + std::to_string(rejected));
+            }
+            for (const std::uint32_t admitted : {format, Format16Uint}) {
+                const auto admittedResource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels, admitted, Type2DArray, TileLinear));
+                Require(AgcDriver::Graphics::Texture::CanCopyFrom(*pending, admittedResource), "a format-list-restricted raw16 alias rejected in-list guest format " + std::to_string(admitted));
+            }
         }
         std::vector<std::uint32_t> loadData(16, 0u);
         const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
@@ -726,6 +745,69 @@ void RetiredRaw16AliasSampledAsUnormCase(AgcDriver::VulkanDevice& device, const 
         Require(std::bit_cast<float>(output[0]) == 0.0f, "sampling a retired raw16 alias as R16_UNORM did not observe the pending zero store at texel 0");
         const float expectedLane1 = static_cast<float>(format == Format16Sfloat ? 0x2400u : 0x0200u) / 65535.0f;
         Require(std::abs(std::bit_cast<float>(output[1]) - expectedLane1) <= 1e-5f, "sampling a retired raw16 alias as R16_UNORM did not observe the pending store at texel 1");
+    }
+    if (AgcDriver::Graphics::StorageFormatAvailable(context, Format16Sfloat)) {
+        auto* texels = block + RetiredAliasRg8Offset;
+        const auto address = reinterpret_cast<std::uintptr_t>(texels);
+        std::vector<std::uint16_t> initial(static_cast<std::size_t>(Width) * Height, 0x3c00u);
+        std::memcpy(texels, initial.data(), initial.size() * sizeof(std::uint16_t));
+        AgcDriver::GuestMemory::CollectWrites(address, initial.size() * sizeof(std::uint16_t));
+        const Surface surface{address, 0, 0, false, VK_FORMAT_D16_UNORM_S8_UINT};
+        Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the retired RG8 alias producer did not cover the surface");
+        std::vector<std::uint32_t> storeData(16, 0u);
+        const auto storeTexture = TextureDescriptor(texels, Format16Sfloat, Type2DArray, TileLinear);
+        std::copy(storeTexture.begin(), storeTexture.end(), storeData.begin() + 4);
+        const auto store = Compile(device, StoreCode, storeData);
+        device.Dispatch(store, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        device.WaitIdle();
+        AgcDriver::Graphics::RetireDepthSurfaces(context.device, address, Width * Height * sizeof(std::uint16_t));
+        std::vector<std::uint32_t> loadData(16, 0u);
+        const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
+        const auto rg8Texture = TextureDescriptor(texels, Format8_8Unorm, Type2DArray, TileLinear);
+        std::copy(buffer.begin(), buffer.end(), loadData.begin());
+        std::copy(rg8Texture.begin(), rg8Texture.end(), loadData.begin() + 4);
+        loadData[12] = 0u;
+        loadData[14] = std::bit_cast<std::uint32_t>(1.0f / 128.0f);
+        const auto load = Compile(device, LoadLayerCode, loadData);
+        std::fill(output.begin(), output.end(), 0xdeadbeefu);
+        device.Dispatch(load, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadLayerCode.data()));
+        device.WaitIdle();
+        Require(std::bit_cast<float>(output[0]) == 0.0f, "sampling a retired raw16 alias as R8G8_UNORM did not observe the pending zero store at texel 0");
+        Require(std::abs(std::bit_cast<float>(output[9]) - (128.0f / 255.0f)) <= 1e-4f, "sampling a retired raw16 alias as R8G8_UNORM did not observe the pending store low byte at texel 9");
+    }
+}
+
+void Raw16DepthUsageQueryCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    if (!AgcDriver::Graphics::StorageFormatAvailable(device.graphicsContext(), Format16Sfloat)) return;
+    {
+        auto cubeContext = ForcedContext(device, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, true);
+        formatFilter.rejectCubeColorAttachment = true;
+        const auto cubeAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block + Raw16UsageCubeOffset));
+        const std::array<std::uint32_t, 8> cubeWords{
+            static_cast<std::uint32_t>(cubeAddress >> 8u),
+            static_cast<std::uint32_t>((cubeAddress >> 40u) & 0xffu) | (Format16Sfloat << 20u) | (((Height - 1u) & 3u) << 30u),
+            ((Height - 1u) >> 2u) | ((Height - 1u) << 14u),
+            0xfacu | (TileLinear << 20u) | (TypeCube << 28u),
+            5u, 0u, 0u, 0u,
+        };
+        const auto cubeResource = AgcDriver::Graphics::DecodeTextureResource(cubeWords);
+        const auto cubeStorage = AgcDriver::Graphics::StorageTexture::CreateRaw16Depth(cubeContext, *cubeContext.detiler, cubeResource, 0);
+        formatFilter.rejectCubeColorAttachment = false;
+        Require(cubeStorage != nullptr && cubeStorage->ImageFormat() == VK_FORMAT_R16_SFLOAT, "cube CreateRaw16Depth requested color-attachment usage or fell back from R16_SFLOAT");
+        Require(cubeStorage->StorageView(0, false, false) != VK_NULL_HANDLE && cubeStorage->StorageView(0, false, true) != VK_NULL_HANDLE, "cube CreateRaw16Depth did not provide both typed and raw UINT views");
+        device.WaitIdle();
+    }
+    {
+        auto viewOnlyContext = ForcedContext(device, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, true);
+        formatFilter.requireR16UintStorageOnly = true;
+        const auto sfloatResource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(block + Raw16UsageViewOffset, Format16Sfloat, Type2D, TileLinear));
+        const auto sfloatStorage = AgcDriver::Graphics::StorageTexture::CreateRaw16Depth(viewOnlyContext, *viewOnlyContext.detiler, sfloatResource, 0);
+        Require(sfloatStorage != nullptr && sfloatStorage->ImageFormat() == VK_FORMAT_R16_SFLOAT, "CreateRaw16Depth rejected R16_SFLOAT when R16_UINT supported storage-only view usage");
+        Require(sfloatStorage->StorageView(0, false, false) != VK_NULL_HANDLE && sfloatStorage->StorageView(0, false, true) != VK_NULL_HANDLE, "storage-only R16_UINT view CreateRaw16Depth did not provide both views");
+        const auto sintResource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(block + Raw16UsageViewOffset, Format16Sint, Type2D, TileLinear));
+        ExpectRefusal([&] { static_cast<void>(AgcDriver::Graphics::StorageTexture::CreateRaw16Depth(viewOnlyContext, *viewOnlyContext.detiler, sintResource, 0)); }, "raw depth storage backing is not usable for this image", "raw R16_UINT backing when R16_UINT only supports storage usage");
+        formatFilter.requireR16UintStorageOnly = false;
+        device.WaitIdle();
     }
 }
 
@@ -761,6 +843,7 @@ int main() {
         ForcedFormatListCase(*device, block.Data());
         ForcedRefusalCase(*device, block.Data());
         RetiredRaw16AliasSampledAsUnormCase(*device, shaders, block.Data());
+        Raw16DepthUsageQueryCase(*device, block.Data());
         std::puts("depth storage dispatch tests passed");
         return 0;
     } catch (const std::exception& error) {

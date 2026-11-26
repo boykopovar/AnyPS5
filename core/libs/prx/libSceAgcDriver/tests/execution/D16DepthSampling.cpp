@@ -694,15 +694,14 @@ void RequireRefusals(AgcDriver::VulkanDevice& device, const Context& context, co
     }
     std::uint32_t msaaSamples = 0u;
     if (context.imageFormatProperties != nullptr) {
-        VkImageFormatProperties msaaProperties{};
         const auto hostFormat = HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT);
         const auto msaaUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (context.imageFormatProperties(context.physical, hostFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, msaaUsage, 0u, &msaaProperties) == VK_SUCCESS && msaaProperties.maxExtent.width >= Width && msaaProperties.maxExtent.height >= Height) {
-            for (const std::uint32_t candidate : {2u, 4u, 8u}) {
-                if ((msaaProperties.sampleCounts & candidate) != 0u) {
-                    msaaSamples = candidate;
-                    break;
-                }
+        for (const std::uint32_t candidate : {2u, 4u, 8u}) {
+            const VkImageCreateFlags msaaFlags = AgcDriver::Graphics::SampleLocationsCompatibleDepth(context, hostFormat, candidate) ? VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT : 0u;
+            VkImageFormatProperties msaaProperties{};
+            if (context.imageFormatProperties(context.physical, hostFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, msaaUsage, msaaFlags, &msaaProperties) == VK_SUCCESS && (msaaProperties.sampleCounts & candidate) != 0u && msaaProperties.maxExtent.width >= Width && msaaProperties.maxExtent.height >= Height) {
+                msaaSamples = candidate;
+                break;
             }
         }
     }

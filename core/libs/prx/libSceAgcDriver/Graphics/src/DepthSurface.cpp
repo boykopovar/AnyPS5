@@ -3368,19 +3368,6 @@ void takePlanes(DepthSurface& surface, bool created, VkImageAspectFlags clearAsp
     }
 }
 
-DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
-    if (const auto found = depthOwners().find({device, address}); found != depthOwners().end()) {
-        auto* owner = found->second.surface;
-        if (owner->active->load(std::memory_order_acquire) && !owner->retired) {
-            const auto& target = owner->target;
-            return target.samples == 1u && target.extent.width == base.extent.width && target.extent.height == base.extent.height && target.format == base.format ? owner : nullptr;
-        }
-    }
-    const auto& list = surfaces();
-    const auto slice = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->context.device == device && !surface->retired && surface->target.address == address && surface->target.samples == 1u && surface->target.extent.width == base.extent.width && surface->target.extent.height == base.extent.height && surface->target.format == base.format; });
-    return slice == list.rend() ? nullptr : slice->get();
-}
-
 DepthSurface* planeSurface(VkDevice device, std::uint64_t address) {
     const auto depth = depthOwners().find({device, address});
     const auto stencil = stencilOwners().find({device, address});
@@ -3393,6 +3380,14 @@ DepthSurface* planeSurface(VkDevice device, std::uint64_t address) {
         return surface->active->load(std::memory_order_acquire) && surface->context.device == device && !surface->retired && (surface->target.address == address || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == address));
     });
     return found == list.rend() ? nullptr : found->get();
+}
+
+DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
+    auto* owner = planeSurface(device, address);
+    if (owner == nullptr || owner->retired) return nullptr;
+    const auto& target = owner->target;
+    if (target.samples != 1u || target.address != address || target.extent.width != base.extent.width || target.extent.height != base.extent.height || target.format != base.format) return nullptr;
+    return owner;
 }
 
 DepthSurface* stencilSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
