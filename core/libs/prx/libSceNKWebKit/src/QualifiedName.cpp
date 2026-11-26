@@ -48,6 +48,7 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/QualifiedNameExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
@@ -82,7 +83,11 @@ T ReadGuestValue(const T* pointer, const char* function) {
 template <typename T>
 void RequireWritableGuestValue(T* pointer, const char* function) {
     const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(pointer, sizeof(T));
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, sizeof(T));
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, sizeof(T));
+    }
     errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
