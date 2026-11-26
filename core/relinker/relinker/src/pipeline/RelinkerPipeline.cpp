@@ -609,6 +609,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
         }
     }
+    const auto strictExportRoots = exportedFunctions;
     for (const auto& function : unwindFunctions) {
         for (const auto target : function.ExtraTargets) exportedFunctions.push_back(target);
     }
@@ -621,7 +622,7 @@ RelinkResult RelinkerPipeline::Relink() {
     if (unusedFilterLevel == 2) {
         if (executableSegments.size() > 1)
             throw RelinkerException("Strict NID filtering does not support multiple executable segments");
-        nidRefs = unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr, exportedFunctions);
+        nidRefs = unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr, strictExportRoots);
         if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
         { std::ostringstream message; message << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n"; progress.Message(message.str()); }
     } else if (unusedFilterLevel == 1) {
