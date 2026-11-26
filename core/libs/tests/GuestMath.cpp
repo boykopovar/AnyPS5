@@ -1287,13 +1287,13 @@ static void CheckErfSaturationRounding() {
     constexpr int modes[] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
     for (const int mode : modes) {
         Require(std::fesetround(mode) == 0);
-        for (const double x : {6.0, 40.0}) {
+        for (const double x : {6.0, 0x1.bffffffffffffp+4, 28.0, 40.0}) {
             std::feclearexcept(FE_ALL_EXCEPT);
             Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(x)) == 0x3ff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
             std::feclearexcept(FE_ALL_EXCEPT);
             Require(std::bit_cast<std::uint64_t>(erf_nid_postfix(-x)) == 0xbff0000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == 0);
             std::feclearexcept(FE_ALL_EXCEPT);
-            Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(-x)) == 0x4000000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == FE_INEXACT);
+            Require(std::bit_cast<std::uint64_t>(erfc_nid_postfix(-x)) == 0x4000000000000000ull && std::fetestexcept(FE_ALL_EXCEPT) == (x < 28.0 ? FE_INEXACT : 0));
         }
     }
 }
@@ -3824,6 +3824,17 @@ static bool RaisesOnly(long double (APS5_VABI* function)(long double), long doub
     return ExtendedBits(result, mantissa, signExponent) && std::fetestexcept(flag) != 0 && *__error_nid_postfix() == error;
 }
 
+static void CheckTinySinhl() {
+    const RestoreFloatingPointState saved;
+    constexpr std::uint64_t one = 0x8000000000000000ull;
+    for (const std::uint16_t exponent : {0x3fb0, 0xbfb0, 0x3fde, 0xbfde}) {
+        Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+        Require(std::feraiseexcept(FE_DIVBYZERO) == 0);
+        Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, exponent)), one, exponent));
+        Require(std::fetestexcept(FE_ALL_EXCEPT) == FE_DIVBYZERO);
+    }
+}
+
 static void CheckLongDoubleExponentialHyperbolic() {
     const long double infinity = std::numeric_limits<long double>::infinity();
     const long double nan = std::numeric_limits<long double>::quiet_NaN();
@@ -3843,8 +3854,7 @@ static void CheckLongDoubleExponentialHyperbolic() {
     Require(ExtendedBits(sinhl_nid_postfix(0.0L), 0, 0) && ExtendedBits(sinhl_nid_postfix(-0.0L), 0, 0x8000));
     Require(ExtendedBits(sinhl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(sinhl_nid_postfix(-infinity), one, 0xffff));
     Require(std::isnan(sinhl_nid_postfix(nan)));
-    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0x3fb0)), one, 0x3fb0));
-    Require(ExtendedBits(sinhl_nid_postfix(MakeExtended(one, 0xbfb0)), one, 0xbfb0));
+    CheckTinySinhl();
     Require(RaisesOnly(sinhl_nid_postfix, 12000.0L, FE_OVERFLOW, one, 0x7fff));
     Require(RaisesOnly(sinhl_nid_postfix, -12000.0L, FE_OVERFLOW, one, 0xffff));
     Require(ExtendedBits(coshl_nid_postfix(infinity), one, 0x7fff) && ExtendedBits(coshl_nid_postfix(-infinity), one, 0x7fff));

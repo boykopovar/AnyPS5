@@ -147,6 +147,23 @@ class ForwardingExportTests(unittest.TestCase):
             result = subprocess.run([str(PATCHER), "libforwarder", str(path)], capture_output=True, text=True)
             return result, path.read_bytes()
 
+    def test_export_tables_cannot_cross_section_raw_data(self):
+        cases = ((28, 0x21fe, "<I", 0x2000, "rva range exceeds section file data"),
+                 (32, 0x21fe, "<I", 0x1032, "export name tables out of file bounds"),
+                 (36, 0x21ff, "<H", 0, "export name tables out of file bounds"))
+        for field, rva, fmt, value, message in cases:
+            with self.subTest(field=field):
+                image = reference()
+                struct.pack_into("<II", image, 0x58 + 32, 4096, 512)
+                image.extend(bytes(64))
+                struct.pack_into("<I", image, 512 + field, rva)
+                struct.pack_into(fmt, image, 768 + rva - 0x2000, value)
+                original = bytes(image)
+                result, after = self.patch(image)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(after, original)
+
     def test_forwarder_targets_and_ordinals_survive_name_repacking(self):
         names = ["a", "b", "retained_nid_no_patch"]
         for bits in (32, 64):
@@ -397,6 +414,20 @@ class ExecutableImportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("import descriptor table is not terminated within import directory", result.stderr)
             self.assertEqual(path.read_bytes(), image)
+
+    def test_pe_import_descriptor_terminator_is_all_zero(self):
+        for field, value in ((536, 1), (540, 1), (544, 0x1028)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                image = bytearray(self.pe())
+                struct.pack_into("<I", image, field, value)
+                original = bytes(image)
+                path = Path(directory) / "program"
+                path.write_bytes(original)
+                result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("nonzero fields in null import descriptor", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_exec_rejects_thunk_crossing_raw_tail_without_writing(self):
         image = bytearray(self.pe())
         section = 0x58 + 240
@@ -410,6 +441,19 @@ class ExecutableImportTests(unittest.TestCase):
             result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("thunk entry out of bounds", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_exec_rejects_iat_crossing_raw_tail_without_writing(self):
+        self.names = ["sceA", "sceNetRecv"]
+        image = bytearray(self.pe())
+        struct.pack_into("<I", image, 512 + 16, 0x15f8)
+        original = bytes(image)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(original)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("import address table entry out of bounds", result.stderr)
             self.assertEqual(path.read_bytes(), original)
 
     def test_exec_accepts_macho_without_exports(self):

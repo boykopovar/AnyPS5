@@ -1,4 +1,5 @@
 #include "prx/libScePngEnc/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -71,7 +72,7 @@ static T Resolve(void* module, const char* name) {
 int main(int argc, char** argv) {
     Require(argc == 3, "module and raw/nid arguments required");
 #ifdef _WIN32
-    void* module = LoadLibraryA(argv[1]);
+    void* module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     void* module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());

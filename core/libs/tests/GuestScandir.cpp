@@ -7,7 +7,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -42,6 +44,18 @@ void RegisterAllocator() {
 int APS5_VABI KeepTextFiles(const GuestDirectoryEntry* entry) {
     errno = ENOENT;
     return std::strstr(entry->name, ".txt") != nullptr;
+}
+
+std::vector<const void*> g_compared;
+
+int APS5_VABI CompareRecordingPlaces(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right) {
+    g_compared.push_back(left);
+    g_compared.push_back(right);
+    return std::strcmp((*left)->name, (*right)->name);
+}
+
+int APS5_VABI CompareAlwaysLess(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*) {
+    return -1;
 }
 
 int APS5_VABI CompareReverse(const GuestDirectoryEntry* const* left, const GuestDirectoryEntry* const* right) {
@@ -81,6 +95,35 @@ int main(int argc, char** argv) {
     list = nullptr;
     Require(scandir_nid_postfix((base / "absent").string().c_str(), &list, nullptr, alphasort_nid_postfix) == -1 && *__error_nid_postfix() == 2);
     Require(list == nullptr);
+
+    const std::filesystem::path many = base / "many";
+    Require(std::filesystem::create_directory(many));
+    std::set<std::string> names{".", ".."};
+    for (int index = 0; index < 40; ++index) {
+        const std::string name = "f" + std::to_string(index);
+        std::ofstream(many / name).put('x');
+        names.insert(name);
+    }
+    const int total = static_cast<int>(names.size());
+
+    list = nullptr;
+    g_compared.clear();
+    Require(scandir_nid_postfix(many.string().c_str(), &list, nullptr, CompareRecordingPlaces) == total);
+    Require(!g_compared.empty());
+    for (const void* place : g_compared) Require(place >= list && place < list + total);
+    for (int index = 1; index < total; ++index) Require(std::strcmp(list[index - 1]->name, list[index]->name) < 0);
+    for (int index = 0; index < total; ++index) free_nid_postfix(list[index]);
+    free_nid_postfix(list);
+
+    list = nullptr;
+    Require(scandir_nid_postfix(many.string().c_str(), &list, nullptr, CompareAlwaysLess) == total);
+    std::set<std::string> seen;
+    for (int index = 0; index < total; ++index) {
+        seen.insert(list[index]->name);
+        free_nid_postfix(list[index]);
+    }
+    free_nid_postfix(list);
+    Require(seen == names);
 
     std::filesystem::remove_all(base);
     return 0;

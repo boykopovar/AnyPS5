@@ -323,11 +323,13 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (decoded.fmask && (storage || base.depthCompare || table)) {
         return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
     }
-    if (decoded.fmask && !FmaskLayoutOf(format).has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
+    const auto fmaskLayout = FmaskLayoutOf(format);
+    if (decoded.fmask && !fmaskLayout.has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
     if (decoded.fmask && ((descriptor.dwords[6] & (1u << 20u)) != 0u || ((descriptor.dwords[6] & (1u << 21u)) != 0u && (descriptor.dwords[6] >> 24u) == 0u && descriptor.dwords[7] == 0u))) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented without readable metadata");
     if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8 && format != IrBufferFormat::Fmask8_S2_F2) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 2-sample, 2-fragment and 8-sample, 8-fragment FMASK");
     if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
-    for (std::uint32_t component = 0; decoded.fmask && component < 4u; ++component) {
+    const bool identityWideFmask = decoded.fmask && fmaskLayout->samples > 8u && descriptorImageSwizzle(descriptor) == ShaderImageIdentitySwizzle;
+    for (std::uint32_t component = 0; decoded.fmask && !identityWideFmask && component < 4u; ++component) {
         const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;
         if (selector != 0u && selector != 1u && selector != 4u) return rejectImage(PoisonReason::Fmask, "FMASK destination channel selector is not implemented");
     }
@@ -810,6 +812,7 @@ public:
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             parentKeysRemaining = ImageTableAbi::MaxParentKeys;
             nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+            parentScans.clear();
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
@@ -1172,8 +1175,23 @@ private:
                 if (column.buffer) records.readRanges.emplace_back(records.base, records.size);
             }
         }
-        ReadColumn(column, records, column.buffer ? parentKeysRemaining : ImageTableAbi::MaxKeys);
-        if (column.buffer) parentKeysRemaining -= records.keys;
+        if (!column.buffer) {
+            ReadColumn(column, records, ImageTableAbi::MaxKeys);
+            return;
+        }
+        auto scan = column;
+        scan.indirectOffset = 0u;
+        scan.indirectImmediate = 0u;
+        const auto scanned = std::ranges::find_if(parentScans, [&](const ParentScan& known) {
+            return known.base == records.base && known.size == records.size && known.column == scan && known.column.maxKey == scan.maxKey && known.column.unkeyed == scan.unkeyed && known.column.keyDomains == scan.keyDomains;
+        });
+        if (scanned != parentScans.end()) {
+            ReadColumn(column, records, scanned->keys);
+            return;
+        }
+        ReadColumn(column, records, parentKeysRemaining);
+        parentKeysRemaining -= records.keys;
+        parentScans.push_back({std::move(scan), records.base, records.size, records.keys});
     }
 
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
@@ -1620,6 +1638,13 @@ private:
         }
     }
 
+    struct ParentScan {
+        TableColumn column;
+        std::uint64_t base = 0;
+        std::uint64_t size = 0;
+        std::uint32_t keys = 0;
+    };
+
     const IrResourcePlan& plan;
     const SrtRuntime& runtime;
     SrtWalker& walker;
@@ -1627,6 +1652,7 @@ private:
     ImageTableSnapshot& tables;
     std::uint32_t parentKeysRemaining = ImageTableAbi::MaxParentKeys;
     std::uint32_t nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
+    std::vector<ParentScan> parentScans;
     std::map<std::uint32_t, ColumnRecords> columns;
     HashScratchIndex wordsIndex{threadScratch<HashSlot, WordsIndexTag>()};
     std::unordered_map<std::uint64_t, bool> pages;

@@ -613,6 +613,7 @@ class FontconfigLicenseInstallTests(unittest.TestCase):
         compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
         if not cmake or not ninja or not compiler:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         root = Path(__file__).resolve().parents[2]
         library = root / "core/libs/prx/libfontconfig"
         with tempfile.TemporaryDirectory() as temporary:
@@ -996,7 +997,7 @@ class ReleasePackageTests(unittest.TestCase):
                     (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
                     self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
-    def test_webrtc_library_archives_include_vad_notices(self):
+    def test_webrtc_library_archives_include_vad_and_scaler_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
@@ -1004,8 +1005,14 @@ class ReleasePackageTests(unittest.TestCase):
         source.mkdir(parents=True)
         (source / "LICENSE").write_bytes(b"VAD license\n")
         (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        source = self.source / "3rdparty/libyuv"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"Scaler license\n")
+        (source / "PATENTS").write_bytes(b"Scaler patent grant\n")
         package_release.package("linux", self.build, self.output, "v1")
-        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+        notices = {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n",
+                   "libyuv.txt": b"Scaler license\n", "libyuv-patents.txt": b"Scaler patent grant\n"}
+        for archive_name, content in notices.items():
             with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:

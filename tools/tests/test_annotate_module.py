@@ -528,6 +528,19 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertFalse(any("unwind_" in line for line in listing))
         self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
 
+    def test_linker_values_cannot_name_a_branch_or_hide_an_unwind_range(self):
+        symbols = [(IMPORT_NAME, 0xfff1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 0xfff2, 0x11, EXPORT_ADDRESS),
+                   (EXPORT_NAME, 1, 0x12, CODE_ADDRESS)]
+        code = b"\xe8\x06\x00\x00\x00" + b"\x90" * 6 + b"\xc3"
+        self.annotate(unwind_image([EXPORT_ADDRESS], code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== export")], ["; ===== export " + EXPORT_NAME])
+        self.assertIn("; ===== unwind range unwind_100b", listing)
+        self.assertTrue(instruction(listing, "call").endswith("; -> unwind_100b"))
+        inventory = self.read(".exports.txt")
+        for name in (IMPORT_NAME, SECOND_IMPORT_NAME):
+            self.assertIn(f"{EXPORT_ADDRESS:#x} {symbol_name(name)} {name}\n", inventory)
+
     def test_branch_annotation_requires_a_listed_unwind_target_instruction(self):
         code = b"\xe8\x01\x00\x00\x00\xb8\x90\x90\x90\x90\xc3"
         self.annotate(unwind_image([CODE_ADDRESS + 6], code=code, symbols=(), relocations=()))
