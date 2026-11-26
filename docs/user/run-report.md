@@ -20,6 +20,20 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
+
 ## Switching it off
 
 The report is written by default. Turn it off with the launch flag `--aps5-report=off` or the environment variable `APS5_REPORT=0`. The flag wins over the environment variable, and the environment variable wins over the default (on). There is no ini setting. The flag needs a game converted with a new enough relinker; the environment variable also works with older conversions. The runtime reads the flag from the command line and does not remove it, so the game can see `--aps5-report=...` in its arguments. When the game relaunches itself, the choice is passed on through `APS5_REPORT`.

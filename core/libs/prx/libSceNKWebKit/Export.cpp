@@ -7258,10 +7258,6 @@ int APS5_VABI _ZN7WebCore16MIMETypeRegistry22systemPreviewMIMETypesEv() {
 }
 
 
-int APS5_VABI _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation6createEdddNS_18TransformOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8263,19 +8259,7 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleNodeHandleGetRenderRect() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8822,10 +8806,6 @@ int APS5_VABI WKPageClearSelection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageComputePagesForPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9054,10 +9034,6 @@ int APS5_VABI WKPageRestoreFromSessionStateWithoutNavigation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageResumeActiveDOMObjectsAndAnimations() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9166,10 +9142,6 @@ int APS5_VABI WKPageSupportsTextEncoding() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSuspendActiveDOMObjectsAndAnimations() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageTryClose() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9191,9 +9163,6 @@ int APS5_VABI WKRegistrableDomainCreate() {
 
 
 
-int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKViewAccessibilityFocusedObject() {
     NotImplemented_nid_no_patch(__func__);
@@ -23998,10 +23967,6 @@ int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv() {
 }
 
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF9MediaTime8toStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

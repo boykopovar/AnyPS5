@@ -3328,11 +3328,16 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
                     if (GuestMemory::StoredAllSince_nid_no_patch(address, bytes, plane.range.generation)) {
                         if (!std::equal(current[index].begin() + first, current[index].begin() + first + bytes, result[index].begin() + first)) tookGuest[index] = true;
                         std::copy_n(current[index].begin() + first, bytes, result[index].begin() + first);
-                    } else for (std::size_t offset = first; offset < first + bytes; ++offset) {
-                        if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
-                            if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
-                            result[index][offset] = current[index][offset];
-                        } else if (!GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
+                    } else {
+                        std::optional<bool> pageUnstored;
+                        for (std::size_t offset = first; offset < first + bytes; ++offset) {
+                            if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
+                                if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
+                                result[index][offset] = current[index][offset];
+                                continue;
+                            }
+                            if (!pageUnstored) pageUnstored = GuestMemory::StoreUnchangedSinceLastCollect(address, bytes, plane.range.generation);
+                            if (*pageUnstored || GuestMemory::StoreUnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) continue;
                             Require(cause != DepthReadCause::Access && cause != DepthReadCause::Write, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
                             tookGuest[index] = true;
                             result[index][offset] = current[index][offset];

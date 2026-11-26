@@ -144,6 +144,8 @@ class AbCsvTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
+                if not arguments:
+                    self.assertIn(path.name.encode(), completed.stderr)
 
     def test_spreadsheet_safe_prefixes_formula_cells_only_when_requested(self):
         for trigger in ("=1+1", "+cmd", "-1", "@SUM(A1)", "\t=1+1"):

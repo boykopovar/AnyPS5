@@ -69,6 +69,18 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_pad_audio_haptics_merge_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadAudioHapticsMerge.cpp)
+    target_include_directories(guest_pad_audio_haptics_merge_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_audio_haptics_merge_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_audio_haptics_merge_tests)
+    add_test(NAME guest_pad_audio_haptics_merge COMMAND guest_pad_audio_haptics_merge_tests)
+    if(WIN32)
+        set_tests_properties(guest_pad_audio_haptics_merge PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_pad_recording_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadRecording.cpp)
     target_include_directories(guest_pad_recording_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_pad_recording_tests PRIVATE libScePad libc)

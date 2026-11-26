@@ -634,14 +634,6 @@ public:
                 address.pNext = &robustness;
             }
             if (pushDescriptors) extensionsEnabled.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-            VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
-            if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
-                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
-                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
-                extensionsEnabled.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
-                portabilityFeatures.pNext = address.pNext;
-                address.pNext = &portabilityFeatures;
-            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
@@ -7446,9 +7438,9 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
         bool configured;
         ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, configured); }
     } restore{configured};
-    const auto attempt = [&](const Context& with, std::uint64_t at, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, std::uint32_t firstVertex) {
+    const auto attempt = [&](const Context& with, std::uint64_t at, std::uint32_t indexSize, bool meshStage, std::uint32_t firstVertex) {
         IndexBehindWriter outcome = IndexBehindWriter::Count;
-        const auto* import = InPlaceIndexBehindWriter(with, at, 256, indexSize, vertexAttributes, meshStage, false, firstVertex, &outcome);
+        const auto* import = InPlaceIndexBehindWriter(with, at, 256, indexSize, meshStage, false, firstVertex, &outcome);
         return std::pair<const HostImport*, IndexBehindWriter>(import, outcome);
     };
     const auto indices = address + 4096;
@@ -7456,49 +7448,47 @@ bool indexBehindWriterTests(const Device& device, Recorder& recorder) {
     Require(recorder.PendingWriteOverlaps(indices, 256), "the pending GPU write over the index range was not noted");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, false);
     const auto switchedOff = IndexBehindWriterCounts();
-    const auto off = attempt(context, indices, 4, false, false, 0);
+    const auto off = attempt(context, indices, 4, false, 0);
     Require(IndexBehindWriterCounts() == switchedOff, "an attempt without APS5_INDEX_IN_PLACE_BEHIND_WRITER was counted");
     Require(off.first == nullptr && off.second == IndexBehindWriter::Off, "an index range behind a pending GPU writer was bound in place without APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(!recorder.PendingReadOverlaps(indices, 256), "an index range left on the copy path was noted as an in-place read");
     RuntimeSwitches::Assign(RuntimeSwitch::IndexInPlaceBehindWriter, true);
     const auto countsBefore = IndexBehindWriterCounts();
-    const auto taken = attempt(context, indices, 4, false, false, 0);
+    const auto taken = attempt(context, indices, 4, false, 0);
     Require(taken.first != nullptr && taken.second == IndexBehindWriter::Taken && taken.first->base <= indices && indices + 256 <= taken.first->base + taken.first->bytes, "an index range behind a pending GPU writer was not bound in place with APS5_INDEX_IN_PLACE_BEHIND_WRITER");
     Require(recorder.PendingWriteOverlaps(indices, 256), "binding an index range behind a pending GPU writer waited for the writer");
     const auto read = recorder.DescribePendingRead(indices, 256);
     Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput && read->open, "the read of an index range bound behind a pending GPU writer was not noted on the open batch");
-    Require(attempt(context, address + 16384, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range without a pending GPU writer left the copy path");
-    Require(attempt(context, indices, 4, true, false, 0).second == IndexBehindWriter::VertexAttributes, "an index range of a draw with vertex attributes, which needs its highest index on the CPU, was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 4, false, true, 0).second == IndexBehindWriter::MeshStage, "an index range of a mesh draw was bound behind a pending GPU writer");
+    Require(attempt(context, address + 16384, 4, false, 0).second == IndexBehindWriter::NoWriter, "an index range without a pending GPU writer left the copy path");
+    Require(attempt(context, indices, 4, true, 0).second == IndexBehindWriter::MeshStage, "an index range of a mesh draw was bound behind a pending GPU writer");
     IndexBehindWriter restartOutcome = IndexBehindWriter::Count;
-    Require(InPlaceIndexBehindWriter(context, indices, 256, 4, false, false, true, 0, &restartOutcome) == nullptr && restartOutcome == IndexBehindWriter::PrimitiveRestart, "an index range of a draw with primitive restart, which is skipped when it holds restart indices only, was bound behind a pending GPU writer");
+    Require(InPlaceIndexBehindWriter(context, indices, 256, 4, false, true, 0, &restartOutcome) == nullptr && restartOutcome == IndexBehindWriter::PrimitiveRestart, "an index range of a draw with primitive restart, which is skipped when it holds restart indices only, was bound behind a pending GPU writer");
     IndexBehindWriter shortOutcome = IndexBehindWriter::Count;
-    Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 4, false, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
-    Require(attempt(context, indices, 2, false, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
-    Require(attempt(context, indices + 2, 4, false, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
+    Require(InPlaceIndexBehindWriter(context, indices, 2, 4, false, false, 0, &shortOutcome) == nullptr && shortOutcome == IndexBehindWriter::Off, "an index range shorter than one index, which is skipped on the copy path, was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 4, false, 1).second == IndexBehindWriter::VertexOffset, "a 32-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xffff0000u).second == IndexBehindWriter::Taken, "a 16-bit index range whose vertex offset cannot overflow was not bound behind a pending GPU writer");
+    Require(attempt(context, indices, 2, false, 0xffff0001u).second == IndexBehindWriter::VertexOffset, "a 16-bit index range whose vertex offset can overflow was bound behind a pending GPU writer");
+    Require(attempt(context, indices + 2, 4, false, 0).second == IndexBehindWriter::NoImport, "an index range misaligned for its format was bound behind a pending GPU writer");
     auto limited = context;
     limited.limits.maxDrawIndexedIndexValue = 0xffffffu;
-    Require(attempt(limited, indices, 4, false, false, 0).second == IndexBehindWriter::IndexLimit, "an index range was bound behind a pending GPU writer on a device whose index limit needs the highest index");
+    Require(attempt(limited, indices, 4, false, 0).second == IndexBehindWriter::IndexLimit, "an index range was bound behind a pending GPU writer on a device whose index limit needs the highest index");
     auto unrecorded = context;
     unrecorded.recorder = nullptr;
-    Require(attempt(unrecorded, indices, 4, false, false, 0).second == IndexBehindWriter::Off, "an index range was bound behind a pending GPU writer without a recorder");
+    Require(attempt(unrecorded, indices, 4, false, 0).second == IndexBehindWriter::Off, "an index range was bound behind a pending GPU writer without a recorder");
     const std::array<std::byte, 4> label{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     recorder.NotePendingWrite(address + 12288, 16);
     recorder.RecordStore(whole->buffer, address + 12288 - whole->base, label, address + 12288);
     Require(recorder.QueuedStoreOverlaps(address + 12288, 4), "the label store was not queued");
-    Require(attempt(context, address + 12288, 4, false, false, 0).second == IndexBehindWriter::LabelOrStore, "an index range under a queued label store was bound behind a pending GPU writer");
+    Require(attempt(context, address + 12288, 4, false, 0).second == IndexBehindWriter::LabelOrStore, "an index range under a queued label store was bound behind a pending GPU writer");
     recorder.Sync();
     Require(!recorder.PendingReadOverlaps(indices, 256), "the read of an index range bound behind a pending GPU writer outlived its batch");
-    Require(attempt(context, indices, 4, false, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
+    Require(attempt(context, indices, 4, false, 0).second == IndexBehindWriter::NoWriter, "an index range whose GPU writer completed left the copy path");
     const auto countsAfter = IndexBehindWriterCounts();
     std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> expectedCounts{};
     const auto expect = [&](IndexBehindWriter outcome, std::uint64_t count) { expectedCounts[static_cast<std::size_t>(outcome)] = count; };
     expect(IndexBehindWriter::Taken, 2);
     expect(IndexBehindWriter::Off, 2);
     expect(IndexBehindWriter::NoWriter, 2);
-    expect(IndexBehindWriter::VertexAttributes, 1);
     expect(IndexBehindWriter::IndexLimit, 1);
     expect(IndexBehindWriter::MeshStage, 1);
     expect(IndexBehindWriter::PrimitiveRestart, 1);
@@ -12276,6 +12266,110 @@ bool repeatedNeighbourStoreTests(const Device& device, Recorder& recorder) {
         ran = true;
     }
     return ran;
+}
+
+bool storageImportTouchTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "watched host imports unavailable: storage import touch not tested\n";
+        return false;
+    }
+    constexpr std::uint64_t offset = 0x2000;
+    constexpr std::size_t atlasBytes = 1024 * 1024;
+    constexpr std::size_t allocationBytes = atlasBytes + 2 * 65536;
+    PrepareImportWatch(base);
+    for (const bool cpuChanged : {false, true}) {
+        void* allocation = AllocateWatched(allocationBytes, 65536);
+        Require(allocation != nullptr, "no watched allocation for a stored image beside an import touch");
+        auto* memory = static_cast<std::uint8_t*>(allocation);
+        std::memset(memory, 0x11, allocationBytes);
+        const auto allocationAddress = reinterpret_cast<std::uint64_t>(allocation);
+        const auto address = allocationAddress + offset;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(allocation, allocationBytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* allocation;
+            std::uint64_t address;
+            std::size_t bytes;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(allocation);
+                }
+                HostImportFor(context, address, bytes);
+                ReleaseWatched(allocation, bytes);
+            }
+        } unregister{base, allocation, allocationAddress, allocationBytes};
+        AgcDriver::GuestMemory::CollectWritesUncached(allocationAddress, allocationBytes);
+        auto context = base;
+        TextureDetiler detiler(context);
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = 1024;
+        resource.height = 1024;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kStandard4KB;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 1;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        if (HostImportFor(context, address, atlasBytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, atlasBytes)) {
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            std::cout << "host imports are compared, not watched: storage import touch not tested\n";
+            return false;
+        }
+        const auto clear = [&](const VkClearColorValue& value) {
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+        };
+        clear(VkClearColorValue{{0.25f, 0.0f, 0.0f, 1.0f}});
+        image->WriteBack();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        clear(VkClearColorValue{{1.0f, 0.0f, 0.0f, 1.0f}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        Require(AgcDriver::GuestMemory::ImportWatched(address, atlasBytes, [&] {
+            static_cast<volatile std::uint8_t*>(allocation)[offset + 0x100] = 64;
+            return true;
+        }, true, false), "the stored image's unchanged import failed");
+        memory[offset - 4096] = 0x44;
+        if (cpuChanged) memory[offset + 0x100] = 0x44;
+        AgcDriver::GuestMemory::CollectWritesUncached(allocationAddress, allocationBytes);
+        image->WriteBack();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        std::vector<std::byte> read(allocationBytes);
+        AgcDriver::GuestMemory::Read(allocationAddress, read);
+        std::size_t dropped = 0;
+        for (std::size_t at = offset; at < offset + atlasBytes; ++at) {
+            const bool stored = read[at] == std::byte{255};
+            if (cpuChanged && at < 65536) continue;
+            if (!stored) ++dropped;
+        }
+        if (dropped != 0) throw std::runtime_error("an import-window touch beside a store dropped " + std::to_string(dropped) + " new GPU texels after an earlier write-back");
+        Require(read[offset - 4096] == std::byte{0x44}, "the image write-back overwrote a neighbouring CPU store");
+        if (cpuChanged) Require(read[offset + 0x100] == std::byte{0x44}, "the image write-back overwrote a real CPU store after an import touch");
+        std::cout << "stored image beside an import touch, CPU changed=" << cpuChanged << ": ok\n";
+    }
+    return true;
 }
 
 void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
@@ -18939,6 +19033,9 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--sampled-storage-base-level-usage-only") {
             sampledStorageBaseLevelUsageTests(device, recorder);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-import-touch-only") {
+            return storageImportTouchTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unchanged-cpu-stamps-only") {
             unchangedCpuStampTests(device, recorder);
