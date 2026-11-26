@@ -402,7 +402,7 @@ void TestLowLatencyCallsRejectBadArguments() {
     AudioOut2PortState state;
     Require(sceAudioOut2LoPortGetState(0, &state) == errorInvalidHandle);
     uint8_t extra = 0xAA;
-    Require(sceAudioOut2LoPortGetStateEx(0, nullptr, &extra) == errorInvalidArgument);
+    Require(sceAudioOut2LoPortGetStateEx(0, nullptr, &extra) == errorInvalidParam);
     Require(extra == 0xAA);
     Require(sceAudioOut2LoPortGetStateEx(0, &state, &extra) == errorInvalidHandle);
     Require(extra == 0xAA);
@@ -417,7 +417,7 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 1) == errorInvalidArgument);
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 0) == 0);
     Require(sceAudioOut2LoPortGetState(session.port, nullptr) == errorInvalidArgument);
-    Require(sceAudioOut2LoPortGetStateEx(session.port, nullptr, &extra) == errorInvalidArgument);
+    Require(sceAudioOut2LoPortGetStateEx(session.port, nullptr, &extra) == errorInvalidParam);
     Require(extra == 0xAA);
     Require(sceAudioOut2LoContextGetQueueLevel(session.context, nullptr, nullptr) == 0);
     std::memset(&state, 0xAB, sizeof(state));
