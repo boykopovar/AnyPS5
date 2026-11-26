@@ -1,10 +1,10 @@
 #include "prx/libSceVideodec2/include/InventoryExports.hpp"
+#include "prx/libSceVideodec2/include/PictureMetadata.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 namespace {
 
@@ -16,8 +16,6 @@ constexpr int Videodec2ErrorFrameBufferPointer = static_cast<int>(0x811D0107u);
 constexpr int Videodec2ErrorFrameBufferAlignment = static_cast<int>(0x811D0108u);
 constexpr int Videodec2ErrorSliceInput = static_cast<int>(0x811D01E0u);
 
-constexpr std::uint64_t SliceDecoderMagic = 0xA824D9799010A455ull;
-constexpr std::size_t DecoderMagicOffset = 0x68;
 constexpr std::uint64_t SliceSyncResultSize = 0x18;
 
 struct SliceInput {
@@ -57,14 +55,8 @@ bool CopyOutGuest(TValue* destination, const TValue& source) {
     return copied;
 }
 
-bool ValidateDecoder(const void* decoder) {
-    if (!decoder) return false;
-    const auto address = reinterpret_cast<std::uintptr_t>(decoder);
-    if (address > std::numeric_limits<std::uintptr_t>::max() - DecoderMagicOffset) return false;
-    std::uint64_t magic = 0;
-    const auto* magicPtr = reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(decoder) + DecoderMagicOffset);
-    if (!CopyInGuest(magic, magicPtr)) return false;
-    return magic == SliceDecoderMagic;
+bool ValidateDecoder(std::uint64_t decoder) {
+    return decoder != 0 && Videodec2DecoderExists_nid_no_patch(decoder);
 }
 
 int ValidateSliceInputFields(const SliceInput& input) {
@@ -80,7 +72,7 @@ int ValidateSliceInputFields(const SliceInput& input) {
 
 extern "C" {
 
-int APS5_VABI sceVideodec2DecodeFirstSlice(const void* decoder, const void* input, SceVideodec2::FrameBuffer* frameBuffer) {
+int APS5_VABI sceVideodec2DecodeFirstSlice(std::uint64_t decoder, const void* input, SceVideodec2::FrameBuffer* frameBuffer) {
     if (!ValidateDecoder(decoder)) return Videodec2ErrorDecoderHandle;
     if (!input || !frameBuffer) return Videodec2ErrorArgumentPointer;
     std::uint64_t inputSize = 0;
@@ -99,7 +91,7 @@ int APS5_VABI sceVideodec2DecodeFirstSlice(const void* decoder, const void* inpu
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideodec2DecodeNextSlice(const void* decoder, const void* input) {
+int APS5_VABI sceVideodec2DecodeNextSlice(std::uint64_t decoder, const void* input) {
     if (!ValidateDecoder(decoder)) return Videodec2ErrorDecoderHandle;
     if (!input) return Videodec2ErrorArgumentPointer;
     std::uint64_t inputSize = 0;
@@ -111,7 +103,7 @@ int APS5_VABI sceVideodec2DecodeNextSlice(const void* decoder, const void* input
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideodec2SyncAllSlice(const void* decoder, SceVideodec2::OutputInfo* output, const void* syncResult) {
+int APS5_VABI sceVideodec2SyncAllSlice(std::uint64_t decoder, SceVideodec2::OutputInfo* output, const void* syncResult) {
     if (!ValidateDecoder(decoder)) return Videodec2ErrorDecoderHandle;
     if (!output) return Videodec2ErrorArgumentPointer;
     std::uint64_t outputSize = 0;

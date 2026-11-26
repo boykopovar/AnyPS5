@@ -845,6 +845,10 @@ bool Videodec2CopyParsedPictureInfo_nid_no_patch(std::uint64_t handle, const voi
     throw std::runtime_error("Videodec2: expected an AVC or HEVC picture");
 }
 
+bool Videodec2DecoderExists_nid_no_patch(std::uint64_t handle) {
+    return FindDecoder(handle) != nullptr;
+}
+
 void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frameBuffer, PictureHeader* header) {
     if (!header) throw std::runtime_error("Videodec2: invalid argument pointer");
     const auto found = FindDecoder(handle);
