@@ -414,6 +414,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     binding.bufferRead = {true};
     program.bindings.push_back(binding);
     const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const bool noFastRevalidate = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto unrelated = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.At(EpochUnrelatedOffset)));
     DrawDepth(device, unrelated, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -436,7 +437,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     const bool unrelatedStale = AgcDriver::Graphics::DepthPlanesStale();
     std::printf("depth plane epoch exit: with a stale plane outside the buffer (%s), an unchanged buffer build %s the exit\n", unrelatedStale ? "still stale" : "stored", unrelatedExit ? "took" : "did not take");
     Require(unrelatedStale, "depth plane epoch exit: proving the buffer build stored a plane outside the buffer");
-    Require(unrelatedExit, "depth plane epoch exit: an unchanged buffer build did not take the epoch exit while only a plane outside the buffer was stale");
+    Require(unrelatedExit != noFastRevalidate, "depth plane epoch exit: an unchanged buffer build did not take the epoch exit while only a plane outside the buffer was stale, or took it with APS5_NO_FAST_REVALIDATE set");
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
     const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes);
     Require(stale, "depth plane epoch exit: the draw over the buffer did not leave the buffer's plane stale");
@@ -448,7 +449,7 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     Require(!proved || !left, "depth plane epoch exit: a reused buffer build read guest memory a depth surface had not stored to");
     Require(resources->Revalidate(shader), "depth plane epoch exit: the buffer build did not prove current after its plane was stored");
     const auto storedBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
-    Require(AgcDriver::Graphics::DepthPlanesStale() && resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != storedBefore, "depth plane epoch exit: the stored buffer build did not take the exit while only a plane outside the buffer was stale");
+    Require(AgcDriver::Graphics::DepthPlanesStale() && resources->Revalidate(shader) && (AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != storedBefore) != noFastRevalidate, "depth plane epoch exit: the stored buffer build did not take the exit while only a plane outside the buffer was stale, or took it with APS5_NO_FAST_REVALIDATE set");
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, 0.5f, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
     const bool kept = AgcDriver::Graphics::DepthSurfacesSerial() == surfacesBefore;
@@ -481,15 +482,13 @@ void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, st
     Require(resources->Reusable(), "depth surface epoch exit: the plane sampling build is not reusable");
     Require(resources->Revalidate(shader), "depth surface epoch exit: the sampling build did not prove current");
     const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
-    const bool proveAgain = resources->Revalidate(shader);
-    const bool exitTaken = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore;
-    Require(proveAgain && exitTaken != (std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr), "depth surface epoch exit: an unchanged sampling build did not take the epoch exit, or took it with APS5_NO_FAST_REVALIDATE set");
+    Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
     const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false, false);
     const bool created = AgcDriver::Graphics::DepthSurfacesSerial() != surfacesBefore;
     const bool broke = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
-    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes);
     const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
     const bool proved = resources->Revalidate(shader);
     const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
@@ -794,11 +793,6 @@ int main(int argc, char** argv) {
             if (AgcDriver::Graphics::EpochProofCountsProfiled()) AgcDriver::Graphics::ReportEpochProofCounts();
             if (!planeChecked) return VulkanTestSkipped;
             std::puts("depth plane epoch exit tests passed");
-            return 0;
-        }
-        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-surface") {
-            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
-            std::puts("depth surface epoch exit tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {
