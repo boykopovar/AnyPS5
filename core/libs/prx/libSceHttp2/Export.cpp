@@ -304,9 +304,10 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
         if (!handle) return ERROR_INVALID_ID;
         async = handle->async;
         transport = handle->transport;
+        DropAsync(async);
         g_handles.erase(req_id);
+        ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::HandleRemoved);
     }
-    DropAsync(async);
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::Deleting);
     if (transport) transport->Stop(false);
     AbortAsync(async, req_id);

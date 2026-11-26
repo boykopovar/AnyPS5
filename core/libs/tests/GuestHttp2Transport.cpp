@@ -685,8 +685,8 @@ struct AsyncPhases {
     int request;
     std::mutex mutex;
     std::condition_variable changed;
-    std::array<bool, 5> blocked{};
-    std::array<unsigned, 5> seen{};
+    std::array<bool, 6> blocked{};
+    std::array<unsigned, 6> seen{};
     bool finished = false;
 
     explicit AsyncPhases(int id) : request(id) {
@@ -727,8 +727,8 @@ struct AsyncPhases {
     }
 };
 
-void AsyncDeletionPublicationRace(int ssl) {
-    std::fprintf(stderr, "HTTP2 resolved wait during deletion publication gap\n");
+void AsyncDeletionPublicationRace(int ssl, AsyncPhase deletion = AsyncPhase::Deleting) {
+    std::fprintf(stderr, "HTTP2 resolved wait during deletion phase %d\n", static_cast<int>(deletion));
     Server server(Mode::StallResponse);
     Client client(ssl);
     client.Create(server.Url());
@@ -736,7 +736,7 @@ void AsyncDeletionPublicationRace(int ssl) {
     server.WaitStage(2);
     AsyncPhases phases(client.request);
     phases.Block(AsyncPhase::WaitResolved);
-    phases.Block(AsyncPhase::Deleting);
+    phases.Block(deletion);
     Http2AsyncResult completion{};
     auto waiter = std::async(std::launch::async, [&] {
         const int result = sceHttp2WaitAsync(client.request, &completion, nullptr, nullptr);
@@ -745,12 +745,12 @@ void AsyncDeletionPublicationRace(int ssl) {
     });
     phases.Wait(AsyncPhase::WaitResolved);
     auto deleting = std::async(std::launch::async, [&] { return sceHttp2DeleteRequest(client.request); });
-    phases.Wait(AsyncPhase::Deleting);
+    phases.Wait(deletion);
     server.Release();
     phases.Wait(AsyncPhase::Completed);
     phases.Release(AsyncPhase::WaitResolved);
     phases.WaitPendingOrFinished();
-    phases.Release(AsyncPhase::Deleting);
+    phases.Release(deletion);
     Require(deleting.wait_for(std::chrono::seconds(5)) == std::future_status::ready && deleting.get() == 0, "deletion publication completes");
     Require(waiter.wait_for(std::chrono::seconds(5)) == std::future_status::ready && waiter.get() == 0, "resolved waiter receives deletion completion");
     Require(completion.event_type == 0 && completion.req_id == client.request && completion.result == static_cast<int>(0x817b1080), "resolved waiter receives the send abort");
@@ -3006,6 +3006,8 @@ int main(int argc, char** argv) {
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
     if (argc == 2 && std::string_view(argv[1]) == "--async-deletion-publication-race") {
         AsyncDeletionPublicationRace(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--async-handle-removal-race") {
+        AsyncDeletionPublicationRace(ssl, AsyncPhase::HandleRemoved);
     } else if (argc == 3 && std::string_view(argv[1]) == "--async-submission-deletion-race") {
         AsyncSubmissionDeletionRace(ssl, argv[2]);
     } else if (argc == 2 && std::string_view(argv[1]) == "--async-completed-zero") {

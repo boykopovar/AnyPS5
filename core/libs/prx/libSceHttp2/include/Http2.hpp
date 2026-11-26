@@ -32,7 +32,7 @@ using Http2AuthInfoCallback = int (APS5_VABI*)(int request, int authType, const 
 namespace GuestSceHttp2Test {
 using AsyncPublishHook = void (*)(void*);
 void SetAsyncPublishHookForTests_nid_no_patch(AsyncPublishHook hook, void* data) noexcept;
-enum class AsyncPhase { SubmissionResolved, WaitResolved, WaitPending, Deleting, Completed };
+enum class AsyncPhase { SubmissionResolved, WaitResolved, WaitPending, Deleting, Completed, HandleRemoved };
 using AsyncPhaseHook = void (*)(int, AsyncPhase, void*);
 void SetAsyncPhaseHookForTests_nid_no_patch(AsyncPhaseHook hook, void* data) noexcept;
 }
