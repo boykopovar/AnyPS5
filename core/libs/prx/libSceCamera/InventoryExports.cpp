@@ -1,7 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceCamera/include/InventoryExports.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
-#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
@@ -63,8 +63,10 @@ int APS5_VABI sceCameraOpenByModuleIdWithMode(std::int32_t userId, std::int32_t 
 }
 
 int APS5_VABI sceCameraSetForceDriverMode(std::int32_t mode) {
-    std::uint32_t category = 0;
-    sceKernelGetAppCategoryType(getpid_nid_postfix(), &category);
+    std::uint32_t category = 0xFFFFFFFFu;
+    if (!GetAppCategoryType_nid_no_patch(&category)) {
+        category = 0xFFFFFFFFu;
+    }
     if (!IsForceDriverModeCategoryAllowed(category)) return SCE_CAMERA_ERROR_INVALID_APP_CATEGORY;
     if (mode != 0 && mode != 1) return SCE_CAMERA_ERROR_PARAM;
     NotImplemented_nid_no_patch(__func__);
