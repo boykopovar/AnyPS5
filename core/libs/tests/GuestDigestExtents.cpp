@@ -136,8 +136,57 @@ static std::size_t Check(bool wide, std::size_t digestLength) {
     }
     return cases;
 }
+template<auto TInit, auto TUpdate, auto TFinal>
+static void CheckWideBufferWipeFor() {
+    const auto requireZeroData = [](const Sha512Context& context) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(context.data);
+        for (std::size_t i = 0; i < sizeof(context.data); ++i) Require(bytes[i] == 0);
+    };
+    std::array<unsigned char, 128> payload{};
+    for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<unsigned char>(i + 1);
+    std::array<unsigned char, 64> digest{};
+
+    Sha512Context context{};
+    std::memset(&context, 0xa5, sizeof(context));
+    Require(TInit(&context) == 1);
+    Require(TUpdate(&context, payload.data(), 16) == 1);
+    Require(TFinal(digest.data(), &context) == 1);
+    requireZeroData(context);
+
+    std::memset(&context, 0xa5, sizeof(context));
+    Require(TInit(&context) == 1);
+    Require(TUpdate(&context, payload.data(), 120) == 1);
+    Require(TFinal(digest.data(), &context) == 1);
+    requireZeroData(context);
+
+    std::memset(&context, 0xa5, sizeof(context));
+    Require(TInit(&context) == 1);
+    Require(TUpdate(&context, payload.data(), 64) == 1);
+    Require(TUpdate(&context, payload.data() + 64, 64) == 1);
+    requireZeroData(context);
+    Require(TFinal(digest.data(), &context) == 1);
+    requireZeroData(context);
+
+    std::memset(&context, 0xa5, sizeof(context));
+    Require(TInit(&context) == 1);
+    Require(TUpdate(&context, payload.data(), 16) == 1);
+    Require(TFinal(nullptr, &context) == 0);
+    requireZeroData(context);
+
+    std::memset(&context, 0xa5, sizeof(context));
+    Require(TInit(&context) == 1);
+    Require(TUpdate(&context, payload.data(), 16) == 1);
+    context.mdLength = 32;
+    Require(TFinal(digest.data(), &context) == 0);
+    requireZeroData(context);
+}
+static void CheckWideBufferWipe() {
+    CheckWideBufferWipeFor<SHA512_Init_nid_postfix, SHA512_Update_nid_postfix, SHA512_Final_nid_postfix>();
+    CheckWideBufferWipeFor<SHA384_Init_nid_postfix, SHA384_Update_nid_postfix, SHA384_Final_nid_postfix>();
+}
 int main() {
     const auto count = Check<Sha256Context,SHA256_Init_nid_postfix,SHA256_Update_nid_postfix,SHA256_Final_nid_postfix>(false,32)
                      + Check<Sha512Context,SHA512_Init_nid_postfix,SHA512_Update_nid_postfix,SHA512_Final_nid_postfix>(true,64);
+    CheckWideBufferWipe();
     std::printf("%zu guarded SHA input/context/output and padding cases passed\n", count);
 }

@@ -284,6 +284,7 @@ void Sha512Update(Sha512Context& c, const void* input, std::size_t length) {
         data += room;
         length -= room;
         c.num = 0;
+        std::memset(buffer, 0, blockSize);
     }
     for (; length >= blockSize; data += blockSize, length -= blockSize) Sha512Block(c, data);
     if (length) {
@@ -306,6 +307,7 @@ int Sha512Final(unsigned char* digest, Sha512Context& c) {
     StoreBig64(buffer + 112, c.Nh);
     StoreBig64(buffer + 120, c.Nl);
     Sha512Block(c, buffer);
+    std::memset(buffer, 0, blockSize);
     if (!digest) return 0;
     if (c.mdLength != Sha384Length && c.mdLength != Sha512Length) return 0;
     for (std::size_t i = 0; i < c.mdLength / 8; ++i) StoreBig64(digest + 8 * i, c.h[i]);
