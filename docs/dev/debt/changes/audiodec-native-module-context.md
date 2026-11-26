@@ -2,7 +2,7 @@
 
 ## change [libSceAudiodec.native pending exports]
 
-- [libSceAudiodec.native pending exports](../../../core/libs/prx/libSceAudiodec.native/Export.cpp) - the argument checks for caller-owned context initialization and termination, codec registration, decoder creation and clearing, and the seven decode variants follow [firmware 13.42](https://github.com/boykopovar/AnyPS5/issues/19399#issuecomment-6848182372). The service calls for those paths, registration locking and the per-codec routines remain incomplete.
+- [libSceAudiodec.native pending exports](../../../core/libs/prx/libSceAudiodec.native/Export.cpp) - the argument checks for caller-owned context initialization and termination, codec registration, decoder creation and clearing, and the seven decode variants follow [firmware 13.42](https://github.com/boykopovar/AnyPS5/issues/19399#issuecomment-6848182372). Initialization of a caller-owned context is complete: both service IDs, the lock and the cleared codec flags, returning the Ajm initialization result, with an unwritable context returning the service error where the console would fault. The service calls for the other paths, registration locking and the per-codec routines remain incomplete.
 
 ## add Functional
 

@@ -129,6 +129,22 @@ int main(int argc, char** argv) {
     CheckDecoderRelease(reference.data(), moduleAjmi, moduleAjm);
 
     Require(sceAudiodecInitialize(nullptr) == ErrorArgument, "Initialize null context");
+    alignas(8) unsigned char fresh[64];
+    std::memset(fresh, 0xa5, sizeof(fresh));
+    Require(sceAudiodecInitialize(fresh) == 0, "Initialize caller context");
+    std::uint32_t freshAjmi = 0, freshAjm = 0;
+    Require(sceAudiodecGetAjmContext(fresh, &freshAjmi, &freshAjm) == 0 && freshAjmi && freshAjm &&
+            freshAjmi != freshAjm && freshAjmi != moduleAjmi && freshAjm != moduleAjm, "Initialize opens both services");
+    auto* freshLock = reinterpret_cast<unsigned char*>((reinterpret_cast<std::uintptr_t>(fresh) + 0xFu) & ~static_cast<std::uintptr_t>(7u));
+    PthreadRwlock freshRwlock = nullptr;
+    std::memcpy(&freshRwlock, freshLock, sizeof(freshRwlock));
+    Require(freshRwlock && scePthreadRwlockTryrdlock(&freshRwlock) == 0 && scePthreadRwlockUnlock(&freshRwlock) == 0,
+            "Initialize creates the lock");
+    Require(std::all_of(freshLock + 8, freshLock + 16, [](auto b) { return b == 0; }), "Initialize clears both codec flags");
+    Require(std::all_of(freshLock + 16, fresh + sizeof(fresh), [](auto b) { return b == 0xa5; }), "Initialize writes nothing past the flags");
+    Require(scePthreadRwlockDestroy(&freshRwlock) == 0 && sceAjmiFinalize(freshAjmi) == 0 && sceAjmFinalize(freshAjm) == 0,
+            "release the caller context");
+    Require(sceAudiodecInitialize(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x80930005u), "Initialize unwritable context");
 
     bool termNullCaught = false;
     try {
