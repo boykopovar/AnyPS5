@@ -534,6 +534,8 @@ Changed-test selection uses the configured CMake target sources. Windows CI repl
 ## Checker scripts
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
+  Run `python3 tools/check_test_registration.py --scripts` after changing Python test registration. It checks for
+  test scripts omitted from CTest or workflows and test classes omitted from explicitly selected suites.
 - `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
   Use `--list` to inspect reported skip reasons without applying the job's policy. Use `--json` for policy decisions
   and the list of unexpected skips in machine-readable form.
