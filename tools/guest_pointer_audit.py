@@ -1,4 +1,5 @@
 import argparse
+import errno
 import functools
 import json
 import os
@@ -558,7 +559,9 @@ def main(argv=None):
         for library, count in counts.most_common():
             print(f"  {count:5} {library}")
         sys.stdout.flush()
-    except BrokenPipeError:
+    except OSError as exc:
+        if not (isinstance(exc, BrokenPipeError) or (sys.platform == "win32" and exc.errno == errno.EINVAL)):
+            raise
         devnull = os.open(os.devnull, os.O_WRONLY)
         try:
             os.dup2(devnull, sys.stdout.fileno())
