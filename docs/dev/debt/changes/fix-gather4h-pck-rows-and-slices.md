@@ -1,0 +1,5 @@
+# shader
+
+## change [Packed horizontal gathers]
+
+- [Packed horizontal gathers](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) (`image_gather4h_pck`, MIMG opcode 98) - cube images, D16 data and formats whose bits the view loses throw; the PS5's gfx1013 is not measured. The four window texels are read raw into a little-endian bitstream, DMASK bit i writing stream word i to the next register; texels wider than 32 bits write zeros. The anchor is floor(x-0.5) with elements -1 to +2 and the row is floor(y), both clamped; sampler addressing is ignored (gfx1031). On gfx1036 ([hardware oracle](../HW_ORACLE.md)) a row past the height clamps (gfx1031 was recorded returning zeros), a 1D or 2D array slice is the nearest-even layer from `BASE_ARRAY` clamped to the last array index, and a 3D slice is floor(z*depth) clamped. The stream rule was measured for R8_UNORM, RG8_UNORM and RGBA8. `image_gather8h_pck` (opcode 99) only zero-fills popcount(dmask) registers on gfx1031 and translates to that; D16, TFE and LWE throw.

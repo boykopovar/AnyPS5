@@ -1713,8 +1713,13 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto dimension = access.image.dimension;
-    if (dimension != RdnaImageDimension::Dim1D && dimension != RdnaImageDimension::Dim2D) {
+    const bool rows = dimension == RdnaImageDimension::Dim2D || dimension == RdnaImageDimension::Dim2DArray || dimension == RdnaImageDimension::Dim3D;
+    const bool layered = dimension == RdnaImageDimension::Dim1DArray || dimension == RdnaImageDimension::Dim2DArray;
+    if (!rows && !layered && dimension != RdnaImageDimension::Dim1D) {
         ctx.Fail(access.inst, "is a packed horizontal gather of an image dimension whose row and slice rules are not measured");
+    }
+    if (access.image.layerRows) {
+        ctx.Fail(access.inst, "is a packed horizontal gather of a 1D array laid out as rows of a 2D image, which is not implemented");
     }
     if (Layout(mem).clamp != NoImageComponent || HasFlag(mem, RdnaImageSampleFlagCompare)) {
         ctx.Fail(access.inst, "is a packed horizontal gather with depth comparison or an LOD clamp, which is not implemented");
@@ -1728,15 +1733,14 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
         texelBits += info.componentBits[component];
     }
     std::uint32_t streamWords[4] = {ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
-    std::uint32_t rowInside = 0;
-    const bool twoDimensional = dimension == RdnaImageDimension::Dim2D;
     if (texelBits <= 32u) {
+        const auto components = RdnaImageDimensionInfoFor(dimension).coordinateComponents;
         state.module.EmitCapability(spv::CapabilityImageQuery);
         const auto image = LoadSampledImageDescriptor(state, mem.resource);
         const auto size = state.module.AllocateId();
-        state.module.AddFunction(spv::OpImageQuerySizeLod, twoDimensional ? TypeI32Vector(state, 2) : TypeI32(state), size, image, ConstantU32(state, 0));
+        state.module.AddFunction(spv::OpImageQuerySizeLod, components == 1u ? TypeI32(state) : TypeI32Vector(state, components), size, image, ConstantU32(state, 0));
         const auto extent = [&](std::uint32_t axis) {
-            if (!twoDimensional) {
+            if (components == 1u) {
                 return size;
             }
             const auto value = state.module.AllocateId();
@@ -1770,18 +1774,29 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
         const auto width = extent(0u);
         const auto anchor = texelFloor(0u, width, true);
         std::uint32_t row = 0;
-        if (twoDimensional) {
+        if (rows) {
             const auto height = extent(1u);
-            const auto rawRow = texelFloor(1u, height, false);
-            rowInside = Binary(state, spv::OpSLessThan, TypeBool(state), rawRow, height);
-            row = clampInto(rawRow, height);
+            row = clampInto(texelFloor(1u, height, false), height);
+        }
+        std::uint32_t slice = 0;
+        if (dimension == RdnaImageDimension::Dim3D) {
+            const auto depth = extent(2u);
+            slice = clampInto(texelFloor(2u, depth, false), depth);
+        } else if (layered) {
+            const auto axis = components - 1u;
+            const auto rounded = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeF32(state), rounded, GlslStd450(state), GLSLstd450RoundEven, AddressF32(ctx, access, axis));
+            slice = clampInto(Unary(state, spv::OpConvertFToS, TypeI32(state), rounded), extent(axis));
         }
         for (std::uint32_t element = 0; element < 4u; element++) {
             const auto column = clampInto(Binary(state, spv::OpIAdd, TypeI32(state), anchor, ConstantI32(state, static_cast<std::int32_t>(element) - 1)), width);
             std::uint32_t coord = column;
-            if (twoDimensional) {
+            if (components == 2u) {
                 coord = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 2), coord, column, row);
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 2), coord, column, rows ? row : slice);
+            } else if (components == 3u) {
+                coord = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 3), coord, column, row, slice);
             }
             const auto color = state.module.AllocateId();
             state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, access.image.numericClass, 4), color, image, coord, spv::ImageOperandsLodMask, ConstantI32(state, 0));
@@ -1804,7 +1819,7 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
             continue;
         }
         if (texelBits <= 32u) {
-            selected[next] = rowInside != 0u ? Select(state, TypeU32(state), rowInside, streamWords[bit], ConstantU32(state, 0)) : streamWords[bit];
+            selected[next] = streamWords[bit];
         }
         next++;
     }
