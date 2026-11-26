@@ -5,10 +5,18 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::CreateStorageMapImpl;
 using NKWebKit::WebCoreAbi::DerefStorageMapImpl;
@@ -849,6 +857,218 @@ void TestRandomOperations() {
     for (const String& key : keys) Require(key.impl->refCount == 2);
 }
 
+void SetPageProtection(void* address, std::size_t size, bool readable, bool writable) {
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    const DWORD protect = !readable ? PAGE_NOACCESS : (writable ? PAGE_READWRITE : PAGE_READONLY);
+    Require(VirtualProtect(address, size, protect, &oldProtect) != 0);
+#else
+    const int prot = !readable ? PROT_NONE : (writable ? (PROT_READ | PROT_WRITE) : PROT_READ);
+    Require(mprotect(address, size, prot) == 0);
+#endif
+}
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    void* unmapped = nullptr;
+    void* readOnly = nullptr;
+    void* boundary = nullptr;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        unmapped = VirtualAlloc(nullptr, pageSize, MEM_RESERVE, PAGE_NOACCESS);
+        Require(unmapped != nullptr);
+        readOnly = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(readOnly != nullptr);
+        std::memset(readOnly, 0, pageSize);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(boundary != nullptr);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(unmapped != MAP_FAILED);
+        readOnly = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(readOnly != MAP_FAILED);
+        std::memset(readOnly, 0, pageSize);
+        SetPageProtection(readOnly, pageSize, true, false);
+        boundary = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(boundary != MAP_FAILED);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(unmapped, 0, MEM_RELEASE);
+        VirtualFree(readOnly, 0, MEM_RELEASE);
+        VirtualFree(boundary, 0, MEM_RELEASE);
+#else
+        munmap(unmapped, pageSize);
+        munmap(readOnly, pageSize);
+        munmap(boundary, pageSize * 2);
+#endif
+    }
+};
+
+void TestGuestPointersAndAliases() {
+    GuardedPages pages;
+    auto* badMap = static_cast<StorageMap*>(pages.unmapped);
+    auto* badString = static_cast<String*>(pages.unmapped);
+    auto* badBool = static_cast<bool*>(pages.unmapped);
+
+    StorageMap storage = NewStorage(StorageMapNoQuota);
+    String key = Make8("alpha");
+    String value = Make8("first");
+    String replacement = Make8("second");
+    String out;
+    bool quota = false;
+
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap3keyEj(badMap, 0); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE(badMap, &key); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(badMap, &key); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(badMap, &key, &value, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap20setItemIgnoringQuotaERKN3WTF6StringES4_(badMap, &key, &value); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(badMap, &key, &out); }));
+
+    StorageMap badImplMap{static_cast<StorageMapImpl*>(pages.unmapped), StorageMapNoQuota};
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap3keyEj(&badImplMap, 0); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE(&badImplMap, &key); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&badImplMap, &key); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&badImplMap, &key, &value, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&badImplMap, &key, &out); }));
+
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE(&storage, badString); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, badString); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, badString, &value, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, badString, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &value, badString, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &value, &out, badBool); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, badString, &out); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &key, badString); }));
+
+    String badHeaderKey;
+    badHeaderKey.impl = static_cast<StringImpl*>(pages.unmapped);
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE(&storage, &badHeaderKey); }));
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, &badHeaderKey); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &badHeaderKey, &value, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &badHeaderKey, &out); }));
+    badHeaderKey.impl = nullptr;
+
+    StringImpl boundaryDataImpl{2U, 8U, static_cast<std::byte*>(pages.boundary) + pages.pageSize - 2, 4U | (1U << 8)};
+    String boundaryDataStr;
+    boundaryDataStr.impl = &boundaryDataImpl;
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE(&storage, &boundaryDataStr); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &boundaryDataStr, &value, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &boundaryDataStr, &out, &quota); }));
+    boundaryDataStr.impl = nullptr;
+
+    Set(storage, key, value);
+
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
+    auto* roString = static_cast<String*>(pages.readOnly);
+    std::memset(roString, 0, sizeof(String));
+    auto* roBool = reinterpret_cast<bool*>(static_cast<std::byte*>(pages.readOnly) + 16);
+    *roBool = false;
+    auto* roMap = reinterpret_cast<StorageMap*>(static_cast<std::byte*>(pages.readOnly) + 32);
+    roMap->impl = storage.impl;
+    roMap->quotaSize = StorageMapNoQuota;
+    auto* roKeyImpl = reinterpret_cast<StringImpl*>(static_cast<std::byte*>(pages.readOnly) + 64);
+    auto* roCachedKeyImpl = reinterpret_cast<StringImpl*>(static_cast<std::byte*>(pages.readOnly) + 96);
+    auto* roKeyChars = reinterpret_cast<char*>(static_cast<std::byte*>(pages.readOnly) + 128);
+    std::memcpy(roKeyChars, "alpha", 5);
+    roKeyImpl->refCount = 2U;
+    roKeyImpl->length = 5U;
+    roKeyImpl->data = roKeyChars;
+    roKeyImpl->hashAndFlags = 4U;
+    roCachedKeyImpl->refCount = 2U;
+    roCachedKeyImpl->length = 5U;
+    roCachedKeyImpl->data = roKeyChars;
+    roCachedKeyImpl->hashAndFlags = key.impl->hashAndFlags;
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
+
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &replacement, roString, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &replacement, &out, roBool); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &key, roString); }));
+    Require(Get(storage, key).impl == value.impl);
+    Require(value.impl->refCount == 4 && replacement.impl->refCount == 2);
+
+    String roKeyStr;
+    roKeyStr.impl = roKeyImpl;
+    Require(Throws<std::runtime_error>([&] { _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, &roKeyStr); }));
+    roKeyStr.impl = nullptr;
+
+    String roCachedAlias;
+    roCachedAlias.impl = roCachedKeyImpl;
+    quota = false;
+    Require(_ZNK7WebCore10StorageMap8containsERKN3WTF6StringE(&storage, &roCachedAlias));
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &roCachedAlias, &replacement, &roCachedAlias, &quota);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && !quota && Get(storage, key).impl == value.impl);
+    Require(value.impl->refCount == 4 && replacement.impl->refCount == 2);
+    StorageMap tightQuotaMap{storage.impl, storage.impl->currentSize};
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&tightQuotaMap, &roCachedAlias, &replacement, &roCachedAlias, &quota);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && !quota && Get(storage, key).impl == value.impl);
+    Require(Throws<std::runtime_error>([&] {
+        _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &roCachedAlias, &roCachedAlias);
+    }));
+    Require(roCachedAlias.impl == roCachedKeyImpl && Get(storage, key).impl == value.impl);
+    Require(value.impl->refCount == 4);
+    roCachedAlias.impl = nullptr;
+
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, true);
+    auto* splitImpl = reinterpret_cast<StorageMapImpl*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 16);
+    splitImpl->refCount = 1U;
+    splitImpl->map = storage.impl->map;
+    splitImpl->iterator = NKWebKit::WtfAbi::StringHashMapEnd(splitImpl->map);
+    splitImpl->iteratorIndex = std::numeric_limits<unsigned>::max();
+    splitImpl->currentSize = storage.impl->currentSize;
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, false);
+    StorageMap splitMap{splitImpl, StorageMapNoQuota};
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap3keyEj(&splitMap, 0); }));
+    Require(splitImpl->refCount == 1U && splitImpl->map.table == storage.impl->map.table);
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, true, true);
+    std::memset(splitImpl, 0, sizeof(StorageMapImpl));
+    SetPageProtection(static_cast<std::byte*>(pages.boundary) + pages.pageSize, pages.pageSize, false, false);
+
+    storage.impl->refCount = 2U;
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(roMap, &key, &replacement, &out, &quota); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap20setItemIgnoringQuotaERKN3WTF6StringES4_(roMap, &key, &replacement); }));
+    Require(Throws<std::runtime_error>([&] { _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(roMap, &key, &out); }));
+    Require(storage.impl->refCount == 2U && Get(storage, key).impl == value.impl && out.impl == nullptr);
+    storage.impl->refCount = 1U;
+
+    String aliasKey = Make8("alpha");
+    _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &aliasKey, &replacement, &aliasKey, &quota);
+    Require(!quota && aliasKey.impl == value.impl && Get(storage, key).impl == replacement.impl);
+    aliasKey = String();
+    Require(value.impl->refCount == 2);
+
+    String aliasVal = Make8("third");
+    StringImpl* thirdImpl = aliasVal.impl;
+    _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb(&storage, &key, &aliasVal, &aliasVal, &quota);
+    Require(!quota && aliasVal.impl == replacement.impl && Get(storage, key).impl == thirdImpl);
+    aliasVal = String();
+    Require(replacement.impl->refCount == 2);
+
+    String aliasRemoveKey = Make8("alpha");
+    _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_(&storage, &aliasRemoveKey, &aliasRemoveKey);
+    Require(aliasRemoveKey.impl == thirdImpl && !Contains(storage, key));
+    aliasRemoveKey = String();
+
+    DestroyStorage(storage);
+    Require(key.impl->refCount == 2 && value.impl->refCount == 2 && replacement.impl->refCount == 2);
+}
+
 }  // namespace
 
 int main() {
@@ -863,5 +1083,6 @@ int main() {
     TestCopyOnWrite();
     TestOutputAliases();
     TestRandomOperations();
+    TestGuestPointersAndAliases();
     return 0;
 }

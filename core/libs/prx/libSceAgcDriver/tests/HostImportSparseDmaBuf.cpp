@@ -2,9 +2,11 @@
 #include "FakeHandles.hpp"
 #include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #ifdef __linux__
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -21,6 +23,7 @@
 #include <mutex>
 #include <new>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -55,6 +58,12 @@ struct Bind {
     VkDeviceSize memoryOffset;
 };
 
+struct Copy {
+    VkBuffer source;
+    VkBuffer destination;
+    bool live;
+};
+
 struct MockDevice {
     std::uintptr_t next = 0x1000;
     std::set<VkBuffer> buffers;
@@ -64,6 +73,7 @@ struct MockDevice {
     std::map<VkBuffer, VkBufferUsageFlags> usages;
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
+    std::vector<Copy> copies;
     VkResult bindResult = VK_SUCCESS;
     VkResult allocationResult = VK_SUCCESS;
     std::uint64_t allocationAttempts = 0;
@@ -93,7 +103,10 @@ VKAPI_ATTR VkResult VKAPI_CALL mockResetCommandBuffer(VkCommandBuffer, VkCommand
 VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockEndCommandBuffer(VkCommandBuffer) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return VK_SUCCESS; }
-VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer, VkBuffer, std::uint32_t, const VkBufferCopy*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer source, VkBuffer destination, std::uint32_t, const VkBufferCopy*) {
+    mock.copies.push_back({source, destination, mock.buffers.contains(source) && mock.buffers.contains(destination)});
+}
+VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdFillBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, std::uint32_t) {}
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueWaitIdle(VkQueue) { return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
@@ -174,6 +187,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockEndCommandBuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(mockQueueSubmit)},
         {"vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyBuffer)},
+        {"vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPipelineBarrier)},
         {"vkCmdFillBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdFillBuffer)},
         {"vkQueueWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(mockQueueWaitIdle)},
         {"vkFreeCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockFreeCommandBuffers)},
@@ -348,6 +362,11 @@ void ImportsASmallRangeForVertexAndIndexInput() {
     const auto usage = mock.usages.at(import->buffer);
     Expect((usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as a vertex buffer");
     Expect((usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as an index buffer");
+    constexpr std::uint64_t page = 4096;
+    auto noHostPointerTraps = context;
+    noHostPointerTraps.readTrapsOverHostPointerImports = false;
+    Expect(ReadTrappableHostImportCovers(noHostPointerTraps, range.Address() + 5 * page, 2 * page, page), "a range under a dma-buf import was not trappable on a driver whose host pointer imports cannot keep read traps");
+    Expect(!ReadTrappableHostImportCovers(noHostPointerTraps, range.Address() + bytes - page, 2 * page, page), "a range past its dma-buf import was trappable");
 }
 
 void ImportsALargeRangeAsOneSparseBuffer() {
@@ -593,9 +612,85 @@ void FailureAfterTheDecisionThrows(bool sealed, VkResult bind, const char* step)
     Expect(mock.buffers.size() == live, std::string("the sparse buffer outlived the failure at ") + step);
 }
 
+enum class ShadowState { None, Idle, Live };
+
+void RetireTakesTheRegistrySnapshotOnlyForLiveUnits(ShadowState state, bool locked) {
+    constexpr std::uint64_t bytes = 8u << 20u;
+    constexpr std::uint64_t unit = 65536;
+    const std::string name = std::string(state == ShadowState::None ? "no shadow" : state == ShadowState::Idle ? "a shadow without live units" : "a live shadow unit") + (locked ? ", device lock held" : ", device lock free");
+    SharedRange range(bytes, 0, true);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(range.backing.base, static_cast<std::size_t>(bytes));
+    auto context = mockContext();
+    context.memory.memoryTypeCount = 1;
+    context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    context.memory.memoryHeapCount = 1;
+    context.memory.memoryHeaps[0].size = std::uint64_t{8} << 30u;
+    context.memory.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    VkBuffer imported = VK_NULL_HANDLE;
+    VkBuffer slab = VK_NULL_HANDLE;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto* import = HostImportFor(context, range.Address(), bytes);
+        Expect(import != nullptr, name + ": the range was not imported");
+        if (import == nullptr) return;
+        imported = import->buffer;
+        if (state != ShadowState::None) {
+            AgcDriver::GuestMemory::CollectWritesUncached(range.Address(), unit);
+            const auto destination = ShadowDestinationFor(context, *import, range.Address(), range.Address() + unit);
+            Expect(destination.has_value(), name + ": the import got no unit shadow");
+            if (destination.has_value()) slab = destination->buffer;
+            if (destination.has_value() && state == ShadowState::Live) {
+                const ShadowedRange shadowed{range.Address(), range.Address() + unit, destination->slab};
+                MarkShadowed(*import, std::span(&shadowed, 1), AgcDriver::GuestMemory::TrackerGeneration());
+                Expect(AnyShadowedOverlaps(range.Address(), unit), name + ": the unit is not live before the retire");
+            }
+        }
+    }
+    mock.copies.clear();
+    const auto before = LeaseCounters();
+    {
+        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
+        if (locked) gpu.lock();
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(range.backing.base, static_cast<std::size_t>(bytes), [](const void*, std::size_t, const void*, bool) {});
+    }
+    const auto after = LeaseCounters();
+    const auto published = std::count_if(mock.copies.begin(), mock.copies.end(), [&](const Copy& copy) { return copy.source == slab && copy.destination == imported && copy.live; });
+    Expect(after.contentionWaits > before.contentionWaits && !mock.buffers.contains(imported), name + ": the unmap did not retire the import through the pin waiter");
+    if (state == ShadowState::Live) {
+        Expect(after.retireSnapshots == before.retireSnapshots + 1 && after.retireSnapshotsSkipped == before.retireSnapshotsSkipped, name + ": the retire did not take exactly one registry snapshot");
+        Expect(published == 1, name + ": the unit's results were not copied into the import before it retired");
+    } else {
+        Expect(after.retireSnapshots == before.retireSnapshots && after.retireSnapshotsSkipped == before.retireSnapshotsSkipped + 1, name + ": the retire did not skip the registry snapshot nothing reads");
+        Expect(mock.copies.empty(), name + ": the retire copied into the import");
+    }
+    Expect(!AnyShadowedOverlaps(range.Address(), unit), name + ": a unit stayed live after the retire");
 }
 
-int main() {
+int RetireSnapshotTests() {
+    const bool shadows = UnitShadowEnabled();
+    for (const bool locked : {false, true}) {
+        RetireTakesTheRegistrySnapshotOnlyForLiveUnits(ShadowState::None, locked);
+        if (!shadows) continue;
+        RetireTakesTheRegistrySnapshotOnlyForLiveUnits(ShadowState::Idle, locked);
+        RetireTakesTheRegistrySnapshotOnlyForLiveUnits(ShadowState::Live, locked);
+    }
+    if (failures != 0) {
+        std::fprintf(stderr, "%d retire registry snapshot checks failed\n", failures);
+        return 1;
+    }
+    if (!shadows) {
+        std::printf("skipped, unit shadows are off: only the retire without a shadow ran\n");
+        return 77;
+    }
+    std::printf("host import retire registry snapshot tests passed\n");
+    return 0;
+}
+
+}
+
+int main(int argc, char** argv) {
+    const bool retireSnapshot = argc == 2 && std::string_view(argv[1]) == "--retire-snapshot";
     const int udmabuf = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
     if (udmabuf < 0) {
         std::printf("skipped, host imports are unavailable: /dev/udmabuf is not accessible\n");
@@ -606,11 +701,12 @@ int main() {
         std::printf("skipped, udmabuf size_limit_mb is above %llu: a range above it is too large to map\n", static_cast<unsigned long long>(LargestTestedLimit >> 20u));
         return 77;
     }
-    setenv("APS5_WRITE_WATCH_IMPORTS", "unwatch", 1);
+    setenv("APS5_WRITE_WATCH_IMPORTS", retireSnapshot ? "watch" : "unwatch", 1);
     SetHostImportBudget(~std::uint64_t{0});
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
     GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(ResolveRuns);
     try {
+        if (retireSnapshot) return RetireSnapshotTests();
         SettlingSurvivesDeviceReplacement(false);
         SettlingSurvivesDeviceReplacement(true);
         ImportsASmallRangeForVertexAndIndexInput();

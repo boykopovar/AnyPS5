@@ -366,7 +366,7 @@ def daily(points):
     return "\n".join(out)
 
 
-def page(points):
+def page(points, ref="HEAD"):
     metrics = used_shader_metrics(points)
     labels = {metric: title for metric, title, _ in SHADER_SERIES}
     changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
@@ -401,7 +401,7 @@ def page(points):
         '"Legacy shader opcode names" counts the archived decoder opcode table against the current AMD RDNA 1 + RDNA 2 '
         f'instruction list (<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>) and is used only when '
         'the current scanner cannot read the archived source. Their totals differ, so compare points only within the same '
-        'shader panel. One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point '
+        f'shader panel. One point per UTC day with commits on <code>{escape(ref)}</code>, taken at the last commit of the day. Every point '
         f'is measured with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
         f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
         'so points within each series are comparable across days. The bars and the Functions implemented column show the net change '
@@ -453,7 +453,7 @@ def main(argv=None):
         args.output.mkdir(parents=True, exist_ok=True)
         (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
         (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
-        (args.output / "history.html").write_text(page(points), encoding="utf-8")
+        (args.output / "history.html").write_text(page(points, args.ref), encoding="utf-8")
         (args.output / "badge-week.svg").write_text(weekly_badge(points), encoding="utf-8")
         if args.csv:
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
