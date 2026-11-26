@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"
+#include "prx/libc/include/ScanQuadLength.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -208,6 +209,20 @@ void WarmUpHostExceptionRuntime() {
     }
 }
 
+void CheckQuadScanAllocationModifiers() {
+    Require(LibcDetail::FindQuadScanDirective("%ml[%q]%d") == nullptr, "POSIX m before l skips bracketed scanset");
+    const char* const posAllocQuad = "%1$ml[%q]%2$qd";
+    Require(LibcDetail::FindQuadScanDirective(posAllocQuad) == posAllocQuad + 9, "positional m before l advances to the following quad directive");
+    Require(LibcDetail::FindQuadScanDirective("%m[%q]%d") == nullptr, "POSIX m without length modifier skips bracketed scanset");
+    const char* const wideAllocStringQuad = "%mls%qd";
+    Require(LibcDetail::FindQuadScanDirective(wideAllocStringQuad) == wideAllocStringQuad + 4, "POSIX m before l and s advances to following quad directive");
+    const char* const wideAllocCharQuad = "%mlc%qd";
+    Require(LibcDetail::FindQuadScanDirective(wideAllocCharQuad) == wideAllocCharQuad + 4, "POSIX m before l and c advances to following quad directive");
+    const char* const standaloneMQuad = "%m%qd";
+    Require(LibcDetail::FindQuadScanDirective(standaloneMQuad) == standaloneMQuad + 2, "standalone m before another directive advances to following quad directive");
+    Require(LibcDetail::FindQuadScanDirective("%mq") == nullptr, "m before q without scanset/s/c is not misclassified as quad");
+}
+
 }
 
 int main() {
@@ -216,6 +231,7 @@ int main() {
     CheckUnshift();
     CheckGuardedMemory();
     CheckInvalidFacets();
+    CheckQuadScanAllocationModifiers();
     std::puts("UTF codecvt metadata checks passed");
     return 0;
 }
