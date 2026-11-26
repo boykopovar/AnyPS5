@@ -920,7 +920,7 @@ def main(argv=None):
                              "fragments and stage them")
     args = parser.parse_args(argv)
     try:
-        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").removesuffix("\n"))
         if os.name == "nt" and not root.is_dir():
             root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     except (OSError, subprocess.CalledProcessError) as error:

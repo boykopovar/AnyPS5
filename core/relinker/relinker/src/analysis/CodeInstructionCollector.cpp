@@ -357,7 +357,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        const auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         if (!sceFunctions.empty() || functions.empty() || !isCode(target) || inTable(target) || inFunction(target)) {
             addPointerRoot(target);
             return;

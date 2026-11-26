@@ -91,7 +91,7 @@ class SelectFixture(unittest.TestCase):
         for name, content in PROJECT.items():
             (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
             (cls.source / name).write_text(content, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
         subprocess.run(["cmake", "-S", str(cls.source), "-B", str(cls.build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                        check=True, capture_output=True)
         subprocess.run(["cmake", "--build", str(cls.build)], check=True, capture_output=True)
@@ -253,7 +253,7 @@ class SelectBuildTests(SelectFixture):
     def test_fresh_build_keeps_a_shared_selected_executable(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory) / "fresh"
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             changed = build / "changed.txt"
@@ -481,7 +481,7 @@ class FixtureBuildTests(unittest.TestCase):
         for name, content in project.items():
             (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
             (cls.source / name).write_text(content, encoding="utf-8")
-        compiler = shutil.which("gcc") or shutil.which("cc")
+        compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
         subprocess.run(["cmake", "-S", str(cls.source), "-B", str(cls.build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                        check=True, capture_output=True)
         subprocess.run(["cmake", "--build", str(cls.build)], check=True, capture_output=True)
@@ -543,7 +543,7 @@ class NonAsciiDirectoryTests(unittest.TestCase):
             for name, content in PROJECT.items():
                 (source / name).parent.mkdir(parents=True, exist_ok=True)
                 (source / name).write_text(content, encoding="utf-8")
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
@@ -874,7 +874,7 @@ class LinkedDirectoryTests(unittest.TestCase):
                 import _winapi
                 _winapi.CreateJunction(str(real), str(link))
             source, build, graph = link / "source", link / "build", Path(directory) / "graph.json"
-            compiler = shutil.which("gcc") or shutil.which("cc")
+            compiler = (shutil.which("gcc") or shutil.which("cc") or "").replace("\\", "/")
             subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
                            check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
@@ -1159,6 +1159,57 @@ class GraphClosureTests(unittest.TestCase):
                     self.assertEqual(select_tests.load_graph(path), graph)
             path.write_text('{"tests": {}, "closures": {}}', encoding="utf-8")
             self.assertEqual(select_tests.load_graph(path), {"tests": {}, "closures": {}})
+
+
+GRAPH = {
+    "all": ("phony", ["app"]),
+    "app": ("phony", ["app.exe"]),
+    "app.exe": ("CXX_EXECUTABLE_LINKER", ["main.o", "dep.h"]),
+    "main.o": ("CXX_COMPILER", []),
+}
+
+
+def fake_ninja(*args):
+    if args[:2] == ("-t", "targets"):
+        return "".join(f"{name}: {rule}\n" for name, (rule, _) in GRAPH.items())
+    if args[:2] == ("-t", "query"):
+        out = []
+        for target in args[2:]:
+            kind, inputs = GRAPH[target]
+            out.append(f"{target}:\n  input: {kind}\n")
+            out.extend(f"    {item}\n" for item in inputs)
+            out.append("  outputs:\n")
+        return "".join(out)
+    raise AssertionError(args)
+
+
+class FakeNinjaGraphTests(unittest.TestCase):
+    def build(self):
+        build = object.__new__(select_tests.Build)
+        build.program, build.path, build.encoding = "ninja", ".", "utf-8"
+        return build
+
+    def test_query_reads_inputs_and_the_phony_flag(self):
+        with mock.patch.object(select_tests.Build, "run", side_effect=fake_ninja):
+            found = self.build().query(["app", "app.exe"])
+        self.assertEqual(found["app"], {"inputs": ["app.exe"], "phony": True})
+        self.assertEqual(found["app.exe"], {"inputs": ["main.o", "dep.h"], "phony": False})
+
+    def test_walk_visits_every_input_reachable_from_the_roots(self):
+        with mock.patch.object(select_tests.Build, "run", side_effect=fake_ninja):
+            nodes = self.build().walk(["app"])
+        self.assertEqual(sorted(nodes), ["app", "app.exe", "main.o"])
+        self.assertEqual(nodes["main.o"]["inputs"], [])
+
+    def test_leaves_stop_at_the_first_non_phony_target(self):
+        with mock.patch.object(select_tests.Build, "run", side_effect=fake_ninja):
+            leaves = self.build().leaves()
+        self.assertEqual(leaves, ["app.exe"])
+
+    def test_outputs_keeps_only_paths_ninja_knows_as_targets(self):
+        with mock.patch.object(select_tests.Build, "run", side_effect=fake_ninja):
+            kept = self.build().outputs(["app.exe", "missing.exe", "main.o"])
+        self.assertEqual(kept, ["app.exe", "main.o"])
 
 
 if __name__ == "__main__":
