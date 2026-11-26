@@ -933,7 +933,10 @@ bool TranslationContext::vCndmaskB32(const RdnaInstruction& inst) {
     RdnaOperand defaultMask{};
     defaultMask.kind = RdnaOperandKind::VccLo;
     const RdnaOperand& maskOperand = inst.sourceCount >= 3u ? sourceAt(inst, 2u) : defaultMask;
-    const IrU1 condition = readMask(maskOperand);
+    IrU1 condition = readMask(maskOperand);
+    if (smallComputeSubgroup && program.WaveSize() == 32u && maskOperand.kind == RdnaOperandKind::VccLo) {
+        condition = IrU1(ir.Emit(IrOpcode::ResolveWave32VccLane, IrType::U1, {&ir.GetVccLo(), &condition.Value()}));
+    }
     const RdnaOperand& falseOperand = sourceAt(inst, 0u);
     const RdnaOperand& trueOperand = sourceAt(inst, 1u);
     const IrU32 falseValue = readU32(falseOperand);

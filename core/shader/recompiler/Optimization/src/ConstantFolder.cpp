@@ -806,8 +806,8 @@ bool isPackedAncillary(const IrValue& builtin) {
     return isImmediate(kind, IrType::U32) && static_cast<StageInputKind>(kind.ImmediateU32()) == StageInputKind::PackedAncillary;
 }
 
-IrValue& insertBefore(IrProgram& program, IrValue& next, IrOpcode opcode, IrValue& lhs, IrValue& rhs) {
-    IrValue& created = program.CreateValue(opcode, IrType::U32);
+IrValue& insertBefore(IrProgram& program, IrValue& next, IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrType type = IrType::U32) {
+    IrValue& created = program.CreateValue(opcode, type);
     created.AddArgument(&lhs);
     created.AddArgument(&rhs);
     next.Parent()->InsertInstructionBefore(&next, &created);
@@ -816,6 +816,65 @@ IrValue& insertBefore(IrProgram& program, IrValue& next, IrOpcode opcode, IrValu
 
 IrValue& insertBuiltin(IrProgram& program, IrBuilder& builder, IrValue& next, StageInputKind kind) {
     return insertBefore(program, next, IrOpcode::GetBuiltin, builder.Constant(static_cast<std::uint32_t>(kind)), builder.Constant(0u));
+}
+
+bool isCompleteWave32Mask(const IrValue& root) {
+    std::vector<const IrValue*> pending{&root};
+    std::unordered_set<const IrValue*> seen;
+    while (!pending.empty()) {
+        const auto& value = *pending.back()->Resolve();
+        pending.pop_back();
+        if (!seen.insert(&value).second) continue;
+        if (value.Type() != IrType::U32) return false;
+        if (value.HasImmediate() || value.Opcode() == IrOpcode::GetUserData) continue;
+        switch (value.Opcode()) {
+            case IrOpcode::BitwiseNot32:
+            case IrOpcode::BitwiseAnd32:
+            case IrOpcode::BitwiseOr32:
+            case IrOpcode::BitwiseXor32:
+                pending.insert(pending.end(), value.Arguments().begin(), value.Arguments().end());
+                break;
+            default:
+                return false;
+        }
+    }
+    return true;
+}
+
+void resolveWave32VccUse(IrProgram& program, IrBuilder& builder, IrValue& use) {
+    auto& word = resolveArg(use, 0u);
+    if (!isCompleteWave32Mask(word)) {
+        replaceWith(use, resolveArg(use, 1u));
+        return;
+    }
+    auto& zero = builder.Constant(0u);
+    if (use.Opcode() == IrOpcode::ResolveWave32VccZero) {
+        auto& result = word.HasImmediate() ? builder.ConstantBool(word.ImmediateU32() == 0u)
+                                           : insertBefore(program, use, IrOpcode::IEqual32, word, zero, IrType::U1);
+        replaceWith(use, result);
+        return;
+    }
+    auto& invocation = insertBuiltin(program, builder, use, StageInputKind::LocalInvocationIndex);
+    auto& lane = insertBefore(program, use, IrOpcode::BitwiseAnd32, invocation, builder.Constant(31u));
+    auto& shifted = insertBefore(program, use, IrOpcode::ShiftRightLogical32, word, lane);
+    auto& bit = insertBefore(program, use, IrOpcode::BitwiseAnd32, shifted, builder.Constant(1u));
+    replaceWith(use, insertBefore(program, use, IrOpcode::INotEqual32, bit, zero, IrType::U1));
+}
+
+void resolveWave32VccUses(IrProgram& program) {
+    if (program.Resources().stage != IrShaderStage::Compute || program.WaveSize() != 32u) return;
+    std::vector<IrValue*> uses;
+    for (IrBlock* block : program.BlockOrder()) {
+        for (IrValue* instruction : block->Instructions()) {
+            if (instruction->Opcode() == IrOpcode::ResolveWave32VccLane || instruction->Opcode() == IrOpcode::ResolveWave32VccZero) {
+                uses.push_back(instruction);
+            }
+        }
+    }
+    IrBuilder builder(program);
+    for (IrValue* use : uses) {
+        resolveWave32VccUse(program, builder, *use);
+    }
 }
 
 IrValue& sampleNumber(IrProgram& program, IrBuilder& builder, IrValue& next) {
@@ -1401,6 +1460,7 @@ void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) 
 
 void ConstantFolder::Fold(IrProgram& program) const {
     Fold(program, program.BlockOrder());
+    resolveWave32VccUses(program);
 }
 
 bool ConstantFolder::FoldVertexLaneBounds(IrProgram& program, std::uint32_t hostSubgroupSize, std::uint32_t spirvVersion) const {

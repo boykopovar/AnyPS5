@@ -126,6 +126,38 @@ bool halvesRejoin() {
     return rejoined == &word && fieldBack;
 }
 
+bool completeWave32MaskAfterDivergence() {
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Compute;
+    program.SetWaveSize(32u);
+    auto& entry = program.CreateBlock();
+    auto& left = program.CreateBlock();
+    auto& right = program.CreateBlock();
+    auto& merge = program.CreateBlock();
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &left, &right, &merge};
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(entry);
+    auto& invocation = builder.Emit(IrOpcode::GetBuiltin, IrType::U32,
+                                    {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::LocalInvocationIndex)), &builder.Constant(0u)});
+    builder.BranchConditional(builder.ULessThan(invocation, builder.Constant(16u)), left, right);
+    builder.SetInsertionPoint(left);
+    builder.Branch(merge);
+    builder.SetInsertionPoint(right);
+    builder.Branch(merge);
+    builder.SetInsertionPoint(merge);
+    auto& word = builder.GetUserData(static_cast<ScalarReg>(4u));
+    auto& fallback = builder.ConstantBool(false);
+    auto& lane = builder.Emit(IrOpcode::ResolveWave32VccLane, IrType::U1, {&word, &fallback});
+    auto& zero = builder.Emit(IrOpcode::ResolveWave32VccZero, IrType::U1, {&word, &fallback});
+    auto& laneUser = builder.Emit(IrOpcode::Reference, IrType::Void, {&lane});
+    auto& zeroUser = builder.Emit(IrOpcode::Reference, IrType::Void, {&zero});
+    static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
+    ConstantFolder{}.Fold(program);
+    return laneUser.Argument(0)->Resolve()->Opcode() == IrOpcode::INotEqual32 &&
+           zeroUser.Argument(0)->Resolve()->Opcode() == IrOpcode::IEqual32;
+}
+
 bool factorFieldKept(bool multiplied, bool negated) {
     IrProgram program;
     auto& block = program.CreateBlock();
@@ -324,6 +356,7 @@ int main() {
         passed &= run("a mask under a merge of the halves reads through it", mergedHalfMask());
         passed &= run("half extractions read the half that was merged in", halfExtractions());
         passed &= run("the two halves of one word rejoin into the word", halvesRejoin());
+        passed &= run("complete Wave32 words resolve after divergent control flow", completeWave32MaskAfterDivergence());
         passed &= run("a 24-bit field read of a value masked to 16 bits folds into the value", factorFieldKept(false, false));
         passed &= run("a 24-bit field read that a multiply uses is kept, even for a factor masked to 16 bits", factorFieldKept(true, false));
         passed &= run("a 24-bit field read that a multiply uses through a negating xor is kept, even for a factor masked to 16 bits", factorFieldKept(true, true));
