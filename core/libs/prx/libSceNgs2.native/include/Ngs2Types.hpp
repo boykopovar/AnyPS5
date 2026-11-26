@@ -877,6 +877,18 @@ struct Ngs2SamplerVoiceState {
 };
 static_assert(sizeof(Ngs2SamplerVoiceState) == 56);
 
+struct Ngs2Ps4SamplerVoiceState {
+    std::uint32_t state_flags;
+    float envelope_height;
+    float peak_height;
+    std::uint32_t reserved;
+    std::uint64_t num_decoded_samples;
+    std::uint64_t decoded_data_size;
+    std::uintptr_t user_data;
+    const void* waveform_data;
+};
+static_assert(sizeof(Ngs2Ps4SamplerVoiceState) == 48);
+
 struct Ngs2CustomSamplerVoiceState {
     Ngs2VoiceState voice_state;
     std::uint32_t reserved[2];

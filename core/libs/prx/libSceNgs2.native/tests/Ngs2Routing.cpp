@@ -723,6 +723,21 @@ static void TestPs4CombinedVoiceEvent() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestPs4SamplerState() {
+    const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Ngs2Ps4SamplerVoiceState ps4{};
+    const auto ps4Size = sizeof(ps4);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(&ps4), ps4Size) == SCE_NGS2_OK);
+    Require(ps4.state_flags == 0);
+    Require(ps4.num_decoded_samples == 0 && ps4.decoded_data_size == 0);
+#else
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(&ps4), ps4Size) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestPs4SamplerOption() {
     const std::uint32_t specific[] {256, 32, 4, 4, 8, 256, 256, 0, 8, 0};
     TestPs4RackOption(SCE_NGS2_RACK_ID_SAMPLER, 168, 256, specific, 10);
@@ -757,6 +772,7 @@ int main() {
     TestPs4ReverbOption();
     TestPs4ZeroVoiceEvent();
     TestPs4CombinedVoiceEvent();
+    TestPs4SamplerState();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
     TestSubmixerCompressor();

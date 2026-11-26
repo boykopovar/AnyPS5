@@ -1365,7 +1365,8 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
             const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
-            if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            const bool ps4State = PS4_LIBRARY && state_size == sizeof(Ngs2Ps4SamplerVoiceState);
+            if (!commonOnly && !ps4State && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
             Ngs2SamplerVoiceState sampler{};
             if (voice.pendingPlay) {
                 sampler = {};
@@ -1386,6 +1387,18 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             }
             if (commonOnly) {
                 if (!WriteGuest(state, sampler.voice_state)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                return SCE_NGS2_OK;
+            }
+            if (ps4State) {
+                Ngs2Ps4SamplerVoiceState ps4{};
+                ps4.state_flags = sampler.voice_state.state_flags;
+                ps4.envelope_height = sampler.envelope_height;
+                ps4.peak_height = sampler.peak_height;
+                ps4.num_decoded_samples = sampler.num_decoded_samples;
+                ps4.decoded_data_size = sampler.decoded_data_size;
+                ps4.user_data = sampler.user_data;
+                ps4.waveform_data = sampler.waveform_data;
+                if (!WriteGuestBytes(state, &ps4, sizeof(ps4))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
                 return SCE_NGS2_OK;
             }
             if (!WriteGuestBytes(state, &sampler, sizeof(sampler))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
