@@ -214,11 +214,8 @@ const RegularExpression& Checked(const RegularExpression* self, const char* mess
     return *self;
 }
 
-int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength) {
-    if (!string) throw std::invalid_argument("JSC::Yarr::RegularExpression: null string reference");
+int MatchUnits(RegularExpressionPrivate& d, const Units& input, int startFrom, int* matchLength) {
     if (!d.regExpByteCode) return -1;
-    if (!string->impl) return -1;
-    const Units input = UnitsOf(string->impl, "JSC::Yarr::RegularExpression: string with null characters and a nonzero length");
     const auto* bytecode = static_cast<const std::uint8_t*>(d.regExpByteCode);
     bool matched = false;
     std::uint8_t* captures[2 * 255] = {};
@@ -242,6 +239,14 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
     d.lastMatchLength = end - begin;
     if (matchLength) *matchLength = d.lastMatchLength;
     return begin;
+}
+
+int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength) {
+    if (!string) throw std::invalid_argument("JSC::Yarr::RegularExpression: null string reference");
+    if (!d.regExpByteCode) return -1;
+    if (!string->impl) return -1;
+    const Units input = UnitsOf(string->impl, "JSC::Yarr::RegularExpression: string with null characters and a nonzero length");
+    return MatchUnits(d, input, startFrom, matchLength);
 }
 
 void Construct(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
@@ -299,10 +304,6 @@ StringImpl* AllocateString(const std::vector<char16_t>& units, bool is8Bit) {
     return impl;
 }
 
-void AppendUnits(std::vector<char16_t>& out, const Units& units, unsigned begin, unsigned end) {
-    for (unsigned index = begin; index < end; ++index) out.push_back(units.At(index));
-}
-
 void Replace(StringReference* string, const RegularExpression* target, const StringReference* replacement) {
     if (!string) throw std::invalid_argument("JSC::Yarr::replace: null string reference");
     if (!target || !target->d) throw std::invalid_argument("JSC::Yarr::replace: null regular expression");
@@ -312,25 +313,30 @@ void Replace(StringReference* string, const RegularExpression* target, const Str
     const Units input = UnitsOf(string->impl, "JSC::Yarr::replace: string with null characters and a nonzero length");
     if (input.length > static_cast<unsigned>(INT_MAX)) return;
     const Units replacementUnits = UnitsOf(replacement->impl, "JSC::Yarr::replace: replacement with null characters and a nonzero length");
-    std::vector<char16_t> result;
-    unsigned cursor = 0;
+    std::vector<char16_t> text;
+    text.reserve(input.length);
+    for (unsigned at = 0; at < input.length; ++at) text.push_back(input.At(at));
+    std::vector<char16_t> rebuilt;
+    unsigned index = 0;
     bool changed = false;
-    while (cursor < input.length) {
+    while (index < text.size()) {
+        const Units current{text.data(), static_cast<unsigned>(text.size()), false};
         int matchLength = 0;
-        const int begin = Match(d, string, static_cast<int>(cursor), &matchLength);
+        const int begin = MatchUnits(d, current, static_cast<int>(index), &matchLength);
         if (begin < 0) break;
         const unsigned start = static_cast<unsigned>(begin);
         const unsigned removed = static_cast<unsigned>(matchLength);
         if (!removed && !replacementUnits.length) break;
-        AppendUnits(result, input, cursor, start);
-        AppendUnits(result, replacementUnits, 0, replacementUnits.length);
-        cursor = start + removed;
+        rebuilt.assign(text.begin(), text.begin() + start);
+        for (unsigned at = 0; at < replacementUnits.length; ++at) rebuilt.push_back(replacementUnits.At(at));
+        rebuilt.insert(rebuilt.end(), text.begin() + start + removed, text.end());
+        text.swap(rebuilt);
+        index = start + replacementUnits.length;
         changed = true;
         if (!removed) break;
     }
     if (!changed) return;
-    AppendUnits(result, input, cursor, input.length);
-    StringImpl* next = AllocateString(result, input.is8Bit && replacementUnits.is8Bit);
+    StringImpl* next = AllocateString(text, input.is8Bit && replacementUnits.is8Bit);
     DropStringReference(string->impl);
     string->impl = next;
 }

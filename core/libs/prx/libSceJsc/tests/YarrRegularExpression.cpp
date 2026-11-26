@@ -474,6 +474,36 @@ void TestReplace() {
         FreeText(text.impl);
     }
     {
+        Expression expression("^a");
+        StringReference text{NewText(std::string("aa"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string(""));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("\\ba");
+        StringReference text{NewText(std::string("aa"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("-"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"--");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
+        Expression expression("(?:b|^a)", 0, 1, 0);
+        StringReference text{NewText(std::string("ba"))};
+        StringImpl* const original = text.impl;
+        const Text replacement(std::string("\n"));
+        ReplaceIn(&text, &expression.value, &replacement.reference);
+        Require(ReadText(text) == u"\n\n");
+        FreeText(original);
+        FreeText(text.impl);
+    }
+    {
         Expression expression("a");
         StringReference text{NewText(std::string("abcabc"))};
         StringImpl* const original = text.impl;
