@@ -1037,9 +1037,9 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
         if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared specialization instruction");
         if (!artifact.stencilReferences.empty() && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId) {
-            if (PipelineSpecialization::IsWorkgroupOffset(words[cursor + 3u])) {
-                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset is supplied at dispatch, not prepared");
-                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate workgroup offset specialization");
+            if (PipelineSpecialization::IsDispatchSupplied(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a dispatch specialization value is supplied at dispatch, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate dispatch specialization");
                 cursor += count;
                 continue;
             }
@@ -1125,6 +1125,68 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
     return materialized;
 }
 
+std::vector<std::byte> specializedCacheKey(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    constexpr std::string_view tag = "specialized-spirv";
+    std::vector<std::byte> key(tag.size());
+    std::memcpy(key.data(), tag.data(), tag.size());
+    const auto put = [&key](std::uint64_t value) {
+        const auto offset = key.size();
+        key.resize(offset + sizeof(value));
+        std::memcpy(key.data() + offset, &value, sizeof(value));
+    };
+    const auto content = artifact.spirv.ContentHash();
+    put(content.low);
+    put(content.high);
+    put(artifact.vertexInputPatches.size());
+    for (const auto& patch : artifact.vertexInputPatches) {
+        put((static_cast<std::uint64_t>(patch.location) << 32u) | patch.word);
+        for (const auto value : patch.values) put(value);
+    }
+    put(artifact.stencilReferences.size());
+    for (const auto value : artifact.stencilReferences) put(value);
+    put(artifact.vertexInputs.size());
+    put(artifact.hostSubgroupSize);
+    put(artifact.bdaAbiVersion);
+    put(artifact.runtimeAbiVersion);
+    put(classes.size());
+    for (const auto value : classes) put(value);
+    put(constants.size());
+    for (const auto& constant : constants) put((static_cast<std::uint64_t>(constant.id) << 32u) | constant.value);
+    put(target.vulkanVersion);
+    put(target.spirvVersion);
+    put(target.subgroupSize);
+    put(target.bdaAbiVersion);
+    put(target.fragmentShaderBarycentricEnabled);
+    for (const auto value : target.maxWorkgroupSize) put(value);
+    put(target.maxWorkgroupInvocations);
+    put(target.maxWorkgroupSharedMemoryBytes);
+    put(target.nonConstantImageOffsets);
+    const auto features = RecompileCacheKey::FeatureDigest(target);
+    put(features[0]);
+    put(features[1]);
+    put(target.mesh.has_value());
+    if (const auto& mesh = target.mesh) {
+        for (const auto value : mesh->maxWorkgroupSize) put(value);
+        for (const auto value : {mesh->maxWorkgroupInvocations, mesh->maxSharedMemoryBytes, mesh->maxOutputVertices, mesh->maxOutputPrimitives, mesh->maxOutputComponents, mesh->maxOutputMemoryBytes, mesh->outputPerVertexGranularity, mesh->outputPerPrimitiveGranularity}) put(value);
+    }
+    put(target.tessellation.has_value());
+    if (const auto& tessellation = target.tessellation) {
+        for (const auto value : {tessellation->maxPatchSize, tessellation->maxControlPerVertexInputComponents, tessellation->maxControlPerVertexOutputComponents, tessellation->maxControlPerPatchOutputComponents, tessellation->maxControlTotalOutputComponents, tessellation->maxEvaluationInputComponents, tessellation->maxEvaluationOutputComponents}) put(value);
+    }
+    return key;
+}
+
+std::vector<std::uint32_t> cachedSpecializeWords(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+    static const bool enabled = std::getenv("APS5_NO_SPECIALIZED_CACHE") == nullptr && ShaderDiskCache::Enabled();
+    if (!enabled) return specializeWords(artifact, classes, constants, target);
+    auto key = specializedCacheKey(artifact, classes, constants, target);
+    std::vector<std::uint32_t> words;
+    if (ShaderDiskCache::LoadSpecialized(key, words)) return words;
+    words = specializeWords(artifact, classes, constants, target);
+    ShaderDiskCache::StoreSpecialized(std::move(key), words);
+    return words;
+}
+
 void keepSpecializedWords(const SharedSpirv& spirv) {
     static const std::uint64_t budget = [] {
         const char* text = std::getenv("APS5_KEEP_SPECIALIZED_MIB");
@@ -1148,7 +1210,7 @@ void keepSpecializedWords(const SharedSpirv& spirv) {
 }
 
 SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
-    auto materialized = specializeWords(artifact, classes, constants, target);
+    auto materialized = cachedSpecializeWords(artifact, classes, constants, target);
     auto module = std::make_shared<SpecializedModule>();
     std::map<std::uint32_t, std::uint32_t> supplied;
     for (const auto& constant : constants) supplied.emplace(constant.id, constant.value);
@@ -1163,7 +1225,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet || (compute && materialized[cursor + 3u] == WorkgroupMemoryDescriptorSet))) ldsBuffers.insert(materialized[cursor + 1u]);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationSpecId) {
             const auto id = materialized[cursor + 3u];
-            if (!PipelineSpecialization::IsWorkgroupOffset(id) && !PipelineSpecialization::IsAtomicLockTable(id)) module->specialization.push_back({id, supplied.at(id)});
+            if (!PipelineSpecialization::IsDispatchSupplied(id) && !PipelineSpecialization::IsAtomicLockTable(id)) module->specialization.push_back({id, supplied.at(id)});
         }
         if (op == spv::OpVariable && count >= 4u && !ldsBuffers.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
@@ -1621,6 +1683,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.readsDepthRemapPush = depthRemap;
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
+        result.specialization.push_back({PipelineSpecialization::StorePages, 0u});
     }
     if (declaresAtomicLockTable(artifact.spirv.Words())) {
         for (std::uint32_t word = 0; word < PipelineSpecialization::AtomicLockTableWords; ++word) result.specialization.push_back({PipelineSpecialization::AtomicLockTableBase + word, 0u});

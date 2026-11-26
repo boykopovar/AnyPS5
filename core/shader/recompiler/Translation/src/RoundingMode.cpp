@@ -253,6 +253,9 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::FlatAtomicFminX2:
         return {denorm1664In, RoundingUseKind::Denormal};
     case RdnaOpcode::VDivScaleF64:
+    case RdnaOpcode::VRcpF64:
+    case RdnaOpcode::VRsqF64:
+    case RdnaOpcode::VSqrtF64:
     case RdnaOpcode::VRcpF16:
     case RdnaOpcode::VSqrtF16:
     case RdnaOpcode::VRsqF16:

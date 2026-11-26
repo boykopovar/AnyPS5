@@ -8,6 +8,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 
 - Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
 - `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
+  Add `--strict` to reject a branch that is behind the base even when the test merge is clean.
+  A conflict or a strict-mode rejection exits with status 1. Use `--json` to inspect the counts in scripts.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
   - Linux: `relinker --registry src/eboot.elf app.elf`
   - Windows: `relinker --windows --registry src/eboot.elf app.exe`. Without `--windows` the output is an ELF file whatever its name, and Windows refuses to start it (exit code 216, "not compatible with the version of Windows").
@@ -151,6 +153,11 @@ The launcher verifies output console handles and never tees the native output to
 Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+
+When reporting a capture, distinguish the [summary's measurements](BUILD.md#performance-trace):
+
+- Check `trace_dropped_threads` when `trace_dropped` is true. `events_lost` makes retained slice and wait inventories incomplete; `totals_full` makes that thread's phase totals incomplete. Event loss alone does not invalidate the separately accumulated phase totals. Report both states rather than treating a readable trace as complete.
+- Phase totals include nested scopes and aggregate threads that can run at the same time. Do not add them to derive exclusive frame cost. `worker_busy_pct` includes waits inside its measured scopes, so it does not establish OS thread CPU utilization. Preserve these limits when naming a suspected bottleneck.
 
 If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
 `tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.
