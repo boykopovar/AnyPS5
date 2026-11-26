@@ -73,8 +73,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumf_openResult_nid_postfix(&status); });
-        Require(status == incoming);
+        UFormattedNumber* result = unumf_openResult_nid_postfix(&status);
+        Require(result != nullptr);
+        Require(status == (incoming == -124 ? -124 : incoming));
+        unumf_closeResult_nid_postfix(result);
+        RequireThrows([&] { unumf_closeResult_nid_postfix(result); });
     }
 
     RequireThrows([&] { unumf_openResult_nid_postfix(nullptr); });
@@ -120,7 +123,7 @@ void Run() {
         Require(unumf_resultToString_nid_postfix(result, buffer, 8, &status) == 0);
         Require(unumf_resultToString_nid_postfix(nullptr, nullptr, -1, &status) == 0);
         Require(status == incoming);
-        RequireThrows([&] { unumf_openForSkeletonAndLocale_nid_postfix(u"percent", 7, "en", &status); });
+        Require(unumf_openForSkeletonAndLocale_nid_postfix(u"percent", 7, "en", &status) == nullptr);
         Require(status == incoming);
     }
     for (const auto incoming : Passing) {
@@ -145,9 +148,18 @@ void Run() {
         RequireThrows([&] { unumf_resultGetAllFieldPositions_nid_postfix(result, nullptr, &status); });
         RequireThrows([&] { unumf_resultToString_nid_postfix(result, buffer, 8, &status); });
         RequireThrows([&] { unumf_resultToString_nid_postfix(result, nullptr, 1, &status); });
-        RequireThrows([&] { unumf_openForSkeletonAndLocale_nid_postfix(u"percent", 7, "en", &status); });
-        RequireThrows([&] { unumf_openForSkeletonAndLocale_nid_postfix(nullptr, 0, nullptr, &status); });
-        Require(status == incoming);
+        status = incoming;
+        Require(unumf_openForSkeletonAndLocale_nid_postfix(nullptr, 1, "en", &status) == nullptr);
+        Require(status == IllegalArgument);
+        status = incoming;
+        if (UNumberFormatter* fmt = unumf_openForSkeletonAndLocale_nid_postfix(u"percent", 7, "en", &status)) {
+            Require(status <= 0);
+            unumf_close_nid_postfix(fmt);
+            RequireThrows([&] { unumf_close_nid_postfix(fmt); });
+        } else {
+            Require(status > 0);
+        }
+        status = incoming;
     }
     RequireThrows([&] { unumf_formatDecimal_nid_postfix(formatter, "1.5", 3, result, nullptr); });
     RequireThrows([&] { unumf_formatDouble_nid_postfix(formatter, 1.5, result, nullptr); });
@@ -156,6 +168,28 @@ void Run() {
     RequireThrows([] { unumf_openForSkeletonAndLocale_nid_postfix(u"percent", 7, "en", nullptr); });
     for (const auto unit : buffer) Require(unit == 0);
     Require(Unchanged(storage));
+
+    std::int32_t status = 0;
+    UNumberFormatter* fmt = unumf_openForSkeletonAndLocale_nid_postfix(u"integer-width/*00", 17, "en", &status);
+    UFormattedNumber* formatted = unumf_openResult_nid_postfix(&status);
+    Require(formatted != nullptr && status <= 0);
+    if (fmt != nullptr) {
+        unumf_formatDouble_nid_postfix(fmt, 42.0, formatted, &status);
+        if (status <= 0) {
+            std::array<char16_t, 16> out{};
+            const std::int32_t len = unumf_resultToString_nid_postfix(formatted, out.data(), 16, &status);
+            Require(status <= 0 && len > 0);
+            UFieldPositionIterator* fpos = ufieldpositer_open_nid_postfix(&status);
+            Require(fpos != nullptr && status <= 0);
+            unumf_resultGetAllFieldPositions_nid_postfix(formatted, fpos, &status);
+            Require(status <= 0);
+            ufieldpositer_close_nid_postfix(fpos);
+        }
+        status = 0;
+        unumf_formatDecimal_nid_postfix(fmt, "12.5", 4, formatted, &status);
+        unumf_close_nid_postfix(fmt);
+    }
+    unumf_closeResult_nid_postfix(formatted);
 }
 
 } // namespace UnumfFormatAndResult
