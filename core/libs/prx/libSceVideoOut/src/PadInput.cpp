@@ -589,8 +589,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 }
 
 void PadInput::dispatchPadChords(DisplayWindow& window) {
-    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const auto requests = keyboardMouse.PadChordRequests(slots[0].state.buttons);
+    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const bool focused = window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle();
     applyRequests(requests, focused, window);
 }
@@ -598,6 +598,7 @@ void PadInput::dispatchPadChords(DisplayWindow& window) {
 void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
     if (requests.reloadInputMapping) reloadInputMapping();
     if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
+    if (requests.toggleBorderless && windowFocused) window.ToggleBorderless();
     if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
     if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
     if (requests.showPadStatus && windowFocused) {

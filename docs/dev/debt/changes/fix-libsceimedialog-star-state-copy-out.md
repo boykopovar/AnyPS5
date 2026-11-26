@@ -1,0 +1,5 @@
+# libSceImeDialog
+
+## change [sceImeDialogGetCurrentStarState, sceImeDialogInitInternal, sceImeDialogSetPanelPosition]
+
+- [sceImeDialogGetCurrentStarState, sceImeDialogInitInternal, sceImeDialogSetPanelPosition](../../../core/libs/prx/libSceImeDialog/Export.cpp) (libSceImeDialog) - not measured on a console; signatures and checks follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/ime/ime_dialog.cpp). `sceImeDialogInitInternal` runs `sceImeDialogInit`, as shadPS4's two share one path apart from user flags this library does not keep. There is no movable panel, so `sceImeDialogSetPanelPosition` never succeeds: `DIALOG_NOT_IN_USE` without a dialog and `IME_SUSPENDING` while one is running or finished, the states in which shadPS4 refuses it too. The star state is always 0. A star state pointer the host cannot write returns `0x80bc0031` without writing, the code the function returns for a null pointer, as an unmeasured host-safety fallback; shadPS4 writes through it unchecked

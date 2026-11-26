@@ -358,6 +358,16 @@ class DatabaseCacheTests(unittest.TestCase):
             self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
 
 class NidArgumentTests(unittest.TestCase):
+    def test_invalid_utf8_in_symbol_file_names_the_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-symbols.txt"
+            path.write_bytes(b"\xff")
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as exit:
+                nid_names.main(["--name", "example", "--from-file", str(path)])
+            self.assertEqual(exit.exception.code, 2)
+            self.assertIn(path.name, errors.getvalue())
+
     options = ["-h", "--help", "--db", "--nid", "--json"]
 
     def test_name_and_nid_modes_conflict_even_with_empty_filters(self):

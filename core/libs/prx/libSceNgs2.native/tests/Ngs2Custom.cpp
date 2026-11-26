@@ -11,6 +11,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 struct Calls {
     std::vector<std::uint32_t> setupVoices;
     std::vector<std::uint32_t> cleanupVoices;
@@ -1388,6 +1398,24 @@ static void TestCustomMastering() {
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
     const auto voice = Voice(rack);
     Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    {
+#ifdef _WIN32
+        SYSTEM_INFO systemInfo{};
+        GetSystemInfo(&systemInfo);
+        const auto page = static_cast<std::size_t>(systemInfo.dwPageSize);
+        auto* region = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        DWORD previous = 0;
+        Require(region != nullptr && VirtualProtect(region + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        auto* region = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(region + page, page, PROT_NONE) == 0);
+#endif
+        auto* header = reinterpret_cast<Ngs2RackInfo*>(region + page - sizeof(Ngs2RackInfo));
+        Require(sceNgs2RackGetInfo(rack, header, sizeof(Ngs2RackInfo) + 4096) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    }
 
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0});
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 1.0f, 1.0f});

@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [SET_*_REG_INDIRECT]
+
+- [SET_*_REG_INDIRECT](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/Submission.cpp) (libSceAgcDriver) reads its register list when the command buffer is submitted, with the packets. The console's graphics PFP reads it when it reaches the packet, so a list written after the submission (by the CPU, or by GPU work ahead of the packet behind PFP_SYNC_ME) is read here before that write. When the list read at submission holds an offset dword that is not a register offset (bits 16-27 set), the worker reads the list again where the packet executes and writes that copy. An entry of 0xffffffff names no register and is skipped when the list is written, including the copy read again at the packet. PPSA23566 (UFC 6) intermittently submits a SET_CONTEXT_REG_INDIRECT whose first entry is 0x038f038f or 0x03900390 in both copies; what the PFP does with such an entry is unknown, so a copy that still holds one throws unless `APS5_SKIP_INVALID_INDIRECT_REGISTERS=1`, which skips its invalid entries and writes its valid ones.
