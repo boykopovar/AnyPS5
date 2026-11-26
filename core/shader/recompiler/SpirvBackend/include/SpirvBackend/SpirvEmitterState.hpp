@@ -90,7 +90,7 @@ struct SpirvTableAccess {
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
-    SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
+    SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo, bool meshAsCompute = false);
 
     SpirvModule module;
     const IrProgram& program;
@@ -141,6 +141,7 @@ struct SpirvEmitterState {
     bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool meshAsCompute = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     bool laneValueShared = false;

@@ -58,6 +58,9 @@ public:
     bool Optimized() const { return optimized != nullptr && optimized->handle.load() != VK_NULL_HANDLE; }
     void ContinueBackFaces(CommandState& recording, const State& state, const State* masked = nullptr) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
+    VkPipeline MeshCompute() const { return meshCompute; }
+    VkPipelineLayout MeshComputeLayout() const { return meshComputeLayout; }
+    void PushMeshCompute(VkCommandBuffer commands, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     void ContinueSecondChannel(CommandState& recording, const State& state, const State* masked = nullptr) const;
     bool MasksStencilReplayPasses(const State& state) const;
     void SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const;
@@ -92,6 +95,8 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline backFaces = VK_NULL_HANDLE;
     VkPipeline secondChannel = VK_NULL_HANDLE;
+    VkPipeline meshCompute = VK_NULL_HANDLE;
+    VkPipelineLayout meshComputeLayout = VK_NULL_HANDLE;
     std::size_t attachments = 0;
     std::size_t colorAttachments = 0;
     std::vector<bool> boundAttachments;

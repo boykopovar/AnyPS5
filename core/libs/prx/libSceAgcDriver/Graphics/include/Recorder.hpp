@@ -405,7 +405,7 @@ public:
     void Sync();
     void CountSamples();
     bool CountingSamples() const { return countingSamples; }
-    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules);
+    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 8> rules, bool compute);
     bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     struct BoundWords {
         VkBuffer buffer = VK_NULL_HANDLE;

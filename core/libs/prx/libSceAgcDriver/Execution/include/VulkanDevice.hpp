@@ -97,6 +97,7 @@ public:
     Graphics::SampleOrder HostSampleOrder(const Graphics::State& graphics) const;
     std::optional<ShaderRecompiler::GeometryStageLimits> GeometryLimits() const;
     std::uint32_t MaxFragmentInputComponents() const;
+    std::uint32_t MaxMeshOutputLayers() const;
     const std::uint32_t* WorkGroupCountLimit() const;
     std::uint64_t StorageBufferRangeLimit() const;
     std::uint64_t DeviceLocalBytes() const;

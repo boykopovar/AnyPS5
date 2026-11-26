@@ -283,6 +283,10 @@ int main() {
             std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
             return VulkanTestSkipped;
         }
+        if (device->Target().meshAsCompute) {
+            std::puts("skipped, the compute fallback has no barycentric path (MeshComputeStages requires native mesh)");
+            return VulkanTestSkipped;
+        }
         for (std::size_t i = 0; i < Corners.size(); ++i) {
             const auto& corner = Corners[i];
             Vertices[i] = {{corner.x * corner.w, corner.y * corner.w, 0.5f * corner.w, corner.w}, {VertexValues[i], 0.0f, 0.0f, 1.0f}};
