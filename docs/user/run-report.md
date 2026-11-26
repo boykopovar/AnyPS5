@@ -123,7 +123,7 @@ Values pass through the same text filter as the report, so a path or a user name
 - `coverage` says which sections the runtime collected for this run. A list can be empty because nothing happened or because this build doesn't collect it. With a section's coverage off, don't read its empty list as "nothing missing".
 - `truncated` counts the entries dropped from each capped list, so a capped list never looks complete.
 
-Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. When it would be larger, the runtime drops the lowest-ranked list entries first, then optional descriptions, and never the build, game or stop details.
+Lists are sorted by count, highest first. They hold at most 200 entries (`missing.functions`, `shaders.unsupported`) or 100 (`imageFormats`, `descriptors`); strings are at most 300 characters. The whole file is at most 65,536 bytes of UTF-8. If it would be larger, the runtime removes the last entry from the list with the most entries and increments that list's `truncated` count. This repeats until the report fits. If it still exceeds the limit with empty lists, the runtime does not write the report.
 
 ## Privacy
 
