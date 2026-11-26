@@ -44,6 +44,8 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdarg>
+#include <vector>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -959,6 +961,94 @@ int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
 
 int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
     return ExecProgram(path, arguments, environment, false, false);
+}
+
+namespace {
+
+std::vector<char*> CollectArguments(const char* first, const void* (*next)(void*), void* list) {
+    std::vector<char*> arguments;
+    for (const char* text = first; text != nullptr; text = static_cast<const char*>(next(list))) arguments.push_back(const_cast<char*>(text));
+    return arguments;
+}
+
+#ifdef _WIN32
+struct SysVVaList {
+    unsigned int gpOffset;
+    unsigned int fpOffset;
+    void* overflowArea;
+    void* registerSaveArea;
+};
+
+const void* NextVaPointer(void* list) {
+    auto* state = static_cast<SysVVaList*>(list);
+    const void* address;
+    if (state->gpOffset < 48) {
+        address = static_cast<const char*>(state->registerSaveArea) + state->gpOffset;
+        state->gpOffset += 8;
+    } else {
+        address = state->overflowArea;
+        state->overflowArea = static_cast<char*>(state->overflowArea) + 8;
+    }
+    const void* value;
+    std::memcpy(&value, address, sizeof(value));
+    return value;
+}
+#else
+const void* NextVaPointer(void* list) {
+    return va_arg(*static_cast<va_list*>(list), const void*);
+}
+#endif
+
+}
+
+int APS5_VABI execl_nid_postfix(const char* path, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execv_nid_postfix(path, arguments.data());
+}
+
+int APS5_VABI execle_nid_postfix(const char* path, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    char* const* environment = static_cast<char* const*>(const_cast<void*>(NextVaPointer(&list)));
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    char* const* environment = static_cast<char* const*>(const_cast<void*>(NextVaPointer(&list)));
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execve_nid_postfix(path, arguments.data(), environment);
+}
+
+int APS5_VABI execlp_nid_postfix(const char* file, const char* arg, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list list;
+    __builtin_sysv_va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    __builtin_sysv_va_end(list);
+#else
+    va_list list;
+    va_start(list, arg);
+    auto arguments = CollectArguments(arg, NextVaPointer, &list);
+    va_end(list);
+#endif
+    arguments.push_back(nullptr);
+    return execvp_nid_postfix(file, arguments.data());
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
