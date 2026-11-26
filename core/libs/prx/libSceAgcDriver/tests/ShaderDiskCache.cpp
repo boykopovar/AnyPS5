@@ -2581,6 +2581,15 @@ void verifyPlanRoundTrip() {
     const auto pointerBytes = encodedPlan(pointerTable);
     IrResourcePlan pointerDecoded;
     require(pointerBytes != handBytes && ShaderDiskCache::DecodePlan(pointerBytes, pointerDecoded) && samePlan(pointerTable, pointerDecoded) && pointerDecoded.descriptorSources[1].tableColumn->pointerKeyed, "the pointer-keyed column changed in a disk-cache round trip");
+    auto chaseTable = handBuiltPlan();
+    auto& chaseColumn = *chaseTable.descriptorSources[1].tableColumn;
+    chaseColumn.indirect = true;
+    chaseColumn.pointerKeyed = true;
+    chaseColumn.pointerChaseDepth = 1u;
+    chaseColumn.pointerChases = {PointerChase{8u, 16u, 4u, 24u, 40u, {}}};
+    const auto chaseBytes = encodedPlan(chaseTable);
+    IrResourcePlan chaseDecoded;
+    require(chaseBytes != pointerBytes && ShaderDiskCache::DecodePlan(chaseBytes, chaseDecoded) && samePlan(chaseTable, chaseDecoded) && chaseDecoded.descriptorSources[1].tableColumn->pointerChases == chaseColumn.pointerChases, "a pointer chase whose high word has its own immediate changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
