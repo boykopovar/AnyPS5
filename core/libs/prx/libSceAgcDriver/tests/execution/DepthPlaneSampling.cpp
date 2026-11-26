@@ -497,6 +497,8 @@ void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, st
     const bool fullProved = resources->Revalidate(shader);
     std::printf("depth surface epoch exit: a depth-tested draw without depth writes %s a surface over the sampled plane (proof serial %s, planes %s); the next proof %s the exit and %s, the full proof %s\n", created ? "created" : "did not create", broke ? "moved" : "kept", stale ? "stale" : "stored", exited ? "took" : "did not take", proved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
     Require(created, "depth surface epoch exit: the draw did not create a depth surface over the sampled plane");
+    Require(!broke && !stale, "depth surface epoch exit: the draw moved an input other than the surface serial, so the case does not isolate it");
+    Require(!exited, "depth surface epoch exit: the exit was taken after a depth surface was created over the sampled plane");
     Require(!proved || fullProved, "depth surface epoch exit: the exit reused a sampling build the full proof refuses after a depth surface was created over its plane");
     resources.reset();
     Load(device, base, shape, 0, output);
