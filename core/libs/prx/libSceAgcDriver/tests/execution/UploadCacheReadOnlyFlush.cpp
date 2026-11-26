@@ -19,7 +19,9 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -165,6 +167,175 @@ std::vector<std::uint32_t> ReadUploaded(const AgcDriver::Graphics::Context& cont
     return words;
 }
 
+using SparsePieces = std::vector<std::pair<std::size_t, std::size_t>>;
+
+void ReplaySparseLayout(const AgcDriver::Graphics::Context& context, const SparsePieces& pieces) {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t page = 65536;
+    Require(pieces.size() >= 2 && pieces.front().first == 0, "sparse replay requires at least two pieces starting at zero");
+    std::size_t size = 0;
+    for (const auto& [offset, bytes] : pieces) {
+        Require(offset >= size && bytes && offset % page == 0 && bytes % page == 0 && offset <= SIZE_MAX - bytes, "invalid sparse replay layout");
+        size = offset + bytes;
+    }
+#ifdef _WIN32
+    auto* data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS));
+    Require(data != nullptr, "sparse replay reservation failed");
+#else
+    auto* data = static_cast<std::uint8_t*>(mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(data != MAP_FAILED, "sparse replay reservation failed");
+#endif
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    for (const auto& [offset, bytes] : pieces) {
+#ifdef _WIN32
+        Require(VirtualAlloc(data + offset, bytes, MEM_COMMIT, PAGE_READWRITE) != nullptr, "sparse replay commit failed");
+#else
+        Require(mprotect(data + offset, bytes, PROT_READ | PROT_WRITE) == 0, "sparse replay commit failed");
+#endif
+        std::memset(data + offset, 0x5a, bytes);
+        GuestAllocations::Mutation().Add(data + offset, bytes, true, true, true);
+    }
+    Require(AgcDriver::GuestMemory::DescribeCommitted(address, size).ranges.size() == pieces.size(), "sparse replay layout differs from input");
+    VkBuffer poisonedHandle{};
+    {
+        Buffer poison(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(poison.Bytes().data(), 0xa5, size);
+        poisonedHandle = poison.Handle();
+    }
+    const auto upload = [&](GuestBufferMemory& memory) {
+        memory.AddReadable(address, size);
+        memory.Upload(false);
+    };
+    const auto verify = [&](GuestBufferMemory& memory, bool unmapped, std::uint32_t firstWord) {
+        const auto words = ReadUploaded(context, memory, address, size);
+        Require(words.size() == size / 4, "unexpected sparse readback size");
+        auto cursor = words.begin();
+        for (std::size_t i = unmapped ? 1 : 0; i < pieces.size(); ++i) {
+            const auto begin = words.begin() + pieces[i].first / 4;
+            const auto end = begin + pieces[i].second / 4;
+            Require(std::all_of(cursor, begin, [](auto value) { return value == 0; }), "nonzero sparse hole");
+            if (i == 0) Require(*begin == firstWord, "stale backed write");
+            Require(std::all_of(begin + (i == 0 ? 1 : 0), end, [](auto value) { return value == 0x5a5a5a5au; }), "incorrect backed data");
+            cursor = end;
+        }
+    };
+    {
+        GuestBufferMemory held(context);
+        upload(held);
+        std::uint32_t adjustment = 0;
+        Require(held.Descriptor(address, size, adjustment).buffer == poisonedHandle, "sparse replay did not take the poisoned pooled buffer");
+        *reinterpret_cast<std::uint32_t*>(data) = Second;
+        GuestBufferMemory changed(context);
+        upload(changed);
+        verify(held, false, 0x5a5a5a5au);
+        verify(changed, false, Second);
+    }
+    std::vector<double> times;
+    for (int iteration = 0; iteration < 18; ++iteration) {
+        *reinterpret_cast<std::uint32_t*>(data) = First + iteration;
+        const auto start = std::chrono::steady_clock::now();
+        {
+            GuestBufferMemory memory(context);
+            upload(memory);
+            if (iteration == 0) verify(memory, false, First);
+        }
+        if (iteration >= 2) times.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+    }
+    std::sort(times.begin(), times.end());
+    std::printf("sparse replay: %zu bytes, %zu pieces, median of 16 uploads %.3f ms\n", size, pieces.size(), (times[7] + times[8]) / 2);
+    {
+        std::array<std::unique_ptr<GuestBufferMemory>, 3> live;
+        std::array<std::uint32_t, 3> values{};
+        std::vector<double> overlapping;
+        VkBuffer last = VK_NULL_HANDLE;
+        unsigned shared = 0;
+        for (unsigned iteration = 0; iteration < 20; ++iteration) {
+            const auto slot = iteration % live.size();
+            values[slot] = Second + iteration / 4;
+            *reinterpret_cast<std::uint32_t*>(data) = values[slot];
+            live[slot] = std::make_unique<GuestBufferMemory>(context);
+            const auto start = std::chrono::steady_clock::now();
+            upload(*live[slot]);
+            const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            std::uint32_t adjustment = 0;
+            const auto handle = live[slot]->Descriptor(address, size, adjustment).buffer;
+            if (iteration >= 4) {
+                overlapping.push_back(elapsed);
+                shared += handle == last;
+            }
+            last = handle;
+            if (iteration == 8) {
+                for (std::size_t i = 0; i < live.size(); ++i) verify(*live[i], false, values[i]);
+            }
+        }
+        std::sort(overlapping.begin(), overlapping.end());
+        std::printf("overlapping sparse replay: %zu bytes, %zu pieces, median %.3f ms, shared %u of 16\n", size, pieces.size(), (overlapping[7] + overlapping[8]) / 2, shared);
+    }
+    GuestAllocations::Mutation().Unmap(data, pieces.front().second, [&](const void*, std::size_t bytes, const void*, bool) {
+#ifdef _WIN32
+        Require(VirtualFree(data, bytes, MEM_DECOMMIT) != 0, "sparse replay decommit failed");
+#else
+        Require(munmap(data, bytes) == 0, "sparse replay unmap failed");
+#endif
+    });
+    {
+        GuestBufferMemory changedLayout(context);
+        upload(changedLayout);
+        verify(changedLayout, true, 0);
+    }
+    for (std::size_t i = 1; i < pieces.size(); ++i) GuestAllocations::Mutation().Remove(data + pieces[i].first);
+#ifdef _WIN32
+    VirtualFree(data, 0, MEM_RELEASE);
+#else
+    munmap(data + pieces.front().second, size - pieces.front().second);
+#endif
+}
+
+void SparsePendingWrite(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context) {
+    constexpr std::size_t page = 65536;
+    GuestBlock block(true);
+    GuestAllocations::Mutation().Protect(block.Data() + 4 * page, page, false, false, false, [&] {
+#ifdef _WIN32
+        DWORD prior = 0;
+        Require(VirtualProtect(block.Data() + 4 * page, page, PAGE_NOACCESS, &prior) != 0, "cannot protect sparse flush test gap");
+#else
+        Require(mprotect(block.Data() + 4 * page, page, PROT_NONE) == 0, "cannot protect sparse flush test gap");
+#endif
+    });
+    AgcDriver::GuestMemory::Unwatch(block.Address() + 5 * page, page);
+    Require(AgcDriver::GuestMemory::Watched(block.Address(), ImageBytes) && !AgcDriver::GuestMemory::Watched(block.Address() + 5 * page, page), "sparse flush fixture requires mixed write tracking");
+    const auto upload = [&](AgcDriver::Graphics::GuestBufferMemory& memory) {
+        memory.AddReadable(block.Address(), BlockBytes);
+        memory.Upload(false);
+        return ReadUploaded(context, memory, block.Address(), BlockBytes);
+    };
+    AgcDriver::Graphics::GuestBufferMemory before(context), after(context);
+    const auto original = upload(before);
+    Store(device, block.Data(), Second);
+    Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "sparse flush fixture requires a pending GPU store");
+    const auto current = upload(after);
+    Require(std::find(current.begin(), current.begin() + ImageBytes / 4, Second) != current.begin() + ImageBytes / 4, "sparse validation missed the pending GPU store");
+    Require(std::all_of(current.begin() + 4 * page / 4, current.begin() + 5 * page / 4, [](auto value) { return value == 0; }), "sparse flush exposed nonzero gap bytes");
+    Require(ReadUploaded(context, before, block.Address(), BlockBytes) == original, "a later GPU store changed a live sparse snapshot");
+    auto* later = reinterpret_cast<std::uint32_t*>(block.Data() + 5 * page);
+    *later = First;
+    AgcDriver::Graphics::GuestBufferMemory untracked(context);
+    const auto withWrite = upload(untracked);
+    Require(withWrite[5 * page / 4] == First && ReadUploaded(context, after, block.Address(), BlockBytes) == current, "an unwatched write changed a live predecessor or missed the next upload");
+    const auto index = 2 * page / sizeof(std::uint32_t);
+    AgcDriver::GuestMemory::Unwatch(block.Address() + 2 * page, page);
+    Require(AgcDriver::GuestMemory::Watched(block.Address(), page) && !AgcDriver::GuestMemory::Watched(block.Address() + 2 * page, page) && AgcDriver::GuestMemory::Watched(block.Address() + 3 * page, page), "sparse fixture requires an unwatched page inside a backed piece");
+    auto* words = reinterpret_cast<std::uint32_t*>(block.Data());
+    words[index] = First;
+    AgcDriver::Graphics::GuestBufferMemory mixed(context);
+    const auto mixedWords = upload(mixed);
+    Require(mixedWords[index] == First && ReadUploaded(context, untracked, block.Address(), BlockBytes) == withWrite, "a change of watch coverage corrupted a live sparse snapshot");
+    words[index] = Second;
+    AgcDriver::Graphics::GuestBufferMemory changed(context);
+    const auto latest = upload(changed);
+    Require(latest[index] == Second && ReadUploaded(context, mixed, block.Address(), BlockBytes) == mixedWords, "an interior unwatched write changed a live predecessor or missed the next upload");
+}
+
 bool BlockContains(const std::uint8_t* block, std::size_t bytes, std::uint32_t value) {
     const auto* words = reinterpret_cast<const std::uint32_t*>(block);
     return std::find(words, words + bytes / sizeof(std::uint32_t), value) != words + bytes / sizeof(std::uint32_t);
@@ -196,6 +367,20 @@ int main() {
 
         auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         context.hostImportAlignment = 0;
+        SparsePendingWrite(*device, context);
+        ReplaySparseLayout(context, {{0, 65536}, {131072, 131072}});
+        if (const auto path = std::getenv("APS5_SPARSE_FIXTURE_LAYOUT")) {
+            std::ifstream input(path);
+            Require(input.is_open(), "cannot open replay layout");
+            SparsePieces pieces;
+            std::size_t offset, bytes;
+            while (input >> offset) {
+                Require(static_cast<bool>(input >> bytes), "missing length in replay layout");
+                pieces.emplace_back(offset, bytes);
+            }
+            Require(input.eof(), "cannot parse replay layout");
+            ReplaySparseLayout(context, pieces);
+        }
         {
             AgcDriver::Graphics::GuestBufferMemory memory(context);
             memory.AddReadable(block.Address(), ImageBytes);
