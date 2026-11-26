@@ -310,7 +310,11 @@ int main() {
     auto* material = reinterpret_cast<AudioPropagationStructDescriptor*>(materialBytes);
     AudioPropagationHandle materialHandle = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemRegisterMaterial(system, material, &materialHandle); }, "material without descriptor");
-    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemRegisterMaterial(system, reinterpret_cast<const AudioPropagationStructDescriptor*>(0x10), &materialHandle); }, "unreadable material descriptor");
+    AudioPropagationHandle unreadableHandle = 0x12345678u;
+    errno = 73;
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemRegisterMaterial(system, reinterpret_cast<const AudioPropagationStructDescriptor*>(0x10), &unreadableHandle); }, "unreadable material descriptor");
+    Require(errno == 73, "errno preserved for unreadable material descriptor");
+    Require(unreadableHandle == 0x12345678u, "unreadable material descriptor modified output handle");
     *material = {AudioPropagation::MaterialId, AudioPropagation::MaterialSize};
     Require(sceAudioPropagationSystemRegisterMaterial(system, material, &materialHandle) == 0 && materialHandle != 0, "register material failed");
     Require(sceAudioPropagationSystemUnregisterMaterial(materialHandle) == 0, "unregister material failed");
