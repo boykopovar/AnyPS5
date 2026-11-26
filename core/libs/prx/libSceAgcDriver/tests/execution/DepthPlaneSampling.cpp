@@ -477,7 +477,9 @@ void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, st
     Require(resources->Reusable(), "depth surface epoch exit: the plane sampling build is not reusable");
     Require(resources->Revalidate(shader), "depth surface epoch exit: the sampling build did not prove current");
     const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
-    Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
+    const bool proveAgain = resources->Revalidate(shader);
+    const bool exitTaken = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore;
+    Require(proveAgain && exitTaken != (std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr), "depth surface epoch exit: an unchanged sampling build did not take the epoch exit, or took it with APS5_NO_FAST_REVALIDATE set");
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
     const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false, false);
@@ -779,6 +781,11 @@ int main(int argc, char** argv) {
             EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
             if (AgcDriver::Graphics::EpochProofCountsProfiled()) AgcDriver::Graphics::ReportEpochProofCounts();
             std::puts("depth plane epoch exit tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-surface") {
+            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
+            std::puts("depth surface epoch exit tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {

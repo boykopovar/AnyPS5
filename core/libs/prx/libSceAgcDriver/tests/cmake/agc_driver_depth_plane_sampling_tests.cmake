@@ -11,6 +11,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_depth_plane_epoch_exit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_depth_plane_epoch_exit_no_fast COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit-surface)
+    set_tests_properties(agc_driver_depth_plane_epoch_exit_no_fast PROPERTIES ENVIRONMENT "APS5_NO_FAST_REVALIDATE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_epoch_exit_no_fast PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_depth_plane_epoch_exit_retired COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit-retired)
     set_tests_properties(agc_driver_depth_plane_epoch_exit_retired PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
