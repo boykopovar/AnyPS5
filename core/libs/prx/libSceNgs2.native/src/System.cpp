@@ -374,7 +374,7 @@ int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2C
     const int planned = PlanJobs(checked, plan);
     if (planned < 0) return planned;
     const std::size_t size = plan.size;
-    if (!WriteGuest(&buffer_info->host_buffer_size, size)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (!WriteGuestBytes(reinterpret_cast<char*>(buffer_info) + offsetof(Ngs2ContextBufferInfo, host_buffer_size), &size, sizeof(size))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
