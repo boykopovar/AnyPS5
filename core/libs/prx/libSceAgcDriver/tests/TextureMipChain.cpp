@@ -199,6 +199,7 @@ VKAPI_ATTR VkResult VKAPI_CALL endCommandBuffer(VkCommandBuffer) { return VK_SUC
 VKAPI_ATTR VkResult VKAPI_CALL queueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL waitForFences(VkDevice, std::uint32_t, const VkFence*, VkBool32, std::uint64_t) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL getFenceStatus(VkDevice, VkFence) { return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL resetFences(VkDevice, std::uint32_t, const VkFence*) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL queueWaitIdle(VkQueue) { return VK_SUCCESS; }
 
 VKAPI_ATTR void VKAPI_CALL cmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t count, const VkImageMemoryBarrier* barriers) {
@@ -206,6 +207,11 @@ VKAPI_ATTR void VKAPI_CALL cmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFl
 }
 
 VKAPI_ATTR void VKAPI_CALL cmdCopyBuffer(VkCommandBuffer, VkBuffer, VkBuffer, std::uint32_t, const VkBufferCopy*) {}
+VKAPI_ATTR void VKAPI_CALL cmdUpdateBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, const void*) {}
+VKAPI_ATTR void VKAPI_CALL cmdBeginQuery(VkCommandBuffer, VkQueryPool, std::uint32_t, VkQueryControlFlags) {}
+VKAPI_ATTR void VKAPI_CALL cmdEndQuery(VkCommandBuffer, VkQueryPool, std::uint32_t) {}
+VKAPI_ATTR void VKAPI_CALL cmdResetQueryPool(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t) {}
+VKAPI_ATTR void VKAPI_CALL cmdCopyQueryPoolResults(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags) {}
 
 VKAPI_ATTR void VKAPI_CALL cmdCopyBufferToImage(VkCommandBuffer, VkBuffer, VkImage image, VkImageLayout, std::uint32_t count, const VkBufferImageCopy* regions) {
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -274,9 +280,15 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(queueSubmit)},
         {"vkWaitForFences", reinterpret_cast<PFN_vkVoidFunction>(waitForFences)},
         {"vkGetFenceStatus", reinterpret_cast<PFN_vkVoidFunction>(getFenceStatus)},
+        {"vkResetFences", reinterpret_cast<PFN_vkVoidFunction>(resetFences)},
         {"vkQueueWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(queueWaitIdle)},
         {"vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(cmdPipelineBarrier)},
         {"vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(cmdCopyBuffer)},
+        {"vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(cmdUpdateBuffer)},
+        {"vkCmdBeginQuery", reinterpret_cast<PFN_vkVoidFunction>(cmdBeginQuery)},
+        {"vkCmdEndQuery", reinterpret_cast<PFN_vkVoidFunction>(cmdEndQuery)},
+        {"vkCmdResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(cmdResetQueryPool)},
+        {"vkCmdCopyQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(cmdCopyQueryPoolResults)},
         {"vkCmdCopyBufferToImage", reinterpret_cast<PFN_vkVoidFunction>(cmdCopyBufferToImage)},
         {"vkCmdCopyImageToBuffer", reinterpret_cast<PFN_vkVoidFunction>(cmdCopyImageToBuffer)},
         {"vkCmdBlitImage", reinterpret_cast<PFN_vkVoidFunction>(cmdBlitImage)},
