@@ -170,11 +170,16 @@ void Run() {
     Require(Unchanged(storage));
 
     std::int32_t status = 0;
-    UNumberFormatter* fmt = unumf_openForSkeletonAndLocale_nid_postfix(u"integer-width/*00", 17, "en", &status);
     UFormattedNumber* formatted = unumf_openResult_nid_postfix(&status);
     Require(formatted != nullptr && status <= 0);
+    RequireThrows([&] { unumf_resultGetAllFieldPositions_nid_postfix(formatted, iterator, &status); });
+    Require(status == 0);
+    UNumberFormatter* fmt = unumf_openForSkeletonAndLocale_nid_postfix(u"integer-width/*00", 17, "en", &status);
     if (fmt != nullptr) {
+        Require(status <= 0 || status == 2);
+        status = 0;
         unumf_formatDouble_nid_postfix(fmt, 42.0, formatted, &status);
+        Require(status <= 0 || status == 2);
         if (status <= 0) {
             std::array<char16_t, 16> out{};
             const std::int32_t len = unumf_resultToString_nid_postfix(formatted, out.data(), 16, &status);
@@ -187,7 +192,10 @@ void Run() {
         }
         status = 0;
         unumf_formatDecimal_nid_postfix(fmt, "12.5", 4, formatted, &status);
+        Require(status <= 0 || status == 2);
         unumf_close_nid_postfix(fmt);
+    } else {
+        Require(status == 2);
     }
     unumf_closeResult_nid_postfix(formatted);
 }

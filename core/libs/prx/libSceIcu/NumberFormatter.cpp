@@ -1,3 +1,5 @@
+#include "prx/libSceIcu/FieldPositionIteratorRegistry.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/NumberFormatterBackend.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
@@ -207,12 +209,12 @@ UNumberFormatter* APS5_VABI unumf_openForSkeletonAndLocale_nid_postfix(const cha
     const std::u16string hostSkeleton =
         skeleton ? ReadGuestU16(skeleton, skeletonLen, __func__) : std::u16string{};
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     auto local = incoming;
     void* formatter = Icu::NumberFormatterBackend::OpenForSkeletonAndLocale(
         skeleton ? hostSkeleton.c_str() : nullptr, static_cast<std::int32_t>(hostSkeleton.size()), localePtr, &local);
     WriteStatus(status, incoming, local, __func__);
-    if (local <= 0 && formatter) RegisterFormatter(formatter);
+    if (formatter) RegisterFormatter(formatter);
     return static_cast<UNumberFormatter*>(formatter);
 }
 
@@ -240,6 +242,7 @@ void APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix(const UFormattedNumb
         WriteStatus(status, incoming, Icu::IllegalArgument, __func__);
         return;
     }
+    if (!Icu::IsRegisteredFieldPositionIterator(fpositer)) NotImplemented_nid_no_patch(__func__);
     auto local = incoming;
     Icu::NumberFormatterBackend::ResultGetAllFieldPositions(result, fpositer, &local);
     WriteStatus(status, incoming, local, __func__);

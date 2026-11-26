@@ -8,6 +8,7 @@
 */
 // https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/i18n/ufieldpositer.cpp
 
+#include "prx/libSceIcu/FieldPositionIteratorRegistry.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -80,6 +81,16 @@ std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator* fp
         NotImplemented_nid_no_patch(__func__);
     }
     return field.getField();
+}
+
+}
+
+namespace Icu {
+
+bool IsRegisteredFieldPositionIterator(const UFieldPositionIterator* iterator) {
+    if (!iterator) return false;
+    const std::lock_guard lock(iteratorMutex);
+    return iterators.contains(const_cast<UFieldPositionIterator*>(iterator));
 }
 
 }
