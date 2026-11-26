@@ -64,6 +64,7 @@ extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
     state->count = 0;
 #elif defined(__linux__)
     ::__fpurge(native);
+    if (resume >= 0 && std::fflush(native) != 0) return -1;
 #else
     if (::fpurge(native) != 0) return -1;
 #endif
