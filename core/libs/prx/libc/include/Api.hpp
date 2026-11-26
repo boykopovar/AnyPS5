@@ -1764,6 +1764,10 @@ void APS5_VABI _ZNSt13runtime_errorD0Ev_nid_postfix(LibcException::ExceptionObje
 const char* APS5_VABI _ZNKSt13runtime_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt13runtime_errorC1EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message);
 void APS5_VABI _ZNSt13runtime_errorC2EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message);
+void APS5_VABI _ZNSt13runtime_errorC1ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE_nid_postfix(
+    LibcException::ExceptionObject* self, const void* message);
+void APS5_VABI _ZNSt13runtime_errorC2ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE_nid_postfix(
+    LibcException::ExceptionObject* self, const void* message);
 void APS5_VABI _ZNSt13runtime_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 void APS5_VABI _ZNSt13runtime_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 LibcException::ExceptionObject* APS5_VABI _ZNSt13runtime_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);

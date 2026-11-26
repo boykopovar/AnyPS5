@@ -139,6 +139,7 @@
 #include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
 #include "prx/libSceNKWebKit/include/AdClickAttributionExports.hpp"
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
+#include "prx/libSceNKWebKit/include/ElementNavigationExports.hpp"
 #include "prx/libSceNKWebKit/include/BasicFilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
