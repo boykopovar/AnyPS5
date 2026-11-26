@@ -6,6 +6,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+void* AgcFontBackend_nid_no_patch(std::uint32_t index);
+
 namespace {
 
 constexpr int FontGsInvalidParameter = static_cast<int>(0x80460002);
@@ -94,15 +96,7 @@ void MarkAgcRecord(void* output) {
 extern "C" {
 
 void* APS5_VABI sceFontSelectGraphicsAgc(std::uint32_t index) {
-    if (index == 0) {
-        NotImplemented_nid_no_patch(__func__);
-    }
-    return nullptr;
-}
-
-int APS5_VABI sceFontGraphicsAgcSurfaceInit(void* surface, const void* config) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return AgcFontBackend_nid_no_patch(index);
 }
 
 int APS5_VABI sceFontGraphicsAgcDrawupFillTextureImage(FontGraphicsFrame* graphicsObject, const void* surface, void** output,

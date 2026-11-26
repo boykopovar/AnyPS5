@@ -1,5 +1,8 @@
 #include <codegen/x86/ShiftLowering.hpp>
 #include <codegen/x86/ScalarLowering.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/CodegenException.hpp>
+#include <algorithm>
 
 namespace Codegen {
 
@@ -14,6 +17,49 @@ constexpr std::int32_t kStackResultSlot = 24;
 constexpr std::uint8_t kPushFlags = 0x9C;
 constexpr std::uint8_t kPopFlags = 0x9D;
 constexpr std::int32_t kFrame = FrameSize + 16;
+constexpr std::size_t kFlagScanLimit = 16;
+
+enum class FlagUse : std::uint8_t {
+    Unknown,
+    Neutral,
+    Overwrite,
+};
+
+FlagUse _flagUse(const std::span<const std::uint8_t> code, const DecodedInstructionInfo& info) {
+    if (!std::all_of(code.begin(), code.begin() + static_cast<std::ptrdiff_t>(info.OpcodeOffset), [](const std::uint8_t prefix) { return prefix == 0x66 || (prefix & 0xF0) == 0x40; }))
+        return FlagUse::Unknown;
+    const auto first = code[info.OpcodeOffset];
+    if (first == 0xC4) {
+        try {
+            return DecodeShift(code.data(), info.Length) ? FlagUse::Neutral : FlagUse::Unknown;
+        } catch (const CodegenException&) {
+            return FlagUse::Unknown;
+        }
+    }
+    if (first == 0xC5 || first == 0x62 || first == 0x8F)
+        return FlagUse::Unknown;
+    const auto op = info.Opcode;
+    const auto reg = info.ModRmRegField;
+    if (info.IsTwoByteOpcode) {
+        if (first != 0x0F) return FlagUse::Unknown;
+        return op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF || op == 0x1F ? FlagUse::Neutral : FlagUse::Unknown;
+    }
+    if (op <= 0x3D && (op & 7) <= 5) {
+        const auto group = op >> 3;
+        return group == 2 || group == 3 ? FlagUse::Unknown : FlagUse::Overwrite;
+    }
+    if (op == 0x80 || op == 0x81 || op == 0x83)
+        return reg == 2 || reg == 3 ? FlagUse::Unknown : FlagUse::Overwrite;
+    if (op == 0x84 || op == 0x85 || op == 0xA8 || op == 0xA9)
+        return FlagUse::Overwrite;
+    if (op == 0xF6 || op == 0xF7)
+        return reg == 0 || reg == 3 ? FlagUse::Overwrite : FlagUse::Unknown;
+    if ((op >= 0x88 && op <= 0x8B) || op == 0x8D || op == 0x63 || (op >= 0x50 && op <= 0x5F) || (op >= 0xB0 && op <= 0xBF))
+        return FlagUse::Neutral;
+    if ((op == 0xC6 || op == 0xC7) && reg == 0)
+        return FlagUse::Neutral;
+    return FlagUse::Unknown;
+}
 
 std::uint8_t _shiftDigit(const ShiftOperation operation) {
     switch (operation) {
@@ -34,6 +80,27 @@ void _loadSource(StubBodyBuilder& body, const ShiftOperands& operands, const std
         Register(body, 0x8B, operands.Wide, result, operands.Source);
 }
 
+}
+
+bool FlagsDeadAfter(std::span<const std::uint8_t> code) {
+    const X64InstructionDecoder decoder;
+    for (std::size_t step = 0; step < kFlagScanLimit && !code.empty(); ++step) {
+        DecodedInstructionInfo info{};
+        try {
+            info = decoder.DecodeInstruction(code.data(), code.size());
+        } catch (const CodegenException&) {
+            return false;
+        }
+        if (info.Length == 0 || info.Length > code.size() || info.OpcodeOffset >= info.Length)
+            return false;
+        switch (_flagUse(code, info)) {
+        case FlagUse::Overwrite: return true;
+        case FlagUse::Neutral: break;
+        case FlagUse::Unknown: return false;
+        }
+        code = code.subspan(info.Length);
+    }
+    return false;
 }
 
 const char* ShiftName(const ShiftOperation operation) {
@@ -86,7 +153,7 @@ std::optional<ShiftOperands> DecodeShift(const std::uint8_t* data, const std::si
     return operands;
 }
 
-void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands) {
+void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands, const bool preserveFlags) {
     const auto name = ShiftName(operands.Operation);
     const bool rotate = operands.Operation == ShiftOperation::RotateRight;
     std::array<bool, 16> used{};
@@ -97,8 +164,9 @@ void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands) {
                                : UsedRegisters({operands.Destination, operands.Source, operands.Count, kCountRegister}, std::nullopt);
     const auto result = Scratch(used, name);
     const auto frame = SelectFrame(operands.Memory, operands.Wide, kFrame, 32);
-    StackSlot(body, 0x8D, true, Stack, 8 - frame);
-    body.Raw(std::array{kPushFlags});
+    const std::int32_t flagsSlot = preserveFlags ? 8 : 0;
+    StackSlot(body, 0x8D, true, Stack, flagsSlot - frame);
+    if (preserveFlags) body.Raw(std::array{kPushFlags});
     StackSlot(body, 0x89, true, result, kResultSlot);
     if (!rotate) StackSlot(body, 0x89, true, kCountRegister, kCountSlot);
     _loadSource(body, operands, result, name, frame);
@@ -120,11 +188,11 @@ void EmitShift(StubBodyBuilder& body, const ShiftOperands& operands) {
         Register(body, 0x8B, operands.Wide, operands.Destination, result);
     if (!rotate) StackSlot(body, 0x8B, true, kCountRegister, kCountSlot);
     StackSlot(body, 0x8B, true, result, kResultSlot);
-    body.Raw(std::array{kPopFlags});
+    if (preserveFlags) body.Raw(std::array{kPopFlags});
     if (operands.Destination == Stack)
-        StackSlot(body, 0x8B, operands.Wide, Stack, kStackResultSlot - 8);
+        StackSlot(body, 0x8B, operands.Wide, Stack, kStackResultSlot - flagsSlot);
     else
-        StackSlot(body, 0x8D, true, Stack, frame - 8);
+        StackSlot(body, 0x8D, true, Stack, frame - flagsSlot);
 }
 
 }

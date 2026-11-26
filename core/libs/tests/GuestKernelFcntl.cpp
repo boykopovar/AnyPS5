@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -12,7 +13,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -641,11 +645,73 @@ static void StandardInputFlags() {
     Require(fcntl_nid_postfix(0, GetDescriptorFlags) == 0);
 }
 
+static void PipeOwnerRoundTrips() {
+    constexpr int GetOwnerCommand = 5;
+    constexpr int SetOwnerCommand = 6;
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 4242) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(pipe[0], SetOwnerCommand, 0) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void PipeOwnerIsSharedByDuplicatesMadeBeforeTheFirstCall() {
+    constexpr int GetOwnerCommand = 5;
+    constexpr int SetOwnerCommand = 6;
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    const int copy = dup_nid_postfix(pipe[0]);
+    const int fromCommand = fcntl_nid_postfix(pipe[0], DuplicateCommand, 0);
+    Require(copy >= 0 && fromCommand >= 0);
+    const int second = std::max({pipe[1], copy, fromCommand}) + 1;
+    const int moved = dup2_nid_postfix(pipe[0], second);
+    Require(moved == second);
+    Require(fcntl_nid_postfix(copy, SetOwnerCommand, 4242) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(moved, GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(fromCommand, GetOwnerCommand) == 4242);
+    Require(fcntl_nid_postfix(moved, SetOwnerCommand, 77) == 0);
+    Require(fcntl_nid_postfix(pipe[0], GetOwnerCommand) == 77 && fcntl_nid_postfix(copy, GetOwnerCommand) == 77);
+    Require(close_nid_postfix(copy) == 0 && close_nid_postfix(moved) == 0 && close_nid_postfix(fromCommand) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void RequireNoDeviceType(int device) {
+    for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+        int type = 0x5a5a5a5a;
+        Require(call(device, DeviceTypeRequest, &type) == 0 && type == 0);
+        RequireFailure(call(device, DeviceTypeRequest, nullptr), GuestEfault);
+        RequireFailure(call(device, DeviceTypeRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    }
+}
+
+static void CharacterDevicesHaveNoDeviceType() {
+#ifdef _WIN32
+    const int device = ::_open("NUL", _O_RDONLY | _O_BINARY);
+#else
+    const int device = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+#endif
+    Require(device >= 0);
+    RequireNoDeviceType(device);
+    Require(close_nid_postfix(device) == 0);
+#ifndef _WIN32
+    const int terminal = ::posix_openpt(O_RDWR | O_NOCTTY);
+    Require(terminal >= 0 && ::isatty(terminal) == 1);
+    RequireNoDeviceType(terminal);
+    Require(close_nid_postfix(terminal) == 0);
+#endif
+}
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
     RecordLocksBelongToTheProcess();
     PipeFlagsRoundTrip();
+    PipeOwnerRoundTrips();
+    PipeOwnerIsSharedByDuplicatesMadeBeforeTheFirstCall();
     AsyncRequestSetsTheStatusFlag();
 #ifndef _WIN32
     HostSocketFlags();
@@ -654,5 +720,6 @@ int main() {
     HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs();
 #endif
     StandardInputFlags();
+    CharacterDevicesHaveNoDeviceType();
     return 0;
 }

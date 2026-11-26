@@ -185,8 +185,11 @@ void testIndexedIndirectDraws() {
     check(multi == storage.words.data() + expectedSingle.size() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indexed indirect multi draw packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expectedSingle.size() + expectedMulti.size(), "incorrect indexed indirect cursor advance");
     check(sceAgcDcbDrawIndexIndirectMultiGetSize() == expectedMulti.size() * sizeof(std::uint32_t), "indexed indirect multi draw size differs from its packets");
+    Storage console;
+    const auto* unaligned = sceAgcDcbDrawIndexIndirect(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    const std::array<std::uint32_t, 5> expectedUnaligned{0xc0032500u, 0x22222222u, 0x280, 0x94, 0};
+    check(unaligned == console.words.data() && std::equal(expectedUnaligned.begin(), expectedUnaligned.end(), unaligned), "indexed indirect draw did not encode an unaligned offset and high modifier bits as the console does");
     const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, nullptr, 20, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 3, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
@@ -309,14 +312,16 @@ void testMarkers() {
     check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker header mismatch");
     check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker text mismatch");
     const auto* acbPop = sceAgcAcbPopMarker(&acb.buffer);
-    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x10, 2, 0x0cu << 2u) && acbPop[1] == 0, "ACB pop marker mismatch");
-    sceAgcDcbPopMarker(&dcb.buffer);
+    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x79, 3, 0) && acbPop[1] == 0x342u && acbPop[2] == 0xc2000000u, "ACB pop marker mismatch");
+    const auto* dcbPop = sceAgcDcbPopMarker(&dcb.buffer);
+    check(dcbPop == dcb.words.data() + 3 && dcbPop[0] == Agc::Command::Header(0x79, 3, 4) && dcbPop[1] == 0x342u && dcbPop[2] == 0xc2000000u, "DCB pop marker mismatch");
     const auto* acbSet = sceAgcAcbSetMarker(&acb.buffer, nullptr, 0);
     const auto* dcbSet = sceAgcDcbSetMarker(&dcb.buffer, nullptr, 0);
-    check(acbSet == acb.words.data() + 5 && dcbSet == dcb.words.data() + 5, "set marker did not return its push packet");
+    check(acbSet == acb.words.data() + 6 && dcbSet == dcb.words.data() + 6, "set marker did not return its push packet");
     check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker is not a push and pop pair");
-    check(dcbPush == dcb.words.data() && dcb.words == acb.words, "ACB and DCB markers differ");
-    check(acb.buffer.cursor_up == acb.words.data() + 9, "incorrect ACB marker cursor advance");
+    check(dcbPush == dcb.words.data() && std::equal(acb.words.begin(), acb.words.begin() + 3, dcb.words.begin()), "ACB and DCB push markers differ");
+    check(std::equal(acbSet, acbSet + 4, dcbSet), "ACB and DCB set markers differ");
+    check(acb.buffer.cursor_up == acb.words.data() + 10 && dcb.buffer.cursor_up == dcb.words.data() + 10, "incorrect marker cursor advance");
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
@@ -482,6 +487,12 @@ void testDrawPackets() {
     sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
     sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
     check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage console;
+    sceAgcDcbDrawIndirect(&console.buffer, 1, 2);
+    sceAgcDcbDrawIndirect(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    sceAgcDcbDrawIndexAuto(&console.buffer, 0x22222222u, 0x3333333344444444ull);
+    const std::array<std::uint32_t, 13> consoleExpected{0xc0032400u, 1, 0x280, 0x280, 2, 0xc0032400u, 0x22222222u, 0x280, 0x94, 2, 0xc0012d00u, 0x22222222u, 2};
+    check(std::equal(consoleExpected.begin(), consoleExpected.end(), console.words.begin()) && console.buffer.cursor_up == console.words.data() + consoleExpected.size(), "draws did not encode unaligned offsets and high modifier bits as the console does");
     Storage offset;
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
     sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
@@ -493,19 +504,17 @@ void testDrawPackets() {
     Storage size;
     sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
     sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
-    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    sceAgcDcbSetIndexSize(&size.buffer, 0x11, 0x22);
+    sceAgcDcbSetIndexSize(&size.buffer, 0x22, 0x44);
+    const std::array<std::uint32_t, 12> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u, 0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x402u};
     check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
     Storage rejected;
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0x13, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
@@ -520,15 +529,12 @@ void testIndexBuffer() {
     check(bound[1] == static_cast<std::uint32_t>(address) && bound[2] == static_cast<std::uint32_t>(address >> 32u), "index buffer address mismatch");
     const auto* unbound = sceAgcDcbSetIndexBuffer(&storage.buffer, 0);
     check(unbound == bound + 3 && unbound[0] == bound[0] && unbound[1] == 0 && unbound[2] == 0, "index buffer was not unbound");
-    const auto before = storage.words;
-    try {
-        sceAgcDcbSetIndexBuffer(&storage.buffer, 0x1001);
-    } catch (const std::runtime_error& error) {
-        check(std::string(error.what()).find("0x1001") != std::string::npos, "misaligned index buffer error omits the address");
-        check(storage.words == before, "misaligned index buffer modified packet memory");
-        return;
-    }
-    throw std::runtime_error("misaligned index buffer was accepted");
+    const auto* odd = sceAgcDcbSetIndexBuffer(&storage.buffer, 0x11111111u);
+    check(odd == unbound + 3 && odd[0] == bound[0] && odd[1] == 0x11111110u && odd[2] == 0, "odd index buffer address differs from the console's");
+    const auto* one = sceAgcDcbSetIndexBuffer(&storage.buffer, 1);
+    check(one == odd + 3 && one[0] == bound[0] && one[1] == 0 && one[2] == 0, "index buffer address 1 differs from the console's");
+    const auto* wide = sceAgcDcbSetIndexBuffer(&storage.buffer, 0x1111111122222222u);
+    check(wide == one + 3 && wide[0] == bound[0] && wide[1] == 0x22222222u && wide[2] == 0x11111111u, "64-bit index buffer address differs from the console's");
 }
 
 void testIndexIndirectArgs() {
@@ -539,10 +545,12 @@ void testIndexIndirectArgs() {
     check(sceAgcDcbSetIndexIndirectArgsGetSize() == expected.size() * sizeof(std::uint32_t), "index indirect args size differs from its packet");
     const auto* cleared = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0, 0);
     check(cleared == packet + expected.size() && cleared[0] == expected[0] && cleared[1] == 0 && cleared[2] == 0 && cleared[3] == 0, "null index attribute base was not written as 0");
-    const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222228u, 0); });
-    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222220u, 0x10000u); });
-    check(storage.words == before && storage.buffer.cursor_up == cleared + expected.size(), "rejected index indirect args modified the buffer");
+    const auto* odd = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x11111111u, 0x22222222u);
+    check(odd == cleared + expected.size() && odd[0] == expected[0] && odd[1] == 0x11111110u && odd[2] == 0 && odd[3] == 0x2222u, "index indirect args differ from the console's for an odd address");
+    const auto* one = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 1, 2);
+    check(one == odd + expected.size() && one[0] == expected[0] && one[1] == 0 && one[2] == 0 && one[3] == 2, "index indirect args differ from the console's for address 1");
+    const auto* wide = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0x1111111122222222u, 0x44444444u);
+    check(wide == one + expected.size() && wide[0] == expected[0] && wide[1] == 0x22222220u && wide[2] == 0x11111111u && wide[3] == 0x4444u, "index indirect args differ from the console's for a 64-bit address");
 }
 
 void testIndirectBase() {
@@ -632,6 +640,27 @@ void testContextState() {
     growth.destination.buffer.cursor_down = growth.destination.words.data() + 21;
     expectFailure([&] { sceAgcDcbContextStateOp_0100(&invalid.buffer, 1); });
     check(invalid.buffer.cursor_up == growth.destination.words.data(), "failed reservation advanced cursor");
+}
+
+void testCondExecConsoleArguments() {
+    struct Case {
+        std::uintptr_t address;
+        std::uint32_t count;
+        std::array<std::uint32_t, 5> words;
+    };
+    const std::array<Case, 3> cases{{
+        {0x11111111u, 0x22222222u, {0xc0032200u, 0x11111110u, 0u, 0u, 0x2222u}},
+        {1u, 2u, {0xc0032200u, 0u, 0u, 0u, 2u}},
+        {0x1111111122222222ull, 0x44444444u, {0xc0032200u, 0x22222220u, 0x11111111u, 0u, 0x444u}},
+    }};
+    for (const auto write : {sceAgcDcbCondExec, sceAgcAcbCondExec}) {
+        for (const auto& item : cases) {
+            Storage storage;
+            const auto* packet = write(&storage.buffer, reinterpret_cast<const volatile std::uint32_t*>(item.address), item.count);
+            check(packet == storage.words.data() && std::equal(item.words.begin(), item.words.end(), packet), "COND_EXEC packet does not match the console's");
+            check(storage.buffer.cursor_up == storage.words.data() + item.words.size(), "COND_EXEC cursor mismatch");
+        }
+    }
 }
 
 void testFlowPackets() {
@@ -1378,6 +1407,7 @@ int main(int argc, char** argv) {
         testIndirectBase();
         testContextState();
         testFlowPackets();
+        testCondExecConsoleArguments();
         testFlip();
         testRegisters();
         testIndirectRegisterPatches();

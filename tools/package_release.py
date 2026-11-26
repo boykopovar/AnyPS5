@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -106,9 +108,48 @@ def promote_native_assets(staging, output):
     shutil.rmtree(backups)
 
 
+def dated_zip_info(name, epoch, mode=0o644):
+    info = zipfile.ZipInfo(name, time.gmtime(max(epoch, 315532800))[:6])
+    info.create_system = 3
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (stat.S_IFREG | mode) << 16
+    return info
+
+
+def add_zip_file(archive, source, destination, epoch):
+    if epoch is None:
+        archive.write(source, arcname=destination)
+        return
+    metadata = source.stat()
+    info = dated_zip_info(destination, epoch, 0o644 | (metadata.st_mode & 0o111))
+    info.file_size = metadata.st_size
+    with source.open("rb") as content, archive.open(info, "w") as member:
+        shutil.copyfileobj(content, member)
+
+
+def write_tar_archive(target, entries, epoch):
+    if epoch is None:
+        with tarfile.open(target, "w:gz", compresslevel=9, dereference=True) as archive:
+            for source, destination in entries:
+                archive.add(source, arcname=destination)
+        return
+    with target.open("wb") as output, gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=epoch, compresslevel=9) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w", dereference=True) as archive:
+            for source, destination in entries:
+                info = archive.gettarinfo(source, arcname=destination)
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.mode = 0o644 | (info.mode & 0o111)
+                info.mtime = epoch
+                info.pax_headers = {}
+                with source.open("rb") as content:
+                    archive.addfile(info, content)
+
+
 def package(platform, build, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
+    epoch = package_headers.source_date_epoch()
     libraries = sorted((build / "core/libs/libs").glob("*.prx"))
     expected = {f"{directory.name}.prx" for directory in (ROOT / "core/libs/prx").iterdir() if directory.is_dir() and not directory.name.startswith(".")}
     missing = expected - {library.name for library in libraries}
@@ -129,6 +170,8 @@ def package(platform, build, output, version):
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/LICENSE", "libs/licenses/libyuv.txt"))
+        licenses.append((ROOT / "3rdparty/libyuv/PATENTS", "libs/licenses/libyuv-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
@@ -146,6 +189,14 @@ def package(platform, build, output, version):
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
+    if expected & {"libSceAjm.native.prx", "libSceAudiodec.prx", "libSceAvPlayer.prx", "libSceVdecCore.prx", "libSceVideodec2.prx"}:
+        ffmpeg_manifest = build / "release-ffmpeg-notices.txt"
+        if not ffmpeg_manifest.is_file():
+            raise RuntimeError(f"Missing FFmpeg notice manifest: {ffmpeg_manifest}; reconfigure the build")
+        ffmpeg_notices = Path(ffmpeg_manifest.read_text(encoding="utf-8").removesuffix("\n"))
+        if not ffmpeg_notices.is_absolute():
+            raise RuntimeError(f"Invalid FFmpeg notice directory in: {ffmpeg_manifest}")
+        licenses.extend((ffmpeg_notices / name, "libs/licenses/ffmpeg/" + name) for name in ("copyright", "SOURCE.txt"))
     files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
@@ -193,15 +244,14 @@ def package(platform, build, output, version):
         staging = Path(temporary)
         if needs_freetype_notices:
             attribution = staging / "freetype-attribution.txt"
-            attribution.write_text("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n", encoding="utf-8", newline="\n")
+            with attribution.open("w", encoding="utf-8", newline="\n") as notice:
+                notice.write("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n")
             licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
                 for source, destination in entries + licenses:
-                    archive.write(source, arcname=destination)
-            with tarfile.open(staging / (stem + ".tar.gz"), "w:gz", compresslevel=9, dereference=True) as archive:
-                for source, destination in entries + licenses:
-                    archive.add(source, arcname=destination)
+                    add_zip_file(archive, source, destination, epoch)
+            write_tar_archive(staging / (stem + ".tar.gz"), entries + licenses, epoch)
         shutil.copy2(binary, staging / asset)
         if needs_freetype_notices:
             attribution.unlink()
@@ -248,6 +298,7 @@ def package_web(build, output, version, revision):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Web release revision must be a full commit SHA")
+    epoch = package_headers.source_date_epoch()
     source = build / "web"
     for name in WEB_FILES:
         file = source / name
@@ -262,8 +313,9 @@ def package_web(build, output, version, revision):
         asset = Path(temporary) / name
         with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for file in WEB_FILES:
-                archive.write(source / file, arcname=file)
-            archive.writestr("web-release.json", json.dumps({"tag": version, "revision": revision}) + "\n")
+                add_zip_file(archive, source / file, file, epoch)
+            manifest = "web-release.json" if epoch is None else dated_zip_info("web-release.json", epoch)
+            archive.writestr(manifest, json.dumps({"tag": version, "revision": revision}) + "\n")
         asset.replace(destination)
 
 
@@ -272,7 +324,7 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(epilog="Set SOURCE_DATE_EPOCH to reproduce archive metadata for native, web and header packages.")
     parser.add_argument("--platform", choices=("linux", "windows", "web", "headers"))
     parser.add_argument("--build", type=Path)
     parser.add_argument("--version")

@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::rtcp::ReceiverReport constructor](../../../core/libs/prx/libwebrtc/src/RtcpReceiverReport.cpp) (libwebrtc) - layout, vtable and allocator are unverified on the console. Layout: vtable, `sender_ssrc_` at 8, the `std::vector<ReportBlock>` at 16, 28-byte blocks. A local vtable holds D1, D0, `BlockLength` and `Create`; the destructor frees the vector storage with the module allocator shared with `rtcp::CompoundPacket`. No `RTC_DCHECK`s; more than 31 blocks, or a full buffer without a callback, throw. `Parse`, `AddReportBlock` and `SetReportBlocks` are not exported. Adapted from [receiver_report.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/receiver_report.cc) and [report_block.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/report_block.cc), the same at M127. Closes when: compared with the console.

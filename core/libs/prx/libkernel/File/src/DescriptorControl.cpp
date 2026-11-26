@@ -7,6 +7,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
@@ -51,6 +52,8 @@ constexpr int GuestEagain = 35;
 constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEnolck = 77;
 constexpr int GuestEoverflow = 84;
+
+constexpr int DirectoryReadableBytes = 65536;
 
 constexpr int DuplicateCommand = 0;
 constexpr int GetDescriptorFlags = 1;
@@ -100,6 +103,7 @@ constexpr std::uint32_t NonblockingRequest = 0x8004667e;
 constexpr std::uint32_t AsynchronousRequest = 0x8004667d;
 constexpr std::uint32_t SetOwnerRequest = 0x8004667c;
 constexpr std::uint32_t GetOwnerRequest = 0x4004667b;
+constexpr std::uint32_t DeviceTypeRequest = 0x4004667a;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
 constexpr std::uint32_t RequestIn = 0x80000000u;
 constexpr std::uint32_t RequestOut = 0x40000000u;
@@ -123,6 +127,7 @@ enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedF
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
+    std::shared_ptr<int> owner;
     bool pipe = false;
     bool fixedSizeWrites = false;
 };
@@ -545,7 +550,13 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
         case SetOwner: {
             const auto kind = Classify(fd, "fcntl");
             if (!kind) return Fail(GuestEbadf);
-            Unsupported("fcntl", command == GetOwner ? "F_GETOWN" : "F_SETOWN", *kind, fd);
+            if (*kind != Kind::Pipe) Unsupported("fcntl", command == GetOwner ? "F_GETOWN" : "F_SETOWN", *kind, fd);
+            std::lock_guard lock(g_mutex);
+            auto& owner = Materialize(fd).owner;
+            if (!owner) owner = std::make_shared<int>(0);
+            if (command == GetOwner) return *owner;
+            *owner = static_cast<int>(argument);
+            return 0;
         }
         case OldGetLock:
         case OldSetLock:
@@ -594,10 +605,17 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
-        if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
+        if (*kind != Kind::File && *kind != Kind::Directory && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
-        const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
+        const int available = *kind == Kind::Directory ? DirectoryReadableBytes
+            : archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max()))
+                       : Readable(fd, *kind, "ioctl");
         if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
+        return 0;
+    }
+    if (command == DeviceTypeRequest && *kind == Kind::Device && !IsKsemDescriptor(fd)) {
+        const int type = 0;
+        if (!GuestCopyOut_nid_no_patch(argument, &type, sizeof(type))) return Fail(GuestEfault);
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
@@ -630,7 +648,9 @@ void RememberPipe(int fd, int openFlags) {
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto copy = Materialize(from);
+    auto& source = Materialize(from);
+    if (source.pipe && !source.owner) source.owner = std::make_shared<int>(0);
+    auto copy = source;
     copy.closeOnExec = false;
     g_entries[to] = std::move(copy);
 #ifdef _WIN32
@@ -702,7 +722,7 @@ bool IsVnode(int fd) {
 }
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
-    return IsKqueueDescriptor_nid_no_patch(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
+    return IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
 }
 
 extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {

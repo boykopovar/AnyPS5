@@ -445,7 +445,25 @@ void Allocation() {
     memory = &calls;
     Require(WMPAlloc_nid_postfix(&memory, Max) == -101 && memory == nullptr, "failed allocation did not report out of memory");
     RequireInvalidArgument([] { WMPAlloc_nid_postfix(nullptr, 24); }, "allocation accepted a null pointer");
+    RequireInvalidArgument([] { WMPAlloc_nid_postfix(reinterpret_cast<void**>(0x10), 24); }, "allocation accepted an unmapped pointer");
     RequireInvalidArgument([] { WMPFree_nid_postfix(nullptr); }, "free accepted a null pointer");
+    RequireInvalidArgument([] { WMPFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "free accepted an unmapped pointer");
+    constexpr std::size_t slotSize = 0x4000;
+    std::int64_t slotPhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, slotSize, 0, 0, &slotPhys) == 0, "allocate direct memory for slot");
+    void* slotMap = nullptr;
+    Require(sceKernelMapDirectMemory(&slotMap, slotSize, 3, 0, slotPhys, 0) == 0 && slotMap != nullptr, "map direct memory for slot");
+    void* allocBuf = nullptr;
+    Require(WMPAlloc_nid_postfix(&allocBuf, 32) == 0 && allocBuf != nullptr, "allocate buffer for slot test");
+    auto** slotPtr = static_cast<void**>(slotMap);
+    slotPtr[0] = allocBuf;
+    Require(sceKernelMprotect(slotMap, slotSize, 1) == 0, "protect slot read-only");
+    RequireInvalidArgument([slotPtr] { WMPFree_nid_postfix(slotPtr); }, "free accepted a read-only slot");
+    Require(slotPtr[0] == allocBuf, "read-only slot still contains original pointer");
+    Require(sceKernelMprotect(slotMap, slotSize, 3) == 0, "restore slot writability");
+    Require(WMPFree_nid_postfix(slotPtr) == 0 && slotPtr[0] == nullptr, "free succeeds after restoring writability");
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(slotMap), slotSize) == 0, "unmap direct memory for slot");
+    Require(sceKernelReleaseDirectMemory(slotPhys, slotSize) == 0, "release direct memory for slot");
 }
 
 void MemoryCreate() {
@@ -526,6 +544,40 @@ void MemoryPosition() {
     errno = 71;
     RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(stream, reinterpret_cast<std::size_t*>(0x10)); }, "get position accepted an inaccessible guest result");
     Require(errno == 71, "get position invalid guest result changed errno");
+
+    auto* unmappedStream = reinterpret_cast<Jxr::Stream*>(0x10);
+    static const std::array<std::uint8_t, 8> readOnlyBytes{10, 20, 30, 40, 50, 60, 70, 80};
+    static const Jxr::Stream readOnlyStream{{reinterpret_cast<std::uintptr_t>(readOnlyBytes.data()), readOnlyBytes.size(), 0, 0}, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    Jxr::Stream writableToReadOnlyTarget{{reinterpret_cast<std::uintptr_t>(readOnlyBytes.data()), readOnlyBytes.size(), 0, 0}, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    std::array<std::uint8_t, 8> scratch{1, 2, 3, 4, 5, 6, 7, 8};
+
+    errno = 71;
+    RequireInvalidArgument([&] { EOSWS_Memory_nid_postfix(unmappedStream); }, "end of stream accepted an unmapped stream");
+    Require(errno == 71, "EOSWS_Memory unmapped stream changed errno");
+    RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(unmappedStream, &position); }, "get position accepted an unmapped stream");
+    Require(errno == 71, "GetPosWS_Memory unmapped stream changed errno");
+    RequireInvalidArgument([&] { SetPosWS_Memory_nid_postfix(unmappedStream, 0); }, "set position accepted an unmapped stream");
+    Require(errno == 71, "SetPosWS_Memory unmapped stream changed errno");
+    RequireInvalidArgument([&] { SetPosWS_Memory_nid_postfix(const_cast<Jxr::Stream*>(&readOnlyStream), 3); }, "set position accepted a read-only stream");
+    Require(errno == 71 && readOnlyStream.state[2] == 0, "SetPosWS_Memory read-only stream mutated state or errno");
+    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(unmappedStream, scratch.data(), 1); }, "read accepted an unmapped stream");
+    Require(errno == 71, "ReadWS_Memory unmapped stream changed errno");
+    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(unmappedStream, scratch.data(), 1); }, "write accepted an unmapped stream");
+    Require(errno == 71, "WriteWS_Memory unmapped stream changed errno");
+
+    Require(SetPosWS_Memory_nid_postfix(stream, 2) == 0, "seek failed before guest read/write checks");
+    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(stream, reinterpret_cast<void*>(0x10), 1); }, "read accepted an unmapped destination");
+    Require(errno == 71 && stream->state[2] == 2, "ReadWS_Memory unmapped destination moved stream or changed errno");
+    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(stream, const_cast<std::uint8_t*>(readOnlyBytes.data()), 1); }, "read accepted a read-only destination");
+    Require(errno == 71 && stream->state[2] == 2 && readOnlyBytes[0] == 10, "ReadWS_Memory read-only destination moved stream or changed errno");
+    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(const_cast<Jxr::Stream*>(&readOnlyStream), scratch.data(), 0); }, "read accepted a read-only stream");
+    Require(errno == 71 && readOnlyStream.state[2] == 0, "ReadWS_Memory read-only stream changed errno");
+    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(stream, reinterpret_cast<const void*>(0x10), 1); }, "write accepted an unmapped source");
+    Require(errno == 71 && stream->state[2] == 2, "WriteWS_Memory unmapped source moved stream or changed errno");
+    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(&writableToReadOnlyTarget, scratch.data(), 1); }, "write accepted a read-only target buffer");
+    Require(errno == 71 && writableToReadOnlyTarget.state[2] == 0 && readOnlyBytes[0] == 10, "WriteWS_Memory read-only target moved stream or changed errno");
+    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(const_cast<Jxr::Stream*>(&readOnlyStream), scratch.data(), 0); }, "write accepted a read-only stream");
+    Require(errno == 71 && readOnlyStream.state[2] == 0, "WriteWS_Memory read-only stream changed errno");
     CloseMemory(stream);
 }
 

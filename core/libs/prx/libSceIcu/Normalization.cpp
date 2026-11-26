@@ -6,9 +6,12 @@
 #include "unicode/uniset.h"
 #include "unicode/unorm.h"
 #include "unicode/unorm2.h"
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 #undef unorm2_getNFKCInstance
 #undef unorm2_getNFKDInstance
@@ -41,6 +44,20 @@ const UNormalizer2* Required(const Icu::Normalizer2* normalizer) {
 
 const Icu::Normalizer2* Guest(const UNormalizer2* normalizer) {
     return reinterpret_cast<const Icu::Normalizer2*>(normalizer);
+}
+
+std::string ReadName(const char* source, const char* caller) {
+    std::string text;
+    for (;;) {
+        char chunk[0x1000];
+        const auto address = reinterpret_cast<std::uintptr_t>(source) + text.size();
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!GuestCopyIn_nid_no_patch(chunk, source + text.size(), count))
+            throw std::invalid_argument(std::string(caller) + ": unreadable name");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
+        if (end) return text;
+    }
 }
 
 bool InvalidSource(const char16_t* source, std::int32_t length) {
@@ -76,18 +93,10 @@ Icu::Normalizer2* APS5_VABI unorm2_openFiltered_nid_postfix(const Icu::Normalize
     }
     if (!normalizer) APS5_INVALID_ARG_EX;
 
-    const auto count = uset_getItemCount_nid_postfix(filter);
-    std::unique_ptr<icu::UnicodeSet> nativeSet(new icu::UnicodeSet);
+    std::unique_ptr<icu::UnicodeSet> nativeSet(new icu::UnicodeSet(*icu::UnicodeSet::fromUSet(Icu::NativeSet(filter))));
     if (!nativeSet) {
         status = U_MEMORY_ALLOCATION_ERROR;
         return nullptr;
-    }
-    for (std::int32_t index = 0; index < count; ++index) {
-        std::int32_t start = 0;
-        std::int32_t end = 0;
-        uset_getItem_nid_postfix(filter, index, &start, &end, nullptr, 0, error);
-        if (U_FAILURE(status)) return nullptr;
-        nativeSet->add(start, end);
     }
     nativeSet->freeze();
     if (nativeSet->isBogus()) {
@@ -136,12 +145,14 @@ const Icu::Normalizer2* APS5_VABI unorm2_getNFDInstance_nid_postfix(std::int32_t
 const Icu::Normalizer2* APS5_VABI unorm2_getInstance_nid_postfix(const char* package, const char* name, std::int32_t mode,
                                                                  std::int32_t* error) {
     auto& status = Status(error);
-    if (U_SUCCESS(status) && name && *name &&
-        (package || (std::strcmp(name, "nfc") != 0 && std::strcmp(name, "nfkc") != 0 &&
-                     std::strcmp(name, "nfkc_cf") != 0))) {
+    const std::string text = U_SUCCESS(status) && name ? ReadName(name, __func__) : std::string();
+    const char* hostName = name ? text.c_str() : nullptr;
+    if (U_SUCCESS(status) && hostName && *hostName &&
+        (package || (std::strcmp(hostName, "nfc") != 0 && std::strcmp(hostName, "nfkc") != 0 &&
+                     std::strcmp(hostName, "nfkc_cf") != 0))) {
         NotImplemented_nid_no_patch("unorm2_getInstance: normalization data file");
     }
-    return Guest(unorm2_getInstance(package, name, static_cast<UNormalization2Mode>(mode), &status));
+    return Guest(unorm2_getInstance(package, hostName, static_cast<UNormalization2Mode>(mode), &status));
 }
 
 std::int32_t APS5_VABI unorm2_normalize_nid_postfix(const Icu::Normalizer2* normalizer, const char16_t* source,

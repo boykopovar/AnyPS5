@@ -1,6 +1,30 @@
+// Derived from src/psl.c (libpsl ba4c49a205408845834b1648ad23c15ee09f722b): https://github.com/rockdaboot/libpsl/blob/ba4c49a205408845834b1648ad23c15ee09f722b/src/psl.c
+/*
+ * Copyright(c) 2014-2024 Tim Ruehsen
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+
 #include "prx/libSceNKWebKitRequirements/include/GuestPsl.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <libpsl.h>
@@ -11,12 +35,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
+#include <string>
 
 namespace {
 
+constexpr int GuestInet = 2;
+constexpr int GuestInet6 = 28;
+
 void SyncFileStream(FileStream* stream) {
     stream->SyncStatus();
+}
+
+bool IsIpAddress(const char* hostname) {
+    std::array<unsigned char, 16> address{};
+    return __inet_pton_nid_postfix(GuestInet, hostname, address.data()) == 1
+        || __inet_pton_nid_postfix(GuestInet6, hostname, address.data()) == 1;
 }
 
 } // namespace
@@ -67,8 +102,27 @@ const char* APS5_VABI psl_get_version_nid_postfix() {
     return psl_get_version();
 }
 
-int APS5_VABI psl_is_cookie_domain_acceptable_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* hostname, const char* cookie_domain) {
-    return psl_is_cookie_domain_acceptable(reinterpret_cast<const psl_ctx_t*>(psl), hostname, cookie_domain);
+int APS5_VABI psl_is_cookie_domain_acceptable_nid_postfix(const NKWebKit::GuestPslCtx* guest, const char* hostname, const char* cookieDomain) {
+    const auto* psl = reinterpret_cast<const psl_ctx_t*>(guest);
+    if (!psl || !hostname || !cookieDomain) return 0;
+    const int savedErrno = errno;
+    std::string host;
+    std::string cookie;
+    const bool copied = CopyGuestString_nid_no_patch(hostname, 1024, host) == 0
+        && CopyGuestString_nid_no_patch(cookieDomain, 1024, cookie) == 0;
+    errno = savedErrno;
+    if (!copied) return 0;
+    const char* domain = cookie.c_str();
+    while (*domain == '.') ++domain;
+    if (host == domain) return 1;
+    if (IsIpAddress(host.c_str())) return 0;
+    const std::size_t cookieLength = std::strlen(domain);
+    const std::size_t hostLength = host.size();
+    if (cookieLength >= hostLength) return 0;
+    const char* tail = host.c_str() + hostLength - cookieLength;
+    if (std::strcmp(tail, domain) || tail[-1] != '.') return 0;
+    const char* unregistrable = psl_unregistrable_domain(psl, host.c_str());
+    return !unregistrable || cookieLength > std::strlen(unregistrable) ? 1 : 0;
 }
 
 int APS5_VABI psl_is_public_suffix_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain) {
@@ -106,9 +160,7 @@ NKWebKit::GuestPslCtx* APS5_VABI psl_latest_nid_postfix(const char* fname) {
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname) {
     if (!fname) return nullptr;
     char firstChar = '\0';
-    const int savedErrno = errno;
     const bool readable = GuestCopyIn_nid_no_patch(&firstChar, fname, sizeof(firstChar));
-    errno = savedErrno;
     if (!readable || firstChar == '\0') return nullptr;
     std::unique_ptr<FileStream, decltype(&fclose_nid_postfix)> stream(fopen_nid_postfix(fname, "rb"), fclose_nid_postfix);
     return stream ? psl_load_fp_nid_postfix(stream.get()) : nullptr;
@@ -116,9 +168,7 @@ NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname) {
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FileStream* fp) {
     if (!fp) return nullptr;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(fp, sizeof(*fp));
-    errno = savedErrno;
     if (!writable) return nullptr;
     const psl_ctx_t* psl = psl_load_fp(GetNativeStream(fp));
     SyncFileStream(fp);

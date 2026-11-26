@@ -195,8 +195,18 @@ void Scenario(const std::string& name) {
         Check(sigaction(SIGILL, &action, nullptr) == 0, "cannot install concurrent handler\n");
     }
     Load();
-    if (name == "near-null" || name == "logged") WriteNearNull();
+    if (name == "redirected") {
+        void* handle = dlopen(library, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+        Check(handle != nullptr, "cannot reopen the loaded library\n");
+        const auto keep = reinterpret_cast<int (*)()>(dlsym(handle, "KeepHostStandardError_nid_no_patch"));
+        Check(keep != nullptr && keep() >= 0, "cannot keep the host standard error\n");
+        const int redirect = open("/dev/null", O_WRONLY | O_CLOEXEC);
+        Check(redirect >= 0 && dup2(redirect, STDERR_FILENO) == STDERR_FILENO, "cannot redirect the fixture standard error\n");
+        close(redirect);
+    }
+    if (name == "near-null" || name == "logged" || name == "redirected") WriteNearNull();
     if (name == "trap") Trap();
+    if (name == "locked-monitorx") asm volatile(".byte 0xf0, 0x0f, 0x01, 0xfa");
     if (name == "guest-abort") asm volatile("int $0x45");
     if (name == "guest-assert") asm volatile("int $0x41");
     if (name == "other-interrupt") asm volatile("int $0x44");
@@ -383,7 +393,11 @@ int main(int argc, char** argv) {
         Expect(Has(fault, "  rax 0x") && Has(fault, " r15 0x"), "fault registers missing");
         Expect(Has(fault, "  frame chain from rbp:") && Has(fault, "  stack words that point at code, from rsp:"), "fault stack missing");
         Expect(!Has(fault, "  guest "), "memory fault misidentified as guest interrupt");
-        Expect(Has(run("trap", SIGILL), "[libc] fatal SIGILL"), "trap report missing");
+        const auto trap = run("trap", SIGILL);
+        Expect(Has(trap, "[libc] fatal SIGILL"), "trap report missing");
+        Expect(!Has(trap, "AMD-only instruction"), "trap named as an AMD-only instruction");
+        const auto monitorx = run("locked-monitorx", SIGILL);
+        Expect(Has(monitorx, "[libc] fatal SIGILL") && Has(monitorx, "  MONITORX is an AMD-only instruction this CPU lacks: relink with --to-intel"), "AMD-only instruction not named");
         for (const char* name : {"guest-abort", "guest-abort-edge"}) {
             const auto result = run(name, SIGSEGV);
             Expect(Has(result, "  guest abort() (int 0x45)"), std::string(name) + ": guest abort description missing");
@@ -397,6 +411,8 @@ int main(int argc, char** argv) {
             Expect(Has(result, "[libc] fatal SIGSEGV") && Has(result, "  rax 0x"), std::string(name) + ": ordinary fault report incomplete");
             Expect(!Has(result, "  guest "), std::string(name) + ": unverified interrupt was named");
         }
+        const auto redirected = run("redirected", SIGSEGV);
+        Expect(Has(redirected, "[libc] fatal SIGSEGV (code 1) at address 0x0000000000000018") && Has(redirected, "  stack words that point at code, from rsp:"), "report did not reach the kept host standard error after a redirect");
         Expect(Has(run("divide", SIGFPE), "[libc] fatal SIGFPE"), "divide report missing");
         Expect(Has(run("bus", SIGBUS), "[libc] fatal SIGBUS"), "bus report missing");
         Expect(Has(run("sent", SIGSEGV), "[libc] fatal SIGSEGV (code 0)"), "sent signal report missing");
