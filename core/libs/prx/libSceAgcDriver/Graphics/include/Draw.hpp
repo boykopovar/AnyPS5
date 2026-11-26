@@ -38,6 +38,7 @@ struct DrawTraceContext {
 // APS5_NO_DRAW_RECIPE=1).
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
 std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
+void ValidateStencilAttachment(const Context& context, const State& state);
 
 struct PixelFunctionLdsLayouts {
     VkDescriptorSetLayout empty = VK_NULL_HANDLE;

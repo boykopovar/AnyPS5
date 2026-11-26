@@ -169,6 +169,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
+    require(left.dispatchThreadLimit == right.dispatchThreadLimit && left.splitStateLanes == right.splitStateLanes, prefix + "split dispatch state differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
     require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
@@ -184,6 +185,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
+    require(left.stencilAttachmentExport == right.stencilAttachmentExport, prefix + "stencil attachment mode differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
     require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
@@ -266,6 +268,8 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 RecompileResult sampleResult() {
     RecompileResult result;
     result.meshWindowBuffer = true;
+    result.dispatchThreadLimit = true;
+    result.splitStateLanes = 64u;
     std::vector<std::uint32_t> words(1000);
     for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
@@ -300,6 +304,7 @@ RecompileResult sampleResult() {
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
+    result.stencilAttachmentExport = true;
     result.bdaWrites = true;
     result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
@@ -560,6 +565,11 @@ void verifyEntryRoundTrip() {
     auto upstreamVersion = file;
     upstreamVersion[4] = std::byte{33};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
+    for (const auto version : {69u, 85u, 88u, 90u, 91u, 95u, 96u, 103u, 104u, 106u}) {
+        auto previousStencilVersion = file;
+        previousStencilVersion[4] = static_cast<std::byte>(version);
+        require(ShaderDiskCache::DecodeEntry(previousStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil attachment artifact with previous format " + std::to_string(version) + " loads");
+    }
     auto incompatible = variant;
     incompatible.artifact.runtimeAbiVersion = RuntimeAbi::Version + 1u;
     const auto incompatibleFile = ShaderDiskCache::EncodeEntry(key, incompatible);
