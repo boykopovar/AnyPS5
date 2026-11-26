@@ -643,6 +643,7 @@ void APS5_VABI WKConnectionSetConnectionClient(const void* connectionRef, const 
 void APS5_VABI WKClearMockMediaDevices();
 void APS5_VABI WKRemoveMockMediaDevice(const void* persistentIdRef);
 void APS5_VABI WKResetMockMediaDevices();
+void APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo(const void* checkRef, const void* userMediaIDRef, bool isAllowed);
 void APS5_VABI WKUserMediaPermissionRequestAllow(const void* requestRef);
 void APS5_VABI WKUserMediaPermissionRequestDeny(const void* requestRef);
 std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef);

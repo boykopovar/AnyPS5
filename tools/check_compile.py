@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import base_ref
 
 CPP =(".cpp", ".cc", ".cxx", ".c")
+HEADERS = (".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
         "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
@@ -178,7 +179,7 @@ def index(build, root):
     return commands
 
 
-def changed(root, base):
+def changed(root, base, suffixes=CPP):
     fork = capture(["git", "-C", str(root), "merge-base", base, "HEAD"])
     if fork.returncode != 0:
         raise ValueError(f"git merge-base {base}: {fork.stderr.strip()}")
@@ -189,7 +190,7 @@ def changed(root, base):
     if untracked.returncode != 0:
         raise ValueError(f"git ls-files: {untracked.stderr.strip()}")
     names = dict.fromkeys(result.stdout.split("\0") + untracked.stdout.split("\0"))
-    return [name for name in names if name.endswith(CPP)]
+    return [name for name in names if name.endswith(suffixes)]
 
 
 def command_arguments(command):
@@ -506,12 +507,116 @@ def resolve_source(file, root):
     return source, name
 
 
-def check(root, build, files, jobs=1):
+def compilation_output(entry):
+    output = entry.get("output")
+    if output is not None:
+        return output if isinstance(output, str) and output and "\0" not in output else None
+    try:
+        arguments = entry["arguments"] if "arguments" in entry else command_arguments(entry["command"])
+        start = len(launcher_prefix(arguments)) + 1
+    except (OSError, ValueError):
+        return None
+    operands = iter(arguments[start:])
+    for argument in operands:
+        if argument == "--":
+            break
+        if argument == "-o":
+            output = next(operands, None)
+        elif argument in (*WITH_VALUE, *DROP_WITH_VALUE):
+            next(operands, None)
+    return output or None
+
+
+def ninja_header_owners(build, outputs, headers, normalize):
+    from select_tests import dependency_path
+
+    program = ninja_for_build(build)
+    if program is None:
+        raise ValueError("--headers needs Ninja and a built Ninja project")
+    result = subprocess.run([program, "-C", str(build), "-t", "deps"], capture_output=True)
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"ninja -t deps failed with exit code {result.returncode}: {detail}")
+    recorded = {}
+    stale = set()
+    current = None
+    for line in result.stdout.splitlines():
+        if line.startswith(b"    ") and current is not None:
+            header = normalize(build, dependency_path(line[4:], build))
+            if header in headers:
+                current.add(header)
+            continue
+        current = None
+        name, separator, status = line.rpartition(b": #deps ")
+        if not separator:
+            continue
+        output = normalize(build, dependency_path(name, build))
+        if output not in outputs:
+            continue
+        if status.endswith(b" (VALID)"):
+            current = recorded.setdefault(output, set())
+        elif status.endswith(b" (STALE)"):
+            stale.add(output)
+    return recorded, stale
+
+
+def header_configurations(build, commands, headers):
+    @cache
+    def normalize(directory, name):
+        return os.path.normcase(real(Path(directory) / name))
+
+    wanted = {normalize(build, path): path for path in headers}
+    configurations = []
+    for name, entries_for_source in commands.items():
+        if name.endswith(CPP):
+            for entry in entries_for_source:
+                output = compilation_output(entry)
+                configurations.append((name, entry, normalize(entry["directory"], output) if output else None))
+    outputs = {output for _, _, output in configurations if output is not None}
+    recorded, stale = ninja_header_owners(build, outputs, wanted, normalize)
+    matched = {}
+    found = set()
+    unknown = missing = outdated = 0
+    for name, entry, output in configurations:
+        if output is None:
+            unknown += 1
+        elif output in stale:
+            outdated += 1
+        elif output not in recorded:
+            missing += 1
+        elif recorded[output]:
+            matched.setdefault(name, []).append(entry)
+            found.update(recorded[output])
+    if unknown or missing or outdated:
+        print(f"Ninja header coverage is incomplete ({outdated} stale, {missing} missing, "
+              f"{unknown} without an object output among {len(configurations)} configurations)", file=sys.stderr)
+    for path, header in wanted.items():
+        if path not in found:
+            print(f"{header} has no compile configuration with a valid recorded Ninja dependency", file=sys.stderr)
+    return matched
+
+
+def compile_tasks(root, build, files, headers=False):
     commands = index(build, root)
     tasks = []
+    requested_headers = []
+    direct = set()
     for file in files:
         source, name = resolve_source(file, root)
+        if headers and file.suffix in HEADERS:
+            requested_headers.append(source)
+            continue
+        direct.add(name)
         tasks.append((source, name, build, commands.get(name)))
+    if requested_headers:
+        for name, configurations in header_configurations(build, commands, requested_headers).items():
+            if name not in direct:
+                tasks.append((real(Path(root) / name), name, build, configurations))
+    return tasks
+
+
+def check(root, build, files, jobs=1, headers=False):
+    tasks = compile_tasks(root, build, files, headers)
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
         results = executor.map(check_source, tasks) if executor is not None else map(check_source, tasks)
@@ -533,14 +638,15 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    parser = argparse.ArgumentParser(
-        description="compile the changed translation units only, to check a change builds without a full build")
+    parser = argparse.ArgumentParser(description="check C and C++ syntax using a configured build's compile commands")
     parser.add_argument("--build", type=Path, default=Path("build"),
                         help="a configured Ninja build directory of this checkout (default: build)")
     parser.add_argument("--jobs", type=positive_integer, default=1, metavar="N",
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
     parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
-    parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
+    parser.add_argument("paths", nargs="*", help="files to check instead of the changed ones")
+    parser.add_argument("--headers", action="store_true",
+                        help="include headers using recorded Ninja dependencies from an existing build")
     parser.add_argument("--dry-run", action="store_true", help="print planned syntax commands as JSON without executing a compiler")
     args = parser.parse_args(argv)
     try:
@@ -549,22 +655,20 @@ def main(argv=None):
             files = [Path(path) for path in args.paths]
         else:
             base = base_ref.resolve(root, args.base)
-            files = [root / path for path in changed(root, base)]
+            suffixes = CPP + HEADERS if args.headers else CPP
+            files = [root / path for path in changed(root, base, suffixes)]
             if not files:
                 print(json.dumps({"translation_units": []}) if args.dry_run else f"no changed translation unit against {base}")
                 return 0
         if args.dry_run:
-            commands = index(args.build, root)
             plan = []
-            for file in files:
-                source, name = resolve_source(file, root)
-                configurations = commands.get(name, [])
+            for source, _, _, configurations in compile_tasks(root, args.build, files, args.headers):
                 plan.append({"source": str(source), "commands": [
                     {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
-                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations]})
+                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations or ()]})
             print(json.dumps({"translation_units": plan}, indent=2))
             return 0 if any(entry["commands"] for entry in plan) else 1
-        checked, failed = check(root, args.build, files, args.jobs)
+        checked, failed = check(root, args.build, files, args.jobs, args.headers)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))
     if failed:

@@ -134,7 +134,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         found = sorted(skips(args.junit, require_tests=args.require_tests))
-    except (OSError, ET.ParseError, ValueError) as error:
+    except ET.ParseError as error:
+        parser.error(f"{args.junit}: {error}")
+    except (OSError, ValueError) as error:
         parser.error(str(error))
     if args.list:
         for name, output in found:
