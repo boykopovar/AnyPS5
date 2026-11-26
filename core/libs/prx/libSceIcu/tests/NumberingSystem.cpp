@@ -106,12 +106,14 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumsys_open_nid_postfix("en", &status); });
-        Require(status == incoming);
+        auto* handle = unumsys_open_nid_postfix("en", &status);
+        Require(handle != nullptr && status <= 0);
+        unumsys_close_nid_postfix(handle);
 
         status = incoming;
-        RequireThrows([&] { unumsys_open_nid_postfix("en@numbers=hanidec", &status); });
-        Require(status == incoming);
+        handle = unumsys_open_nid_postfix("en@numbers=hanidec", &status);
+        Require(handle != nullptr && status <= 0);
+        unumsys_close_nid_postfix(handle);
     }
 
     RequireThrows([&] { unumsys_open_nid_postfix("en", nullptr); });
@@ -144,12 +146,13 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumsys_openByName_nid_postfix("latn", &status); });
-        Require(status == incoming);
+        auto* handle = unumsys_openByName_nid_postfix("latn", &status);
+        Require(handle != nullptr && status <= 0);
+        unumsys_close_nid_postfix(handle);
 
         status = incoming;
-        RequireThrows([&] { unumsys_openByName_nid_postfix("", &status); });
-        Require(status == incoming);
+        Require(unumsys_openByName_nid_postfix("", &status) == nullptr);
+        Require(status == 16);
     }
 
     RequireThrows([&] { unumsys_openByName_nid_postfix("latn", nullptr); });
@@ -175,8 +178,10 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumsys_openAvailableNames_nid_postfix(&status); });
-        Require(status == incoming);
+        auto* names = unumsys_openAvailableNames_nid_postfix(&status);
+        Require(names != nullptr && status == incoming);
+        Require(uenum_count_nid_postfix(names, &status) > 0 && status == incoming);
+        uenum_close_nid_postfix(names);
     }
 
     RequireThrows([&] { unumsys_openAvailableNames_nid_postfix(nullptr); });
