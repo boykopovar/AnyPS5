@@ -19,7 +19,7 @@ The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`
 
 Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
-Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
+Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `ToggleBorderless` (F2, switches the display window between normal and borderless windowed, as described in [USAGE](USAGE.md)), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords. `ToggleBorderless` accepts keyboard keys only.
 
 ### SDL controller detection and layout
 
@@ -86,6 +86,7 @@ Each action keeps its built-in bindings unless the shared file or the current ti
 | `Shake` | X (reports a swinging acceleration and angular velocity while held) |
 | `ToggleMouse` | Middle mouse button, F7 |
 | `ToggleFullscreen` | F11 |
+| `ToggleBorderless` | F2 |
 | `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 | `ShowPadStatus` | F9 |
@@ -213,7 +214,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`, and is at most 32 characters (`MaxTitleIdLength`). A longer ID, or one with other characters, selects no per-game file, and no message is logged for it. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -248,7 +249,7 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](https://boykopovar.github.io/AnyPS5/input-mapper/) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs. The hosted mapper follows `main`, so settings added since a release require a newer build.
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
@@ -256,7 +257,7 @@ On the Configuration page, enter the game's exact title ID to download a [per-ga
 
 On the Configuration page, open **Controller buttons** to assign an SDL button to a PlayStation button. Choose `None` to disable it or **No override** to omit its `SDLButton:` line and keep the inherited mapping. These assignments apply to all connected controllers.
 
-Add settings such as `MouseSensitivity` or `ToggleActions` by hand. The configurator validates settings and controller assignments on import and preserves them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
+Use Native settings to edit values such as `MouseSensitivity` or `ToggleActions`. Leave a setting blank to inherit its value. The configurator validates settings and controller assignments and includes them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
@@ -272,13 +273,14 @@ npm --prefix tools/input-mapper test
 
 Controls, Configuration and Help are separate views; switching views preserves bindings. Search covers all control groups. The group selector supports arrow keys, Home and End. Input and language menus support search, arrow keys and Enter; Escape cancels selection. Menus open beside their fields on larger screens and as bottom sheets on phones. The interface uses system fonts and respects reduced-motion preferences.
 
-The translation button selects one of 22 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
+The translation button selects one of 24 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
 
-Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
+Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `74be4c2836da0940f0144d0d97852606f9ab11e9`, the commit `3rdparty/SDL2` is pinned to. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
-For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
+For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory.
 
 ## Checking a timeline without a controller
 
-- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the preview as JSON.
+- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the expanded events and their duration as JSON. The duration ends at the last event's release.
+  With `--repeat`, `--gap-ms` specifies the delay from one iteration's last release to the next iteration's time zero.
 - `tools/preview_pad_input.py <path> <button> [--hold-ms MS] [--left-stick X Y] [--right-stick X Y] [--touch X Y ID ACTIVE]` prints one controller pulse without modifying the command file at `<path>`.

@@ -127,6 +127,39 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_not_called()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_same_target_is_hashed_once_per_run(self, run):
+        self.write_index([self.entry, self.entry])
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        with patch.object(suggest_patches, "sha256", wraps=suggest_patches.sha256) as hashing:
+            self.assertEqual(self.advise("--list-verified"), 0)
+            self.assertEqual(hashing.call_count, 1)
+            self.assertEqual(self.advise("--list-verified"), 0)
+            self.assertEqual(hashing.call_count, 2)
+        self.assertEqual(run.call_count, 4)
+
+    def test_changed_target_invalidates_cached_hash(self):
+        cache = {}
+        first = suggest_patches.cached_sha256(self.module, cache)
+        stamp = self.module.stat().st_mtime_ns
+        self.module.write_bytes(b"module version two")
+        os.utime(self.module, ns=(stamp + 1000000000, stamp + 1000000000))
+        second = suggest_patches.cached_sha256(self.module, cache)
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, hashlib.sha256(self.module.read_bytes()).hexdigest())
+
+    def test_target_changed_during_hash_is_rejected(self):
+        def changing_hash(path):
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            stamp = path.stat().st_mtime_ns
+            path.write_bytes(b"module version two")
+            os.utime(path, ns=(stamp + 1000000000, stamp + 1000000000))
+            return digest
+
+        with patch.object(suggest_patches, "sha256", side_effect=changing_hash):
+            with self.assertRaisesRegex(ValueError, "file changed during hashing"):
+                suggest_patches.cached_sha256(self.module, {})
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_rejection_is_not_a_recommendation(self, run):
         run.return_value.returncode = 1
         run.return_value.stdout = "Mismatch: patch\nVerified 1 patches: 0 ok, 0 not-checked, 1 mismatch\n"

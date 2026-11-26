@@ -1,5 +1,6 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -231,7 +232,7 @@ int main(int argc, char** argv) {
     std::filesystem::remove(path);
 
     Require(Traced(&Unlabeled, "Unlabeled", "") == &Unlabeled);
-    const auto executable = std::filesystem::path(argv[0]).filename().string();
+    const auto executable = ArgumentPath(argv, 0).filename().string();
 #ifdef _WIN32
     Require(_putenv_s("APS5_TRACE_CALLS", executable.c_str()) == 0);
 #else

@@ -72,6 +72,113 @@ void CheckWait(Fn wait, T value, std::uint64_t milliseconds, bool timed, KernelU
     Require(last.name != nullptr && std::strcmp(last.name, "SceLibcV2AtomicWait") == 0, label);
 }
 
+template <typename Fn>
+void ExpectRuntimeError(Fn fn, const char* expectedFunction, const char* label) {
+    try {
+        fn();
+    } catch (const std::runtime_error& error) {
+        Require(std::strstr(error.what(), expectedFunction) != nullptr, label);
+        return;
+    }
+    std::fprintf(stderr, "std atomic wait: expected runtime_error: %s\n", label);
+    std::abort();
+}
+
+void RegisterZeroedLocalForwards() {
+    AtomicWaitForwards_nid_no_patch localForwards{Wait8, Wait16, Wait32, Wait64, Wake};
+    RegisterAtomicWaitForwards_nid_no_patch(&localForwards);
+    localForwards = {};
+}
+
+void CheckCopiedForwards() {
+    RegisterZeroedLocalForwards();
+
+    last = {};
+    std::uint32_t value32 = 42;
+    Require(__std_atomic_wait_direct_32_nid_postfix(&value32, 42, 7) == 1, "copied wait32 callback succeeds");
+    Require(last.calls == 1 && last.address == &value32 && last.expected == 42 && last.timed && last.timeout == 7000,
+            "copied wait32 invokes registered callback");
+
+    __std_atomic_notify_one_direct_nid_postfix(&value32);
+    Require(last.calls == 2 && last.address == &value32 && last.count == 1,
+            "copied notify_one invokes registered callback");
+}
+
+void CheckPartialForwardsValidation() {
+    const AtomicWaitForwards_nid_no_patch partial{nullptr, Wait16, Wait32, Wait64, nullptr};
+    RegisterAtomicWaitForwards_nid_no_patch(&partial);
+
+    std::uint8_t value8 = 1;
+    std::uint32_t value32 = 99;
+    alignas(8) std::int64_t value64 = 123;
+
+    ExpectRuntimeError(
+        [&]() { __std_atomic_wait_direct_8_nid_postfix(&value8, 1, 0xffffffff); },
+        "__std_atomic_wait_direct_8_nid_postfix",
+        "null wait8 throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_notify_one_direct_nid_postfix(&value32); },
+        "__std_atomic_notify_one_direct_nid_postfix",
+        "null wake in notify_one_direct throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_notify_all_direct_nid_postfix(&value32); },
+        "__std_atomic_notify_all_direct_nid_postfix",
+        "null wake in notify_all_direct throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&value64); },
+        "__std_atomic_notify_one_direct_nid_postfix",
+        "null wake in libc++ notify_one throws runtime_error");
+
+    last = {};
+    Require(__std_atomic_wait_direct_32_nid_postfix(&value32, 99, 0xffffffff) == 1,
+            "partial table still allows populated wait32");
+    Require(last.calls == 1 && last.address == &value32 && last.expected == 99 && !last.timed,
+            "partial table invokes populated wait32");
+}
+
+void CheckUnregisteredForwardsValidation() {
+    RegisterAtomicWaitForwards_nid_no_patch(nullptr);
+
+    std::uint8_t value8 = 1;
+    std::uint16_t value16 = 2;
+    std::uint32_t value32 = 3;
+    std::uint64_t value64 = 4;
+    alignas(8) std::int64_t libcxx = 5;
+
+    ExpectRuntimeError(
+        [&]() { __std_atomic_wait_direct_8_nid_postfix(&value8, 1, 0); },
+        "__std_atomic_wait_direct_8_nid_postfix",
+        "unregistered wait8 throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_wait_direct_16_nid_postfix(&value16, 2, 0); },
+        "__std_atomic_wait_direct_16_nid_postfix",
+        "unregistered wait16 throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_wait_direct_32_nid_postfix(&value32, 3, 0); },
+        "__std_atomic_wait_direct_32_nid_postfix",
+        "unregistered wait32 throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_wait_direct_64_nid_postfix(&value64, 4, 0); },
+        "__std_atomic_wait_direct_64_nid_postfix",
+        "unregistered wait64 throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_notify_one_direct_nid_postfix(&value32); },
+        "__std_atomic_notify_one_direct_nid_postfix",
+        "unregistered notify_one throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { __std_atomic_notify_all_direct_nid_postfix(&value32); },
+        "__std_atomic_notify_all_direct_nid_postfix",
+        "unregistered notify_all throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(&libcxx, 5); },
+        "__std_atomic_wait_direct_64_nid_postfix",
+        "unregistered libc++ wait throws runtime_error");
+    ExpectRuntimeError(
+        [&]() { _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx); },
+        "__std_atomic_notify_one_direct_nid_postfix",
+        "unregistered libc++ notify_one throws runtime_error");
+}
+
 void CheckReadOnlyLibcxxAtomic() {
 #ifdef _WIN32
     SYSTEM_INFO info{};
@@ -201,7 +308,9 @@ int main() {
     catch (const std::invalid_argument&) {}
 
     CheckReadOnlyLibcxxAtomic();
+    CheckCopiedForwards();
+    CheckPartialForwardsValidation();
+    CheckUnregisteredForwardsValidation();
 
-    RegisterAtomicWaitForwards_nid_no_patch(nullptr);
     return 0;
 }
