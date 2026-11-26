@@ -115,6 +115,42 @@ void CheckEmptyDeviceQueries() {
     Require(sceMbusGetDeviceDescription(1, 0, description) == unavailable, "device description lookup reached a service");
     Require(descriptionBytes[0] == 0xa5, "device description lookup wrote a record");
     Require(sceMbusGetDeviceDescription(1, 0, nullptr) == invalidArgument, "null device description accepted");
+
+    alignas(16) std::array<std::uint8_t, 16> statusBytes{};
+    statusBytes.fill(0xa5);
+    auto* spark = reinterpret_cast<MbusSparkState*>(statusBytes.data());
+    auto* simulated = reinterpret_cast<MbusSimulatedHandleStatus*>(statusBytes.data());
+    auto* control = reinterpret_cast<MbusControlStatus*>(statusBytes.data());
+    Require(sceMbusGetSparkState(1, spark) == unavailable && statusBytes[0] == 0xa5, "spark state wrote a record");
+    Require(sceMbusGetSparkState(1, nullptr) == invalidArgument, "null spark state accepted");
+    Require(sceMbusGetSimulatedHandleStatusInfo(1, 0, 0, simulated) == unavailable, "simulated handle status reached a service");
+    Require(sceMbusGetSimulatedHandleStatusInfo(1, 0, 0, nullptr) == invalidArgument, "null simulated handle status accepted");
+    Require(sceMbusGetSimulatedHandleStatusInfo2(1, 0, 0, 0, nullptr) == invalidArgument, "null simulated handle status 2 accepted");
+    Require(sceMbusGetControlStatus(1, control) == unavailable && statusBytes[0] == 0xa5, "control status wrote a record");
+    Require(sceMbusGetControlStatus(1, nullptr) == invalidArgument, "null control status accepted");
+    Require(sceMbusDebugGetControlStatus(1, 2, nullptr) == invalidArgument, "null debug control status accepted");
+    Require(sceMbusDebugGetDeviceInfo(1, nullptr) == invalidArgument, "null debug device info accepted");
+    Require(sceMbusDebugGetInternalInfo(nullptr) == invalidArgument, "null internal info accepted");
+    Require(sceMbusDebugGetPriorityInfo(1, nullptr) == invalidArgument, "null priority info accepted");
+    Require(sceMbusDebugGetApplicationStartupInfo(1, nullptr, nullptr) == invalidArgument, "null startup info accepted");
+    auto* startup = reinterpret_cast<MbusStartupInfo*>(statusBytes.data());
+    Require(sceMbusDebugGetApplicationStartupInfo(1, nullptr, startup) == unavailable && statusBytes[0] == 0xa5, "startup info wrote a record");
+    Require(sceMbusDebugCheckProcessResume(nullptr, 0) == invalidArgument, "null process resume info accepted");
+    Require(sceMbusIsUsingDevice(1, 2) == 0, "a device was reported in use");
+    Require(sceMbusIsBgmProhibited() == 0, "bgm started prohibited");
+    Require(sceMbusDisableBgmForShellUi() == 0 && sceMbusIsBgmProhibited() == 1, "disabling bgm did not stick");
+    Require(sceMbusReenableBgmForShellUi() == 0 && sceMbusIsBgmProhibited() == 0, "re-enabling bgm did not clear the flag");
+    Require(sceMbusRemoveCameraAppModuleFocus() == 0, "removing camera focus failed");
+    Require(sceMbusDumpDeviceInfo() == 0, "device dump failed");
+    Require(sceMbusStartAudioOutAuxBroadcast() == 0 && sceMbusStopAudioOutAuxBroadcast() == 0, "aux broadcast failed");
+    Require(sceMbusStopAudioOutSharePlay() == 0, "stopping share play failed");
+    Require(sceMbusAcquireControl(1, 0, 0) == unavailable, "control acquisition reached a service");
+    Require(sceMbusEventCreate_(0, nullptr, 0, nullptr, nullptr) == unavailable, "event queue creation reached a service");
+    std::uint8_t entry = 0;
+    auto* entries = reinterpret_cast<const MbusUsbPowerEntry*>(&entry);
+    Require(sceMbusSetUsbPowerBlackList(0, 101, entries) == invalidArgument, "usb power count above 100 accepted");
+    Require(sceMbusSetUsbPowerBlackList(0, 1, nullptr) == invalidArgument, "null usb power list accepted");
+    Require(sceMbusSetUsbPowerBlackList(0, 0, nullptr) == unavailable, "empty usb power list reached a service");
 }
 
 void CheckInit() {
