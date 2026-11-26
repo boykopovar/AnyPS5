@@ -1,4 +1,5 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -20,6 +21,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -673,6 +675,30 @@ void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& d
     Require(!mock.views.empty() && mock.views.back().first == texture->Image(7) && mock.views.back().second.baseMipLevel == 0, "the default storage view did not select its extra mip image");
 }
 
+void TestStoragePartialMipClears(const Context& context, TextureDetiler& detiler) {
+    auto descriptor = storageSurface(256u, 256u, 9u);
+    GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
+    descriptor.baseAddress = memory.Address();
+    clearRecords();
+    const auto texture = StorageTexture::Create(context, detiler, descriptor, 0u);
+    const auto [image, info] = storageImage("256x256 storage with nine physical levels");
+    Require(info.mipLevels == 9u && info.arrayLayers == 1u, "an ordinary mip clear needs one complete physical image");
+    const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(context);
+    recorder.Activate();
+    for (const auto level : {0u, 1u}) {
+        const auto clearsBefore = mock.clears.size();
+        const auto barriersBefore = mock.barriers.size();
+        const char* refusal = nullptr;
+        Require(texture->ClearMip({}, level, false, refusal), "an ordinary partial mip clear was refused");
+        Require(mock.clears.size() == clearsBefore + 1u && mock.clears.back().first == image, "a partial mip clear changed another image or the number of clear commands");
+        const auto& range = mock.clears.back().second;
+        Require(range.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT && range.baseMipLevel == level && range.levelCount == 1u && range.baseArrayLayer == 0u && range.layerCount == 1u, "a partial mip clear changed its requested mip or layer range");
+        Require(mock.barriers.size() == barriersBefore + 2u, "a partial mip clear lost its layout transitions");
+        checkInsideImage(image, info, "an ordinary partial mip clear");
+    }
+}
+
 void TestStorageFullChainIsUnchanged(const Context& context, TextureDetiler& detiler) {
     auto descriptor = storageSurface(64, 32, 7);
     GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
@@ -848,6 +874,7 @@ void RunTextureMipChainTests() {
         TestStorageLevelsPastTheFullChain(context, detiler, 1u);
         TestStorageLevelsPastTheFullChain(context, detiler, 3u);
         TestStorageFullChainIsUnchanged(context, detiler);
+        TestStoragePartialMipClears(context, detiler);
         TestShaderLevelsPastTheView(context, detiler);
         TestSrgbLevelsPastTheFullChain(context);
     }
