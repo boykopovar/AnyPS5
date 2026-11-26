@@ -202,7 +202,8 @@ std::string_view FrameCallName(FrameCallKind kind) {
     throw std::runtime_error("frame capture: unknown call kind " + std::to_string(static_cast<std::uint32_t>(kind)));
 }
 
-FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level, std::uint64_t cacheBudget) : directory(directory), level(level), cacheBudget(cacheBudget) {
+FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level, std::uint64_t cacheBudget, std::uint32_t callsVersion) : directory(directory), level(level), cacheBudget(cacheBudget) {
+    requireCapture(callsVersion == 2 || callsVersion == CallsVersion, "a capture writer writes calls format 2 or " + std::to_string(CallsVersion) + ", not " + std::to_string(callsVersion));
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     requireCapture(!error && std::filesystem::is_directory(directory), "cannot create the directory " + directory.string());
@@ -210,7 +211,8 @@ FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, i
     calls.open(directory / CallsName, std::ios::binary | std::ios::trunc);
     memory.open(directory / MemoryName, std::ios::binary | std::ios::trunc);
     requireCapture(calls.is_open() && memory.is_open(), "cannot create the capture files in " + directory.string());
-    calls.write(CallsMagic.data(), static_cast<std::streamsize>(CallsMagic.size()));
+    const auto magic = callsVersion == 2 ? CallsMagicV2 : CallsMagic;
+    calls.write(magic.data(), static_cast<std::streamsize>(magic.size()));
     memory.write(MemoryMagic.data(), static_cast<std::streamsize>(MemoryMagic.size()));
     memoryOffset = MemoryMagic.size();
     requireCapture(calls.good() && memory.good(), "cannot write the capture files in " + directory.string());

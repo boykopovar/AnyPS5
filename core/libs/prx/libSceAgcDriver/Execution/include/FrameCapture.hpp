@@ -96,7 +96,9 @@ public:
         double compareSeconds = 0;
     };
 
-    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, std::uint64_t cacheBudget = CachedDeltaBytes);
+    static constexpr std::uint32_t CallsVersion = 3;
+
+    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, std::uint64_t cacheBudget = CachedDeltaBytes, std::uint32_t callsVersion = CallsVersion);
     FrameCaptureWriter(const FrameCaptureWriter&) = delete;
     FrameCaptureWriter& operator=(const FrameCaptureWriter&) = delete;
 

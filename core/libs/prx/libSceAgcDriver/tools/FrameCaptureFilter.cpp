@@ -124,7 +124,7 @@ void FilterFrameCapture(const std::filesystem::path& source, const std::filesyst
     requireFilter(!createError && createdDestination, "destination already exists or cannot be created: " + destination.string());
 
     try {
-        AgcDriver::FrameCaptureWriter writer(destination);
+        AgcDriver::FrameCaptureWriter writer(destination, 1, AgcDriver::FrameCaptureWriter::CachedDeltaBytes, reader.Version());
         for (std::size_t index = 0; index < reader.Calls().size(); ++index) {
             if (!plan.calls.contains(index)) writer.WriteCall(reader.Calls()[index]);
         }
