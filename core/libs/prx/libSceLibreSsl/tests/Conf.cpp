@@ -436,6 +436,14 @@ void ParserVectors(const HostDirectory& host) {
         {"badcontinuation.cnf", "value=one\\\n$missing\n", "default", "value", 0, 2, nullptr, {ConfVariableHasNoValue}},
         {"comment.cnf", "value=\"one#two\" # ignored\n", "default", "value", 1, 0, "one#two", {}},
         {"fallback.cnf", "value=hello\n[other]\n", "other", "value", 1, 0, "hello", {}},
+        {"slashkey.cnf", "a/b = x\n", "default", "a/b", 1, 0, "x", {}},
+        {"punctkey.cnf", "k!%&*+,-./?@^|~ = y\n", "default", "k!%&*+,-./?@^|~", 1, 0, "y", {}},
+        {"semicolonkey.cnf", "a;b = z\n", "default", "a;b", 1, 0, "z", {}},
+        {"leadingsemicolon.cnf", ";c = w\n", "default", ";c", 1, 0, "w", {}},
+        {"punctsection.cnf", "[s/t.u]\nk = v\n", "s/t.u", "k", 1, 0, "v", {}},
+        {"variablepunct.cnf", "a = 1\nb = $a/x\n", "default", "b", 1, 0, "1/x", {}},
+        {"dollarkey.cnf", "a$b = q\n", "default", "a$b", 0, 1, nullptr, {ConfMissingEqualSign}},
+        {"colonkey.cnf", "a:b = q\n", "default", "a:b", 0, 1, nullptr, {ConfMissingEqualSign}},
     };
     Require(setenv_nid_postfix("CONF_REVIEW_ENV", "1.2.3.4.55", 1) == 0, "set guest environment");
     AddPathAlias_nid_no_patch("/conf-test", host.path.string().c_str());
