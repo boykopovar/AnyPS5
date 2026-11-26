@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -86,8 +87,15 @@ std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> cod
 bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes = 0u);
 void NoteCopyDestination(std::uint64_t address, std::size_t bytes);
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
-void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
-void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+struct HtileClearDispatch {
+    std::vector<std::shared_ptr<const std::atomic<bool>>> surfaces;
+};
+void QueueHtileDepthClear(HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes);
+void CompleteHtileDepthClear(const HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes);
+void DiscardHtileDepthClear(const HtileClearDispatch& dispatch, std::uint64_t htileAddress, std::size_t bytes);
+std::uint64_t ArmedHtileDepthClearCount();
+std::uint64_t DiscardedHtileDepthClearCount();
+std::uint32_t PendingHtileDepthClearDispatches(std::uint64_t htileAddress);
 struct HtileMaskClear {
     std::uint64_t address = 0;
     std::size_t bytes = 0;

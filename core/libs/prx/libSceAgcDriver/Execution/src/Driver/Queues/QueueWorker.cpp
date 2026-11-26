@@ -125,8 +125,15 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
-    else submitOpenWork(progress);
+    try {
+        if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
+        else submitOpenWork(progress);
+    } catch (const ProcessShutdown&) {
+        throw;
+    } catch (...) {
+        ReportFailure(std::current_exception());
+        throw;
+    }
 }
 
 const std::atomic<std::uint64_t>*& Driver::workerQueued() {
