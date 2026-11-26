@@ -25,6 +25,9 @@ constexpr int NotInitialized = static_cast<int>(0x809D3004u);
 constexpr int InvalidContentType = static_cast<int>(0x809D3012u);
 constexpr int InvalidArgument = static_cast<int>(0x809D3016u);
 constexpr int InvalidThumbnailType = static_cast<int>(0x809D3019u);
+constexpr int NoFile = static_cast<int>(0x809D3011u);
+constexpr int FileInUse = static_cast<int>(0x809D301Au);
+constexpr int ReservedName = static_cast<int>(0x809D301Cu);
 
 template <typename TException = std::logic_error, typename TAction>
 bool Throws(TAction action) {
@@ -302,6 +305,33 @@ int main() {
     Require(sceContentExportGetProgress(9) == 100);
     Require(ExportTitleIds(3, &plain, "/x", longestThumbnail.c_str(), longestList.c_str()) == InvalidContentType);
     Require(ExportTitleIds(2, &unterminated, "/x", "/y", nullptr) == InvalidContentType);
+    for (const char* name : {"clip.mp4", "thumb.jpg", "sce_clip.mp4", "sce_thumb.jpg"}) {
+        std::ofstream file(name, std::ios::binary | std::ios::trunc);
+        file << "x";
+        Require(file.good());
+    }
+    const ContentExportParam mp4 = ExportParam("video/mp4");
+    std::string manyIds = "[";
+    for (int index = 0; index < 1001; ++index) manyIds += index == 0 ? "\"CUSA04934\"" : ",\"CUSA04934\"";
+    manyIds += "]";
+    Require(ExportTitleIds(9, &mp4, "/missing.mp4", "/thumb.jpg", nullptr) == NoFile);
+    Require(sceContentExportGetProgress(9) == 100);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/missing.jpg", nullptr) == NoFile);
+    Require(ExportTitleIds(9, &mp4, "/sce_missing.mp4", "/thumb.jpg", nullptr) == NoFile);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/clip.mp4", nullptr) == FileInUse);
+    Require(ExportTitleIds(9, &mp4, "/sce_clip.mp4", "/thumb.jpg", nullptr) == ReservedName);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/sce_thumb.jpg", nullptr) == ReservedName);
+    Require(ExportTitleIds(9, &mp4, "", "/sce_thumb.jpg", nullptr) == ReservedName);
+    Require(ExportTitleIds(9, &mp4, "", "/thumb.jpg", "{}") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/thumb.jpg", "{}") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/thumb.jpg", " \"CUSA04934\" ") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/thumb.jpg", "[\"ABC\"]") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/thumb.jpg", "[\"CUSA04934\", \"ABC\"]") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/clip.mp4", "/thumb.jpg", manyIds.c_str()) == InvalidArgument);
+    setSdk(0x05000000);
+    Require(ExportTitleIds(9, &mp4, "/missing.mp4", "/missing.jpg", "{}") == InvalidArgument);
+    Require(ExportTitleIds(9, &mp4, "/sce_clip.mp4", "/clip.mp4", "[\"ABC\"]") == InvalidArgument);
+    setSdk(sdkVersion);
     Require(ExportDataCallback(10) == static_cast<int>(0x809D3016u));
     int first = *sessions.begin();
     ContentExportParam fromData{};
