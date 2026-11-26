@@ -1945,15 +1945,8 @@ int APS5_VABI _ZN7WebCore15FocusController9setActiveEb();
 int APS5_VABI _ZN7WebCore15FontDescriptionC1Ev();
 int APS5_VABI _ZN7WebCore15FontDescriptionC2Ev();
 int APS5_VABI _ZN7WebCore15GraphicsContext15drawImageBufferERNS_11ImageBufferERKNS_10FloatPointERKNS_20ImagePaintingOptionsE();
-int APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE();
-int APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv();
-int APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf();
-int APS5_VABI _ZN7WebCore15GraphicsContext4saveEv();
-int APS5_VABI _ZN7WebCore15GraphicsContext7restoreEv();
 int APS5_VABI _ZN7WebCore15GraphicsContext9drawImageERNS_5ImageERKNS_10FloatPointERKNS_20ImagePaintingOptionsE();
 int APS5_VABI _ZN7WebCore15GraphicsContext9drawImageERNS_5ImageERKNS_9FloatRectERKNS_20ImagePaintingOptionsE();
-int APS5_VABI _ZN7WebCore15GraphicsContextD1Ev();
-int APS5_VABI _ZN7WebCore15GraphicsContextD2Ev();
 int APS5_VABI _ZN7WebCore15HTMLBaseElement7setHrefERKN3WTF10AtomStringE();
 int APS5_VABI _ZN7WebCore15HTMLFormElement13checkValidityEv();
 int APS5_VABI _ZN7WebCore15HTMLFormElement15setAutocompleteERKN3WTF10AtomStringE();
@@ -5596,4 +5589,6 @@ int APS5_VABI libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch();
 void APS5_VABI WKBundlePageCopyRenderTree();
 void APS5_VABI WKBundlePageCopyRenderLayerTree();
 
+int APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf();
+int APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv();
 }
