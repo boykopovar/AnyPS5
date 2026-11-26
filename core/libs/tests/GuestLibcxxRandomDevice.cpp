@@ -24,4 +24,6 @@ int main() {
     _ZNSt3__113random_deviceD1Ev_nid_postfix(object.data());
     Require(object[0] == 0x5a && object[15] == 0x5a);
     Require(token[0] == 0xa5 && token[31] == 0xa5);
+
+    Require(_ZSt22_Random_device_entropyv_nid_postfix() == 32.0);
 }
