@@ -84,18 +84,26 @@ std::uint64_t merged(std::uint8_t width, std::uint64_t previous, std::uint64_t v
     return value;
 }
 
+std::uint64_t stored(std::uint8_t width, std::uint64_t previous, std::uint64_t value) {
+    const auto mask = width == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1;
+    return (previous & ~mask) | swapped(value, width);
+}
+
 void execution() {
     constexpr std::array<std::uint64_t, 4> values{0, 0x0102030405060708ull, 0xFEDCBA9876543210ull, 0x00000000000080FFull};
     for (const bool store : {false, true}) {
         for (const auto width : kWidths) {
-            for (const Bytes tail : {Bytes{0x06}, Bytes{0x46, 0x10}, Bytes{0x84, 0x24, 0x40, 0, 0, 0}, Bytes{0x04, 0xCA}, Bytes{0x85, 0x10, 0, 0, 0}, Bytes{0x05, 0, 0, 0, 0}}) {
+            for (const Bytes tail : {Bytes{0x06}, Bytes{0x46, 0x10}, Bytes{0x84, 0x24, 0x40, 0, 0, 0}, Bytes{0x84, 0x24, 0xF8, 0xFF, 0xFF, 0xFF}, Bytes{0x04, 0xCA}, Bytes{0x85, 0x10, 0, 0, 0}, Bytes{0x05, 0, 0, 0, 0}}) {
                 for (std::uint8_t reg = 0; reg < 16; ++reg) {
                     if (reg == 4 || reg == 6 || reg == 1 || reg == 2 || reg == 5) continue;
                     for (const auto value : values) {
                         const auto bytes = site(store, width, reg, tail);
                         const auto operands = *Codegen::DecodeMovbe(bytes.data(), bytes.size());
                         const auto stackMemory = tail[0] == 0x84;
-                        const auto initial = stackMemory ? 0x1111111111111111ull : 0x2222222222222222ull;
+                        const auto redZoneMemory = stackMemory && tail[2] == 0xF8;
+                        const auto initial = redZoneMemory ? LoweringExecution::kSentinel
+                            : stackMemory ? 0x1111111111111111ull
+                            : 0x2222222222222222ull;
                         Execution execution(bytes, initial, operands.Memory.RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
                             Codegen::EmitMovbe(body, *Codegen::DecodeMovbe(relocated.data(), relocated.size()));
                         });
@@ -121,16 +129,20 @@ void execution() {
                             }
                             if ((trial.Flags & (LoweringExecution::kFlagMask | 0x14u)) != (flags & (LoweringExecution::kFlagMask | 0x14u)))
                                 throw std::runtime_error(describe + ": flags changed");
-                            if (store) {
+                            if (store && !redZoneMemory) {
                                 std::uint64_t memory = 0;
                                 if (stackMemory) memory = trial.StackSlot;
                                 else std::memcpy(&memory, execution.Memory(), sizeof(memory));
-                                const auto mask = width == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1;
-                                const auto wanted = (initial & ~mask) | swapped(value, width);
+                                const auto wanted = stored(width, initial, value);
                                 if (memory != wanted)
                                     throw std::runtime_error(describe + ": memory is " + std::to_string(memory) + ", wanted " + std::to_string(wanted));
                             }
-                            for (const auto red : trial.RedZone) require(red == LoweringExecution::kSentinel, "MOVBE overwrote the caller's red zone");
+                            for (std::size_t index = 0; index < trial.RedZone.size(); ++index) {
+                                const auto wanted = store && redZoneMemory && index + 1 == trial.RedZone.size()
+                                    ? stored(width, LoweringExecution::kSentinel, value)
+                                    : LoweringExecution::kSentinel;
+                                require(trial.RedZone[index] == wanted, "MOVBE changed unexpected stack memory");
+                            }
                         }
                     }
                 }
