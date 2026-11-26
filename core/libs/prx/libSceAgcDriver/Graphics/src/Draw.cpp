@@ -1539,7 +1539,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest, !hostOnly);
-        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
+        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes, use);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;

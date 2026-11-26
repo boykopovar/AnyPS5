@@ -564,9 +564,10 @@ def validate_interval(record):
             raise ValueError(f"{field} must be an object")
         for name, value in values.items():
             interval_number(value, f"{field}.{name}")
-    counts = record.get("owned_draw_counts", {})
-    if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
-        raise ValueError("owned_draw_counts must map names to non-negative integers")
+    for field in ("owned_draw_counts", "owned_storage_counts"):
+        counts = record.get(field, {})
+        if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
+            raise ValueError(f"{field} must map names to non-negative integers")
     graphics = record.get("graphics_track", {})
     if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
         raise ValueError("graphics_track must map names to non-negative integers")
@@ -603,7 +604,7 @@ def digest_intervals(lines):
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"), "owned_storage_counts": line.get("owned_storage_counts"),
                      "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
     keys = INTERVAL_IDENTITY_KEYS
@@ -628,11 +629,12 @@ def markdown_intervals(result):
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
         lines.append(f"| {index} | {row['start_s']:.3f}-{row['end_s']:.3f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
-    count_names = sorted({name for row in rows for name in (row["owned_draw_counts"] or {})})
-    if count_names:
-        lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
-        for index, row in enumerate(rows, 1):
-            lines.append(f"| {index} | " + " | ".join(str(row["owned_draw_counts"].get(name, 0)) if row["owned_draw_counts"] is not None else "-" for name in count_names) + " |")
+    for field in ("owned_draw_counts", "owned_storage_counts"):
+        count_names = sorted({name for row in rows for name in (row[field] or {})})
+        if count_names:
+            lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
+            for index, row in enumerate(rows, 1):
+                lines.append(f"| {index} | " + " | ".join(str(row[field].get(name, 0)) if row[field] is not None else "-" for name in count_names) + " |")
     track = [row["graphics_track"] or {} for row in rows]
     if any(track):
         lines += ["", "| # | passes | continued | closed | top close reason | barriers | merged | copies | copy MiB |",

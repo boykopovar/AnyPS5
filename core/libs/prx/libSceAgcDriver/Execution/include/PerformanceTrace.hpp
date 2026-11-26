@@ -344,6 +344,7 @@ struct TraceSummary {
     std::uint64_t firstPresent = 0;
     double gpuBusyMs = 0;
     std::uint64_t ownedDrawUnbound = 0;
+    std::uint64_t ownedStorageUnbound = 0;
     std::string trace;
     std::optional<std::pair<double, double>> interval;
     std::optional<TraceHost> host;
@@ -696,8 +697,10 @@ public:
         std::map<std::string, Clock::duration> waitedPhases;
         std::map<std::string, std::uint64_t> ownedCounts;
         std::map<std::string, std::uint64_t> graphicsCounts;
-        bool dropped = summary.ownedDrawUnbound != 0;
+        std::map<std::string, std::uint64_t> storageCounts;
+        bool dropped = summary.ownedDrawUnbound != 0 || summary.ownedStorageUnbound != 0;
         if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
+        if (summary.ownedStorageUnbound != 0) storageCounts["OwnedStorage.unbound"] = summary.ownedStorageUnbound;
         struct DroppedThread {
             std::string name;
             std::uint64_t eventsLost = 0;
@@ -720,6 +723,7 @@ public:
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
                 if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
                 else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
+                else if (scope.starts_with("OwnedStorage.") && total.stage == nullptr) storageCounts[std::string(scope)] += total.count;
                 else if (scope != WorkerWaitScope) {
                     const auto name = Name(total.scope, total.stage);
                     phases[name] += total.length;
@@ -771,6 +775,15 @@ public:
         output += ",\"owned_draw_counts\":{";
         bool firstCount = true;
         for (const auto& [name, value] : ownedCounts) {
+            if (!firstCount) output += ',';
+            firstCount = false;
+            AppendString(output, name);
+            output += ':' + std::to_string(value);
+        }
+        output += '}';
+        output += ",\"owned_storage_counts\":{";
+        firstCount = true;
+        for (const auto& [name, value] : storageCounts) {
             if (!firstCount) output += ',';
             firstCount = false;
             AppendString(output, name);
@@ -962,6 +975,7 @@ public:
 
     static void CountOwnedDraw(const char* scope, std::uint64_t amount = 1);
     static std::uint64_t OwnedDrawUnbound();
+    static std::uint64_t OwnedStorageUnbound();
 
     static void SetOverlayTotals(bool on);
     static bool OverlayTotals();
@@ -980,6 +994,7 @@ private:
 
     static std::atomic<bool> recording;
     static std::atomic<std::uint64_t> ownedDrawUnbound;
+    static std::atomic<std::uint64_t> ownedStorageUnbound;
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
