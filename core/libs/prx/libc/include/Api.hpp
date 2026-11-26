@@ -127,6 +127,10 @@ struct LibcxxRegexErrorObject {
     std::int32_t code;
 };
 
+struct LibcxxErrorCode { int value; int reserved; const CategoryObject* category; };
+
+struct LibcxxSystemErrorObject { ExceptionObject base; LibcxxErrorCode code; };
+
 struct FutureErrorObject { const void* vtable; GuestLocale::String message; ErrorCode code; };
 
 }
@@ -1815,6 +1819,17 @@ void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObj
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source);
 void APS5_VABI _ZNSt3__111regex_errorC1ENS_15regex_constants10error_typeE_nid_postfix(LibcException::LibcxxRegexErrorObject* self, std::int32_t code);
 void APS5_VABI _ZNSt3__111regex_errorD1Ev_nid_postfix(LibcException::LibcxxRegexErrorObject* self) noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__114error_categoryE_nid_postfix;
+void APS5_VABI _ZNSt3__114error_categoryD2Ev_nid_postfix(LibcException::CategoryObject* self) noexcept;
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__116generic_categoryEv_nid_postfix() noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__112system_errorE_nid_postfix;
+extern const LibcException::ExceptionVtable _ZTVNSt3__112system_errorE_nid_postfix;
+void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeEPKc_nid_postfix(LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const char* what);
+void APS5_VABI _ZNSt3__112system_errorC2ENS_10error_codeEPKc_nid_postfix(LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const char* what);
+void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(LibcException::LibcxxSystemErrorObject* self, LibcException::LibcxxErrorCode code, const void* what);
+void APS5_VABI _ZNSt3__112system_errorD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
+void APS5_VABI _ZNSt3__112system_errorD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
+[[noreturn]] void APS5_VABI _ZNSt3__120__throw_system_errorEiPKc_nid_postfix(int value, const char* what);
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self);
