@@ -560,6 +560,31 @@ void ForeignLookupWhileAWindowIsOpenProceeds() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}, {own, {"draw 7 1 0 0"}}}, "a foreign lookup");
 }
 
+void LookupsSurviveSlotChurn() {
+    Reset();
+    auto table = FakeTable();
+    const auto steady = Handle<VkDevice>(0x4a);
+    const auto churned = Handle<VkDevice>(0x4b);
+    const auto attached = Attached(steady, table);
+    std::atomic<bool> stop{false};
+    std::thread lookups([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            AgcDriver::Graphics::BeforeCommandLookup(steady);
+            AgcDriver::Graphics::BeforeCommandLookup(churned);
+        }
+    });
+    for (int round = 0; round < 300; ++round) {
+        auto other = FakeTable();
+        const auto encoder = Attached(churned, other);
+        const auto commands = Handle<VkCommandBuffer>(0xd00);
+        encoder->Open(commands, RecordingOf(commands));
+        other.cmdDraw(commands, 1, 1, 0, 0);
+        encoder->Close();
+    }
+    stop.store(true, std::memory_order_release);
+    lookups.join();
+}
+
 void RawCallAfterLookupKeepsOrder() {
     Reset();
     auto table = FakeTable();
@@ -1483,6 +1508,7 @@ int main(int argc, char** argv) {
         OwnersOutliveTheUnwindDrain();
         ForeignThreadCannotProduceIntoAnOpenWindow();
         ForeignLookupWhileAWindowIsOpenProceeds();
+        LookupsSurviveSlotChurn();
         RawCallAfterLookupKeepsOrder();
         FailedReplayStaysWithItsRecording();
         FinishCarriesAnUnreportedFailure();
