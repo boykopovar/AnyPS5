@@ -527,6 +527,26 @@ bool WriteNv12(Decoder& decoder, const AVFrame& frame, std::uint8_t* target, std
 }
 
 void ClearOutput(const Decoder& decoder, FrameBuffer* frame, FrameBuffer* localFrame, OutputInfo* output, OutputInfo& localOutput) {
+    const auto writableGuest = [](void* destination, std::size_t bytes) {
+        const int savedErrno = errno;
+        bool writable = false;
+        {
+            const GuestArena::HostWrite write(destination, bytes);
+            writable = write.Open() && GuestWritable_nid_no_patch(destination, bytes);
+        }
+        errno = savedErrno;
+        return writable;
+    };
+    if (frame && (!localFrame || !writableGuest(frame, sizeof(FrameBuffer)))) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    if (!output || localOutput.thisSize < offsetof(OutputInfo, frameFormat)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
+    const auto outputBytes = static_cast<std::size_t>(std::min<std::uint64_t>(localOutput.thisSize, sizeof(OutputInfo)));
+    if (!writableGuest(output, outputBytes)) {
+        throw std::runtime_error("Videodec2: invalid argument pointer");
+    }
     localOutput.isValid = false;
     localOutput.isErrorFrame = false;
     localOutput.pictureCount = 0;
