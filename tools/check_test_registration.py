@@ -13,12 +13,13 @@ _TEST_EXEC_PATH = re.compile(rf"^{TEST_OUTPUT}(?:.*[\\/])?([^\\/]+)$")
 SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
 COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 _COMMAND_HINT = re.compile(r"(?:add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.I)
-ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
+ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|(?:\\\r?\n|\\[ \t]|[^\s()])+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 _PAREN = re.compile(r"[()]")
 _QUOTE_ESCAPE = re.compile(r"\\(\r?\n|.)", re.S)
 _QUOTE_ESCAPES = {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}
+_UNQUOTED_ESCAPE = re.compile(r"\\(\r?\n|[ \t])")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_]\w*=")
 _PATH_SPLIT = re.compile(r"[\\/]")
 _YAML_SEQUENCE = re.compile(r"-\s+")
@@ -369,6 +370,8 @@ def command_records(content):
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
                 argument = argument[width:-width].removeprefix("\n")
+            elif "\\" in argument:
+                argument = _UNQUOTED_ESCAPE.sub(lambda match: "" if "\n" in match[1] else match[1], argument)
             arguments.append(argument)
             position = token.end()
         else:

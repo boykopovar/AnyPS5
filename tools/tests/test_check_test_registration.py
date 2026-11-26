@@ -47,6 +47,15 @@ class CheckTestRegistrationTests(unittest.TestCase):
         content = "add_test(NAME a COMMAND a)\n# note\nadd_test(NAME b COMMAND b)\n"
         self.assertEqual([line for _, _, line in check_test_registration.command_records(content)], [1, 3])
 
+    def test_unquoted_escaped_space_is_one_property_value(self):
+        source = "set_tests_properties(foo PROPERTIES DISABLED OFF TIMEOUT integration\\ test)\n"
+        self.assertEqual(list(check_test_registration.commands(source)),
+                         [("set_tests_properties", ["foo", "PROPERTIES", "DISABLED", "OFF", "TIMEOUT", "integration test"])])
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CTestTestfile.cmake").write_text("add_test(foo foo)\n" + source, encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"foo"})
+
     def test_registered_names_the_file_and_line_of_an_unpaired_property_list(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
