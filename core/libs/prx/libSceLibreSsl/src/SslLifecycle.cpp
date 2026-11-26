@@ -606,6 +606,23 @@ void APS5_VABI SSL_free_nid_postfix(LibreSslSsl* ssl) {
     DestroySsl(*ssl, true, true);
 }
 
+LibreSslCtx* APS5_VABI SSL_set_SSL_CTX_nid_postfix(LibreSslSsl* ssl, LibreSslCtx* ctx) {
+    if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
+    LibreSslCtx* target = ctx ? ctx : static_cast<LibreSslCtx*>(ssl->initialCtx);
+    if (!target) return nullptr;
+    if (ssl->ctx == target) return target;
+    LibreSslCtxInternal& internal = InternalOf(*target, __func__);
+    Certificate* source = static_cast<Certificate*>(internal.cert);
+    Certificate* copy = source ? DuplicateCertificate(*source) : nullptr;
+    if (source && !copy) return nullptr;
+    FreeCertificate(static_cast<Certificate*>(ssl->cert));
+    ssl->cert = copy;
+    std::atomic_ref<int>(target->references).fetch_add(1);
+    SSL_CTX_free_nid_postfix(static_cast<LibreSslCtx*>(ssl->ctx));
+    ssl->ctx = target;
+    return target;
+}
+
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd) {
     if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
     LibreSsl::Bio* bio = LibreSslNewSocketBio_nid_no_patch(fd);
