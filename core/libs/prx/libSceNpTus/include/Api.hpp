@@ -14,12 +14,12 @@ int APS5_VABI sceNpTusGetMultiSlotVariableAAsync(int reqId, std::uint64_t target
 int APS5_VABI sceNpTusSetMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
 int APS5_VABI sceNpTusDeleteMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, int arrayLen, void* option);
 int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAccountId, std::int32_t slotId, std::int64_t inVariable, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* outVariable, std::uint64_t outVariableSize, void* option);
-int APS5_VABI sceNpTusSetThreadParam(void);
+int APS5_VABI sceNpTusSetThreadParam(int priority, std::uint64_t affinity);
 int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId);
 int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
-int APS5_VABI sceNpTusCreateTitleCtx(void);
-int APS5_VABI sceNpTusSetTimeout(void);
-int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(void);
+int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId);
+int APS5_VABI sceNpTusSetTimeout(int id, int resolveRetry, int resolveTimeout, int connTimeout, int sendTimeout, int recvTimeout);
+int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(int id, std::uint32_t mode);
 int APS5_VABI sceNpTusWaitAsync(int reqId, int* result);
 int APS5_VABI sceNpTusGetMultiSlotVariableA(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
 int APS5_VABI sceNpTusGetMultiSlotVariableAsync(int reqId, const void* targetNpId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);
@@ -40,8 +40,8 @@ int APS5_VABI sceNpTusDeleteMultiSlotVariableVUserAsync(int reqId, const NpOnlin
 int APS5_VABI sceNpTusDeleteMultiSlotVariableVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option);
 int APS5_VABI sceNpTusDeleteMultiSlotDataVUser(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option);
 int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option);
-int APS5_VABI sceNpTssGetStorage(void);
-int APS5_VABI sceNpTssGetStorageAsync(void);
+int APS5_VABI sceNpTssGetStorage(int reqId, std::int32_t slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const void* option);
+int APS5_VABI sceNpTssGetStorageAsync(int reqId, std::int32_t slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const void* option);
 int APS5_VABI sceNpTssGetDataAsync(int reqId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, const void* option);
 int APS5_VABI sceNpTusGetDataForCrossSaveVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);
 int APS5_VABI sceNpTusGetDataForCrossSaveVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);

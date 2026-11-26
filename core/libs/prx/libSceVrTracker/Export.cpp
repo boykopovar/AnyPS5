@@ -1,12 +1,14 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVrTracker/include/InventoryExports.hpp"
 #include "prx/libSceVrTracker/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <mutex>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 static_assert(sizeof(VrTrackerMemoryBlock) == 16);
 static_assert(sizeof(VrTrackerInitConfig) == 32);
@@ -67,6 +69,22 @@ constexpr std::uint32_t DeviceGun = 3;
 std::mutex g_devicesMutex;
 std::int32_t g_deviceHandles[DeviceGun + 1] = {-1, -1, -1, -1};
 
+template<typename TValue>
+bool CopyInGuest(TValue& destination, const TValue* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
+template<typename TValue>
+bool CopyOutGuest(TValue* destination, const TValue& source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &source, sizeof(TValue));
+    errno = savedErrno;
+    return copied;
+}
+
 } // namespace
 
 extern "C" {
@@ -80,8 +98,10 @@ int APS5_VABI sceVrTrackerGetResult(const VrTrackerGetResultParam* param, VrTrac
     return 0;
 }
 int APS5_VABI sceVrTrackerGetTime(std::uint64_t* time) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized.load()) return NotInit;
+    if (!time) return ArgumentInvalid;
+    const std::uint64_t now = sceKernelGetProcessTime();
+    return CopyOutGuest(time, now) ? 0 : ArgumentInvalid;
 }
 int APS5_VABI sceVrTrackerGpuSubmit(const VrTrackerGpuSubmitParam* param) {
     NotImplemented_nid_no_patch(__func__);
@@ -93,15 +113,27 @@ int APS5_VABI sceVrTrackerGpuWait(const VrTrackerGpuWaitParam* param) {
 }
 int APS5_VABI sceVrTrackerInit(const VrTrackerInitParam* param) {
     if (g_initialized.load()) return AlreadyInitialized;
-    if (param && param->size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
-    const auto* init = reinterpret_cast<const InitParam*>(param);
-    if (!init || init->size != sizeof(InitParam) || !init->direct_memory_garlic ||
-        init->direct_memory_garlic_alignment != MemoryAlignment || init->direct_memory_garlic_size != GarlicSize ||
-        !init->direct_memory_onion || init->direct_memory_onion_alignment != MemoryAlignment ||
-        init->direct_memory_onion_size != OnionSize(init->calibration_settings) || !init->work_memory ||
-        init->work_memory_alignment != MemoryAlignment || init->work_memory_size != WorkSize ||
-        init->gpu_pipe_id >= ComputePipes || init->gpu_queue_id >= QueuesPerPipe ||
-        !ValidCalibration(init->calibration_settings)) {
+    if (!param) return ArgumentInvalid;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    if (size == sizeof(VrTrackerInitParam)) NotImplemented_nid_no_patch(__func__);
+    InitParam init{};
+    if (!GuestCopyIn_nid_no_patch(&init, param, sizeof(init))) {
+        errno = savedErrno;
+        return ArgumentInvalid;
+    }
+    errno = savedErrno;
+    if (init.size != sizeof(InitParam) || !init.direct_memory_garlic ||
+        init.direct_memory_garlic_alignment != MemoryAlignment || init.direct_memory_garlic_size != GarlicSize ||
+        !init.direct_memory_onion || init.direct_memory_onion_alignment != MemoryAlignment ||
+        init.direct_memory_onion_size != OnionSize(init.calibration_settings) || !init.work_memory ||
+        init.work_memory_alignment != MemoryAlignment || init.work_memory_size != WorkSize ||
+        init.gpu_pipe_id >= ComputePipes || init.gpu_queue_id >= QueuesPerPipe ||
+        !ValidCalibration(init.calibration_settings)) {
         return ArgumentInvalid;
     }
     bool expected = false;
@@ -131,27 +163,33 @@ int APS5_VABI sceVrTrackerNotifyEndOfCpuProcess(const void* param) {
     return 0;
 }
 int APS5_VABI sceVrTrackerQueryMemory(const void* param, void* result) {
-    const auto* query = static_cast<const QueryMemoryParam*>(param);
-    auto* memory = static_cast<QueryMemoryResult*>(result);
-    if (!query || !memory || query->size != sizeof(QueryMemoryParam) || (query->profile != 0 && query->profile != 100) ||
-        !ValidCalibration(query->calibration_settings)) {
+    if (!param || !result) return ArgumentInvalid;
+    QueryMemoryParam localQuery{};
+    if (!CopyInGuest(localQuery, static_cast<const QueryMemoryParam*>(param))) return ArgumentInvalid;
+    if (localQuery.size != sizeof(QueryMemoryParam) || (localQuery.profile != 0 && localQuery.profile != 100) ||
+        !ValidCalibration(localQuery.calibration_settings)) {
         return ArgumentInvalid;
     }
-    memory->direct_memory_onion_size = OnionSize(query->calibration_settings);
-    memory->direct_memory_onion_alignment = MemoryAlignment;
-    memory->direct_memory_garlic_size = GarlicSize;
-    memory->direct_memory_garlic_alignment = MemoryAlignment;
-    memory->work_memory_size = WorkSize;
-    memory->work_memory_alignment = MemoryAlignment;
+    QueryMemoryResult localResult{};
+    if (!CopyInGuest(localResult, static_cast<const QueryMemoryResult*>(result))) return ArgumentInvalid;
+    localResult.direct_memory_onion_size = OnionSize(localQuery.calibration_settings);
+    localResult.direct_memory_onion_alignment = MemoryAlignment;
+    localResult.direct_memory_garlic_size = GarlicSize;
+    localResult.direct_memory_garlic_alignment = MemoryAlignment;
+    localResult.work_memory_size = WorkSize;
+    localResult.work_memory_alignment = MemoryAlignment;
+    if (!CopyOutGuest(static_cast<QueryMemoryResult*>(result), localResult)) return ArgumentInvalid;
     return 0;
 }
 int APS5_VABI sceVrTrackerRecalibrate(const void* param) {
     if (!g_initialized.load()) return NotInit;
-    const auto* recalibrate = static_cast<const RecalibrateParam*>(param);
-    if (!recalibrate || recalibrate->size != sizeof(RecalibrateParam) || recalibrate->device_type > DeviceGun) return ArgumentInvalid;
-    if (recalibrate->device_type == DeviceHmd) return DeviceNotRegistered;
+    if (!param) return ArgumentInvalid;
+    RecalibrateParam recalibrate{};
+    if (!CopyInGuest(recalibrate, static_cast<const RecalibrateParam*>(param))) return ArgumentInvalid;
+    if (recalibrate.size != sizeof(RecalibrateParam) || recalibrate.device_type > DeviceGun) return ArgumentInvalid;
+    if (recalibrate.device_type == DeviceHmd) return DeviceNotRegistered;
     std::lock_guard lock(g_devicesMutex);
-    return g_deviceHandles[recalibrate->device_type] == -1 ? DeviceNotRegistered : 0;
+    return g_deviceHandles[recalibrate.device_type] == -1 ? DeviceNotRegistered : 0;
 }
 int APS5_VABI sceVrTrackerRegisterDevice(int device_type, int handle) {
     return sceVrTrackerRegisterDeviceInternal(device_type, handle, -1, 0);

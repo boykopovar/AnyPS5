@@ -28,20 +28,34 @@ public:
         std::uint64_t retired = 0;
         std::size_t items = 0;
         std::vector<Range> writes;
+        Watch() = default;
+        Watch(std::uint64_t retired, std::size_t items) : retired(retired), items(items) {}
+        Watch(Watch&& other) noexcept : retired(other.retired), items(other.items), writes(std::move(other.writes)), pinned(std::exchange(other.pinned, nullptr)) {}
+        Watch(const Watch&) = delete;
+        Watch& operator=(const Watch&) = delete;
+        ~Watch();
+    private:
+        friend class DrawPipeline;
+        DrawPipeline* pinned = nullptr;
     };
     enum class DrainReason : std::uint8_t { Packet, Flush, Labels, Capture, Indirect, Submission, Count };
     enum class QueuedWrite : std::uint8_t { None, Stored, Unknown };
+    enum class CommitKind : std::uint8_t { Other, Draw, IndirectDraw, ColorMetadata, Dispatch, SampleDump, DmaFill, DmaWrite, DmaCopy, Store, EndOfPipe, Seal, SubmitEnd, Completion, BufferFill, Count };
 
     static DrawPipeline& Queue0();
     static std::size_t Depth();
+    static std::size_t ResumeDepth();
     static std::size_t QueuedItems();
     static bool& Active();
     static std::atomic<std::uint64_t>& EpochToken();
     static void FollowEpoch(std::uint64_t token);
+    static void NoteEpochSince(std::uint64_t token, std::uint64_t since);
     static unsigned Committers();
 
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
+    void Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
+    static void NoteDrawKey(std::uint64_t key, std::uint64_t shape);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     void Stop();
     void ReleaseRetired();
@@ -51,13 +65,18 @@ public:
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     bool OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static bool CountedWatch();
+    std::uint64_t CountedLookups() const { return countedLookups.load(std::memory_order_relaxed); }
     Watch WatchWrites();
-    bool WrittenSince(const Watch& watch, const std::vector<Range>& reads);
+    bool WrittenSince(Watch& watch, const std::vector<Range>& reads);
     std::uint64_t Retired() const { return retiredItems.load(std::memory_order_acquire); }
+    std::uint64_t ProducerWaits() const { return producerWaits.load(std::memory_order_acquire); }
+    std::uint64_t DrainWaits() const { return drainWaits.load(std::memory_order_acquire); }
     void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
     std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
+    std::uint64_t CommitterThread() const { return committerThread.load(std::memory_order_acquire); }
     static std::uint64_t HeldReadQueries();
     void ReleaseRunningReads();
     QueuedWrite StoredBytes(std::uint64_t address, std::size_t bytes, std::span<std::byte> out);
@@ -65,6 +84,7 @@ public:
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
     static std::uint64_t PipelinedMetadataPasses();
+    static std::uint64_t CommitClockReads();
 private:
     struct Item {
         Commit commit;
@@ -74,6 +94,7 @@ private:
         std::vector<Range> reads;
         bool draw = false;
         bool store = false;
+        CommitKind kind = CommitKind::Other;
     };
     DrawPipeline() = default;
     void enqueue(Item item);
@@ -81,6 +102,8 @@ private:
     void rethrowFailure();
     void report(std::chrono::steady_clock::time_point now);
     void countWrites(const std::vector<Range>& writes, bool added);
+    void releaseWatch(Watch& watch);
+    void unpinWatch(Watch& watch);
 
     std::mutex mutex;
     std::condition_variable wake;
@@ -88,13 +111,19 @@ private:
     std::deque<Item> items;
     std::vector<std::pair<Range, std::uint32_t>> queuedWrites;
     std::vector<Item> retired;
+    std::uint64_t reclaimedItems = 0;
+    std::size_t watchers = 0;
+    std::atomic<std::uint64_t> countedLookups{0};
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
+    std::atomic<std::uint64_t> committerThread{0};
     std::atomic<std::uint64_t> retiredItems{0};
+    std::atomic<std::uint64_t> producerWaits{0};
+    std::atomic<std::uint64_t> drainWaits{0};
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
-    std::uint32_t idleWaiters = 0;
-    std::size_t resumeAt = 0;
+    std::uint32_t producersWaiting = 0;
+    std::uint32_t drainersWaiting = 0;
     bool committerWaiting = false;
     bool stopped = false;
     bool closing = false;
@@ -111,6 +140,8 @@ private:
     std::array<std::uint64_t, 257> drainOpcodes{};
     std::array<std::atomic<std::uint64_t>, 257> drainRequests{};
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrainReason::Count)> reasonRequests{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(CommitKind::Count)> kindCommits{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(CommitKind::Count)> kindNs{};
     std::uint64_t depthSum = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };

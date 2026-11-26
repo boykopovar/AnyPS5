@@ -2,12 +2,16 @@
 #include <algorithm>
 #include <bit>
 #include <new>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <exception>
+#include <limits>
+#include <optional>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "Decoder/Png.hpp"
 
 namespace {
@@ -46,6 +50,19 @@ static_assert(sizeof(PngEncCreateParam) == 16);
 static_assert(sizeof(PngEncEncodeParam) == 48);
 static_assert(sizeof(PngEncOutputInfo) == 8);
 
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
+bool CanCopyOut(void* dst, std::size_t size) {
+    if (size == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(dst);
+    if (start == 0 || size > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    const GuestArena::HostWrite guard(dst, size);
+    return guard.Open() && GuestWritable_nid_no_patch(dst, size);
+}
+
 int validateCreateParam(const PngEncCreateParam* param, PngEncCreateParam* outParam = nullptr) {
     if (!param) return PNG_ENC_ERROR_INVALID_ADDR;
     PngEncCreateParam local{};
@@ -60,12 +77,12 @@ std::uint32_t workMemorySize(const PngEncCreateParam& param) {
     return 285808 + ((4 * param.max_image_width + 28) & ~std::uint32_t{31}) * (param.max_filter_number + 2);
 }
 
-PngEncContext* context(void* handle) {
-    if (reinterpret_cast<std::uintptr_t>(handle) == 0 || reinterpret_cast<std::uintptr_t>(handle) % HANDLE_ALIGNMENT != 0) return nullptr;
-    auto* ctx = static_cast<PngEncContext*>(handle);
-    PngEncContext selfCheck{};
-    if (!GuestCopyIn_nid_no_patch(&selfCheck, ctx, sizeof(selfCheck))) return nullptr;
-    return selfCheck.self == ctx ? ctx : nullptr;
+std::optional<PngEncContext> context(void* handle) {
+    if (reinterpret_cast<std::uintptr_t>(handle) == 0 || reinterpret_cast<std::uintptr_t>(handle) % HANDLE_ALIGNMENT != 0) return std::nullopt;
+    PngEncContext localCtx{};
+    if (!GuestCopyIn_nid_no_patch(&localCtx, handle, sizeof(localCtx))) return std::nullopt;
+    if (localCtx.self != handle) return std::nullopt;
+    return localCtx;
 }
 
 std::uint8_t filterSet(std::uint16_t filterType) {
@@ -84,12 +101,14 @@ std::uint8_t filterSet(std::uint16_t filterType) {
 extern "C" {
 
 int APS5_VABI scePngEncQueryMemorySize(const PngEncCreateParam* param) {
+    const ErrnoGuard errnoGuard;
     PngEncCreateParam local{};
     if (const int result = validateCreateParam(param, &local); result != 0) return result;
     return static_cast<int>(workMemorySize(local));
 }
 
 int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddress, uint32_t memorySize, void** handle) {
+    const ErrnoGuard errnoGuard;
     PngEncCreateParam local{};
     if (const int result = validateCreateParam(param, &local); result != 0) return result;
     if (!memoryAddress) return PNG_ENC_ERROR_INVALID_ADDR;
@@ -97,6 +116,9 @@ int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddres
     if (memorySize < requiredSize) return PNG_ENC_ERROR_INVALID_SIZE;
     if (!handle) return PNG_ENC_ERROR_INVALID_ADDR;
     const std::uintptr_t aligned = (reinterpret_cast<std::uintptr_t>(memoryAddress) + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
+    if (!CanCopyOut(handle, sizeof(void*))) {
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
     PngEncContext localCtx{};
     localCtx.self = reinterpret_cast<PngEncContext*>(aligned);
     localCtx.size = sizeof(PngEncCreateParam);
@@ -116,15 +138,17 @@ int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddres
 }
 
 int APS5_VABI scePngEncDelete(void* handle) {
-    PngEncContext* ctx = context(handle);
+    const ErrnoGuard errnoGuard;
+    const std::optional<PngEncContext> ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
     PngEncContext cleared{};
-    GuestCopyOut_nid_no_patch(ctx, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared))) return PNG_ENC_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngEncOutputInfo* outputInfo) {
-    const PngEncContext* ctx = context(handle);
+    const ErrnoGuard errnoGuard;
+    const std::optional<PngEncContext> ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
     if (!param) return PNG_ENC_ERROR_INVALID_ADDR;
     PngEncEncodeParam localParam{};
@@ -170,12 +194,24 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
     }
 
     const bool overflow = png.size() > localParam.png_mem_size;
+    if (outputInfo && !CanCopyOut(outputInfo, sizeof(*outputInfo))) {
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
+    if (!overflow && !CanCopyOut(localParam.png_mem_addr, png.size())) {
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
+    if (overflow) {
+        if (outputInfo) {
+            PngEncOutputInfo localOutput{0, 0};
+            if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return PNG_ENC_ERROR_INVALID_ADDR;
+        }
+        return PNG_ENC_ERROR_DATA_OVERFLOW;
+    }
+    if (!GuestCopyOut_nid_no_patch(localParam.png_mem_addr, png.data(), png.size())) return PNG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo) {
-        PngEncOutputInfo localOutput{overflow ? 0 : static_cast<std::uint32_t>(png.size()), overflow ? 0 : height};
+        PngEncOutputInfo localOutput{static_cast<std::uint32_t>(png.size()), height};
         if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return PNG_ENC_ERROR_INVALID_ADDR;
     }
-    if (overflow) return PNG_ENC_ERROR_DATA_OVERFLOW;
-    if (!GuestCopyOut_nid_no_patch(localParam.png_mem_addr, png.data(), png.size())) return PNG_ENC_ERROR_INVALID_ADDR;
     return static_cast<int>(png.size());
 }
 

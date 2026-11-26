@@ -4,6 +4,7 @@
 #include "tests/FontFixture.hpp"
 #include <array>
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -149,6 +150,10 @@ int main() {
     Require(sceFontGetFontStyleInformation(reinterpret_cast<FontHandle>(notAFont), &cleared) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && Cleared(cleared));
     Require(sceFontGetFontStyleInformation(named, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontGetFontStyleInformation(nullptr, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    errno = 71;
+    Require(sceFontGetFontStyleInformation(named, reinterpret_cast<FontStyleInformation*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontGetFontStyleInformation(nullptr, reinterpret_cast<FontStyleInformation*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(errno == 71);
 
     float w = 0.0f;
     float h = 0.0f;
@@ -160,6 +165,27 @@ int main() {
     Require(sceFontGetEffectSlant(nullptr, &slant) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontGetResolutionDpi(nullptr, &hdpi, &vdpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontGetResolutionDpi(named, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    w = 5.0f;
+    h = 5.0f;
+    Require(sceFontGetScalePoint(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && w == 0.0f && h == 0.0f);
+    w = 5.0f;
+    h = 5.0f;
+    Require(sceFontGetRenderScalePixel(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && w == 0.0f && h == 0.0f);
+    w = 5.0f;
+    h = 5.0f;
+    Require(sceFontGetRenderScalePoint(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && w == 0.0f && h == 0.0f);
+    slant = 0.5f;
+    Require(sceFontGetEffectSlant(nullptr, &slant) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && slant == 0.0f);
+    slant = 0.5f;
+    Require(sceFontGetRenderEffectSlant(nullptr, &slant) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && slant == 0.0f);
+    float weightX = 5.0f;
+    float weightY = 5.0f;
+    std::uint32_t weightMode = 7;
+    Require(sceFontGetEffectWeight(nullptr, &weightX, &weightY, &weightMode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && weightX == 1.0f && weightY == 1.0f && weightMode == 0);
+    Require(sceFontSetResolutionDpi(nullptr, 96, 96) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetEffectSlant(named, 0.25f) == SCE_FONT_OK);
+    Require(sceFontGetEffectSlant(named, &slant) == SCE_FONT_OK && slant == 0.25f);
+    Require(sceFontSetScriptLanguage(named, 0x200, 0x3000) == SCE_FONT_ERROR_INVALID_PARAMETER);
 
     FontStyleFrame frame{};
     std::uint32_t mode = 7;

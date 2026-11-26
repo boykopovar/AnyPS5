@@ -5,10 +5,17 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <future>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 static constexpr int EXPLICIT_SCHED = 0;
@@ -23,6 +30,7 @@ static constexpr KernelCpumask UPDATED_AFFINITY = 0x1000;
 static constexpr std::size_t STACK_SIZE = 2u << 20;
 static constexpr std::size_t MIN_STACK_SIZE = 16384;
 static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
 static constexpr int DETACH_DETACHED = 1;
@@ -82,7 +90,7 @@ static void CheckGuardSize() {
 
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrGetguardsize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 4096);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 16384);
 
     for (const std::size_t size : std::array<std::size_t, 5>{0, 4096, 8192, 16384, 65536}) {
         Require(scePthreadAttrSetguardsize(&attr, size) == SCE_OK);
@@ -113,6 +121,13 @@ static void CheckSoloSched() {
     }
     Require(pthread_attr_setsolosched_np_nid_postfix(&attr, 0) == 0);
     Require(scePthreadAttrGetsolosched(&attr, &soloSched) == SCE_OK && soloSched == 0);
+    PthreadAttr fresh = nullptr;
+    Require(scePthreadAttrInit(&fresh) == SCE_OK);
+    for (int rejected : {1, 2, -1, 0x7fffffff, static_cast<int>(0x80000000u)}) {
+        Require(scePthreadAttrSetsolosched(&fresh, rejected) == SceKernelErrorEopnotsupp);
+        Require(scePthreadAttrGetsolosched(&fresh, &soloSched) == SCE_OK && soloSched == 0);
+    }
+    Require(scePthreadAttrDestroy(&fresh) == SCE_OK);
     PthreadAttr unset = nullptr;
     Require(scePthreadAttrSetsolosched(&unset, 16) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrSetsolosched(nullptr, 16) == SCE_KERNEL_ERROR_EINVAL);
@@ -174,6 +189,7 @@ static void CheckSchedPolicyAndStackGetters() {
         Require(pthread_attr_getstacksize_nid_postfix(invalid, &size) == GUEST_EINVAL && size == 7);
         Require(pthread_attr_getstackaddr_nid_postfix(invalid, &address) == GUEST_EINVAL && address == &policy);
         Require(pthread_attr_getstack_nid_postfix(invalid, &address, &size) == GUEST_EINVAL && address == &policy && size == 7);
+        Require(scePthreadAttrGetstack(invalid, &address, &size) == SCE_KERNEL_ERROR_EINVAL && address == &policy && size == 7);
     }
     int policy = -1;
     void* address = &policy;
@@ -182,6 +198,8 @@ static void CheckSchedPolicyAndStackGetters() {
     Require(pthread_attr_getstackaddr_nid_postfix(&live, nullptr) == GUEST_EINVAL);
     Require(pthread_attr_getstack_nid_postfix(&live, nullptr, &size) == GUEST_EINVAL && size == 7);
     Require(pthread_attr_getstack_nid_postfix(&live, &address, nullptr) == GUEST_EINVAL && address == &policy);
+    Require(scePthreadAttrGetstack(&live, nullptr, &size) == SCE_KERNEL_ERROR_EINVAL && size == 7);
+    Require(scePthreadAttrGetstack(&live, &address, nullptr) == SCE_KERNEL_ERROR_EINVAL && address == &policy);
     Require(scePthreadAttrDestroy(&live) == SCE_OK);
 }
 
@@ -400,6 +418,18 @@ static void CheckEndedThreads() {
         CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
+
+    Pthread adopted = nullptr;
+    std::int64_t adoptedId = 0;
+    std::thread([&adopted, &adoptedId] {
+        adopted = scePthreadSelf();
+        adoptedId = pthread_getthreadid_np_nid_postfix();
+    }).join();
+    Require(adopted != nullptr && ReportedEnded(adopted));
+    CheckPosixQuery(adopted, GUEST_ESRCH);
+    KernelCpumask adoptedMask = 0;
+    *__error_nid_postfix() = 0;
+    Require(cpuset_getaffinity_nid_postfix(3, 1, adoptedId, sizeof(adoptedMask), &adoptedMask) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
 }
 
 static void CheckGetprioOfTheCallingThread() {
@@ -412,9 +442,21 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
     Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(self, reinterpret_cast<int*>(std::uintptr_t{0x10})) == SCE_KERNEL_ERROR_EFAULT);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadSetprio(self, original) == SCE_OK);
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
+static void CheckGetprioOfEndedThreads() {
+    constexpr int UNTOUCHED = -77;
+    int priority = UNTOUCHED;
+    Pthread finished = nullptr;
+    Require(scePthreadCreate(&finished, nullptr, Finish, nullptr, nullptr) == SCE_OK);
+    Require(ReportedEnded(finished));
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
+    Require(scePthreadJoin(finished, nullptr) == SCE_OK);
+    Require(scePthreadGetprio(finished, &priority) == SCE_KERNEL_ERROR_ESRCH && priority == UNTOUCHED);
 }
 
 static void CheckSetStackSizeOnUnsetAttributes() {
@@ -427,8 +469,134 @@ static void CheckSetStackSizeOnUnsetAttributes() {
     Require(pthread_attr_setstacksize_nid_postfix(&destroyed, STACK_SIZE) == GUEST_EINVAL);
 }
 
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers() {
+    GuardPage guard;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        auto* attrs = static_cast<PthreadAttr*>(pointer);
+        auto* ints = static_cast<int*>(pointer);
+        auto* sizes = static_cast<std::size_t*>(pointer);
+        auto* params = static_cast<KernelSchedParam*>(pointer);
+        int value = -1;
+        std::size_t size = 1;
+        KernelSchedParam param{};
+        Require(pthread_attr_getdetachstate_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getguardsize_nid_postfix(attrs, &size) == GUEST_EFAULT && size == 1);
+        Require(pthread_attr_getinheritsched_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getschedparam_nid_postfix(attrs, &param) == GUEST_EFAULT);
+        Require(pthread_attr_getschedpolicy_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getscope_nid_postfix(attrs, &value) == GUEST_EFAULT && value == -1);
+        Require(pthread_attr_getstacksize_nid_postfix(attrs, &size) == GUEST_EFAULT && size == 1);
+        Require(pthread_attr_setdetachstate_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_setguardsize_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_setinheritsched_nid_postfix(attrs, EXPLICIT_SCHED) == GUEST_EFAULT);
+        Require(pthread_attr_setschedparam_nid_postfix(attrs, &param) == GUEST_EFAULT);
+        Require(pthread_attr_setschedpolicy_nid_postfix(attrs, 1) == GUEST_EFAULT);
+        Require(pthread_attr_setscope_nid_postfix(attrs, SCOPE_SYSTEM) == GUEST_EFAULT);
+        Require(pthread_attr_setstacksize_nid_postfix(attrs, STACK_SIZE) == GUEST_EFAULT);
+        void* stackAddress = reinterpret_cast<void*>(1);
+        Require(pthread_attr_getstack_nid_postfix(attrs, &stackAddress, &size) == GUEST_EFAULT && stackAddress == reinterpret_cast<void*>(1) && size == 1);
+        *__error_nid_postfix() = 42;
+        Require(pthread_attr_getstackaddr_nid_postfix(attrs, &stackAddress) == GUEST_EFAULT && stackAddress == reinterpret_cast<void*>(1));
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(attrs, &stackAddress, &size) == SCE_KERNEL_ERROR_EFAULT && stackAddress == reinterpret_cast<void*>(1) && size == 1);
+        Require(*__error_nid_postfix() == 42);
+        Require(pthread_attr_setstack_nid_postfix(attrs, &value, STACK_SIZE) == GUEST_EFAULT);
+        Require(scePthreadAttrSetstack(attrs, &value, STACK_SIZE) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_attr_setsolosched_np_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
+
+        PthreadAttr attr = nullptr;
+        Require(pthread_attr_init_nid_postfix(&attr) == 0);
+        Require(pthread_attr_getdetachstate_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getguardsize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
+        Require(pthread_attr_getinheritsched_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_getschedpolicy_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getscope_nid_postfix(&attr, ints) == GUEST_EFAULT);
+        Require(pthread_attr_getstacksize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
+        Require(pthread_attr_setschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, static_cast<void**>(pointer), sizes) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, sizes) == GUEST_EFAULT);
+        *__error_nid_postfix() = 42;
+        Require(pthread_attr_getstackaddr_nid_postfix(&attr, static_cast<void**>(pointer)) == GUEST_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, static_cast<void**>(pointer), sizes) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, &stackAddress, sizes) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, static_cast<void**>(pointer), &size) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    }
+}
+
+static void CheckGetNpPointers() {
+    constexpr int GUEST_EFAULT = 14;
+    const Pthread self = scePthreadSelf();
+    const Pthread unknown = reinterpret_cast<Pthread>(0x10);
+    GuardPage page;
+    PthreadAttr* const bad[] = {reinterpret_cast<PthreadAttr*>(0x10), static_cast<PthreadAttr*>(page.Unreadable())};
+    PthreadAttr valid = nullptr;
+    Require(scePthreadAttrInit(&valid) == SCE_OK);
+    PthreadAttr unset = nullptr;
+    for (PthreadAttr* pointer : bad) {
+        Require(pthread_attr_get_np_nid_postfix(self, pointer) == GUEST_EFAULT);
+        Require(pthread_attr_get_np_nid_postfix(unknown, pointer) == GUEST_EFAULT);
+        Require(pthread_attr_get_np_nid_postfix(nullptr, pointer) == GUEST_EINVAL);
+    }
+    Require(pthread_attr_get_np_nid_postfix(self, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(self, &unset) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(nullptr, &valid) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(unknown, &valid) == GUEST_ESRCH);
+    Require(pthread_attr_get_np_nid_postfix(self, &valid) == 0);
+    Require(scePthreadAttrDestroy(&valid) == SCE_OK);
+}
+
 int main() {
+    CheckBadPointers();
+    CheckGetNpPointers();
     CheckGetprioOfTheCallingThread();
+    CheckGetprioOfEndedThreads();
     CheckStackSizeLimit();
     CheckGuardSize();
     CheckSoloSched();

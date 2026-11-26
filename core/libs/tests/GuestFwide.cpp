@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
@@ -90,7 +91,7 @@ Function Symbol(
 int main(int argc, char** argv) {
     Require(argc == 3, "expected libc path and scratch filename");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     const auto library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -123,6 +124,25 @@ int main(int argc, char** argv) {
     Require(wide(stream, 1) == 1, "positive mode should establish wide orientation");
     Require(wide(stream, -1) == 1, "an established orientation must not change");
     Require(close(stream) == 0, "could not close query-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, -1) == -1, "negative mode should establish byte orientation");
+    Require(wide(stream, 1) == -1, "an established byte orientation must not change to wide");
+    Require(wide(stream, 0) == -1, "querying established byte orientation");
+    Require(close(stream) == 0, "could not close byte-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, 1000) == 1, "large positive mode should establish wide orientation");
+    Require(wide(stream, -5000) == 1, "large negative mode must not change established wide orientation");
+    Require(close(stream) == 0, "could not close wide-oriented stream");
+
+    stream = open(argv[2], "w+b");
+    Require(stream != nullptr, "could not reopen guest stream");
+    Require(wide(stream, -1000) == -1, "large negative mode should establish byte orientation");
+    Require(wide(stream, 5000) == -1, "large positive mode must not change established byte orientation");
+    Require(close(stream) == 0, "could not close byte-oriented stream");
 
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
@@ -189,7 +209,11 @@ int main(int argc, char** argv) {
     stream = open(argv[2], "w+b");
     Require(stream != nullptr, "could not reopen guest stream");
     Require(getWideLine(wideLine, 0, stream) == nullptr, "fgetws with size 0 should fail");
-    Require(wide(stream, 0) == 1, "fgetws should orient the stream even for size 0");
+    Require(wide(stream, 0) == 0, "fgetws with size 0 should leave the stream unoriented, as the PS5 system module does");
+    Require(getWideLine(wideLine, 1, stream) == nullptr, "fgetws with size 1 should fail");
+    Require(wide(stream, 0) == 0, "fgetws with size 1 should leave the stream unoriented");
+    Require(getWideLine(wideLine, 2, stream) == nullptr, "fgetws at end of file should fail");
+    Require(wide(stream, 0) == 1, "fgetws with size 2 should orient the stream even at end of file");
     Require(close(stream) == 0, "could not close stream after fgetws");
 
     const auto scanList = Symbol<ScanList>(library, "vfscanf_nid_postfix");

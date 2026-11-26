@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 using namespace SceJson2;
 
@@ -85,6 +86,11 @@ int main() {
     }
     _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&parameter), nullptr, &second);
     Require(std::memcmp(&parameter, &saved, sizeof(saved)) == 0, "A null RTTI setter argument must preserve settings");
+    alignas(8) std::array<std::byte, 40> nullLegacy;
+    nullLegacy.fill(std::byte{0xa5});
+    _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(reinterpret_cast<InitParameterRtti*>(nullLegacy.data()), nullptr, &second, 4096);
+    for (std::size_t i = 0; i < nullLegacy.size(); ++i)
+        Require(nullLegacy[i] == (i < 24 ? std::byte{} : std::byte{0xa5}), "A null legacy RTTI argument must clear only its 24-byte base");
     Callbacks replacement{AllocateReplacement, FreeMemory, NotifyError};
     Parameter newer{};
     _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&newer), &replacement, &second);
@@ -123,5 +129,28 @@ int main() {
     const int before = first.calls;
     notify(parameter.allocator, static_cast<int>(0x80848102), 512, parameter.context);
     Require(first.calls == before, "An optional null notifier must not dispatch a callback");
+    auto refusedCall = [](auto call) {
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const Parameter kept = parameter;
+    callbacks = {AllocateMemory, FreeMemory, NotifyError};
+    Require(refusedCall([&] { _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<InitParameter2*>(&parameter), unmapped, &second); }) &&
+                std::memcmp(&parameter, &kept, sizeof(kept)) == 0,
+            "Unmapped RTTI callbacks must be refused before the parameter block changes");
+    Require(refusedCall([&] { _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(static_cast<InitParameter2*>(unmapped), &callbacks, &second); }),
+            "An unmapped parameter block must be refused by the RTTI setter");
+    alignas(8) std::array<std::byte, 40> unread;
+    unread.fill(std::byte{0xa5});
+    Require(refusedCall([&] { _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(reinterpret_cast<InitParameterRtti*>(unread.data()), unmapped, &second, 4096); }) &&
+                unread[0] == std::byte{} && unread[24] == std::byte{0xa5},
+            "Unmapped legacy RTTI callbacks must be refused after the base is cleared");
+    Require(refusedCall([&] { _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(static_cast<InitParameterRtti*>(unmapped), nullptr, &second, 4096); }),
+            "An unmapped legacy parameter block must be refused");
     return 0;
 }

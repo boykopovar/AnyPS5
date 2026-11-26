@@ -1,11 +1,14 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "ImageTableAbi.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -21,15 +24,20 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
+using AgcDriver::Graphics::CompiledShader;
 using AgcDriver::Graphics::Require;
+using AgcDriver::Graphics::ShaderResources;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Wide = 64;
@@ -47,6 +55,9 @@ constexpr std::uint32_t Largest = 60;
 constexpr std::uint32_t Written = 61;
 constexpr std::uint32_t Depth = 62;
 constexpr std::uint32_t Sized = 59;
+constexpr std::uint32_t Tied = 58;
+constexpr std::uint32_t Proved = 56;
+constexpr std::size_t ArgumentsWord = 4096;
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
@@ -176,7 +187,7 @@ void FillTable(const GuestBlock& block) {
     }
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode, std::array<std::uint32_t, 3> partialThreads = {}, std::uint32_t pushBytes = 128) {
     const auto srtAddress = AddressOf(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> words(table.Table(), Records * Stride / 4u);
@@ -186,12 +197,12 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
         {AddressOf(words.data()), std::as_bytes(words)},
         {AddressOf(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1, partialThreads};
     const ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, AddressOf(code.data()), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
+        {0, 0, 0, pushBytes}
     };
     auto result = ShaderRecompiler::Recompile(request);
     const auto binding = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& candidate) { return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable; });
@@ -278,6 +289,59 @@ void RunLargest(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Expect(before, 1, 3, 0, "three dispatches of two variants with no write and no depth surface");
 }
 
+void RunReused(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    SetRecord(block, 0, block.Texels(Largest), Wide);
+    SetRecord(block, 1, block.Texels(Largest), Narrow);
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 1) == Row(block.Texels(Largest), Wide), "image table variants: the narrow variant did not borrow the largest one");
+    Require(Dispatch(device, result, 1) == Row(block.Texels(Largest), Wide), "image table variants: the narrow variant of a reused table did not borrow the largest one");
+    const auto reused = AgcDriver::Graphics::ImageTableReuses().reused - before.reused;
+    Require(reused != 0u, "image table variants: a table whose borrowing entry shares a cached representative was resolved again instead of reused");
+    const auto step = Since(before);
+    Require(step.substituted == 2u && step.rejected == 0u, "image table variants: two dispatches of a reused table with a borrowing entry: " + std::to_string(step.substituted) + " substituted and " + std::to_string(step.rejected) + " rejected entries, expected 2 and 0");
+}
+
+void RunReusedWritten(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    SetRecord(block, 0, block.Texels(Written), Wide);
+    SetRecord(block, 1, block.Texels(Written), Narrow);
+    const auto result = Compile(device, block);
+    Store(device, block.Texels(Written), Wide);
+    std::vector<float> wide(Wide);
+    for (std::uint32_t x = 0; x < Wide; ++x) wide[x] = -4.0f - static_cast<float>(x);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 1) == Row(wide.data(), Wide), "image table variants: the narrow variant did not borrow the wide one written last");
+    Store(device, block.Texels(Written), Narrow);
+    std::vector<float> narrow(Narrow);
+    for (std::uint32_t x = 0; x < Narrow; ++x) narrow[x] = -4.0f - static_cast<float>(x);
+    Require(Dispatch(device, result, 0) == Row(narrow.data(), Narrow), "image table variants: after a write of the narrow variant, the wide variant of a remembered table did not borrow it");
+}
+
+std::uint64_t GuestBytes(const void* texels, std::uint32_t width) {
+    std::array<std::uint32_t, 8> words{};
+    const auto image = Image(texels, width);
+    std::copy(image.begin(), image.end(), words.begin());
+    return AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(words)).guestBytes;
+}
+
+void RunTied(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Require(GuestBytes(block.Texels(Tied), Narrow) == GuestBytes(block.Texels(Tied), Wide), "image table variants: the narrow and the wide variant no longer have the same guest bytes");
+    Prepare(block);
+    Fill(block.Texels(Tied), 7000.25f);
+    SetRecord(block, 0, block.Texels(Tied), Narrow);
+    SetRecord(block, 1, block.Texels(Tied), Wide);
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto wide = Row(block.Texels(Tied), Wide);
+    Require(Dispatch(device, result, 0) == wide, "image table variants: with the same guest bytes, the narrow variant ahead of the wide one did not borrow the wide one");
+    Require(Dispatch(device, result, 1) == wide, "image table variants: with the same guest bytes, the wide variant behind the narrow one sampled the wrong texels");
+    Expect(before, 1, 2, 0, "two dispatches of two variants with the same guest bytes");
+}
+
 void RunWritten(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Prepare(block);
     SetRecord(block, 0, block.Texels(Written), Wide);
@@ -349,18 +413,116 @@ void RunRejected(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
 }
 
+ShaderRecompiler::RecompileResult ProofProgram(const float* variants, const float* other) {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    using ShaderRecompiler::DescriptorKind;
+    using ShaderRecompiler::DescriptorRole;
+    constexpr std::uint32_t count = 3;
+    constexpr auto bindingCount = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding map{};
+    map.kind = DescriptorKind::StorageBuffer;
+    map.role = DescriptorRole::ImageTableMap;
+    map.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Stage::Main) * bindingCount + static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap);
+    map.count = 1;
+    map.guestDescriptor.assign(Abi::HeaderWords + count, 0u);
+    map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+    map.guestDescriptor[Abi::HeaderElementCount] = count;
+    map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+    map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords + count;
+    program.bindings.push_back(map);
+    ShaderRecompiler::DescriptorBinding images{};
+    images.kind = DescriptorKind::SampledImage;
+    images.role = DescriptorRole::ImageTable;
+    images.binding = ShaderRecompiler::RuntimeAbi::ImageTableBinding;
+    images.count = count;
+    const std::array<std::array<std::uint32_t, 4>, count> entries{Image(variants, Narrow), Image(variants, Wide), Image(other, Wide)};
+    for (const auto& entry : entries) {
+        images.guestDescriptor.insert(images.guestDescriptor.end(), entry.begin(), entry.end());
+        images.guestDescriptor.insert(images.guestDescriptor.end(), 4u, 0u);
+    }
+    images.imageShapes.assign(count, ShaderRecompiler::DescriptorImageShape::Image2D);
+    images.imageDepthCompare.assign(count, false);
+    images.imageSamplers.assign(count, 0u);
+    program.bindings.push_back(std::move(images));
+    return program;
+}
+
+void RunProof(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Fill(block.Texels(Proved), 9000.25f);
+    Fill(block.Texels(Proved + 1u), 9500.25f);
+    const auto program = ProofProgram(block.Texels(Proved), block.Texels(Proved + 1u));
+    const CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = device.graphicsContext();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::unique_ptr<ShaderResources> resources;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        resources = std::make_unique<ShaderResources>(context, shader);
+        Require(resources->Reusable(), "image table variants: a set over a table with a borrowing entry is not reusable");
+        Require(resources->SampledTextures().size() == 2u, "image table variants: a set over two surfaces and a borrowing entry holds " + std::to_string(resources->SampledTextures().size()) + " textures");
+        const auto entries = AgcDriver::Graphics::TextureCacheUsage().sampledEntries;
+        const bool walked = resources->Revalidate(shader);
+        Require(AgcDriver::Graphics::TextureCacheUsage().sampledEntries == entries, "image table variants: the full walk looked up the own extent of a borrowing entry");
+        Require(walked, "image table variants: the full walk over a table with a borrowing entry failed");
+    }
+    AgcDriver::Graphics::DepthSurfaceView(context, AgcDriver::Graphics::DepthTarget{AddressOf(block.Texels(Proved)), 0, {Narrow, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(!resources->Revalidate(shader), "image table variants: a set whose borrowing entry moved to another representative proved current");
+        resources.reset();
+    }
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
+}
+
+void RunThreadDimensions(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    const auto result = Compile(device, block, TableCode, {~0u, ~0u, ~0u}, 0u);
+    const auto table = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+    const auto data = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    Require(data != result.bindings.end() && table < data, "image table variants: the thread-dimension shader does not bind its ShaderData after its image table");
+    auto* arguments = block.Table() + ArgumentsWord;
+    std::fill(arguments, arguments + 4, 0u);
+    for (const std::uint32_t threads : {Lanes, Lanes / 2u + 3u}) {
+        arguments[0] = threads;
+        arguments[1] = 1u;
+        arguments[2] = 1u;
+        Keys[0] = 5u;
+        std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+        device.DispatchIndirect(result, AddressOf(arguments), {}, AddressOf(TableCode.data()), nullptr, nullptr, {Lanes, 1u, 1u});
+        device.WaitIdle();
+        const auto expected = Row(block.Texels(5), Wide);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            const auto red = Output[lane * 4u];
+            if (lane < threads) Require(red == expected[lane], "image table variants: a thread-dimension dispatch of " + std::to_string(threads) + " threads sampled the wrong texel in lane " + std::to_string(lane));
+            else Require(red == 0xdeadbeefu, "image table variants: a thread-dimension dispatch of " + std::to_string(threads) + " threads ran lane " + std::to_string(lane));
+        }
+    }
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    RunTied(device, block);
+    RunProof(device, block);
     RunLargest(device, block);
+    RunReused(device, block);
     RunWritten(device, block);
+    RunReusedWritten(device, block);
     RunFetch(device, block);
     RunSize(device, block);
     RunDepth(device, block);
     RunRejected(device, block);
+    RunThreadDimensions(device, block);
 }
 
 }
 
 int main() {
+#ifdef _WIN32
+    _putenv_s("APS5_NO_FAST_REVALIDATE", "1");
+#else
+    setenv("APS5_NO_FAST_REVALIDATE", "1", 1);
+#endif
     try {
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();

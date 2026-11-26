@@ -31,10 +31,25 @@ extern char** environ;
 
 namespace AgcDriver {
 
+std::atomic<bool> PerformanceTrace::buffering{false};
+std::mutex PerformanceTrace::gpuMutex;
+std::vector<TraceGpuRange> PerformanceTrace::gpuRanges;
+std::size_t PerformanceTrace::gpuCapacity = TraceThread::DefaultCapacity;
+std::uint64_t PerformanceTrace::gpuLost = 0;
+
+void PerformanceTrace::GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch) {
+    if (!buffering.load(std::memory_order_relaxed)) return;
+    std::lock_guard lock(gpuMutex);
+    if (gpuRanges.size() >= gpuCapacity) {
+        ++gpuLost;
+        return;
+    }
+    gpuRanges.push_back({name, beginNs, endNs, batch});
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr std::size_t GpuRangeCapacity = TraceThread::DefaultCapacity;
 
 struct Session {
     std::mutex mutex;
@@ -43,11 +58,13 @@ struct Session {
     std::optional<TraceWindow> window;
     bool windowOpen = false;
     std::vector<std::vector<TraceThread::Total>> windowBase;
+    std::uint64_t windowOwnedUnbound = 0;
     std::optional<TraceInterval> interval;
     bool intervalOpen = false;
     std::uint64_t intervalFirstPresent = 0;
     double intervalGpuBusy = 0;
     std::vector<std::vector<TraceThread::Total>> intervalBase;
+    std::uint64_t intervalOwnedUnbound = 0;
     std::vector<Clock::time_point> intervalPresents;
     Clock::time_point first{};
     std::uint64_t present = 0;
@@ -81,8 +98,7 @@ std::unique_ptr<TraceBenchWriter>& benchWriter() {
 }
 
 std::filesystem::path traceDirectory() {
-    const char* directory = std::getenv("APS5_TRACE_DIR");
-    return std::filesystem::path(directory != nullptr ? directory : ".");
+    return TraceFile::Directory();
 }
 
 std::uint64_t processId() {
@@ -267,6 +283,7 @@ void PerformanceTrace::OpenInterval(Clock::time_point now, std::uint64_t present
     state.intervalOpen = true;
     state.intervalFirstPresent = present;
     state.intervalGpuBusy = VulkanDevice::PresentCounts().gpuBusyMs;
+    state.intervalOwnedUnbound = OwnedDrawUnbound();
     state.intervalPresents.assign(1, now);
     if (summaryWriter()) return;
     summaryWriter() = std::make_unique<ProfileOutput>([directory = traceDirectory()](std::string_view text) {
@@ -295,6 +312,7 @@ void PerformanceTrace::FlushInterval(Clock::time_point now, std::uint32_t width,
         snapshots.push_back(std::move(snapshot));
     }
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.intervalOwnedUnbound;
     summary.window = state.interval->Describe();
     summary.firstPresent = state.intervalFirstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.intervalGpuBusy;
@@ -347,6 +365,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     if (edge == TraceWindow::Edge::Open) {
         state.windowOpen = true;
         state.windowBase = totalsOf(state.threads);
+        state.windowOwnedUnbound = OwnedDrawUnbound();
         state.firstPresent = present;
         state.gpuBusyAtOpen = VulkanDevice::PresentCounts().gpuBusyMs;
         TraceClockSample clock;
@@ -355,7 +374,8 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
             std::lock_guard gpu(gpuMutex);
             gpuRanges.clear();
             gpuLost = 0;
-            gpuRanges.reserve(GpuRangeCapacity);
+            gpuCapacity = TraceThread::ParseCapacity(std::getenv("APS5_TRACE_EVENTS"));
+            gpuRanges.reserve(gpuCapacity);
         }
         state.presents.push_back(now);
         presentCount.fetch_add(1, std::memory_order_relaxed);
@@ -394,6 +414,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     }
     const auto process = processId();
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.windowOwnedUnbound;
     summary.window = state.window->Describe();
     summary.firstPresent = state.firstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.gpuBusyAtOpen;

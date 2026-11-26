@@ -47,10 +47,51 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(row["unit"], "ms")
         self.assertEqual([float(row[key]) for key in ("baseline", "candidate", "change", "change_pct")], [20, 10, -10, -50])
         report = performance_compare.compare(self.before, self.after)
-        for row in (row for row in rows if row["kind"] == "metric"):
+        metrics = [row for row in rows if row["kind"] == "metric"]
+        self.assertCountEqual([row["name"] for row in metrics], list(report["metrics_ms"]))
+        for row in metrics:
             for field in ("baseline", "candidate", "change", "change_pct"):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
+
+    def test_gpu_busy_metric_uses_milliseconds_per_present(self):
+        self.before["gpu_busy_ms_per_present"] = 5.0
+        self.after["gpu_busy_ms_per_present"] = 3.0
+        rows = self.rows(self.run_csv())
+        gpu = next(row for row in rows if row["kind"] == "metric" and row["name"] == "gpu_busy_ms_per_present")
+        self.assertEqual(gpu["unit"], "ms/present")
+        self.assertEqual([float(gpu[field]) for field in ("baseline", "candidate", "change", "change_pct")],
+                         [5.0, 3.0, -2.0, -40.0])
+
+    def test_graphics_track_rates_are_not_lost_by_csv_export(self):
+        self.before["graphics_track"] = {"Graphics.RenderPass": 8, "Graphics.RenderPass.Continued": 40,
+                                        "Graphics.Barrier.draw": 80, "Graphics.BarrierMerged.draw": 16,
+                                        "Graphics.Copy": 4, "Graphics.Copy.bytes": 4 * 1024 * 1024}
+        self.after["graphics_track"] = {"Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 20,
+                                       "Graphics.Barrier.draw": 120, "Graphics.BarrierMerged.draw": 0,
+                                       "Graphics.Copy": 6, "Graphics.Copy.bytes": 2 * 1024 * 1024}
+        rows = {row["name"]: row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"}
+        expected = {"render_passes": [2, 3, 1, 50], "continued_draws": [10, 5, -5, -50],
+                    "barriers": [20, 30, 10, 50], "merged_barriers": [4, 0, -4, -100],
+                    "copies": [1, 1.5, 0.5, 50], "copy_mib": [1, 0.5, -0.5, -50]}
+        self.assertEqual(set(rows), set(expected))
+        for name, values in expected.items():
+            self.assertEqual(rows[name]["unit"], "MiB/present" if name == "copy_mib" else "count/present")
+            self.assertEqual([float(rows[name][key]) for key in ("baseline", "candidate", "change", "change_pct")], values)
+
+    def test_missing_graphics_track_is_empty_while_reported_zero_is_zero(self):
+        self.before.pop("graphics_track", None)
+        self.after["graphics_track"] = {}
+        rows = [row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"]
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertEqual((row["baseline"], row["change"], row["change_pct"]), ("", "", ""))
+            self.assertEqual(float(row["candidate"]), 0)
+
+    def test_absent_graphics_tracks_add_no_csv_rows(self):
+        self.before.pop("graphics_track", None)
+        self.after.pop("graphics_track", None)
+        self.assertFalse([row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"])
 
     def test_worker_rows_keep_percentage_points_and_missing_values(self):
         name = 'queue, "worker"\n\u6e2c\u8a66'
@@ -84,9 +125,9 @@ class PerformanceCsvTests(unittest.TestCase):
         self.before["top_phases_ms_per_frame"] = {"before": 1}
         self.after["top_phases_ms_per_frame"] = {"after": 2}
         rows = self.rows(self.run_csv())
-        for row in (row for row in rows if row["kind"] == "phase"):
-            self.assertEqual((row["change"], row["change_pct"]), ("", ""))
-            self.assertTrue(row["baseline"] == "" or row["candidate"] == "")
+        phases = [(row["name"], row["baseline"], row["candidate"], row["change"], row["change_pct"])
+                  for row in rows if row["kind"] == "phase"]
+        self.assertCountEqual(phases, [("before", "1", "", "", ""), ("after", "", "2", "", "")])
         gpu = next(row for row in rows if row["name"] == "gpu_busy_ms_per_present")
         self.assertEqual(gpu["change_pct"], "")
 
@@ -100,6 +141,13 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
+
+    def test_trace_output_directory_does_not_block_csv_export(self):
+        self.before["env"]["APS5_TRACE_DIR"] = "baseline"
+        self.after["env"]["APS5_TRACE_DIR"] = "candidate"
+        rows = self.rows(self.run_csv("--require-matching-context"))
+        self.assertTrue(any(row["kind"] == "metric" for row in rows))
+        self.assertFalse(any(row["kind"] == "configuration" for row in rows))
 
     def test_missing_and_empty_context_values_stay_distinct(self):
         self.before.pop("cpu", None)
@@ -152,6 +200,171 @@ class PerformanceCsvTests(unittest.TestCase):
         rows = self.rows(result)
         commit = next(row for row in rows if row["kind"] == "capture" and row["name"] == "commit")
         self.assertEqual((commit["baseline"], commit["candidate"]), (self.before["commit"], self.after["commit"]))
+
+    def test_default_output_retains_raw_format_byte_for_byte(self):
+        report = performance_compare.compare(self.before, self.after)
+        default_render = performance_csv.render_csv(report)
+        explicit_false_render = performance_csv.render_csv(report, spreadsheet_safe=False)
+        self.assertEqual(default_render, explicit_false_render)
+        result = self.run_csv()
+        self.assertEqual(result.stdout.decode("utf-8"), default_render)
+        self.assertNotIn('"', default_render.splitlines()[0])
+        minimal = {
+            "baseline": {"commit": "a", "trace": "x", "presents": 1, "window": {"ms": 10}},
+            "candidate": {"commit": "b", "trace": "y", "presents": 2, "window": {"ms": 20}},
+            "metrics_ms": {}, "top_phases_ms_per_frame": {}, "worker_busy_pct": {},
+            "configuration_differences": {}, "notes": [],
+        }
+        self.assertEqual(performance_csv.render_csv(minimal),
+                         "kind,name,unit,baseline,candidate,change,change_pct\r\n"
+                         "capture,commit,,a,b,,\r\n"
+                         "capture,trace,,x,y,,\r\n"
+                         "capture,presents,count,1,2,,\r\n"
+                         "capture,window.ms,ms,10,20,,\r\n")
+
+    def test_spreadsheet_safe_help_text(self):
+        result = subprocess.run([sys.executable, str(Path(performance_csv.__file__)), "--help"],
+                                capture_output=True, timeout=5, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--spreadsheet-safe", result.stdout)
+        self.assertIn("opt-in tab prefix changes text cells; spreadsheet behavior varies and save/reopen not guaranteed", " ".join(result.stdout.split()))
+
+    def test_spreadsheet_safe_quotes_text_and_preserves_numeric_and_empty_cells(self):
+        self.before["worker_busy_pct"] = {"w1": 50, "idle": 0}
+        self.after["worker_busy_pct"] = {"w1": 25, "new": 10}
+        report = performance_compare.compare(self.before, self.after)
+        raw_csv = performance_csv.render_csv(report, spreadsheet_safe=True)
+        self.assertTrue(raw_csv.startswith('"kind","name","unit","baseline","candidate","change","change_pct"\r\n'))
+        self.assertIn(',50,25,-25,-50.0\r\n', raw_csv)
+        self.assertIn('"worker","new","%","",10,"",""\r\n', raw_csv)
+        result = self.run_csv("--spreadsheet-safe")
+        self.assertEqual(result.stdout.decode("utf-8"), raw_csv)
+        reader = list(csv.reader(io.StringIO(raw_csv, newline=""), quoting=csv.QUOTE_NONNUMERIC))
+        w1 = next(row for row in reader if row[0] == "worker" and row[1] == "w1")
+        self.assertEqual(w1, ["worker", "w1", "%", 50.0, 25.0, -25.0, -50.0])
+        new_worker = next(row for row in reader if row[0] == "worker" and row[1] == "new")
+        self.assertEqual(new_worker, ["worker", "new", "%", "", 10.0, "", ""])
+
+    def test_spreadsheet_safe_prefixes_dangerous_cells_throughout_row_types(self):
+        self.before["commit"] = "=deadbeef"
+        self.after["commit"] = "+cafebabe"
+        self.before["trace"] = "-base.json.gz"
+        self.after["trace"] = "@cand.json.gz"
+        self.before["top_phases_ms_per_frame"] = {"+phase": 10}
+        self.after["top_phases_ms_per_frame"] = {"+phase": 20}
+        self.before["worker_busy_pct"] = {"-worker": 10}
+        self.after["worker_busy_pct"] = {"-worker": 20}
+        self.after["driver"] = "=driver_candidate"
+        self.before["env"]["@CONFIG"] = "+base_env"
+        self.after["env"]["@CONFIG"] = "-cand_env"
+        self.before["env"]["APOSTROPHE"] = "'benign_apostrophe'"
+        self.after["env"]["APOSTROPHE"] = "'benign_apostrophe'"
+        report = performance_compare.compare(self.before, self.after)
+        report["configuration_differences"]["=config_key"] = {"baseline": "base_val", "candidate": "cand_val"}
+        report["notes"].append("-custom dangerous note")
+        raw_csv = performance_csv.render_csv(report, spreadsheet_safe=True)
+        reader = list(csv.reader(io.StringIO(raw_csv, newline="")))
+        commit_row = next(row for row in reader if row[0] == "capture" and row[1] == "commit")
+        self.assertEqual((commit_row[3], commit_row[4]), ("\t=deadbeef", "\t+cafebabe"))
+        trace_row = next(row for row in reader if row[0] == "capture" and row[1] == "trace")
+        self.assertEqual((trace_row[3], trace_row[4]), ("\t-base.json.gz", "\t@cand.json.gz"))
+        phase_row = next(row for row in reader if row[0] == "phase")
+        self.assertEqual(phase_row[1], "\t+phase")
+        worker_row = next(row for row in reader if row[0] == "worker")
+        self.assertEqual(worker_row[1], "\t-worker")
+        driver_row = next(row for row in reader if row[0] == "configuration" and row[1] == "driver")
+        self.assertEqual(driver_row[4], "\t=driver_candidate")
+        config_row = next(row for row in reader if row[0] == "configuration" and row[1] == "env.@CONFIG")
+        self.assertEqual((config_row[3], config_row[4]), ("\t+base_env", "\t-cand_env"))
+        dangerous_key_row = next(row for row in reader if row[0] == "configuration" and row[1] == "\t=config_key")
+        self.assertEqual((dangerous_key_row[3], dangerous_key_row[4]), ("base_val", "cand_val"))
+        note_row = next(row for row in reader if row[0] == "note" and "-custom dangerous note" in row[1])
+        self.assertEqual(note_row[1], "\t-custom dangerous note")
+        benign_note = next(row for row in reader if row[0] == "note" and "Changes are candidate minus baseline" in row[1])
+        self.assertFalse(benign_note[1].startswith("\t"))
+
+    def test_spreadsheet_safe_triggers_whitespace_controls_and_fullwidth(self):
+        cases = [
+            ("   =formula", "\t   =formula"),
+            ("   +calc", "\t   +calc"),
+            ("   -value", "\t   -value"),
+            ("   @mention", "\t   @mention"),
+            ("\uff1dformula", "\t\uff1dformula"),
+            ("\uff0bcalc", "\t\uff0bcalc"),
+            ("\uff0dvalue", "\t\uff0dvalue"),
+            ("\uff20mention", "\t\uff20mention"),
+            ("   \uff1dindented", "\t   \uff1dindented"),
+            ("\tcommand", "\t\tcommand"),
+            ("\rcommand", "\t\rcommand"),
+            ("\ncommand", "\t\ncommand"),
+            ("\r\ncommand", "\t\r\ncommand"),
+            ("  \tpreceded", "\t  \tpreceded"),
+            ("  \rpreceded", "\t  \rpreceded"),
+            ("  \npreceded", "\t  \npreceded"),
+            ("hello", "hello"),
+            ("hello\tworld", "hello\tworld"),
+            ("Driver, \"phase\"\r\n\u6e2c\u8a66", "Driver, \"phase\"\r\n\u6e2c\u8a66"),
+            ("'single'", "'single'"),
+            (None, "<missing>"),
+            ("<missing>", "\\<missing>"),
+            ("\\<missing>", "\\\\<missing>"),
+            ("   ", "   "),
+        ]
+        for candidate_val, expected_val in cases:
+            report = {
+                "baseline": {"commit": "c", "trace": "t", "presents": 1, "window": {"ms": 10.0}},
+                "candidate": {"commit": "c", "trace": "t", "presents": 1, "window": {"ms": 10.0}},
+                "metrics_ms": {},
+                "top_phases_ms_per_frame": {},
+                "worker_busy_pct": {},
+                "configuration_differences": {"field": {"baseline": "base", "candidate": candidate_val}},
+                "notes": [],
+            }
+            raw_csv = performance_csv.render_csv(report, spreadsheet_safe=True)
+            reader = list(csv.reader(io.StringIO(raw_csv, newline="")))
+            cfg_row = next(row for row in reader if row[0] == "configuration")
+            self.assertEqual(cfg_row[4], expected_val)
+
+    def test_spreadsheet_safe_configuration_cell_marker_encoding_preserved(self):
+        self.before.pop("cpu", None)
+        self.after["cpu"] = "<missing>"
+        self.before["env"]["SLASH"] = r"\<missing>"
+        self.after["env"].pop("SLASH", None)
+        self.after["env"]["DANGEROUS_SLASH"] = r"\-dangerous"
+        self.before["env"].pop("DANGEROUS_SLASH", None)
+        rows = list(csv.reader(io.StringIO(self.run_csv("--spreadsheet-safe").stdout.decode("utf-8"), newline="")))
+        cpu = next(row for row in rows if row[0] == "configuration" and row[1] == "cpu")
+        env = next(row for row in rows if row[0] == "configuration" and row[1] == "env.SLASH")
+        slash = next(row for row in rows if row[0] == "configuration" and row[1] == "env.DANGEROUS_SLASH")
+        self.assertEqual((cpu[3], cpu[4]), ("<missing>", r"\<missing>"))
+        self.assertEqual((env[3], env[4]), (r"\\<missing>", "<missing>"))
+        self.assertEqual((slash[3], slash[4]), ("<missing>", r"\\-dangerous"))
+
+
+class SafeCellTests(unittest.TestCase):
+    def test_formula_and_control_prefixes_get_a_leading_tab(self):
+        for value in ("=1+1", "+1", "-1", "@SUM(A1)", "  =x", "\tx", "\rx", "\nx", "\uff1dx", "\uff0bx", "\uff0dx", "\uff20x"):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), "\t" + value)
+
+    def test_ordinary_values_are_unchanged(self):
+        for value in ("abc", "1-2", " x", "", 5, 2.5, None):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), value)
+
+class CellEscapeTests(unittest.TestCase):
+    def test_safe_cell_prefixes_formula_triggers_with_a_tab(self):
+        for value in ('=1+1', '+x', '-y', '@z'):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), '\t' + value)
+        self.assertEqual(performance_csv.safe_cell('plain'), 'plain')
+        self.assertEqual(performance_csv.safe_cell(3), 3)
+
+    def test_configuration_cell_names_missing_values_and_escapes_backslashes(self):
+        self.assertEqual(performance_csv.configuration_cell(None), '<missing>')
+        self.assertEqual(performance_csv.configuration_cell('<missing>'), '\\<missing>')
+        self.assertEqual(performance_csv.configuration_cell('\\lead'), '\\\\lead')
+        self.assertEqual(performance_csv.configuration_cell('value'), 'value')
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 #ifndef CORE_LIBS_PRX_LIBSCEOPUSCELTENC_INCLUDE_OPUSENCODER_HPP
 #define CORE_LIBS_PRX_LIBSCEOPUSCELTENC_INCLUDE_OPUSENCODER_HPP
 
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -50,9 +52,13 @@ public:
         for (const auto& [id, owner] : contexts)
             if (owner == context) fail("context already initialized");
         if (nextContext == 0) fail("context identifiers exhausted");
-        const auto id = nextContext++;
+        const auto id = nextContext;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(context, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return error(codes.initializeNullErrorOffset);
+        ++nextContext;
         contexts.emplace(id, context);
-        *context = id;
         return 0;
     }
 
@@ -95,11 +101,10 @@ public:
     int Encode(void* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes) {
         if (!state) return error(codes.nullErrorOffset);
         if (!samples) return error(codes.nullSamplesErrorOffset);
-        if (frameSize == 0) return error(codes.frameErrorOffset);
-        std::lock_guard lock(mutex);
-        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         if (!data) return error(codes.nullDataErrorOffset);
         if (maxDataBytes == 0) return error(codes.sizeErrorOffset);
+        std::lock_guard lock(mutex);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         if (!acceptedFrame(stateRate(state), frameSize)) return error(codes.frameErrorOffset);
         const auto found = encoders.find(stateWord(state, codes.stateInstanceOffset));
         if (found == encoders.end()) fail("state does not reference a live encoder");
@@ -126,11 +131,54 @@ public:
         return bytes;
     }
 
+    enum class CtlArgument { None, Value, Unsupported };
+
+    static CtlArgument CtlArgumentKind(int request) {
+        switch (request) {
+        case OPUS_RESET_STATE: return CtlArgument::None;
+        case OPUS_SET_BITRATE_REQUEST:
+        case OPUS_SET_MAX_BANDWIDTH_REQUEST:
+        case OPUS_SET_VBR_REQUEST:
+        case OPUS_SET_BANDWIDTH_REQUEST:
+        case OPUS_SET_COMPLEXITY_REQUEST:
+        case OPUS_SET_INBAND_FEC_REQUEST:
+        case OPUS_SET_PACKET_LOSS_PERC_REQUEST:
+        case OPUS_SET_DTX_REQUEST:
+        case OPUS_SET_VBR_CONSTRAINT_REQUEST:
+        case OPUS_SET_FORCE_CHANNELS_REQUEST:
+        case OPUS_SET_SIGNAL_REQUEST:
+        case OPUS_SET_LSB_DEPTH_REQUEST:
+        case OPUS_SET_EXPERT_FRAME_DURATION_REQUEST:
+        case OPUS_SET_PREDICTION_DISABLED_REQUEST:
+        case OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST: return CtlArgument::Value;
+        }
+        return CtlArgument::Unsupported;
+    }
+
+    template <typename TReadValue>
+    static std::int32_t ReadCtlValue(int request, TReadValue readValue) {
+        return CtlArgumentKind(request) == CtlArgument::Value ? readValue() : 0;
+    }
+
+    int Ctl(void* state, int request, std::int32_t value) {
+        const CtlArgument kind = CtlArgumentKind(request);
+        if (kind == CtlArgument::Unsupported) fail(("request " + std::to_string(request) + " is not implemented").c_str());
+        std::lock_guard lock(mutex);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
+        const auto found = encoders.find(stateWord(state, codes.stateInstanceOffset));
+        if (found == encoders.end()) fail("state does not reference a live encoder");
+        OpusEncoder* codec = found->second->codec.get();
+        if (kind == CtlArgument::None) {
+            if (opus_encoder_ctl(codec, OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset the encoder");
+            return 0;
+        }
+        if (opus_encoder_ctl(codec, request, static_cast<opus_int32>(value)) != OPUS_OK) fail(("the answer to request " + std::to_string(request) + " with a value libopus refuses is not known").c_str());
+        return 0;
+    }
+
     int Destroy(void* state) {
         if (!state) return error(codes.nullErrorOffset);
-        std::uint16_t magic = 0;
-        std::memcpy(&magic, static_cast<std::uint8_t*>(state) + codes.stateMagicOffset, sizeof magic);
-        if (magic != codes.stateMagic) return error(codes.destroyStateErrorOffset);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         std::lock_guard lock(mutex);
         encoders.erase(stateWord(state, codes.stateInstanceOffset));
         setWord(state, codes.stateMagicOffset, 0);
@@ -174,7 +222,7 @@ private:
     bool acceptedFrame(int rate, int frameSize) const {
         if (frameSize < 0 || rate <= 0) return false;
         for (std::size_t index = 0; index < codes.frameStepCount; ++index)
-            if (frameSize == rate * codes.frameSteps[index] / 400) return true;
+            if (frameSize == static_cast<std::int64_t>(rate) * codes.frameSteps[index] / 400) return true;
         return false;
     }
 
@@ -193,9 +241,7 @@ private:
     }
 
     bool hasMarker(void* state) const {
-        std::uint16_t magic = 0;
-        std::memcpy(&magic, static_cast<std::uint8_t*>(state) + codes.stateMagicOffset, sizeof magic);
-        return magic == codes.stateMagic;
+        return stateWord(state, codes.stateMagicOffset) == codes.stateMagic;
     }
 
     const char* name;

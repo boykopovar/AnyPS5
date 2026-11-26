@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <atomic>
 #include <filesystem>
 #include <mutex>
 #include <stdexcept>
@@ -29,14 +30,31 @@
 #include "SceTypes.hpp"
 #include "LoadExec.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
+
+HostBrowserLauncher g_defaultUrlLauncher;
+HostMessageBoxConfirmation g_defaultUrlConfirmation;
+std::atomic<IUrlLauncher*> g_urlLauncher{&g_defaultUrlLauncher};
+std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
+SteadyUrlClock g_steadyUrlClock;
+OpenUrlGate g_urlGate(g_steadyUrlClock);
+
+int OpenWebBrowserUrl(const char* uri) {
+    const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
+    if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    const OpenUrlGateOutcome outcome = g_urlGate.Run(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
+    return outcome == OpenUrlGateOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
+}
 
 struct MeasuredParameter {
     int id;
@@ -80,15 +98,10 @@ ConsoleTimeZone HostTimeZone() {
 std::mutex appSuspendBlockMutex;
 int appSuspendBlocks = 0;
 
-int WriteStatus(bool* status, bool value, const char* function) {
-    if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
-    *status = value;
-    return SYSTEM_SERVICE_OK;
-}
-
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    *status = value;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    if (!copied) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -103,21 +116,6 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
     throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
-std::string ConvertedExecutableName(const char* path) {
-    std::string_view relative(path);
-    if (!relative.starts_with(ApplicationRoot)) UnconvertedExecutable(std::string("executables outside /app0 (") + path + ")");
-    relative.remove_prefix(std::size(ApplicationRoot) - 1);
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..") UnconvertedExecutable(std::string("a path with an empty, . or .. component (") + path + ")");
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
-}
-
 void RequireExecutableBeside(const std::filesystem::path& directory, const std::filesystem::path& target, const char* guestPath) {
     if (target.lexically_normal().parent_path() != directory.lexically_normal()) {
         UnconvertedExecutable(std::string("an executable outside /app0 (") + guestPath + ")");
@@ -125,55 +123,22 @@ void RequireExecutableBeside(const std::filesystem::path& directory, const std::
 }
 
 #if defined(_WIN32)
-std::wstring Utf16(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("sceSystemServiceLoadExec: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring QuotedArgument(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
-
 struct HostLaunch {
     std::wstring executable;
     std::wstring commandLine;
 };
 
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size()) {
-        throw std::runtime_error("sceSystemServiceLoadExec: GetModuleFileNameW failed with error " + std::to_string(GetLastError()));
-    }
-    own.resize(length);
+    const std::wstring own = HostExecutable::Own("sceSystemServiceLoadExec").wstring();
     HostLaunch launch;
     const std::filesystem::path ownPath(own);
+    std::wstring recorded(32768, L'\0');
+    const DWORD recordedLength = GetEnvironmentVariableW(MainExecutableVariableWide, recorded.data(), static_cast<DWORD>(recorded.size()));
+    const std::filesystem::path main = recordedLength > 0 && recordedLength < recorded.size() ? std::filesystem::path(recorded.substr(0, recordedLength)) : ownPath;
     if (std::strcmp(path, MainExecutable) == 0) {
-        std::wstring main(32768, L'\0');
-        const DWORD mainLength = GetEnvironmentVariableW(MainExecutableVariableWide, main.data(), static_cast<DWORD>(main.size()));
-        launch.executable = mainLength > 0 && mainLength < main.size() ? main.substr(0, mainLength) : own;
+        launch.executable = main.wstring();
     } else {
-        const auto target = ownPath.parent_path() / (Utf16(ConvertedExecutableName(path)) + ownPath.extension().wstring());
+        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + main.extension().wstring());
         RequireExecutableBeside(ownPath.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -185,7 +150,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     }
     launch.commandLine = L"\"" + launch.executable + L"\"";
     for (std::size_t index = 0; arguments != nullptr && arguments[index] != nullptr; ++index) {
-        launch.commandLine += L" " + QuotedArgument(Utf16(arguments[index]));
+        launch.commandLine += L" " + HostExecutable::QuotedArgument(HostExecutable::Wide(arguments[index], "sceSystemServiceLoadExec"));
     }
     return launch;
 }
@@ -207,30 +172,15 @@ struct HostLaunch {
     std::vector<std::string> arguments;
 };
 
-std::filesystem::path OwnExecutable() {
-    std::error_code error;
-#ifdef __APPLE__
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::filesystem::path own;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) own = std::filesystem::canonical(executable.data(), error);
-    if (own.empty()) throw std::runtime_error("sceSystemServiceLoadExec: cannot locate the executable");
-#else
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::runtime_error("sceSystemServiceLoadExec: cannot read /proc/self/exe: " + error.message());
-#endif
-    return own;
-}
-
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    const auto own = OwnExecutable();
+    const auto own = HostExecutable::Own("sceSystemServiceLoadExec");
+    const char* recorded = std::getenv(MainExecutableVariable);
+    const std::filesystem::path main = recorded != nullptr && *recorded != '\0' ? std::filesystem::path(recorded) : own;
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
-        const char* main = std::getenv(MainExecutableVariable);
-        launch.executable = main != nullptr && *main != '\0' ? main : own.string();
+        launch.executable = main.string();
     } else {
-        const auto target = own.parent_path() / (ConvertedExecutableName(path) + own.extension().string());
+        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + main.extension().string());
         RequireExecutableBeside(own.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -278,16 +228,38 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
     if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
-    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, titleId.c_str(), titleId.size() + 1);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(caller + ": unwritable title ID buffer");
 }
 
-bool WellFormedTitleId(const char* titleId) {
-    return titleId != nullptr && std::strlen(titleId) == SYSTEM_SERVICE_TITLE_ID_LENGTH;
+bool ReadTitleId(const char* titleId, std::string* value) {
+    if (titleId == nullptr) return false;
+    const int savedErrno = errno;
+    std::string local;
+    bool terminated = false;
+    for (std::size_t index = 0; index < TitleIdBufferSize; ++index) {
+        char byte = 0;
+        if (!GuestCopyIn_nid_no_patch(&byte, titleId + index, sizeof(byte))) {
+            errno = savedErrno;
+            return false;
+        }
+        if (byte == '\0') {
+            terminated = true;
+            break;
+        }
+        local.push_back(byte);
+    }
+    errno = savedErrno;
+    *value = local;
+    return terminated && local.size() == SYSTEM_SERVICE_TITLE_ID_LENGTH;
 }
 
 int RunningAppId(const std::string& caller, const char* titleId) {
-    if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
-    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    std::string localTitle;
+    if (!ReadTitleId(titleId, &localTitle)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
+    if (RunningTitleId() != localTitle) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
     return SYSTEM_SERVICE_RUNNING_APP_ID;
 }
 
@@ -295,15 +267,49 @@ template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
     if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
-    *destination = value;
-    return SYSTEM_SERVICE_OK;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
+int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::uint32_t* categoryType, int nullOutputResult) {
+    if (categoryType == nullptr) return nullOutputResult;
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(std::string(caller) + ": application other than the running title");
+    std::uint32_t value = 0;
+    if (!GetAppCategoryType_nid_no_patch(&value)) {
+        NotImplemented_nid_no_patch((std::string(caller) + ": a title whose param.json has no applicationCategoryType").c_str());
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value));
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
+}
+
+constexpr std::uint32_t BigAppListCapacityLimit = 4;
+
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+    static_cast<void>(caller);
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
-    appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
-    *count = 1;
+    if (capacity >= BigAppListCapacityLimit) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::int32_t currentId = 0;
+    std::uint32_t currentCount = 0;
+    const int savedErrno = errno;
+    const bool valid = GuestCopyIn_nid_no_patch(&currentId, appIds, sizeof(currentId)) &&
+                       GuestCopyOut_nid_no_patch(appIds, &currentId, sizeof(currentId)) &&
+                       GuestCopyIn_nid_no_patch(&currentCount, count, sizeof(currentCount)) &&
+                       GuestCopyOut_nid_no_patch(count, &currentCount, sizeof(currentCount));
+    if (!valid) {
+        errno = savedErrno;
+        return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    if (capacity == 0) {
+        const std::uint32_t none = 0;
+        GuestCopyOut_nid_no_patch(count, &none, sizeof(none));
+        errno = savedErrno;
+        return SYSTEM_SERVICE_OK;
+    }
+    const std::int32_t runningId = SYSTEM_SERVICE_RUNNING_APP_ID;
+    const std::uint32_t one = 1;
+    GuestCopyOut_nid_no_patch(appIds, &runningId, sizeof(runningId));
+    GuestCopyOut_nid_no_patch(count, &one, sizeof(one));
+    errno = savedErrno;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -327,6 +333,9 @@ int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
 
 std::atomic<bool> SuspendConfirmationDialogEnabled{true};
 
+std::atomic<bool> AccessibilityZoomLocked{false};
+std::atomic<bool> NoticeScreenSkipFlag{false};
+
 }
 
 extern "C" {
@@ -344,6 +353,21 @@ int APS5_VABI sceSystemServiceDisableSuspendConfirmationDialog() {
 bool APS5_VABI sceShellCoreUtilGetSuspendConfirmationDialogFlag(std::int32_t appId) {
     if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilGetSuspendConfirmationDialogFlag: application other than the running title");
     return SuspendConfirmationDialogEnabled.load(std::memory_order_relaxed);
+}
+
+int APS5_VABI sceShellCoreUtilAccessibilityZoomLock() {
+    AccessibilityZoomLocked.store(true, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceShellCoreUtilAccessibilityZoomUnlock() {
+    AccessibilityZoomLocked.store(false, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+bool APS5_VABI sceShellCoreUtilIsAccessibilityZoomLocked(std::int32_t appId) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilIsAccessibilityZoomLocked: application other than the running title");
+    return AccessibilityZoomLocked.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI sceSystemServiceSetGpuLoadEmulationMode(std::uint32_t mode) {
@@ -371,8 +395,11 @@ int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId)
     return GetGpuLoadEmulationModeOfApp("sceShellCoreUtilGetGpuLoadEmulationModeByAppId", appId);
 }
 
-int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
-    if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
+int APS5_VABI sceSystemServiceLoadExec(const char* guestPath, const char* const* arguments) {
+    std::string copiedPath;
+    if (!guestPath || CopyGuestPath_nid_no_patch(guestPath, copiedPath) != 0) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    const char* const path = copiedPath.c_str();
+    if (!*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
     if (std::strcmp(path, "exit") == 0) LibcExitWithoutHandlers_nid_no_patch(0);
     auto launch = PrepareLaunch(path, arguments);
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
@@ -393,8 +420,12 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  if (info == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *info = SystemServiceDisplaySafeAreaInfo{};
- info->ratio = 1.0f;
+ SystemServiceDisplaySafeAreaInfo localInfo{};
+ localInfo.ratio = 1.0f;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -407,10 +438,15 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  const auto hdr = AgcDriver::CurrentHostHdr();
- luminance->max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
- luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
- luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
- AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
+ SystemServiceHdrToneMapLuminance localLuminance{};
+ localLuminance.max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
+ localLuminance.max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
+ localLuminance.min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
+ const bool copied = GuestCopyOut_nid_no_patch(luminance, &localLuminance, sizeof(localLuminance));
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ AgcDriverNoteReportedToneMapPeak_nid_postfix(localLuminance.max_tone_map_luminance);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -418,7 +454,11 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *value = false;
+ const bool localValue = NoticeScreenSkipFlag.load(std::memory_order_relaxed);
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -426,7 +466,11 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *status = SystemServiceStatus{};
+ SystemServiceStatus localStatus{};
+ const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -510,7 +554,7 @@ bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
 }
 
 int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
-    return WriteStatus(active, false, __func__);
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
@@ -518,13 +562,21 @@ int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, s
     if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
         NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
     }
-    *adjusted = 0;
+    const std::uint8_t result = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    if (!copied) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with an unwritable output");
+    }
     return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
     if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
+    std::uint8_t result = 0;
+    const int status = sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, &result);
+    if (status != SYSTEM_SERVICE_OK) return status;
+    const bool copied = GuestCopyOut_nid_no_patch(adjusted, &result, sizeof(result));
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
 }
 
 bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
@@ -551,18 +603,27 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
+ int localValue = 0;
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
-  case SYSTEM_SERVICE_PARAM_ID_400: *value = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: *value = SystemServiceDateTime::ConsoleDateFormat("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: *value = HostTimeZone().minutes; break;
-  case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = HostTimeZone().summer ? 1 : 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_400: localValue = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: localValue = SystemServiceDateTime::ConsoleDateFormat("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: localValue = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: localValue = HostTimeZone().minutes; break;
+  case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: localValue = HostTimeZone().summer ? 1 : 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN:
+   if (sceKernelIsPs4Process() != 1) return SYSTEM_SERVICE_ERROR_PARAMETER;
+   localValue = SYSTEM_SERVICE_PARAM_ENTER_BUTTON_ASSIGN_CROSS;
+   break;
   default: {
    const auto measured = std::ranges::find(RegistryParameters, paramId, &MeasuredParameter::id);
    if (measured == std::ranges::end(RegistryParameters)) return SYSTEM_SERVICE_ERROR_PARAMETER;
-   *value = measured->value;
+   localValue = measured->value;
   }
+ }
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  return SYSTEM_SERVICE_OK;
 }
@@ -572,9 +633,17 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ static constexpr char Zeros[256] = {};
+ const int savedErrno = errno;
+ bool copied = true;
+ for (std::size_t offset = 0; copied && offset < bufSize; offset += sizeof(Zeros)) {
+  copied = GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset));
+ }
+ if (copied) copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -583,10 +652,15 @@ int APS5_VABI sceSystemServicePowerTick(void) {
 }
 
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
- if (event == nullptr) {
-  return SYSTEM_SERVICE_ERROR_PARAMETER;
- }
+ (void)event;
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
+}
+
+int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
+ if (message == nullptr) {
+  return APP_MESSAGING_ERROR_NULL_POINTER;
+ }
+ return APP_MESSAGING_ERROR_NO_MESSAGE;
 }
 
 int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
@@ -595,14 +669,17 @@ int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
 }
 
 int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
+ NoticeScreenSkipFlag.store(true, std::memory_order_relaxed);
  return SYSTEM_SERVICE_OK;
 }
 
 void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param) {
  if (param == nullptr) APS5_INVALID_ARG_EX;
- *param = SystemServicePlayerDialogParam{};
- param->size = sizeof(SystemServicePlayerDialogParam);
- param->user_id = -1;
+ SystemServicePlayerDialogParam local{};
+ local.size = sizeof(local);
+ local.user_id = -1;
+ const bool copied = GuestCopyOut_nid_no_patch(param, &local, sizeof(local));
+ if (!copied) APS5_INVALID_ARG_EX;
 }
 
 int APS5_VABI sceSystemServiceDisableMediaPlay() {
@@ -620,11 +697,19 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     if (!uri) return static_cast<int>(0x80a10003);
-    std::size_t length = 0;
-    while (length < 6016 && uri[length] != 0) ++length;
-    if (length > 6015) return static_cast<int>(0x80a10007);
-    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(uri, 6016, copied);
+    if (copyError == 63) return static_cast<int>(0x80a10007);
+    if (copyError != 0) return static_cast<int>(0x80a10003);
+    const char* const text = copied.c_str();
+    if (std::strncmp(text, "http:", 5) != 0 && std::strncmp(text, "https:", 6) != 0 && std::strncmp(text, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
+    return OpenWebBrowserUrl(text);
+}
+
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
+    g_urlLauncher = launcher != nullptr ? launcher : &g_defaultUrlLauncher;
+    g_urlConfirmation = confirmation != nullptr ? confirmation : &g_defaultUrlConfirmation;
+    g_urlGate.Reset(clock != nullptr ? *clock : static_cast<IUrlClock&>(g_steadyUrlClock));
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
@@ -667,12 +752,22 @@ int APS5_VABI sceSystemServiceShowControllerSettings(void) {
  return SYSTEM_SERVICE_OK;
 }
 
+int APS5_VABI sceLncUtilInitialize() {
+ return SYSTEM_SERVICE_OK;
+}
+
 int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
  return SYSTEM_SERVICE_RUNNING_APP_ID;
 }
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
  return RunningAppId("sceSystemServiceGetAppId", titleId);
+}
+
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId) {
+ if (titleId == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ CopyRunningTitleId("sceSystemServiceGetMainAppTitleId", true, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
@@ -689,9 +784,12 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
- if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string localTitle;
+    if (!ReadTitleId(titleId, &localTitle) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
+ const bool localLaunched = true;
+ const bool copied = GuestCopyOut_nid_no_patch(launched, &localLaunched, sizeof(localLaunched));
+ if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -705,6 +803,15 @@ int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t
 
 int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
  return sceLncUtilGetAppIdListOfBigApp(appIds, capacity, count);
+}
+
+int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ return AnswerRunningAppCategoryType("sceLncUtilGetAppCategoryType", appId, categoryType, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ if (categoryType != nullptr && appId != SYSTEM_SERVICE_RUNNING_APP_ID) return LNC_UTIL_ERROR_GAME_PROCESS;
+ return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 
 int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
@@ -730,8 +837,10 @@ int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
  if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
- return sceSystemServiceLoadExec(path, argv);
+ std::string copiedPath;
+ if (CopyGuestPath_nid_no_patch(path, copiedPath) != 0) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (copiedPath.empty()) throw std::runtime_error("sceLncUtilLoadExec: empty path");
+ return sceSystemServiceLoadExec(copiedPath.c_str(), argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
@@ -766,9 +875,10 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
+    if (param == nullptr) return;
+    const std::uint32_t fields[2] = {0, 0xffffffff};
+    GuestCopyOut_nid_no_patch(param, fields, sizeof(fields));
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
@@ -1056,8 +1166,11 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
+    if (count == nullptr) return static_cast<int>(0x80e30005);
+    const std::uint32_t localCount = 50;
+    const bool copied = GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount));
+    if (!copied) return static_cast<int>(0x80e30005);
     return 0;
 }
 

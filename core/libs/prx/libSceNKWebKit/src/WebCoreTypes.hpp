@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
 #include <array>
@@ -34,7 +35,7 @@ struct FloatSize {
     float m_height{0.0f};
 
     float aspectRatio() const {
-        return m_height != 0.0f ? (m_width / m_height) : 0.0f;
+        return m_width / m_height;
     }
 };
 
@@ -64,6 +65,28 @@ struct FloatQuad {
     FloatPoint m_p2;
     FloatPoint m_p3;
     FloatPoint m_p4;
+};
+
+struct VelocityData {
+    float horizontalVelocity{0.0f};
+    float verticalVelocity{0.0f};
+    float scaleChangeRate{0.0f};
+    WTF::MonotonicTime lastUpdateTime;
+};
+
+struct HistoricalVelocityData {
+    static constexpr unsigned maxHistoryDepth = 3;
+
+    struct Data {
+        WTF::MonotonicTime timestamp;
+        FloatPoint position;
+        double scale{0.0};
+    };
+
+    unsigned m_historySize{0};
+    unsigned m_latestDataIndex{0};
+    WTF::MonotonicTime m_lastAppendTimestamp;
+    Data m_positionHistory[maxHistoryDepth];
 };
 
 struct FloatRoundedRect {
@@ -96,6 +119,10 @@ struct LayoutRect {
     LayoutSize m_size;
 };
 
+enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
+
+enum class LayoutViewportConstraint : std::int32_t { ConstrainedToDocumentRect, Unconstrained };
+
 struct RoundedRect {
     struct Radii {
         LayoutSize m_topLeft;
@@ -107,8 +134,26 @@ struct RoundedRect {
     Radii m_radii;
 };
 
+struct FourCC {
+    std::uint32_t value{0};
+
+    constexpr FourCC() = default;
+
+    template<std::size_t N>
+    constexpr FourCC(const char (&data)[N]) {
+        static_assert(N - 1 == 4);
+        value = static_cast<std::uint32_t>(data[0]) << 24 | static_cast<std::uint32_t>(data[1]) << 16 | static_cast<std::uint32_t>(data[2]) << 8 | static_cast<std::uint32_t>(data[3]);
+    }
+};
+
 struct AffineTransform {
     std::array<double, 6> m_transform{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+};
+
+struct OptionalAffineTransform {
+    bool m_engaged;
+    std::array<std::uint8_t, 7> m_padding;
+    AffineTransform m_value;
 };
 
 struct alignas(16) TransformationMatrix {
@@ -137,6 +182,41 @@ struct Color {
     std::uint64_t m_colorAndFlags{0};
 };
 
+template<typename T> struct SRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearSRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct DisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearDisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct HSLA {
+    T hue;
+    T saturation;
+    T lightness;
+    T alpha;
+};
+
 struct RedirectChainCacheStatus {
     enum class Status : std::uint8_t {
         NoRedirection,
@@ -148,27 +228,205 @@ struct RedirectChainCacheStatus {
     Status status{Status::NoRedirection};
 };
 
+enum class ViewportFit : std::uint8_t {
+    Auto,
+    Contain,
+    Cover
+};
+
+struct ViewportAttributes {
+    FloatSize layoutSize;
+    float initialScale;
+    float minimumScale;
+    float maximumScale;
+    float userScalable;
+    float orientation;
+    float shrinkToFit;
+    ViewportFit viewportFit;
+};
+
+struct ViewportArguments {
+    enum Type : int {
+        Implicit,
+        ViewportMeta,
+        CSSDeviceAdaptation
+    };
+
+    static constexpr int ValueAuto = -1;
+    static constexpr int ValueDeviceWidth = -2;
+    static constexpr int ValueDeviceHeight = -3;
+
+    Type type{Implicit};
+    float width{ValueAuto};
+    float minWidth{ValueAuto};
+    float maxWidth{ValueAuto};
+    float height{ValueAuto};
+    float minHeight{ValueAuto};
+    float maxHeight{ValueAuto};
+    float zoom{ValueAuto};
+    float minZoom{ValueAuto};
+    float maxZoom{ValueAuto};
+    float userZoom{ValueAuto};
+    float orientation{ValueAuto};
+    float shrinkToFit{ValueAuto};
+    ViewportFit viewportFit{ViewportFit::Auto};
+    bool widthWasExplicit{false};
+};
+
+struct ProtectionSpaceBase {
+    NKWebKit::WtfAbi::StringImpl* m_host;
+    NKWebKit::WtfAbi::StringImpl* m_realm;
+    int m_port;
+    std::uint8_t m_serverType;
+    std::uint8_t m_authenticationScheme;
+    bool m_isHashTableDeletedValue;
+};
+
+enum class AutofillFieldName {
+    None,
+    Name,
+    HonorificPrefix,
+    GivenName,
+    AdditionalName,
+    FamilyName,
+    HonorificSuffix,
+    Nickname,
+    Username,
+    NewPassword,
+    CurrentPassword,
+    OrganizationTitle,
+    Organization,
+    StreetAddress,
+    AddressLine1,
+    AddressLine2,
+    AddressLine3,
+    AddressLevel4,
+    AddressLevel3,
+    AddressLevel2,
+    AddressLevel1,
+    Country,
+    CountryName,
+    PostalCode,
+    CcName,
+    CcGivenName,
+    CcAdditionalName,
+    CcFamilyName,
+    CcNumber,
+    CcExp,
+    CcExpMonth,
+    CcExpYear,
+    CcCsc,
+    CcType,
+    TransactionCurrency,
+    TransactionAmount,
+    Language,
+    Bday,
+    BdayDay,
+    BdayMonth,
+    BdayYear,
+    Sex,
+    URL,
+    Photo,
+    Tel,
+    TelCountryCode,
+    TelNational,
+    TelAreaCode,
+    TelLocal,
+    TelLocalPrefix,
+    TelLocalSuffix,
+    TelExtension,
+    Email,
+    Impp,
+    WebAuthn
+};
+
+struct TextureMapper {
+    enum ExposedEdges {
+        NoEdges = 0,
+        LeftEdge = 1 << 0,
+        RightEdge = 1 << 1,
+        TopEdge = 1 << 2,
+        BottomEdge = 1 << 3,
+        AllEdges = LeftEdge | RightEdge | TopEdge | BottomEdge,
+    };
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
 static_assert(sizeof(FloatPoint) == 8);
 static_assert(sizeof(FloatSize) == 8);
 static_assert(sizeof(FloatRect) == 16);
+static_assert(sizeof(AutofillFieldName) == 4);
+static_assert(static_cast<int>(AutofillFieldName::Email) == 52);
+static_assert(static_cast<int>(AutofillFieldName::WebAuthn) == 54);
 static_assert(sizeof(FloatQuad) == 32);
 static_assert(sizeof(FloatRoundedRect) == 48);
+static_assert(sizeof(VelocityData) == 24);
+static_assert(offsetof(VelocityData, scaleChangeRate) == 8);
+static_assert(offsetof(VelocityData, lastUpdateTime) == 16);
+static_assert(std::is_trivially_copyable_v<VelocityData>);
+static_assert(sizeof(HistoricalVelocityData::Data) == 24);
+static_assert(offsetof(HistoricalVelocityData::Data, position) == 8);
+static_assert(offsetof(HistoricalVelocityData::Data, scale) == 16);
+static_assert(sizeof(HistoricalVelocityData) == 88);
+static_assert(offsetof(HistoricalVelocityData, m_latestDataIndex) == 4);
+static_assert(offsetof(HistoricalVelocityData, m_lastAppendTimestamp) == 8);
+static_assert(offsetof(HistoricalVelocityData, m_positionHistory) == 16);
 static_assert(sizeof(LayoutUnit) == 4);
 static_assert(sizeof(LayoutPoint) == 8);
 static_assert(sizeof(LayoutSize) == 8);
 static_assert(sizeof(LayoutRect) == 16);
+static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
+static_assert(sizeof(LayoutViewportConstraint) == 4);
+static_assert(static_cast<std::int32_t>(LayoutViewportConstraint::ConstrainedToDocumentRect) == 0);
 static_assert(sizeof(RoundedRect) == 48);
+static_assert(sizeof(FourCC) == 4);
+static_assert(alignof(FourCC) == 4);
+static_assert(std::is_trivially_copyable_v<FourCC>);
 static_assert(sizeof(AffineTransform) == 48);
+static_assert(sizeof(OptionalAffineTransform) == 56);
+static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
+static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(SRGBA<std::uint8_t>) == 4);
+static_assert(offsetof(SRGBA<std::uint8_t>, alpha) == 3);
+static_assert(sizeof(SRGBA<float>) == 16);
+static_assert(offsetof(SRGBA<float>, green) == 4);
+static_assert(offsetof(SRGBA<float>, blue) == 8);
+static_assert(offsetof(SRGBA<float>, alpha) == 12);
+static_assert(sizeof(LinearSRGBA<float>) == 16);
+static_assert(offsetof(LinearSRGBA<float>, alpha) == 12);
+static_assert(sizeof(DisplayP3<float>) == 16);
+static_assert(offsetof(DisplayP3<float>, alpha) == 12);
+static_assert(sizeof(LinearDisplayP3<float>) == 16);
+static_assert(offsetof(LinearDisplayP3<float>, alpha) == 12);
+static_assert(sizeof(HSLA<float>) == 16);
+static_assert(offsetof(HSLA<float>, saturation) == 4);
+static_assert(offsetof(HSLA<float>, lightness) == 8);
+static_assert(offsetof(HSLA<float>, alpha) == 12);
+static_assert(std::is_trivially_copyable_v<SRGBA<std::uint8_t>>);
+static_assert(std::is_trivially_copyable_v<SRGBA<float>>);
+static_assert(std::is_trivially_copyable_v<HSLA<float>>);
 static_assert(sizeof(RedirectChainCacheStatus) == 16);
 static_assert(offsetof(RedirectChainCacheStatus, endOfValidity) == 0);
 static_assert(offsetof(RedirectChainCacheStatus, status) == 8);
 static_assert(std::is_trivially_copyable_v<RedirectChainCacheStatus>);
+static_assert(sizeof(ViewportAttributes) == 36);
+static_assert(offsetof(ViewportAttributes, viewportFit) == 32);
+static_assert(sizeof(ViewportArguments) == 56);
+static_assert(offsetof(ViewportArguments, width) == 4);
+static_assert(offsetof(ViewportArguments, viewportFit) == 52);
+static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ProtectionSpaceBase) == 24);
+static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
+static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);
+static_assert(offsetof(ProtectionSpaceBase, m_port) == 16);
+static_assert(offsetof(ProtectionSpaceBase, m_serverType) == 20);
+static_assert(offsetof(ProtectionSpaceBase, m_authenticationScheme) == 21);
+static_assert(offsetof(ProtectionSpaceBase, m_isHashTableDeletedValue) == 22);
 
 }  // namespace WebCore

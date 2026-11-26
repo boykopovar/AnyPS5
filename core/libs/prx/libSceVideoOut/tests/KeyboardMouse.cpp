@@ -1,8 +1,10 @@
 #include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
+#include "prx/libScePad/include/ToggleLatch.hpp"
 #include "PadSimulation.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -422,6 +424,25 @@ void testWheelPress() {
 }
 
 
+void testWheelTilt() {
+    const auto left = static_cast<std::uint32_t>(Pad::PadButton::Left);
+    const auto right = static_cast<std::uint32_t>(Pad::PadButton::Right);
+    const auto up = static_cast<std::uint32_t>(Pad::PadButton::Up);
+    const auto unbound = Simulate(defaults(), {At(0.0, PadSimulation::TiltEvent(1))}, 1.0, 40.0);
+    check((unbound[20].state.buttons & (left | right | up)) == 0, "a wheel tilt presses nothing without a binding");
+    auto configuration = defaults();
+    configuration.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Left, 0, -1});
+    configuration.bindings.push_back({SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Right, 0, 1});
+    const auto tilted = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1)), At(40.0, PadSimulation::WheelEvent(1))}, 1.0, 200.0);
+    check((tilted[20].state.buttons & right) != 0 && (tilted[20].state.buttons & (left | up)) == 0, "a right tilt presses only Right");
+    check((tilted[60].state.buttons & (right | up)) == (right | up), "a vertical wheel step leaves the tilt held");
+    check((tilted[100].state.buttons & right) == 0 && (tilted[100].state.buttons & up) != 0, "a tilt press releases after its duration");
+    const auto reversed = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1)), At(20.0, PadSimulation::TiltEvent(-1))}, 1.0, 60.0);
+    check((reversed[40].state.buttons & left) != 0 && (reversed[40].state.buttons & right) == 0, "tilting the other way lets go of the first direction");
+    const auto flipped = Simulate(configuration, {At(0.0, PadSimulation::TiltEvent(1, true))}, 1.0, 40.0);
+    check((flipped[20].state.buttons & left) != 0 && (flipped[20].state.buttons & right) == 0, "a flipped wheel tilts the other way");
+}
+
 void testWheelFocusLoss() {
     const auto samples = Simulate(defaults(), {At(0.0, PadSimulation::WheelEvent(1)), At(10.0, KeyEvent(SDL_SCANCODE_W, true)), At(20.0, PadSimulation::FocusLostEvent())}, 1.0, 40.0);
     check(samples[15].state.sticks[1] == 0, "a held key tilts the stick");
@@ -436,6 +457,72 @@ void testFocusLossReleasesMouse() {
     check(requests.releaseMouse, "losing focus asks to release the captured mouse");
     keyboardMouse.SetMouseMode(false);
     check(!keyboardMouse.HandleEvent(PadSimulation::FocusLostEvent(), Pad::KeyboardMouse::Clock::now()).releaseMouse, "nothing to release without capture");
+}
+
+void testToggleLatch() {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    const auto square = static_cast<std::uint32_t>(Pad::PadButton::Square);
+    Pad::ToggleLatch latch;
+    check(!latch.Held(cross), "a new latch holds nothing");
+    latch.Toggle(cross);
+    check(latch.Held(cross), "the first toggle holds the button");
+    latch.Toggle(cross);
+    check(!latch.Held(cross), "the second toggle releases the button");
+    latch.Toggle(cross);
+    latch.Toggle(square);
+    check(latch.Held(cross) && latch.Held(square), "each button keeps its own state");
+    latch.Toggle(square);
+    check(latch.Held(cross) && !latch.Held(square), "toggling one button leaves the other held");
+    latch.Clear();
+    check(!latch.Held(cross) && !latch.Held(square), "clearing releases every toggled button");
+}
+
+void testToggleActions() {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    const auto circle = static_cast<std::uint32_t>(Pad::PadButton::Circle);
+    const auto square = static_cast<std::uint32_t>(Pad::PadButton::Square);
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    auto toggled = defaults();
+    toggled.toggleButtons = cross | square;
+    Pad::KeyboardMouse keyboardMouse(toggled);
+    const auto buttons = [&keyboardMouse]() { return keyboardMouse.Compose(PadInputState{}).buttons; };
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    check((buttons() & cross) != 0, "the first press of a toggled key holds the button");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) != 0, "releasing a toggled key keeps the button held");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) == 0, "the next press releases the toggled button");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_RETURN, true), now);
+    check((buttons() & cross) != 0, "another key bound to the same action toggles the same state");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_RETURN, false), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) == 0, "both keys of the action share one toggle");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_C, true), now);
+    check((buttons() & circle) != 0, "an action that is not listed is held");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_C, false), now);
+    check((buttons() & circle) == 0, "an action that is not listed releases on key up");
+
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    check((buttons() & square) != 0, "a toggled mouse button latches the button");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    check((buttons() & square) == 0, "the next mouse press releases it");
+
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    keyboardMouse.HandleEvent(PadSimulation::FocusLostEvent(), now);
+    check((buttons() & cross) == 0, "losing focus releases the toggled buttons");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, true), now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_SPACE, false), now);
+    check((buttons() & cross) != 0, "a toggle after focus loss starts from released");
+    keyboardMouse.Replace(toggled);
+    check((buttons() & cross) == 0, "replacing the configuration releases the toggled buttons");
 }
 
 void testShake() {
@@ -461,6 +548,8 @@ void testToggleRequests() {
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, true), now).toggleMouse, "F7 asks to toggle the mouse");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F7, false), now).toggleMouse, "releasing F7 asks for nothing");
     check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F11, true), now).toggleFullscreen, "F11 asks to toggle fullscreen");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F2, true), now).toggleBorderless, "F2 asks to toggle borderless");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F2, false), now).toggleBorderless, "releasing F2 asks for nothing");
     const auto overlay = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, true), now);
     check(overlay.togglePerformanceOverlay && !overlay.toggleFullscreen, "F10 asks to toggle the performance overlay");
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F10, false), now).togglePerformanceOverlay, "releasing F10 asks for nothing");
@@ -630,7 +719,14 @@ void testTitleReadsMouse() {
         keyboardMouse.HandleEvent(PadSimulation::MotionEvent(200, 0), now);
         keyboardMouse.Advance(now);
     }
-    check(keyboardMouse.Compose(PadInputState{}).sticks[2] == 128, "motion tilted the right stick while the title reads the mouse");
+    check(keyboardMouse.Compose(PadInputState{}).sticks[2] > 128, "motion in mouse mode did not tilt the right stick while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, true), now);
+    check((keyboardMouse.Compose(PadInputState{}).buttons & square) != 0, "a left click in mouse mode did not press Square while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_LEFT, false), now);
+    keyboardMouse.HandleEvent(PadSimulation::WheelEvent(-1), now);
+    check((keyboardMouse.Compose(PadInputState{}).buttons & down) != 0, "wheel down in mouse mode did not press Down while the title reads the mouse");
+    check(keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, true), now).toggleMouse, "a middle click in mouse mode did not ask to leave mouse mode while the title reads the mouse");
+    keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, false), now);
     keyboardMouse.SetTitleReadsMouse(false);
     keyboardMouse.HandleEvent(PadSimulation::WheelEvent(1), now);
     check((keyboardMouse.Compose(PadInputState{}).buttons & up) != 0, "wheel bindings did not resume after the title stopped reading the mouse");
@@ -671,6 +767,110 @@ void testMouseStickTarget() {
     check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
 }
 
+void testRestingMouseKeepsControllerStick() {
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    PadInputState controller{};
+    controller.sticks = {40, 75, 255, 0};
+    for (const bool right : {true, false}) {
+        auto configuration = defaults();
+        configuration.settings.mouseControlsRightStick = right;
+        const std::size_t offset = right ? 2 : 0;
+        Pad::KeyboardMouse keyboardMouse(configuration);
+        keyboardMouse.SetMouseMode(true);
+        keyboardMouse.Advance(now);
+        keyboardMouse.Advance(now + std::chrono::milliseconds(10));
+        const auto resting = keyboardMouse.Compose(controller);
+        check(resting.sticks == controller.sticks, "a resting mouse in mouse mode must keep the controller sticks");
+        keyboardMouse.HandleEvent(PadSimulation::MotionEvent(-100, 50), now + std::chrono::milliseconds(10));
+        keyboardMouse.Advance(now + std::chrono::milliseconds(20));
+        const auto moving = keyboardMouse.Compose(controller);
+        check(moving.sticks[offset] < 128 && moving.sticks[offset + 1] > 128, "a moving mouse must drive its target stick");
+        check(moving.sticks[2 - offset] == controller.sticks[2 - offset] && moving.sticks[3 - offset] == controller.sticks[3 - offset],
+            "a moving mouse must keep the other controller stick");
+    }
+}
+
+void testPadChordRequests() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Screenshot, Pad::PadButton::None, 0, 0,
+        static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1)});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto options = static_cast<std::uint32_t>(Pad::PadButton::Options);
+    const auto r1 = static_cast<std::uint32_t>(Pad::PadButton::R1);
+    check(!keyboardMouse.PadChordRequests(options).screenshot, "one button of a chord does not fire it");
+    check(keyboardMouse.PadChordRequests(options | r1).screenshot, "the full chord fires once it is held");
+    check(!keyboardMouse.PadChordRequests(options | r1).screenshot, "a held chord does not fire again");
+    check(!keyboardMouse.PadChordRequests(0).screenshot, "releasing the chord does not fire");
+    check(keyboardMouse.PadChordRequests(options | r1 | static_cast<std::uint32_t>(Pad::PadButton::Cross)).screenshot, "extra buttons do not block a chord");
+}
+
+}
+
+void testMouseTouchpad() {
+    Pad::KeyboardMouse keyboard(defaults());
+    keyboard.SetViewport(960, 540);
+    const PadInputState idle{};
+    auto press = [&](int x, int y, Uint8 button, Uint32 type, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = type;
+        event.button.button = button;
+        event.button.x = x;
+        event.button.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    auto move = [&](int x, int y, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = SDL_MOUSEMOTION;
+        event.motion.x = x;
+        event.motion.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    const auto now = std::chrono::steady_clock::now();
+    keyboard.SetMouseTouchpad(false);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    check(!keyboard.Compose(idle).touch[0].active, "the mouse does not touch the pad unless the touchpad option is on");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    keyboard.SetMouseTouchpad(true);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto pressed = keyboard.Compose(idle).touch[0];
+    check(pressed.active && pressed.x == 960 && pressed.y == 540, "a left press at the middle of a 960x540 window touches the middle of the pad");
+    move(0, 0, now);
+    const auto dragged = keyboard.Compose(idle).touch[0];
+    check(dragged.active && dragged.x == 0 && dragged.y == 0, "a drag moves the touch point with the cursor");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto clamped = keyboard.Compose(idle).touch[0];
+    check(clamped.active && clamped.x == 1918 && clamped.y == 0, "a press outside the window is clamped to the pad edge");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    check(!keyboard.Compose(idle).touch[0].active, "releasing the left button lifts the touch point");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    SDL_Event lost{};
+    lost.type = SDL_WINDOWEVENT;
+    lost.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+    keyboard.HandleEvent(lost, now);
+    check(!keyboard.Compose(idle).touch[0].active, "losing the window focus lifts a touch point the mouse holds");
+}
+
+void testMouseGyro() {
+    Pad::KeyboardMouse keyboard(defaults());
+    const auto start = std::chrono::steady_clock::now();
+    const auto near = [](double value, double expected) { return std::abs(value - expected) < 1e-4; };
+    keyboard.SetMouseGyro(true);
+    keyboard.SetMouseMode(true);
+    keyboard.Advance(start);
+    SDL_Event motion{};
+    motion.type = SDL_MOUSEMOTION;
+    motion.motion.xrel = 10;
+    motion.motion.yrel = -5;
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(10));
+    const auto moving = keyboard.Compose(PadInputState{});
+    check(moving.hasMotion && near(moving.gyro[2], 1.0) && near(moving.gyro[1], -0.5), "a mouse drag in mouse mode turns the gyro by counts per second");
+    keyboard.Advance(start + std::chrono::milliseconds(20));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "a still mouse leaves the gyro idle");
+    keyboard.SetMouseGyro(false);
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(30));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "the gyro option off leaves the mouse off the gyro");
 }
 
 int main() {
@@ -686,6 +886,8 @@ int main() {
             {"report rate smoothing", testReportRateSmoothing},
             {"poll rate independence", testPollRateIndependence},
             {"vertical scale", testVerticalScale},
+            {"mouse touchpad", testMouseTouchpad},
+            {"mouse gyro", testMouseGyro},
             {"mouse mode off", testMouseModeOff},
             {"keyboard sticks unchanged", testKeyboardSticksUnchanged},
             {"stick modifier", testStickModifier},
@@ -693,8 +895,11 @@ int main() {
             {"trigger ramp", testTriggerRamp},
             {"ramp keeps advance reporting", testRampKeepsAdvanceReporting},
             {"wheel press", testWheelPress},
+            {"wheel tilt", testWheelTilt},
             {"wheel and keys on focus loss", testWheelFocusLoss},
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
+            {"toggle latch", testToggleLatch},
+            {"toggle actions", testToggleActions},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
             {"show pad status", testShowPadStatus},
@@ -706,7 +911,9 @@ int main() {
             {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
-            {"mouse stick target", testMouseStickTarget}
+            {"mouse stick target", testMouseStickTarget},
+            {"resting mouse keeps controller stick", testRestingMouseKeepsControllerStick},
+            {"pad chord requests", testPadChordRequests}
         };
         for (const auto& [name, test] : tests) {
             test();

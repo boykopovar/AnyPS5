@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstdlib>
+#include <mutex>
 
 namespace AgcDriver::DriverDetail {
 
@@ -56,13 +57,17 @@ bool Driver::verifyDrawRecipe() {
     return verify;
 }
 
-std::size_t Driver::drawCacheEntries() {
+std::size_t Driver::DrawCacheEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_DRAW_CACHE_ENTRIES");
         const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
-        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{4096};
+        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{262144};
     }();
     return entries;
+}
+
+std::size_t Driver::DrawKeySightingKeys() {
+    return std::min<std::size_t>(DrawCacheEntries(), 65536) * DrawKeySightings::Ways;
 }
 
 std::uint64_t Driver::DrawCacheBytes() {
@@ -77,6 +82,16 @@ std::uint64_t Driver::DrawCacheBytes() {
 bool Driver::drawCacheIndirect() {
     static const bool indirect = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
     return indirect;
+}
+
+bool Driver::drawCachePushWord() {
+    static const bool pushWord = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    return pushWord;
+}
+
+bool Driver::verifyDrawPushWord() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PUSH_WORD") != nullptr;
+    return verify;
 }
 
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
@@ -112,10 +127,51 @@ bool DrawKeySightings::SeenBefore(std::uint64_t key) {
     return false;
 }
 
+std::atomic<std::uint64_t>& Driver::drawCacheUseful() {
+    static std::atomic<std::uint64_t> useful{0};
+    return useful;
+}
+
+namespace {
+
+struct EntryBackoff {
+    static constexpr std::uint64_t Window = 4096;
+    static constexpr std::uint64_t ProbeEvery = 16;
+    static constexpr std::uint64_t UsefulShare = 32;
+    std::uint64_t draws = 0;
+    std::uint64_t windowStart = 0;
+    std::uint64_t probes = 0;
+    std::uint64_t usefulAtWindow = 0;
+    bool backingOff = false;
+
+    bool use(std::uint64_t useful) {
+        ++draws;
+        if (draws - windowStart >= Window) {
+            const auto measured = backingOff ? probes : draws - windowStart;
+            backingOff = (useful - usefulAtWindow) * UsefulShare < measured;
+            usefulAtWindow = useful;
+            windowStart = draws;
+            probes = 0;
+        }
+        if (backingOff && draws % ProbeEvery != 0) return false;
+        ++probes;
+        return true;
+    }
+};
+
+}
+
+bool Driver::drawEntriesThisDraw() {
+    static std::mutex mutex;
+    static EntryBackoff backoff;
+    std::lock_guard lock(mutex);
+    return backoff.use(drawCacheUseful().load(std::memory_order_relaxed));
+}
+
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     std::lock_guard cacheLock(drawCacheMutex);
     if (drawCache.contains(key)) return true;
-    if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawKeySightings) drawKeySightings.emplace(DrawKeySightingKeys());
     bool seen = drawKeySightings->SeenBefore(key);
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
@@ -133,7 +189,7 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
         }
     }
     if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
-    if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+    if (!drawShapeSightings) drawShapeSightings.emplace(DrawKeySightingKeys());
     return drawShapeSightings->SeenBefore(shape);
 }
 
@@ -194,8 +250,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
         found->second = std::move(replacement);
     }
-    while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
-        const bool overBytes = drawCache.size() <= drawCacheEntries();
+    while (drawCache.size() > DrawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
+        const bool overBytes = drawCache.size() <= DrawCacheEntries();
         const auto last = drawCache.find(drawOrder.back());
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
@@ -232,9 +288,11 @@ bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
     });
 }
 
-std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages) {
+std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, const std::shared_ptr<DrawEntry>& donor) {
     std::shared_ptr<const std::vector<DrawRecipeRecord>> records;
-    {
+    if (donor != nullptr) {
+        records = donor->recipes.load();
+    } else {
         std::lock_guard cacheLock(drawCacheMutex);
         const auto found = drawCache.find(key);
         if (found == drawCache.end()) return nullptr;
@@ -247,24 +305,28 @@ std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, cons
     return nullptr;
 }
 
-void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe) {
-    std::shared_ptr<DrawEntry> entry;
-    {
+void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe, const std::shared_ptr<DrawEntry>& donor) {
+    std::shared_ptr<DrawEntry> entry = donor;
+    if (entry == nullptr) {
         std::lock_guard cacheLock(drawCacheMutex);
         const auto found = drawCache.find(key);
         if (found == drawCache.end()) return;
         entry = found->second;
     }
-    const auto old = entry->recipes.load();
-    auto records = std::make_shared<std::vector<DrawRecipeRecord>>();
-    records->push_back({std::vector<std::weak_ptr<const DispatchVariant>>(stages.begin(), stages.end()), std::move(recipe)});
-    if (old != nullptr) {
-        for (const auto& record : *old) {
-            if (record.Matches(stages) || record.Expired() || records->size() >= dispatchVariants()) continue;
-            records->push_back(record);
+    const DrawRecipeRecord attached{std::vector<std::weak_ptr<const DispatchVariant>>(stages.begin(), stages.end()), std::move(recipe)};
+    auto old = entry->recipes.load();
+    std::shared_ptr<const std::vector<DrawRecipeRecord>> records;
+    do {
+        auto next = std::make_shared<std::vector<DrawRecipeRecord>>();
+        next->push_back(attached);
+        if (old != nullptr) {
+            for (const auto& record : *old) {
+                if (record.Matches(stages) || record.Expired() || next->size() >= dispatchVariants()) continue;
+                next->push_back(record);
+            }
         }
-    }
-    entry->recipes.store(std::move(records));
+        records = std::move(next);
+    } while (!entry->recipes.compare_exchange_strong(old, records));
     VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Attach, VulkanDevice::RecipeKind::Draw);
 }
 

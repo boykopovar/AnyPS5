@@ -10,6 +10,14 @@ CONTEXT = ("gpu", "driver", "os", "resolution")
 OPTIONAL_STRINGS = ("cpu", "title_id", "title", "content_version")
 OPTIONAL_INTEGERS = ("cpu_threads", "memory_mib")
 PERCENTILES = ("p50", "p90", "p99", "max")
+GRAPHICS_LABELS = {
+    "render_passes": "render passes",
+    "continued_draws": "continued draws",
+    "barriers": "barriers",
+    "merged_barriers": "merged barriers",
+    "copies": "copies",
+    "copy_mib": "copy MiB",
+}
 
 
 def number(value, name):
@@ -22,6 +30,11 @@ def number(value, name):
     return value
 
 
+def unsigned_count(value, name, bits=64, minimum=0):
+    if type(value) is not int or not minimum <= value < 1 << bits:
+        raise ValueError(f"{name} must be an unsigned {bits}-bit integer of at least {minimum}")
+
+
 def validate(summary):
     for key in ("commit", "trace", *CONTEXT):
         if not isinstance(summary.get(key), str):
@@ -30,8 +43,8 @@ def validate(summary):
         if key in summary and not isinstance(summary[key], str):
             raise ValueError(f"{key} must be a string")
     for key in OPTIONAL_INTEGERS:
-        if key in summary and (type(summary[key]) is not int or summary[key] < 0):
-            raise ValueError(f"{key} must be a non-negative integer")
+        if key in summary:
+            unsigned_count(summary[key], key, 32 if key == "cpu_threads" else 64)
     if type(summary.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
     if "trace_dropped_threads" in summary:
@@ -45,6 +58,8 @@ def validate(summary):
                 raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
             if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
                 raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
+            if not summary["trace_dropped"] and (thread.get("events_lost", 0) or thread.get("totals_full", False)):
+                raise ValueError(f"trace_dropped_threads.{name} disagrees with trace_dropped")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
@@ -55,11 +70,8 @@ def validate(summary):
         raise ValueError("window must contain a string spec")
     if number(window.get("ms"), "window.ms") == 0:
         raise ValueError("window.ms must be positive")
-    if type(window.get("first_present")) is not int or window["first_present"] < 0:
-        raise ValueError("window.first_present must be a non-negative integer")
-    if type(summary.get("presents")) is not int or summary["presents"] <= 0:
-        raise ValueError("presents must be a positive integer")
-    number(summary["presents"], "presents")
+    unsigned_count(window.get("first_present"), "window.first_present")
+    unsigned_count(summary.get("presents"), "presents", minimum=1)
     frames = summary.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
@@ -77,6 +89,12 @@ def validate(summary):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
+    for field in ("graphics_track", "owned_draw_counts"):
+        counters = summary.get(field, {})
+        if not isinstance(counters, dict) or any(not isinstance(name, str) for name in counters):
+            raise ValueError(f"{field} must map names to unsigned 64-bit integers")
+        for name, value in counters.items():
+            unsigned_count(value, f"{field}.{name}")
     return summary
 
 
@@ -89,23 +107,38 @@ def unique_json_object(pairs):
     return result
 
 
+def check_finite_json(record):
+    pending = list(record.values())
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("summary contains a non-finite JSON number")
+
+
 def load_summary(path, trace=None):
     selected = None
     count = 0
-    with Path(path).open(encoding="utf-8-sig") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line, object_pairs_hook=unique_json_object)
-                if not isinstance(record, dict):
-                    raise ValueError("summary must be an object")
-            except (ValueError, RecursionError) as error:
-                raise ValueError(f"{path}:{line_number}: {error}") from error
-            if trace is None or record.get("trace") == trace:
-                count += 1
-                if count == 1:
-                    selected = (line_number, record)
+    try:
+        with Path(path).open(encoding="utf-8-sig") as source:
+            for line_number, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line, object_pairs_hook=unique_json_object)
+                    if not isinstance(record, dict):
+                        raise ValueError("summary must be an object")
+                except (ValueError, RecursionError) as error:
+                    raise ValueError(f"{path}:{line_number}: {error}") from error
+                if trace is None or record.get("trace") == trace:
+                    count += 1
+                    if count == 1:
+                        selected = (line_number, record)
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path}: {error}") from error
     if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
         raise ValueError(f"{path}: expected one summary{selection}, found {count}; "
@@ -113,7 +146,9 @@ def load_summary(path, trace=None):
                          "or provide a file containing one summary line")
     line_number, record = selected
     try:
-        return validate(record)
+        validate(record)
+        check_finite_json(record)
+        return record
     except ValueError as error:
         raise ValueError(f"{path}:{line_number}: {error}") from error
 
@@ -126,6 +161,24 @@ def delta(baseline, candidate):
     if percent is not None and not math.isfinite(percent):
         raise ValueError("metric percentage change is outside the finite numeric range")
     return {"baseline": baseline, "candidate": candidate, "change": change, "change_pct": percent}
+
+
+def graphics_metrics(summary):
+    track = summary.get("graphics_track")
+    if track is None:
+        return {name: None for name in GRAPHICS_LABELS}
+    presents = summary["presents"]
+    try:
+        return {
+            "render_passes": track.get("Graphics.RenderPass", 0) / presents,
+            "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
+            "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
+            "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
+            "copies": track.get("Graphics.Copy", 0) / presents,
+            "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
+        }
+    except OverflowError:
+        raise ValueError("graphics track rate is outside the finite numeric range") from None
 
 
 def compare(baseline, candidate):
@@ -141,14 +194,18 @@ def compare(baseline, candidate):
     before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
     workers = {name: delta(before_workers.get(name), after_workers.get(name))
                for name in sorted(before_workers.keys() | after_workers.keys())}
+    before_graphics = graphics_metrics(baseline)
+    after_graphics = graphics_metrics(candidate)
+    graphics = {name: delta(before_graphics[name], after_graphics[name]) for name in GRAPHICS_LABELS}
     contexts = []
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
         context["window.spec"] = summary["window"]["spec"]
-        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+|summary_every [0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
-        context.update({f"env.{key}": value for key, value in summary["env"].items()})
+        context.update({f"env.{key}": value for key, value in summary["env"].items()
+                        if key != "APS5_TRACE_DIR"})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
                    for key in sorted(contexts[0].keys() | contexts[1].keys())
@@ -158,6 +215,8 @@ def compare(baseline, candidate):
              "A missing top phase is unreported, not zero; its change is unavailable.",
              "Worker busy changes are percentage points; change (%) is relative to the baseline. "
              "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
+        notes.append("Graphics-track rates are per present; a capture without a graphics track is unknown, not zero.")
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
@@ -176,10 +235,13 @@ def compare(baseline, candidate):
         if missing:
             notes.append(f"{label}: missing configuration: {', '.join(missing)}.")
     return {"baseline": baseline, "candidate": candidate, "configuration_differences": differences,
-            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers, "notes": notes}
+            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers,
+            "graphics_track": graphics, "notes": notes}
 
 
 def cell(value):
+    if value is None:
+        return "<em>not recorded</em>"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
 
@@ -205,6 +267,13 @@ def markdown(report):
             columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
                        for field in ("baseline", "candidate", "change", "change_pct")]
             lines.append(f"| {cell(name)} | {' | '.join(columns)} |")
+    if any(values["baseline"] is not None or values["candidate"] is not None for values in report["graphics_track"].values()):
+        lines.extend(["", "## Graphics track (per present)", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+                      "| --- | ---: | ---: | ---: | ---: |"])
+        for name, values in report["graphics_track"].items():
+            columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
+                       for field in ("baseline", "candidate", "change", "change_pct")]
+            lines.append(f"| {cell(GRAPHICS_LABELS.get(name, name))} | {' | '.join(columns)} |")
     return "\n".join(lines) + "\n"
 
 

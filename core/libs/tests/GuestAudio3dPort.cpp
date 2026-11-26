@@ -1,6 +1,7 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +25,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -34,6 +38,7 @@ constexpr int INVALID_PARAMETER = static_cast<int>(0x80EA0004);
 constexpr int OUT_OF_MEMORY = static_cast<int>(0x80EA0005);
 constexpr int OUT_OF_RESOURCES = static_cast<int>(0x80EA0006);
 constexpr int NOT_READY = static_cast<int>(0x80EA0007);
+constexpr int NOT_SUPPORTED = static_cast<int>(0x80EA0008);
 constexpr int AUDIO_OUT_INVALID_FORMAT = static_cast<int>(0x80260007);
 constexpr int AUDIO_OUT_INVALID_PORT_TYPE = static_cast<int>(0x8026000A);
 constexpr int SYSTEM_USER = 0xFF;
@@ -111,6 +116,9 @@ void CheckOpenParameters() {
     Require(sceAudio3dPortOpen(1, &defaults, &id) == INVALID_PARAMETER, "user id must be the system user");
     Require(sceAudio3dPortOpen(SYSTEM_USER, nullptr, &id) == INVALID_PARAMETER, "null parameters");
     Require(sceAudio3dPortOpen(SYSTEM_USER, &defaults, nullptr) == INVALID_PARAMETER, "null port id");
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &id) == INVALID_PARAMETER, "unreadable parameters");
+    Require(errno == 71 && id == 7, "parameter copy failure preserves errno and id");
     auto rejects = [&](auto change, const char* message) {
         Audio3dOpenParameters parameters = defaults;
         change(parameters);
@@ -119,6 +127,7 @@ void CheckOpenParameters() {
     };
     rejects([](auto& p) { p.size_this = 0x30; }, "unknown parameter size");
     rejects([](auto& p) { p.size_this = 0x21; }, "parameter size is not masked");
+    rejects([](auto& p) { p.size_this = 0x100000020ULL; }, "oversized parameter size");
     rejects([](auto& p) { p.rate = 1; }, "only 48 kHz");
     rejects([](auto& p) { p.granularity = 0x80; }, "granularity below 256");
     rejects([](auto& p) { p.granularity = 0x180; }, "granularity not a multiple of 256");
@@ -145,6 +154,15 @@ void CheckOpenClose() {
     parameters.size_this = 0x28;
     parameters.num_beds = 2;
     Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0");
+    auto* const badPtr = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, nullptr) == INVALID_PARAMETER, "unwritable attributes pointer with null count");
+    std::uint32_t numAttributes = 0;
+    errno = 71;
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, &numAttributes) == INVALID_PARAMETER, "unwritable attributes pointer");
+    Require(errno == 71 && numAttributes == 3, "attributes copy failure preserves errno and earlier count");
+    errno = 71;
+    Require(sceAudio3dPortGetAttributesSupported(0, nullptr, badPtr) == INVALID_PARAMETER, "unwritable numAttributes pointer");
+    Require(errno == 71, "attribute count copy failure preserves errno");
     std::uint32_t second = 7;
     Require(Open(parameters, &second) == OUT_OF_RESOURCES && second == 7, "only one port");
     std::uint32_t level = 0;
@@ -153,6 +171,12 @@ void CheckOpenClose() {
     Require(sceAudio3dPortClose(0) == 0, "close");
     Require(sceAudio3dPortClose(0) == INVALID_PORT, "double close");
     Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == INVALID_PORT, "closed port");
+    errno = 71;
+    Require(Open(parameters, badPtr) == INVALID_PARAMETER, "open with unwritable id pointer");
+    Require(errno == 71, "port id copy failure preserves errno");
+    id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0 after rejected id pointer");
+    Require(sceAudio3dPortClose(0) == 0, "close after rejected id pointer");
 }
 
 void CheckPortWrappers() {
@@ -177,6 +201,10 @@ void CheckPortWrappers() {
     Require(Open(parameters, &id) == OUT_OF_RESOURCES && id == 7, "open ex takes the only port");
     Require(sceAudio3dPortCreate(0x100, 0, 0, &id) == INVALID_PARAMETER && id == 7, "create is checked before the port count");
     Require(sceAudio3dPortGetStatus(1, &status, nullptr, 0) == INVALID_PORT && status == 7, "status of port 1");
+    errno = 71;
+    Require(sceAudio3dPortGetStatus(0, reinterpret_cast<uint32_t*>(0x10), nullptr, 0) == INVALID_PARAMETER, "unwritable status");
+    Require(sceAudio3dPortGetStatus(0, nullptr, reinterpret_cast<char*>(0x10), 16) == INVALID_PARAMETER, "unwritable description");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dPortGetStatus(0, nullptr, nullptr, 0) == 0, "status without outputs");
     char description[32];
     std::memset(description, 'x', sizeof(description));
@@ -199,6 +227,7 @@ void CheckPortWrappers() {
 void CheckAttributes() {
     float value = 0.5f;
     int flag = 1;
+    const void* const unreadable = reinterpret_cast<const void*>(std::uintptr_t{0x10});
     constexpr std::uint32_t supported[]{0x10001, 0x10002, 0x10003};
     std::uint32_t num_attributes = 99;
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, &num_attributes) == 0 && num_attributes == 3, "null output reports the supported attribute count");
@@ -223,6 +252,14 @@ void CheckAttributes() {
     Require(sceAudio3dPortSetAttribute(0, 0x10003, nullptr, 4) == INVALID_PARAMETER, "height aware needs a value");
     Require(sceAudio3dPortSetAttribute(0, 0x10004, &value, 4) == INVALID_PARAMETER, "unknown attribute");
     Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, 8) == INVALID_PARAMETER, "a float attribute is 4 bytes");
+    Require(sceAudio3dPortSetAttribute(1, 0x10001, unreadable, 4) == INVALID_PORT, "invalid port precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10004, unreadable, 4) == INVALID_PARAMETER, "unknown attribute precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 8) == INVALID_PARAMETER, "float size precedes the pointer read");
+    Require(sceAudio3dPortSetAttribute(0, 0x10003, unreadable, 4) == 0, "height aware does not read the value");
+    errno = 71;
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 4) == INVALID_PARAMETER, "unreadable reverb value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10002, unreadable, 4) == INVALID_PARAMETER, "unreadable spread radius");
+    Require(errno == 71, "float attribute copy failure preserves errno");
     const auto set_float = [](std::uint32_t attribute_id, float level) {
         return sceAudio3dPortSetAttribute(0, attribute_id, &level, sizeof(level));
     };
@@ -244,6 +281,9 @@ void CheckObjects() {
     std::uint32_t id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    errno = 71;
+    Require(sceAudio3dObjectReserve(0, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable object id");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == 7, "reserve on port 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
@@ -270,6 +310,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;
@@ -360,6 +404,9 @@ void CheckAudioOutPorts() {
     Require(handle > 0, "audio out open returns a handle");
     const std::vector<std::int16_t> block(static_cast<std::size_t>(granularity) * 2, 256);
     Require(sceAudio3dAudioOutOutput(0x1234, nullptr) == INVALID_PARAMETER, "the block is checked before the handle");
+    errno = 71;
+    Require(sceAudio3dAudioOutOutput(handle, reinterpret_cast<const void*>(0x10)) == INVALID_PARAMETER, "unreadable output block");
+    Require(errno == 71, "errno preserved after an unreadable output block");
     for (std::uint32_t i = 0; i < parameters.queue_depth; ++i) {
         Require(sceAudio3dAudioOutOutput(handle, block.data()) == 0, "audio out output");
     }
@@ -369,6 +416,9 @@ void CheckAudioOutPorts() {
     Require(sceAudio3dPortFlush(0) == 0, "flush drains the associated ports");
     Require(sceAudio3dAudioOutOutput(handle, block.data()) == 0, "flush resets the pending queue");
     Require(sceAudio3dAudioOutOutputs(nullptr, 0) == INVALID_PARAMETER, "outputs rejects an empty batch");
+    errno = 71;
+    Require(sceAudio3dAudioOutOutputs(reinterpret_cast<AudioOutOutputParam*>(0x10), 1) == INVALID_PARAMETER, "unreadable outputs batch");
+    Require(errno == 71, "errno preserved after an unreadable outputs batch");
     Require(sceAudio3dPortFlush(0) == 0, "flush before outputs");
     AudioOutOutputParam batch[2] = {{handle, block.data()}, {0x1234, block.data()}};
     Require(sceAudio3dAudioOutOutputs(batch, 1) == 0, "outputs one block");
@@ -429,6 +479,87 @@ void CheckObjectAttributes() {
     Require(sceAudio3dPortClose(0) == 0, "close");
 }
 
+void CheckObjectAttributeGuestMemory() {
+#ifdef _WIN32
+    SYSTEM_INFO hostInfo{};
+    GetSystemInfo(&hostInfo);
+    const std::size_t page = hostInfo.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "attribute allocation");
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0, "attribute guard");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "attribute page size");
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED, "attribute allocation");
+    Require(mprotect(memory + page, page, PROT_NONE) == 0, "attribute guard");
+#endif
+    const auto* inaccessible = reinterpret_cast<const Audio3dAttribute*>(memory + page);
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, inaccessible) == INVALID_PORT, "closed port precedence");
+    std::uint32_t port = 7;
+    Require(Open(Defaults(), &port) == 0, "attribute memory open");
+    std::uint32_t object = 0;
+    Require(sceAudio3dObjectReserve(port, &object) == 0, "attribute memory reserve");
+    const Audio3dAttribute reset{7, 0, nullptr, 0};
+    for (const auto offset : {page, page - sizeof(Audio3dAttribute) / 2}) {
+        errno = EDOM;
+        Require(sceAudio3dObjectSetAttributes(port, object, 1, reinterpret_cast<const Audio3dAttribute*>(memory + offset)) == INVALID_PARAMETER, "unreadable attribute array");
+        Require(errno == EDOM, "attribute array errno");
+        Require(sceAudio3dObjectSetAttributes(port, object, 1, &reset) == 0, "attribute read recovery");
+    }
+    auto* exact = reinterpret_cast<Audio3dAttribute*>(memory + page - sizeof(reset));
+    const Audio3dAttribute pair[2]{reset, reset};
+    auto* exactPair = reinterpret_cast<Audio3dAttribute*>(memory + page - sizeof(pair));
+    std::memcpy(exactPair, pair, sizeof(pair));
+    errno = EDOM;
+    Require(sceAudio3dObjectSetAttributes(port, object, 2, exact) == INVALID_PARAMETER && errno == EDOM, "unreadable second attribute");
+    Require(sceAudio3dObjectSetAttributes(port, object, UINT64_MAX, exact) == INVALID_PARAMETER, "attribute count overflow");
+    Require(sceAudio3dObjectSetAttributes(port + 1, object, UINT64_MAX, exact) == INVALID_PORT, "port before count extent");
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "read-only attributes");
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0, "read-only attributes");
+#endif
+    errno = EDOM;
+    Require(sceAudio3dObjectSetAttributes(port, object, 1, exact) == 0 && errno == EDOM, "exact attribute extent");
+    Require(std::memcmp(exact, &reset, sizeof(reset)) == 0, "attribute input changed");
+    Require(sceAudio3dObjectSetAttributes(port, object, 2, exactPair) == 0, "exact multi-attribute extent");
+    Require(std::memcmp(exactPair, pair, sizeof(pair)) == 0, "multi-attribute input changed");
+    for (const auto offset : {page, page - sizeof(Audio3dPcm) / 2}) {
+        const Audio3dAttribute pcmAttribute{1, 0, memory + offset, sizeof(Audio3dPcm)};
+        errno = EDOM;
+        Require(sceAudio3dObjectSetAttributes(port, object, 1, &pcmAttribute) == INVALID_PARAMETER && errno == EDOM, "unreadable PCM descriptor");
+        Require(sceAudio3dObjectSetAttributes(port, object + 1, 1, &pcmAttribute) == INVALID_PARAMETER, "PCM read before object check");
+    }
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0, "writable PCM storage");
+#else
+    Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0, "writable PCM storage");
+#endif
+    const std::int16_t samples[4]{};
+    const Audio3dPcm pcm{0, samples, 4};
+    auto* exactPcm = memory + page - sizeof(pcm);
+    std::memcpy(exactPcm, &pcm, sizeof(pcm));
+    const Audio3dAttribute pcmAttribute{1, 0, exactPcm, sizeof(pcm)};
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "read-only PCM storage");
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0, "read-only PCM storage");
+#endif
+    errno = EDOM;
+    Require(sceAudio3dObjectSetAttributes(port, object, 1, &pcmAttribute) == 0 && errno == EDOM, "exact read-only PCM descriptor");
+    Require(std::memcmp(exactPcm, &pcm, sizeof(pcm)) == 0, "PCM descriptor changed");
+    Require(sceAudio3dObjectUnreserve(port, object) == 0, "attribute memory unreserve");
+    Require(sceAudio3dPortClose(port) == 0, "attribute memory close");
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "attribute release");
+#else
+    Require(munmap(memory, page * 2) == 0, "attribute release");
+#endif
+}
+
 void CheckBed() {
     const std::int16_t samples[8] = {};
     Require(sceAudio3dBedWrite(0, 2, 0, samples, 4) == INVALID_PORT, "bed write needs an open port");
@@ -444,6 +575,10 @@ void CheckBed() {
     consume();
     Require(sceAudio3dBedWrite(0, 1, 0, samples, 4) == INVALID_PARAMETER, "1 channel bed write");
     Require(sceAudio3dBedWrite(0, 2, 0, nullptr, 4) == INVALID_PARAMETER, "null bed buffer");
+    errno = 71;
+    Require(sceAudio3dBedWrite(0, 2, 0, reinterpret_cast<const void*>(0x10), 4) == INVALID_PARAMETER, "unreadable bed buffer");
+    Require(sceAudio3dBedWrite2(0, 2, 1, reinterpret_cast<const void*>(0x10), 4, 0, false) == INVALID_PARAMETER, "unreadable float bed buffer");
+    Require(errno == 71, "unreadable bed buffer preserves errno");
     Require(sceAudio3dBedWrite2(0, 2, 0, samples, 4, 0, false) == 0, "bed write2 route both");
     consume();
     Require(sceAudio3dBedWrite2(0, 2, 0, samples, 4, 1, false) == INVALID_PARAMETER, "bed write2 route hmu only is a PS4 route");
@@ -454,6 +589,18 @@ void CheckBed() {
     Require(sceAudio3dBedWrite(0, 2, 0, reinterpret_cast<const char*>(samples) + 1, 4) == INVALID_PARAMETER, "misaligned s16 bed buffer");
     const float floats[8] = {};
     Require(sceAudio3dBedWrite(0, 2, 1, floats, 4) == 0, "float bed write");
+    consume();
+    const float nonFiniteFloats[8] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        0.25f,
+        std::numeric_limits<float>::quiet_NaN(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        -0.25f,
+    };
+    Require(sceAudio3dBedWrite(0, 2, 1, nonFiniteFloats, 4) == 0, "non-finite float bed write");
     consume();
     const std::uint32_t granularity = parameters.granularity;
     std::vector<std::int16_t> wide(static_cast<std::size_t>(granularity) * 8, 0);
@@ -612,6 +759,10 @@ void CheckPs4Process() {
     Require(sceAudio3dInitialize(0) == 0, "initialize in a PS4 process");
     Require(sceAudio3dInitialize(1) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY before the reserved check");
     Require(sceAudio3dInitialize(0) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY");
+    std::uint32_t badParameterId = 7;
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &badParameterId) == INVALID_PARAMETER, "PS4 unreadable parameters");
+    Require(errno == 71 && badParameterId == 7, "PS4 parameter copy failure preserves errno and id");
     const Audio3dOpenParameters defaults = Defaults();
     std::uint32_t id = 7;
     auto open = [&](auto change) {
@@ -630,7 +781,33 @@ void CheckPs4Process() {
     Require(sceAudio3dPortOpenEx(1, &defaults, &id) == INVALID_PARAMETER && id == 7, "open ex in a PS4 process checks like open");
     Require(sceAudio3dPortOpenEx(SYSTEM_USER, &defaults, &id) == 0 && id == 0, "open ex in a PS4 process opens the port");
     id = 7;
-    Require(open([](auto& p) { p.buffer_mode = 0; }) == OUT_OF_RESOURCES && id == 7, "a PS4 process reports the open port before an unsupported buffer mode");
+    Audio3dOpenParameters changed = defaults;
+    changed.granularity = 512;
+    changed.buffer_mode = 0;
+    Require(sceAudio3dPortOpen(1, &changed, &id) == INVALID_PARAMETER && id == 7,
+            "a PS4 process stores the parameter block before validating the user id");
+    Require(sceAudio3dPortAdvance(0) == NOT_SUPPORTED,
+            "a failed PS4 open updates the buffer mode before validating the user id");
+    Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, defaults.granularity, 48000, 1) == INVALID_PARAMETER,
+            "a failed PS4 open updates the granularity before validating the user id");
+
+    Require(Open(defaults, &id) == OUT_OF_RESOURCES && id == 7,
+            "a PS4 process stores valid parameters before checking the open port");
+    Require(sceAudio3dPortAdvance(0) == 0,
+            "a failed open-port check still updates the buffer mode");
+
+    changed.rate = 1;
+    Require(Open(changed, &id) == INVALID_PARAMETER && id == 7,
+            "a PS4 process stores the parameter block before validating its values");
+    Require(sceAudio3dPortAdvance(0) == NOT_SUPPORTED,
+            "an invalid-value PS4 open still updates the buffer mode");
+    Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, defaults.granularity, 48000, 1) == INVALID_PARAMETER,
+            "an invalid-value PS4 open still updates the granularity");
+
+    Require(Open(defaults, &id) == OUT_OF_RESOURCES && id == 7,
+            "a PS4 process restores default parameters before checking the open port");
+    Require(sceAudio3dPortAdvance(0) == 0,
+            "the restored buffer mode is visible after the failed open");
     Require(sceAudio3dPortClose(0) == 0, "close after open ex in a PS4 process");
     Require(sceAudio3dPortCreate(0x100, 0, 1, &id) == INVALID_PARAMETER && id == 7, "create in a PS4 process needs a zero reserved argument");
     RequireThrows([&] { sceAudio3dPortCreate(0x100, 0, 0, &id); }, "create in a PS4 process selects the unsupported buffer mode 0");
@@ -670,7 +847,7 @@ int RunAsPs4Process(const char* program) {
     const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
     const int status = _wsystem(command.c_str());
 #else
-    const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
+    const std::string command = "cd \"" + directory.string() + "\" && \"" + std::filesystem::absolute(program).string() + "\" ps4-process";
     const int status = std::system(command.c_str());
 #endif
     std::filesystem::remove_all(directory);
@@ -680,6 +857,11 @@ int RunAsPs4Process(const char* program) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
     if (argc == 2 && std::string_view(argv[1]) == "ps4-process") {
         CheckPs4Process();
         return 0;
@@ -695,6 +877,7 @@ int main(int argc, char** argv) {
     CheckFlush();
     CheckAudioOutPorts();
     CheckObjectAttributes();
+    CheckObjectAttributeGuestMemory();
     CheckBed();
     CheckBedQueue();
     CheckReportHandlers();

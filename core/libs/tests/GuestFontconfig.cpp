@@ -1,8 +1,20 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <initializer_list>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -34,6 +46,15 @@ static void CheckMatrix() {
     FcMatrix both = first;
     FcMatrixMultiply(&both, &both, &both);
     Check(Same(both, 7, 10, 15, 22));
+
+    errno = 71;
+    FcMatrixMultiply(nullptr, &first, &second);
+    FcMatrixMultiply(&result, nullptr, &second);
+    FcMatrixMultiply(&result, &first, nullptr);
+    FcMatrixMultiply(reinterpret_cast<FcMatrix*>(0x10), &first, &second);
+    FcMatrixMultiply(&result, reinterpret_cast<const FcMatrix*>(0x10), &second);
+    FcMatrixMultiply(&result, &first, reinterpret_cast<const FcMatrix*>(0x10));
+    Check(errno == 71);
 }
 
 static void CheckNullSets() {
@@ -108,6 +129,9 @@ static void CheckMerge() {
     Check(FcCharSetAddChar(source, 0x3042) == 1);
 
     int changed = 0;
+    errno = 71;
+    Check(FcCharSetMerge(target, source, reinterpret_cast<int*>(0x10)) == 0);
+    Check(errno == 71);
     Check(FcCharSetMerge(target, source, &changed) == 1);
     Check(changed == 1);
     Check(FcCharSetSubtractCount(source, target) == 0);
@@ -128,6 +152,108 @@ static void CheckMerge() {
     FcCharSetDestroy(target);
 }
 
+static bool Throws(void (*action)()) {
+    try {
+        action();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+static FcPattern* queryPattern = nullptr;
+
+static void CheckConfigurationQueries() {
+    FcPattern* pattern = FcPatternCreate();
+    queryPattern = pattern;
+    Check(pattern != nullptr);
+    FcObjectSet* objects = FcObjectSetBuild("family", "style", nullptr);
+    Check(objects != nullptr);
+    Check(FcFontList(nullptr, nullptr, nullptr) == nullptr);
+    Check(FcFontList(nullptr, pattern, objects) == nullptr);
+    Check(FcFontList(FcConfigCreate(), pattern, nullptr) == nullptr);
+    FcFontSet* set = FcFontSetCreate();
+    Check(set != nullptr);
+    FcFontSet* sets[] = {set};
+    for (const int count : {0, 1}) {
+        FcResult result = FcResultMatch;
+        Check(FcFontSetMatch(nullptr, sets, count, pattern, &result) == nullptr);
+        Check(result == FcResultNoMatch);
+    }
+    FcResult result = FcResultOutOfMemory;
+    Check(FcFontSetMatch(FcConfigGetCurrent(), sets, 1, pattern, &result) == nullptr && result == FcResultNoMatch);
+    Check(Throws([] { FcFontSet* none[] = {nullptr}; FcFontSetMatch(nullptr, none, 1, queryPattern, nullptr); }));
+    Check(Throws([] { FcResult unused; FcFontSetMatch(nullptr, nullptr, 0, queryPattern, &unused); }));
+    Check(Throws([] { FcFontSet* none[] = {nullptr}; FcResult unused; FcFontSetMatch(nullptr, none, 1, nullptr, &unused); }));
+    {
+        FcResult initial = FcResultMatch;
+        void* page = nullptr;
+        std::size_t pageSize = 0;
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Check(page != nullptr);
+        std::memcpy(page, &initial, sizeof(initial));
+        DWORD previous = 0;
+        Check(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Check(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(page != MAP_FAILED);
+        std::memcpy(page, &initial, sizeof(initial));
+        Check(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+        auto* roResult = static_cast<FcResult*>(page);
+        auto* badResult = reinterpret_cast<FcResult*>(std::uintptr_t{0x10});
+        for (FcResult* target : {badResult, roResult}) {
+            errno = 71;
+            bool threw = false;
+            try { FcFontSetMatch(nullptr, sets, 1, queryPattern, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+            errno = 71;
+            threw = false;
+            try { FcFontMatch(nullptr, queryPattern, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+            errno = 71;
+            threw = false;
+            try { FcFontSort(nullptr, queryPattern, 1, nullptr, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+        }
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, pageSize);
+#endif
+    }
+    for (FcConfig* config : {static_cast<FcConfig*>(nullptr), FcConfigCreate()}) {
+        FcResult matched = FcResultMatch;
+        Check(FcFontMatch(config, pattern, &matched) == nullptr && matched == FcResultNoMatch);
+        FcCharSet* coverage = reinterpret_cast<FcCharSet*>(&matched);
+        for (const FcBool trim : {0, 1}) {
+            FcResult sorted = FcResultTypeMismatch;
+            Check(FcFontSort(config, pattern, trim, &coverage, &sorted) == nullptr && sorted == FcResultNoMatch);
+            Check(coverage == reinterpret_cast<FcCharSet*>(&matched));
+            sorted = FcResultMatch;
+            Check(FcFontSort(config, pattern, trim, nullptr, &sorted) == nullptr && sorted == FcResultNoMatch);
+        }
+    }
+    Check(Throws([] { FcFontMatch(nullptr, queryPattern, nullptr); }));
+    Check(Throws([] { FcResult unused; FcFontMatch(nullptr, nullptr, &unused); }));
+    Check(Throws([] { FcFontSort(nullptr, queryPattern, 1, nullptr, nullptr); }));
+    Check(Throws([] { FcResult unused; FcFontSort(nullptr, nullptr, 1, nullptr, &unused); }));
+    for (const int kind : {-1, 0, 1, 2, 3, 0x7fffffff}) {
+        Check(FcConfigSubstitute(nullptr, pattern, kind) == 0);
+        Check(FcConfigSubstitute(nullptr, nullptr, kind) == 0);
+    }
+    FcFontSetDestroy(set);
+    FcObjectSetDestroy(objects);
+    FcPatternDestroy_nid_postfix(pattern);
+}
+
 int main() {
     CheckMatrix();
     CheckNullSets();
@@ -135,5 +261,6 @@ int main() {
     CheckCharacterRange();
     CheckCharacterAliasesExistingLeaf();
     CheckMerge();
+    CheckConfigurationQueries();
     return 0;
 }

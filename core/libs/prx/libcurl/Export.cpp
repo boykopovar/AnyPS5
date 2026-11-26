@@ -1,445 +1,1862 @@
+#include "prx/libcurl/src/CurlHost.hpp"
+#include "prx/libcurl/src/CurlSockets.hpp"
 #include "prx/libcurl/include/InventoryExports.hpp"
 #include "prx/libcurl/include/Api.hpp"
-#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/general/ExportMacros.hpp"
-#include <cstddef>
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
+
+#include "prx/libc/include/Api.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <climits>
+#include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <limits>
+#include <cstdarg>
+#include <deque>
+#include <memory>
+#include <new>
+#include <mutex>
+#include <iterator>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#ifdef _WIN32
+#define CURL_ARGS_START(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
+#define CURL_ARG(type) __builtin_va_arg(args, type)
+#define CURL_ARGS_END() __builtin_sysv_va_end(args)
+#else
+#define CURL_ARGS_START(last) std::va_list args; va_start(args, last)
+#define CURL_ARG(type) va_arg(args, type)
+#define CURL_ARGS_END() va_end(args)
+#endif
 
 static char RawUpper(char value) {
     return value >= 'a' && value <= 'z' ? static_cast<char>('A' + value - 'a') : value;
 }
 
+class GuestText {
+public:
+    explicit GuestText(const char* source) : source(source) {}
+
+    char Peek(const char* caller) {
+        if (position == size) Fill(caller);
+        return chunk[position];
+    }
+
+    void Advance() {
+        ++position;
+    }
+
+private:
+    void Fill(const char* caller) {
+        constexpr std::uintptr_t pageSize = 4096;
+        consumed += size;
+        const auto address = reinterpret_cast<std::uintptr_t>(source) + consumed;
+        const std::size_t count = (std::min)(chunk.size(), static_cast<std::size_t>(pageSize - address % pageSize));
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const char*>(address), count);
+        errno = savedErrno;
+        if (!copied) throw std::runtime_error(caller);
+        size = count;
+        position = 0;
+    }
+
+    const char* source;
+    std::array<char, 256> chunk{};
+    std::size_t size = 0;
+    std::size_t position = 0;
+    std::size_t consumed = 0;
+};
+
+extern "C" {
+extern curl_malloc_callback Curl_cmalloc;
+extern curl_free_callback Curl_cfree;
+extern curl_realloc_callback Curl_crealloc;
+extern curl_strdup_callback Curl_cstrdup;
+extern curl_calloc_callback Curl_ccalloc;
+}
+
+namespace {
+
+void AddFormOption(std::vector<curl_forms>& options, CURLformoption option, const char* value) {
+    if (option == CURLFORM_NAMELENGTH || option == CURLFORM_BUFFERLENGTH) {
+        const auto length = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(value));
+        if (length < LONG_MIN || length > LONG_MAX) throw std::out_of_range("curl_formadd length does not fit host long");
+    }
+    options.push_back({option, value});
+}
+
+bool IsFormLengthOption(CURLformoption option) {
+    return option == CURLFORM_NAMELENGTH || option == CURLFORM_CONTENTSLENGTH || option == CURLFORM_BUFFERLENGTH;
+}
+
+bool IsFormPointerOption(CURLformoption option) {
+    switch (option) {
+    case CURLFORM_COPYNAME:
+    case CURLFORM_PTRNAME:
+    case CURLFORM_COPYCONTENTS:
+    case CURLFORM_PTRCONTENTS:
+    case CURLFORM_FILECONTENT:
+    case CURLFORM_FILE:
+    case CURLFORM_BUFFER:
+    case CURLFORM_BUFFERPTR:
+    case CURLFORM_CONTENTTYPE:
+    case CURLFORM_CONTENTHEADER:
+    case CURLFORM_FILENAME:
+    case CURLFORM_STREAM:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void FreeGuestFormNodes(guest_curl_httppost* form) {
+    while (form) {
+        auto* const next = form->next;
+        FreeGuestFormNodes(form->more);
+        Curl_cfree(form);
+        form = next;
+    }
+}
+
+guest_curl_httppost* GuestFormFromHost(curl_httppost* host) {
+    if (!host) return nullptr;
+    auto* const guest = static_cast<guest_curl_httppost*>(Curl_ccalloc(1, sizeof(guest_curl_httppost)));
+    if (!guest) return nullptr;
+    guest->more = GuestFormFromHost(host->more);
+    guest->next = GuestFormFromHost(host->next);
+    if ((host->more && !guest->more) || (host->next && !guest->next)) {
+        FreeGuestFormNodes(guest->more);
+        FreeGuestFormNodes(guest->next);
+        Curl_cfree(guest);
+        return nullptr;
+    }
+    guest->name = host->name;
+    guest->namelength = host->namelength;
+    guest->contents = host->contents;
+    guest->contentslength = host->contentslength;
+    guest->buffer = host->buffer;
+    guest->bufferlength = host->bufferlength;
+    guest->contenttype = host->contenttype;
+    guest->contentheader = reinterpret_cast<guest_curl_slist*>(host->contentheader);
+    guest->flags = host->flags;
+    guest->showfilename = host->showfilename;
+    guest->userp = host->userp;
+    guest->contentlen = host->contentlen;
+    return guest;
+}
+
+void FreeHostFormNodes(curl_httppost* form) {
+    while (form) {
+        auto* const next = form->next;
+        FreeHostFormNodes(form->more);
+        Curl_cfree(form);
+        form = next;
+    }
+}
+
+struct GuestAllocators {
+    guest_curl_malloc_callback allocate = malloc_nid_postfix;
+    guest_curl_free_callback release = free_nid_postfix;
+    guest_curl_realloc_callback resize = realloc_nid_postfix;
+    guest_curl_strdup_callback duplicate = strdup_nid_postfix;
+    guest_curl_calloc_callback allocateZeroed = calloc_nid_postfix;
+};
+
+GuestAllocators activeAllocators;
+
+void* GuestCurlMalloc(size_t size) {
+    return activeAllocators.allocate(size);
+}
+
+void GuestCurlFree(void* pointer) {
+    activeAllocators.release(pointer);
+}
+
+void* GuestCurlRealloc(void* pointer, size_t size) {
+    return activeAllocators.resize(pointer, size);
+}
+
+char* GuestCurlStrdup(const char* text) {
+    return activeAllocators.duplicate(text);
+}
+
+void* GuestCurlCalloc(size_t count, size_t size) {
+    return activeAllocators.allocateZeroed(count, size);
+}
+
+const bool guestAllocatorInstalled = [] {
+    Curl_cmalloc = GuestCurlMalloc;
+    Curl_cfree = GuestCurlFree;
+    Curl_crealloc = GuestCurlRealloc;
+    Curl_cstrdup = GuestCurlStrdup;
+    Curl_ccalloc = GuestCurlCalloc;
+    return true;
+}();
+
+std::recursive_mutex globalMutex;
+unsigned globalInitCount = 0;
+
+CURLcode GlobalInitWithGuestAllocator(long flags, const GuestAllocators* callbacks = nullptr) {
+    if (!globalInitCount) activeAllocators = callbacks ? *callbacks : GuestAllocators{};
+    ++globalInitCount;
+    const CURLcode result = ::curl_global_init_mem(flags, GuestCurlMalloc, GuestCurlFree, GuestCurlRealloc, GuestCurlStrdup, GuestCurlCalloc);
+    if (result != CURLE_OK) --globalInitCount;
+    return result;
+}
+
+}
+
+namespace {
+
+
+long HostLong(int64_t value) {
+    if (value < LONG_MIN || value > LONG_MAX) throw std::out_of_range("libcurl guest long");
+    return static_cast<long>(value);
+}
+
+struct HostForm {
+    std::deque<curl_httppost> nodes;
+    std::unordered_set<const guest_curl_httppost*> visited;
+    bool cyclic = false;
+};
+
+curl_httppost* HostFormFromGuest(const guest_curl_httppost* guest, HostForm& form) {
+    if (!guest) return nullptr;
+    if (!form.visited.insert(guest).second) {
+        form.cyclic = true;
+        return nullptr;
+    }
+    auto& host = form.nodes.emplace_back();
+    host.more = HostFormFromGuest(guest->more, form);
+    host.next = HostFormFromGuest(guest->next, form);
+    host.name = guest->name;
+    host.namelength = HostLong(guest->namelength);
+    host.contents = guest->contents;
+    host.contentslength = HostLong(guest->contentslength);
+    host.buffer = guest->buffer;
+    host.bufferlength = HostLong(guest->bufferlength);
+    host.contenttype = guest->contenttype;
+    host.contentheader = reinterpret_cast<curl_slist*>(guest->contentheader);
+    host.flags = HostLong(guest->flags);
+    host.showfilename = guest->showfilename;
+    host.userp = guest->userp;
+    host.contentlen = guest->contentlen;
+    return &host;
+}
+
+struct FormGetTarget {
+    guest_curl_formget_callback append;
+    void* arg;
+};
+
+size_t FormGetAppend(void* target, const char* buffer, size_t length) {
+    const auto* const guest = static_cast<FormGetTarget*>(target);
+    return guest->append(guest->arg, buffer, length);
+}
+
+struct CallbackSlot {
+    void* function = nullptr;
+    void* data = nullptr;
+};
+
+struct EasyContext {
+    CurlSockets::Easy sockets;
+    std::array<CallbackSlot, 314> slots{};
+    void* errorStream = &_Stderr_nid_postfix;
+    EasyContext() {
+        slots[1].data = &_Stdout_nid_postfix;
+        slots[9].data = __stdinp_nid_postfix;
+    }
+};
+
+std::mutex contextMutex;
+std::unordered_map<CURL*, std::shared_ptr<EasyContext>> easies;
+
+template<class T>
+struct GuestFunction;
+
+template<class R, class... A>
+struct GuestFunction<R (*)(A...)> {
+    using Type = R (APS5_VABI*)(A...);
+};
+
+template<class T, class... A>
+auto CallGuest(CallbackSlot& slot, A... args) {
+    return reinterpret_cast<typename GuestFunction<T>::Type>(slot.function)(args...);
+}
+
+size_t Write(char* buffer, size_t size, size_t count, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[1];
+    if (slot.function) return CallGuest<curl_write_callback>(slot, buffer, size, count, slot.data);
+    return slot.data ? fwrite_nid_postfix(buffer, size, count, static_cast<FileStream*>(slot.data)) : 0;
+}
+
+size_t Read(char* buffer, size_t size, size_t count, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[9];
+    if (slot.function) return CallGuest<curl_read_callback>(slot, buffer, size, count, slot.data);
+    return slot.data ? fread_nid_postfix(buffer, size, count, static_cast<FileStream*>(slot.data)) : CURL_READFUNC_ABORT;
+}
+
+size_t Header(char* buffer, size_t size, size_t count, void* opaque) {
+    auto* context = static_cast<EasyContext*>(opaque);
+    auto& slot = context->slots[29];
+    if (slot.function) return CallGuest<curl_write_callback>(slot, buffer, size, count, slot.data);
+    auto& writer = context->slots[1];
+    return writer.function ? CallGuest<curl_write_callback>(writer, buffer, size, count, slot.data)
+        : fwrite_nid_postfix(buffer, size, count, static_cast<FileStream*>(slot.data));
+}
+
+int Debug(CURL* easy, curl_infotype type, char* buffer, size_t size, void* opaque) {
+    auto* context = static_cast<EasyContext*>(opaque);
+    auto& slot = context->slots[95];
+    if (slot.function) return CallGuest<curl_debug_callback>(slot, easy, type, buffer, size, slot.data);
+    if (type == CURLINFO_TEXT || type == CURLINFO_HEADER_IN || type == CURLINFO_HEADER_OUT) {
+        const char* prefix[] = {"* ", "< ", "> "};
+        auto* stream = static_cast<FileStream*>(context->errorStream);
+        fwrite_nid_postfix(prefix[type], 2, 1, stream);
+        fwrite_nid_postfix(buffer, size, 1, stream);
+    }
+    return 0;
+}
+
+void BindSeek(CURL* easy, EasyContext* context);
+
+void BindEasy(CURL* easy, EasyContext* context) {
+    CurlSockets::BindEasy_nid_no_patch(easy, &context->sockets);
+    BindSeek(easy, context);
+    ::curl_easy_setopt(easy, CURLOPT_WRITEDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, Write);
+    ::curl_easy_setopt(easy, CURLOPT_READDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_READFUNCTION, Read);
+    ::curl_easy_setopt(easy, CURLOPT_DEBUGDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_DEBUGFUNCTION, Debug);
+}
+
+void BindHeader(CURL* easy, EasyContext* context) {
+    const auto& slot = context->slots[29];
+    ::curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, slot.function || slot.data ? Header : nullptr);
+    ::curl_easy_setopt(easy, CURLOPT_HEADERDATA, slot.function || slot.data ? context : nullptr);
+}
+
+std::shared_ptr<EasyContext> FindEasy(CURL* easy) {
+    std::lock_guard lock(contextMutex);
+    const auto found = easies.find(easy);
+    return found == easies.end() ? nullptr : found->second;
+}
+
+struct MimeCallback {
+    guest_curl_read_callback read;
+    guest_curl_seek_callback seek;
+    guest_curl_free_callback free;
+    void* arg;
+};
+
+size_t MimeRead(char* buffer, size_t size, size_t count, void* opaque) {
+    auto* callback = static_cast<MimeCallback*>(opaque);
+    return callback->read(buffer, size, count, callback->arg);
+}
+
+int MimeSeek(void* opaque, curl_off_t offset, int origin) {
+    auto* callback = static_cast<MimeCallback*>(opaque);
+    return callback->seek(callback->arg, offset, origin);
+}
+
+void MimeFree(void* opaque) {
+    auto* callback = static_cast<MimeCallback*>(opaque);
+    callback->free(callback->arg);
+}
+
+using MimeCallbacks = std::vector<std::shared_ptr<MimeCallback>>;
+
+std::mutex mimeMutex;
+std::unordered_map<curl_mime*, std::vector<curl_mimepart*>> mimeParts;
+std::unordered_map<curl_mimepart*, std::shared_ptr<MimeCallback>> partCallbacks;
+std::unordered_map<curl_mimepart*, curl_mime*> partSubparts;
+std::unordered_map<curl_mime*, curl_mimepart*> mimeParents;
+std::unordered_map<CURL*, curl_mime*> easyMimePosts;
+std::unordered_map<CURL*, MimeCallbacks> easyMimeCopies;
+
+void ForgetMimeLocked(curl_mime* mime, MimeCallbacks& released);
+
+void ForgetPartContentLocked(curl_mimepart* part, MimeCallbacks& released) {
+    if (auto found = partCallbacks.find(part); found != partCallbacks.end()) {
+        released.push_back(std::move(found->second));
+        partCallbacks.erase(found);
+    }
+    if (auto found = partSubparts.find(part); found != partSubparts.end()) {
+        auto* subparts = found->second;
+        partSubparts.erase(found);
+        mimeParents.erase(subparts);
+        ForgetMimeLocked(subparts, released);
+    }
+}
+
+void ForgetMimeLocked(curl_mime* mime, MimeCallbacks& released) {
+    if (auto parent = mimeParents.find(mime); parent != mimeParents.end()) {
+        partSubparts.erase(parent->second);
+        mimeParents.erase(parent);
+    }
+    for (auto post = easyMimePosts.begin(); post != easyMimePosts.end();) {
+        post = post->second == mime ? easyMimePosts.erase(post) : std::next(post);
+    }
+    auto found = mimeParts.find(mime);
+    if (found == mimeParts.end()) return;
+    auto parts = std::move(found->second);
+    mimeParts.erase(found);
+    for (auto* part : parts) ForgetPartContentLocked(part, released);
+}
+
+void CollectMimeCallbacksLocked(curl_mime* mime, MimeCallbacks& callbacks) {
+    const auto found = mimeParts.find(mime);
+    if (found == mimeParts.end()) return;
+    for (auto* part : found->second) {
+        if (auto callback = partCallbacks.find(part); callback != partCallbacks.end()) callbacks.push_back(callback->second);
+        if (auto subparts = partSubparts.find(part); subparts != partSubparts.end()) CollectMimeCallbacksLocked(subparts->second, callbacks);
+    }
+}
+
+void ReplacePartContent(curl_mimepart* part, std::shared_ptr<MimeCallback> callback, curl_mime* subparts) {
+    MimeCallbacks released;
+    std::lock_guard lock(mimeMutex);
+    ForgetPartContentLocked(part, released);
+    if (callback) partCallbacks.emplace(part, std::move(callback));
+    if (subparts) {
+        partSubparts.emplace(part, subparts);
+        mimeParents.emplace(subparts, part);
+    }
+}
+
+void ForgetEasyMime(CURL* easy) {
+    MimeCallbacks released;
+    std::lock_guard lock(mimeMutex);
+    easyMimePosts.erase(easy);
+    if (auto copies = easyMimeCopies.find(easy); copies != easyMimeCopies.end()) {
+        released = std::move(copies->second);
+        easyMimeCopies.erase(copies);
+    }
+}
+
+void CopyEasyMime(CURL* source, CURL* copy) {
+    MimeCallbacks callbacks;
+    std::lock_guard lock(mimeMutex);
+    if (auto post = easyMimePosts.find(source); post != easyMimePosts.end()) {
+        CollectMimeCallbacksLocked(post->second, callbacks);
+    } else if (auto copies = easyMimeCopies.find(source); copies != easyMimeCopies.end()) {
+        callbacks = copies->second;
+    }
+    if (!callbacks.empty()) easyMimeCopies.insert_or_assign(copy, std::move(callbacks));
+}
+
+int Progress(void* opaque, double a, double b, double c, double d) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_PROGRESSFUNCTION % 10000];
+    return CallGuest<curl_progress_callback>(slot, slot.data, a, b, c, d);
+}
+
+int Xfer(void* opaque, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_XFERINFOFUNCTION % 10000];
+    return CallGuest<curl_xferinfo_callback>(slot, slot.data, a, b, c, d);
+}
+
+int Seek(void* opaque, curl_off_t offset, int origin) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_SEEKFUNCTION % 10000];
+    return CallGuest<curl_seek_callback>(slot, slot.data, offset, origin);
+}
+
+curlioerr Ioctl(CURL* easy, int command, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_IOCTLFUNCTION % 10000];
+    return CallGuest<curl_ioctl_callback>(slot, easy, command, slot.data);
+}
+
+int DefaultSeek(void* opaque, curl_off_t offset, int origin) {
+    auto* context = static_cast<EasyContext*>(opaque);
+    if (!context->slots[9].data) return CURL_SEEKFUNC_CANTSEEK;
+    if (fseek_nid_postfix(static_cast<FileStream*>(context->slots[9].data), offset, origin) == -1)
+        return CURL_SEEKFUNC_CANTSEEK;
+    return CURL_SEEKFUNC_OK;
+}
+
+void BindSeek(CURL* easy, EasyContext* context) {
+    auto callback = context->slots[167].function ? Seek :
+        context->slots[9].function || context->slots[130].function ? nullptr : DefaultSeek;
+    ::curl_easy_setopt(easy, CURLOPT_SEEKFUNCTION, callback);
+    ::curl_easy_setopt(easy, CURLOPT_SEEKDATA, context);
+}
+
+size_t Interleave(char* buffer, size_t size, size_t count, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_INTERLEAVEFUNCTION % 10000];
+    return CallGuest<curl_write_callback>(slot, buffer, size, count, slot.data);
+}
+
+int Fnmatch(void* opaque, const char* pattern, const char* name) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_FNMATCH_FUNCTION % 10000];
+    return CallGuest<curl_fnmatch_callback>(slot, slot.data, pattern, name);
+}
+
+int Resolver(void* resolver, void* reserved, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_RESOLVER_START_FUNCTION % 10000];
+    return CallGuest<curl_resolver_start_callback>(slot, resolver, reserved, slot.data);
+}
+
+int Trailer(curl_slist** list, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_TRAILERFUNCTION % 10000];
+    return CallGuest<curl_trailer_callback>(slot, list, slot.data);
+}
+
+int Prereq(void* opaque, char* primary, char* local, int primaryPort, int localPort) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_PREREQFUNCTION % 10000];
+    return CallGuest<curl_prereq_callback>(slot, slot.data, primary, local, primaryPort, localPort);
+}
+
+int SshKey(CURL* easy, const curl_khkey* known, const curl_khkey* found, curl_khmatch match, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[CURLOPT_SSH_KEYFUNCTION % 10000];
+    return CallGuest<curl_sshkeycallback>(slot, easy, known, found, match, slot.data);
+}
+
+struct GuestHstsEntry {
+    char* name;
+    size_t namelen;
+    unsigned char includeSubDomains;
+    char expire[18];
+};
+static_assert(offsetof(GuestHstsEntry, expire) == 17);
+static_assert(sizeof(GuestHstsEntry) == 40);
+
+CURLSTScode HstsRead(CURL* easy, curl_hstsentry* entry, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[301];
+    GuestHstsEntry guest{entry->name, entry->namelen, static_cast<unsigned char>(entry->includeSubDomains), {}};
+    std::memcpy(guest.expire, entry->expire, 18);
+    using Function = CURLSTScode (APS5_VABI*)(CURL*, GuestHstsEntry*, void*);
+    auto result = reinterpret_cast<Function>(slot.function)(easy, &guest, slot.data);
+    entry->name = guest.name;
+    entry->namelen = guest.namelen;
+    entry->includeSubDomains = guest.includeSubDomains & 1;
+    std::memcpy(entry->expire, guest.expire, 18);
+    return result;
+}
+
+CURLSTScode HstsWrite(CURL* easy, curl_hstsentry* entry, curl_index* index, void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[303];
+    GuestHstsEntry guest{entry->name, entry->namelen, static_cast<unsigned char>(entry->includeSubDomains), {}};
+    std::memcpy(guest.expire, entry->expire, 18);
+    using Function = CURLSTScode (APS5_VABI*)(CURL*, GuestHstsEntry*, curl_index*, void*);
+    auto result = reinterpret_cast<Function>(slot.function)(easy, &guest, index, slot.data);
+    entry->name = guest.name;
+    entry->namelen = guest.namelen;
+    entry->includeSubDomains = guest.includeSubDomains & 1;
+    std::memcpy(entry->expire, guest.expire, 18);
+    return result;
+}
+
+struct GuestFileInfo {
+    char* filename;
+    curlfiletype filetype;
+    int64_t time;
+    unsigned int perm;
+    int uid;
+    int gid;
+    curl_off_t size;
+    int64_t hardlinks;
+    decltype(curl_fileinfo::strings) strings;
+    unsigned int flags;
+    char* buffer;
+    size_t bufferSize;
+    size_t bufferUsed;
+};
+static_assert(sizeof(GuestFileInfo) == 128);
+
+long ChunkBegin(const void* info, void* opaque, int remains) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[198];
+    const auto* host = static_cast<const curl_fileinfo*>(info);
+    GuestFileInfo guest{host->filename, host->filetype, host->time, host->perm, host->uid, host->gid,
+        host->size, host->hardlinks, host->strings, host->flags, host->b_data, host->b_size, host->b_used};
+    using Function = int64_t (APS5_VABI*)(const void*, void*, int);
+    return HostLong(reinterpret_cast<Function>(slot.function)(&guest, slot.data, remains));
+}
+
+long ChunkEnd(void* opaque) {
+    auto& slot = static_cast<EasyContext*>(opaque)->slots[199];
+    using Function = int64_t (APS5_VABI*)(void*);
+    return HostLong(reinterpret_cast<Function>(slot.function)(slot.data));
+}
+
+bool NamesFile(CURLoption option) {
+    switch (option) {
+    case CURLOPT_CAINFO:
+    case CURLOPT_CAPATH:
+    case CURLOPT_CRLFILE:
+    case CURLOPT_ISSUERCERT:
+    case CURLOPT_SSLCERT:
+    case CURLOPT_SSLKEY:
+    case CURLOPT_PINNEDPUBLICKEY:
+    case CURLOPT_PROXY_CAINFO:
+    case CURLOPT_PROXY_CAPATH:
+    case CURLOPT_PROXY_CRLFILE:
+    case CURLOPT_PROXY_ISSUERCERT:
+    case CURLOPT_PROXY_SSLCERT:
+    case CURLOPT_PROXY_SSLKEY:
+    case CURLOPT_PROXY_PINNEDPUBLICKEY:
+    case CURLOPT_COOKIEFILE:
+    case CURLOPT_COOKIEJAR:
+    case CURLOPT_NETRC_FILE:
+    case CURLOPT_HSTS:
+    case CURLOPT_ALTSVC:
+    case CURLOPT_UNIX_SOCKET_PATH:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string HostFileName(CURLoption option, const char* name) {
+    const std::string_view text(name);
+    if (text.empty()) return {};
+    if (text == "-" && (option == CURLOPT_COOKIEFILE || option == CURLOPT_COOKIEJAR)) return std::string(text);
+    if ((option == CURLOPT_PINNEDPUBLICKEY || option == CURLOPT_PROXY_PINNEDPUBLICKEY) && text.starts_with("sha256//")) return std::string(text);
+    std::filesystem::path host;
+    return ResolvePathError_nid_no_patch(name, host) == 0 ? host.string() : std::string{};
+}
+
+CURLcode SetEasyPointer(CURL* easy, CURLoption option, void* value, EasyContext* context) {
+    switch (option) {
+    case CURLOPT_OPENSOCKETFUNCTION:
+    case CURLOPT_OPENSOCKETDATA:
+    case CURLOPT_CLOSESOCKETFUNCTION:
+    case CURLOPT_CLOSESOCKETDATA:
+    case CURLOPT_SOCKOPTFUNCTION:
+    case CURLOPT_SOCKOPTDATA:
+        return CurlSockets::SetEasy_nid_no_patch(easy, &context->sockets, option, value);
+    default: break;
+    }
+    switch (option) {
+    case CURLOPT_WRITEFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, Write);
+        if (result == CURLE_OK) context->slots[1].function = value;
+        return result;
+    }
+    case CURLOPT_READFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, Read);
+        if (result == CURLE_OK) {
+            context->slots[9].function = value;
+            BindSeek(easy, context);
+        }
+        return result;
+    }
+    case CURLOPT_DEBUGFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, Debug);
+        if (result == CURLE_OK) context->slots[95].function = value;
+        return result;
+    }
+    case CURLOPT_HEADERFUNCTION:
+        context->slots[29].function = value;
+        BindHeader(easy, context);
+        return CURLE_OK;
+    case CURLOPT_MIMEPOST: {
+        auto* mime = static_cast<curl_mime*>(value);
+        bool unchanged = false;
+        if (mime) {
+            std::lock_guard lock(mimeMutex);
+            const auto found = easyMimePosts.find(easy);
+            unchanged = found != easyMimePosts.end() && found->second == mime;
+        }
+        const auto result = ::curl_easy_setopt(easy, option, mime);
+        if (!unchanged) {
+            ForgetEasyMime(easy);
+            if (result == CURLE_OK && mime) {
+                std::lock_guard lock(mimeMutex);
+                easyMimePosts.insert_or_assign(easy, mime);
+            }
+        }
+        return result;
+    }
+    case CURLOPT_STDERR: {
+        auto* stream = value ? static_cast<FileStream*>(value) : &_Stderr_nid_postfix;
+        auto result = ::curl_easy_setopt(easy, option, GetNativeStream(stream));
+        if (result == CURLE_OK) context->errorStream = stream;
+        return result;
+    }
+    case CURLOPT_PROGRESSFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Progress : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_XFERINFODATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_XFERINFODATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_XFERINFOFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Xfer : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_XFERINFODATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_XFERINFODATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_SEEKFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Seek : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_SEEKDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_SEEKDATA, context);
+        }
+        if (result == CURLE_OK) BindSeek(easy, context);
+        return result;
+    }
+    case CURLOPT_IOCTLFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Ioctl : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_IOCTLDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_IOCTLDATA, context);
+        }
+        if (result == CURLE_OK) BindSeek(easy, context);
+        return result;
+    }
+    case CURLOPT_INTERLEAVEFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Interleave : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_INTERLEAVEDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_INTERLEAVEDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_FNMATCH_FUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Fnmatch : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_FNMATCH_DATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_FNMATCH_DATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_RESOLVER_START_FUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Resolver : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_RESOLVER_START_DATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_RESOLVER_START_DATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_TRAILERFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Trailer : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_TRAILERDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_TRAILERDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_PREREQFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? Prereq : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_PREREQDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_PREREQDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_SSH_KEYFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? SshKey : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_SSH_KEYDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_SSH_KEYDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_HSTSREADFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? HstsRead : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_HSTSREADDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_HSTSREADDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_HSTSWRITEFUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? HstsWrite : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_HSTSWRITEDATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_HSTSWRITEDATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_CHUNK_BGN_FUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? ChunkBegin : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_CHUNK_DATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_CHUNK_DATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_CHUNK_END_FUNCTION: {
+        auto result = ::curl_easy_setopt(easy, option, value ? ChunkEnd : nullptr);
+        if (result == CURLE_OK) {
+            auto& slot = context->slots[option % 10000];
+            slot.function = value;
+            slot.data = context->slots[CURLOPT_CHUNK_DATA % 10000].data;
+            ::curl_easy_setopt(easy, CURLOPT_CHUNK_DATA, context);
+        }
+        return result;
+    }
+    case CURLOPT_WRITEDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_READDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_HEADERDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            BindHeader(easy, context);
+        }
+        return result;
+    }
+    case CURLOPT_DEBUGDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_XFERINFODATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_PROGRESSFUNCTION % 10000].data = value;
+            context->slots[CURLOPT_XFERINFOFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_SEEKDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_SEEKFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_IOCTLDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_IOCTLFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_INTERLEAVEDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_INTERLEAVEFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_FNMATCH_DATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_FNMATCH_FUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_RESOLVER_START_DATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_RESOLVER_START_FUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_TRAILERDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_TRAILERFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_PREREQDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_PREREQFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_SSH_KEYDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_SSH_KEYFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_HSTSREADDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_HSTSREADFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_HSTSWRITEDATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_HSTSWRITEFUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    case CURLOPT_CHUNK_DATA: {
+        auto result = ::curl_easy_setopt(easy, option, context);
+        if (result == CURLE_OK) {
+            context->slots[option % 10000].data = value;
+            context->slots[CURLOPT_CHUNK_BGN_FUNCTION % 10000].data = value;
+            context->slots[CURLOPT_CHUNK_END_FUNCTION % 10000].data = value;
+        }
+        return result;
+    }
+    default:
+        if (value && NamesFile(option)) return ::curl_easy_setopt(easy, option, HostFileName(option, static_cast<const char*>(value)).c_str());
+        return ::curl_easy_setopt(easy, option, value);
+    }
+}
+
+void RebindEasy(CURL* easy, EasyContext* context) {
+    BindEasy(easy, context);
+    BindHeader(easy, context);
+    ::curl_easy_setopt(easy, CURLOPT_XFERINFODATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_SEEKDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_IOCTLDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_INTERLEAVEDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_CHUNK_DATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_FNMATCH_DATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_RESOLVER_START_DATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_TRAILERDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_PREREQDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_HSTSREADDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_HSTSWRITEDATA, context);
+    ::curl_easy_setopt(easy, CURLOPT_SSH_KEYDATA, context);
+}
+
+struct MultiContext {
+    CurlSockets::Multi sockets;
+    void* timer = nullptr;
+    void* timerData = nullptr;
+    void* push = nullptr;
+    void* pushData = nullptr;
+};
+std::unordered_map<CURLM*, std::shared_ptr<MultiContext>> multis;
+
+std::shared_ptr<MultiContext> FindMulti(CURLM* multi) {
+    std::lock_guard lock(contextMutex);
+    const auto found = multis.find(multi);
+    return found == multis.end() ? nullptr : found->second;
+}
+
+int Timer(CURLM* multi, long timeout, void* opaque) {
+    auto* context = static_cast<MultiContext*>(opaque);
+    using Function = int (APS5_VABI*)(CURLM*, int64_t, void*);
+    return reinterpret_cast<Function>(context->timer)(multi, timeout, context->timerData);
+}
+
+struct ShareContext {
+    guest_curl_lock_callback lock = nullptr;
+    guest_curl_unlock_callback unlock = nullptr;
+    void* data = nullptr;
+};
+
+std::mutex shareMutex;
+std::unordered_map<CURLSH*, std::shared_ptr<ShareContext>> shares;
+
+void ShareLock(CURL* easy, curl_lock_data data, curl_lock_access access, void* opaque) {
+    auto* context = static_cast<ShareContext*>(opaque);
+    if (context->lock) context->lock(easy, data, access, context->data);
+}
+
+void ShareUnlock(CURL* easy, curl_lock_data data, void* opaque) {
+    auto* context = static_cast<ShareContext*>(opaque);
+    if (context->unlock) context->unlock(easy, data, context->data);
+}
+
+std::shared_ptr<ShareContext> FindShare(CURLSH* share) {
+    std::lock_guard lock(shareMutex);
+    const auto found = shares.find(share);
+    return found == shares.end() ? nullptr : found->second;
+}
+
+} // namespace
+
 extern "C" {
 
-int APS5_VABI curl_pushheader_bynum() {
+int Push_nid_no_patch(CURL* parent, CURL* easy, size_t numHeaders, struct curl_pushheaders* headers, void* opaque) {
+    auto* context = static_cast<MultiContext*>(opaque);
+    std::shared_ptr<EasyContext> source;
+    {
+        std::lock_guard lock(contextMutex);
+        const auto found = easies.find(parent);
+        if (found != easies.end()) source = found->second;
+    }
+    if (!source) return CURL_PUSH_DENY;
+    std::shared_ptr<EasyContext> copy;
+    try {
+        copy = std::make_shared<EasyContext>(*source);
+        {
+            std::lock_guard lock(contextMutex);
+            easies.insert_or_assign(easy, copy);
+        }
+        CopyEasyMime(parent, easy);
+        RebindEasy(easy, copy.get());
+    } catch (const std::exception&) {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+        return CURL_PUSH_DENY;
+    }
+    using Function = int (APS5_VABI*)(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
+    const auto result = reinterpret_cast<Function>(context->push)(parent, easy, numHeaders, headers, context->pushData);
+    if (result != CURL_PUSH_OK) {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+    }
+    return result;
+}
+
+char* APS5_VABI curl_pushheader_bynum_nid_postfix(struct curl_pushheaders* h, size_t num) {
+    return ::curl_pushheader_bynum(h, num);
+}
+
+char* APS5_VABI curl_pushheader_byname_nid_postfix(struct curl_pushheaders* h, const char* name) {
+    return ::curl_pushheader_byname(h, name);
+}
+
+std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
+    if (!httppost || !last_post) NotImplemented_nid_no_patch(__func__);
+    guest_curl_httppost* last = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&last, last_post, sizeof(last))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::vector<curl_forms> options;
+    bool nullArray = false;
+    bool unreadableArray = false;
+    CURL_ARGS_START(last_post);
+    for (;;) {
+        const auto option = static_cast<CURLformoption>(CURL_ARG(int));
+        if (option == CURLFORM_END) break;
+        if (option == CURLFORM_ARRAY) {
+            const auto* forms = CURL_ARG(const guest_curl_forms*);
+            if (!forms) {
+                nullArray = true;
+                break;
+            }
+            for (guest_curl_forms entry{};; ++forms) {
+                if (!GuestCopyIn_nid_no_patch(&entry, forms, sizeof(entry))) {
+                    unreadableArray = true;
+                    break;
+                }
+                if (entry.option == CURLFORM_END) break;
+                AddFormOption(options, static_cast<CURLformoption>(entry.option), entry.value);
+            }
+            if (unreadableArray) break;
+            continue;
+        }
+        if (IsFormLengthOption(option) || option == CURLFORM_CONTENTLEN) {
+            AddFormOption(options, option, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(CURL_ARG(std::int64_t))));
+        } else if (IsFormPointerOption(option)) {
+            AddFormOption(options, option, CURL_ARG(const char*));
+        } else {
+            AddFormOption(options, option, nullptr);
+            break;
+        }
+    }
+    CURL_ARGS_END();
+    if (unreadableArray) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    options.push_back({CURLFORM_END, nullptr});
+
+    curl_httppost* hostHead = nullptr;
+    curl_httppost* hostTail = nullptr;
+    auto result = ::curl_formadd(&hostHead, &hostTail, CURLFORM_ARRAY, options.data(), CURLFORM_END);
+    if (nullArray) {
+        ::curl_formfree(hostHead);
+        return result == CURL_FORMADD_OK ? CURL_FORMADD_NULL : result;
+    }
+    if (!hostHead) return result;
+    guest_curl_httppost** const link = last ? &last->next : httppost;
+    if (!GuestWritable_nid_no_patch(link, sizeof(*link)) || !GuestWritable_nid_no_patch(last_post, sizeof(*last_post))) {
+        ::curl_formfree(hostHead);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    auto* const guest = GuestFormFromHost(hostHead);
+    if (!guest) {
+        ::curl_formfree(hostHead);
+        return CURL_FORMADD_MEMORY;
+    }
+    FreeHostFormNodes(hostHead);
+    if (!GuestCopyOut_nid_no_patch(link, &guest, sizeof(guest)) || !GuestCopyOut_nid_no_patch(last_post, &guest, sizeof(guest)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return result;
+}
+
+int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* arg, guest_curl_formget_callback append) {
+    if (!append) return CURLE_BAD_FUNCTION_ARGUMENT;
+    HostForm host;
+    auto* const first = HostFormFromGuest(form, host);
+    if (host.cyclic) return CURLE_BAD_FUNCTION_ARGUMENT;
+    FormGetTarget target{append, arg};
+    return ::curl_formget(first, &target, FormGetAppend);
+}
+
+std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Action_nid_no_patch(multi_handle, &context->sockets, s, ev_bitmask, running_handles, false);
+}
+
+std::int32_t APS5_VABI curl_multi_socket_all_nid_postfix(CURLM* multi_handle, int* running_handles) {
+    GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_socket_all(multi_handle, running_handles);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
+}
+
+std::int32_t APS5_VABI curl_multi_socket_nid_postfix(CURLM* multi_handle, int s, int* running_handles) {
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Action_nid_no_patch(multi_handle, &context->sockets, s, 0, running_handles, true);
+}
+
+std::int32_t APS5_VABI curl_multi_assign_nid_postfix(CURLM* multi_handle, int sockfd, void* sockptr) {
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    return CurlSockets::Assign_nid_no_patch(multi_handle, &context->sockets, sockfd, sockptr);
+}
+
+std::int32_t APS5_VABI curl_easy_recv_nid_postfix(CURL* curl, void* buffer, size_t buflen, size_t* n) {
+    GuestArena::HostWrite write(buffer, buflen);
+    GuestArena::HostWrite count(n, n ? sizeof(*n) : 0);
+    return ::curl_easy_recv(curl, buffer, buflen, n);
+}
+
+std::int32_t APS5_VABI curl_easy_send_nid_postfix(CURL* curl, const void* buffer, size_t buflen, size_t* n) {
+    GuestArena::HostWrite count(n, n ? sizeof(*n) : 0);
+    return ::curl_easy_send(curl, buffer, buflen, n);
+}
+
+void APS5_VABI curl_mime_free_nid_postfix(curl_mime* mime) {
+    ::curl_mime_free(mime);
+    if (!mime) return;
+    MimeCallbacks released;
+    std::lock_guard lock(mimeMutex);
+    ForgetMimeLocked(mime, released);
+}
+
+
+
+
+
+
+
+
+
+int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format, VaList* args) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_formadd() {
+int APS5_VABI curl_mfprintf_nid_postfix(std::FILE* whereto, const char* format, ...) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_multi_socket_action() {
+int APS5_VABI curl_mvsprintf_nid_postfix(char* buffer, const char* format, VaList* args) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_easy_recv() {
+int APS5_VABI curl_msprintf_nid_postfix(char* buffer, const char* format, ...) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_mime_free() {
+int APS5_VABI curl_mvsnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, VaList* args) {
     NotImplemented_nid_no_patch(__func__);
 }
+
+int APS5_VABI curl_msnprintf_nid_postfix(char* buffer, size_t maxlength, const char* format, ...) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI curl_mvprintf_nid_postfix(const char* format, VaList* args) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI curl_mprintf_nid_postfix(const char* format, ...) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+char* APS5_VABI curl_mvaprintf_nid_postfix(const char* format, VaList* args) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+char* APS5_VABI curl_maprintf_nid_postfix(const char* format, ...) {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+std::int32_t APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
+    auto context = FindShare(share_handle);
+    const auto result = ::curl_share_cleanup(share_handle);
+    if (result == CURLSHE_OK) {
+        std::lock_guard lock(shareMutex);
+        const auto found = shares.find(share_handle);
+        if (found != shares.end() && found->second == context) shares.erase(found);
+    }
+    return result;
+}
+
+std::int32_t APS5_VABI curl_easy_perform_nid_postfix(CURL* handle) {
+    return ::curl_easy_perform(handle);
+}
+
+std::int32_t APS5_VABI curl_multi_remove_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_remove_handle(multi_handle, easy_handle);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
+}
+
+std::int32_t APS5_VABI curl_global_sslset_nid_postfix(std::int32_t guestId, const char* name, const guest_curl_ssl_backend*** avail) {
+    const auto id = static_cast<curl_sslbackend>(guestId);
+    GuestArena::HostWrite write(avail, avail ? sizeof(*avail) : 0);
+    return ::curl_global_sslset(id, name, reinterpret_cast<const curl_ssl_backend***>(avail));
+}
+
+std::int32_t APS5_VABI curl_multi_perform_nid_postfix(CURLM* multi_handle, int* running_handles) {
+    GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    const auto result = ::curl_multi_perform(multi_handle, running_handles);
+    CurlSockets::Refresh_nid_no_patch(multi_handle, &context->sockets);
+    return result;
+}
+
+char* APS5_VABI curl_version_nid_postfix() {
+    return ::curl_version();
+}
+
+
+
+
+
+
+
+std::int32_t APS5_VABI curl_url_get_nid_postfix(CURLU* handle, std::int32_t guestWhat, char** part, unsigned int flags) {
+    const auto what = static_cast<CURLUPart>(guestWhat);
+    GuestArena::HostWrite write(part, part ? sizeof(*part) : 0);
+    return ::curl_url_get(handle, what, part, flags);
+}
+
+std::int32_t APS5_VABI curl_url_set_nid_postfix(CURLU* handle, std::int32_t guestWhat, const char* part, unsigned int flags) {
+    const auto what = static_cast<CURLUPart>(guestWhat);
+    return ::curl_url_set(handle, what, part, flags);
+}
+
+CURLU* APS5_VABI curl_url_nid_postfix() {
+    return ::curl_url();
+}
+
+void APS5_VABI curl_url_cleanup_nid_postfix(CURLU* handle) {
+    ::curl_url_cleanup(handle);
+}
+
+CURLU* APS5_VABI curl_url_dup_nid_postfix(CURLU* in) {
+    return ::curl_url_dup(in);
+}
+
+const char* APS5_VABI curl_multi_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLMcode>(guestError);
+    return ::curl_multi_strerror(error);
+}
+
+const char* APS5_VABI curl_easy_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLcode>(guestError);
+    return ::curl_easy_strerror(error);
+}
+
+const char* APS5_VABI curl_share_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLSHcode>(guestError);
+    return ::curl_share_strerror(error);
+}
+
+std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLoption>(guestOption);
+    if (!handle) return CURLE_BAD_FUNCTION_ARGUMENT;
+    switch (option) {
+    case CURLOPT_HTTPPOST:
+        if constexpr (sizeof(long) != 8) throw std::invalid_argument("CURLOPT_HTTPPOST");
+        break;
+    case CURLOPT_SSL_CTX_FUNCTION: throw std::invalid_argument("CURLOPT_SSL_CTX_FUNCTION");
+    case CURLOPT_SSL_CTX_DATA: throw std::invalid_argument("CURLOPT_SSL_CTX_DATA");
+    default: break;
+    }
+    if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
+    auto context = FindEasy(handle);
+    if (!context) throw std::invalid_argument("curl_easy_setopt: unknown easy handle");
+    CURL_ARGS_START(guestOption);
+    CURLcode result;
+    switch (static_cast<int>(option) / 10000) {
+    case 0: {
+        auto value = CURL_ARG(int64_t);
+        CURL_ARGS_END();
+        return ::curl_easy_setopt(handle, option, HostLong(value));
+    }
+    case 3: result = ::curl_easy_setopt(handle, option, CURL_ARG(curl_off_t)); break;
+    case 1:
+    case 2:
+    case 4: result = SetEasyPointer(handle, option, CURL_ARG(void*), context.get()); break;
+    default: result = CURLE_UNKNOWN_OPTION; break;
+    }
+    CURL_ARGS_END();
+    return result;
+}
+
+std::int32_t APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, std::int32_t guestInfo, ...) {
+    const auto info = static_cast<CURLINFO>(guestInfo);
+    if (!handle) return CURLE_UNKNOWN_OPTION;
+    CURL_ARGS_START(guestInfo);
+    void* output = CURL_ARG(void*);
+    CURL_ARGS_END();
+    if (info == CURLINFO_ACTIVESOCKET || info == CURLINFO_LASTSOCKET) return CurlSockets::Active_nid_no_patch(handle, info, output);
+    if ((info & CURLINFO_TYPEMASK) == CURLINFO_LONG) {
+        long value = 0;
+        auto result = ::curl_easy_getinfo(handle, info, output ? &value : nullptr);
+        if (result == CURLE_OK) *static_cast<int64_t*>(output) = value;
+        return result;
+    }
+    GuestArena::HostWrite write(output, output ? sizeof(std::uint64_t) : 0);
+    return ::curl_easy_getinfo(handle, info, output);
+}
+
+std::int32_t APS5_VABI curl_mime_data_nid_postfix(curl_mimepart* part, const char* data, size_t datasize) {
+    const auto result = ::curl_mime_data(part, data, datasize);
+    if (part) ReplacePartContent(part, nullptr, nullptr);
+    return result;
+}
+
+std::int32_t APS5_VABI curl_multi_poll_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
+    if (!FindMulti(multi_handle)) return CURLM_BAD_HANDLE;
+    return CurlSockets::Wait_nid_no_patch(multi_handle, extra_fds, extra_nfds, timeout_ms, ret, true);
+}
+
+void APS5_VABI curl_easy_cleanup_nid_postfix(CURL* handle) {
+    auto context = FindEasy(handle);
+    ::curl_easy_cleanup(handle);
+    ForgetEasyMime(handle);
+    std::lock_guard lock(contextMutex);
+    easies.erase(handle);
+}
+
+std::int32_t APS5_VABI curl_mime_name_nid_postfix(curl_mimepart* part, const char* name) {
+    return ::curl_mime_name(part, name);
+}
+
+std::int32_t APS5_VABI curl_global_init_nid_postfix(long long flags) {
+    std::lock_guard lock(globalMutex);
+    return GlobalInitWithGuestAllocator(globalInitCount ? 0 : HostLong(flags));
+}
+
+CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
+    auto source = FindEasy(handle);
+    if (!source) throw std::invalid_argument("curl_easy_duphandle: unknown easy handle");
+    auto* easy = ::curl_easy_duphandle(handle);
+    if (!easy) return nullptr;
+    std::shared_ptr<EasyContext> context;
+    try {
+        context = std::make_shared<EasyContext>(*source);
+        std::lock_guard lock(contextMutex);
+        easies.insert_or_assign(easy, context);
+    } catch (const std::bad_alloc&) {
+        ::curl_easy_cleanup(easy);
+        return nullptr;
+    }
+    CopyEasyMime(handle, easy);
+    RebindEasy(easy, context.get());
+    return easy;
+}
+
+CURLSH* APS5_VABI curl_share_init_nid_postfix() {
+    auto* share = ::curl_share_init();
+    if (!share) return nullptr;
+    try {
+        auto context = std::make_shared<ShareContext>();
+        ::curl_share_setopt(share, CURLSHOPT_USERDATA, context.get());
+        std::lock_guard lock(shareMutex);
+        shares.insert_or_assign(share, std::move(context));
+    } catch (const std::bad_alloc&) {
+        ::curl_share_cleanup(share);
+        return nullptr;
+    }
+    return share;
+}
+
+char* APS5_VABI curl_getenv_nid_postfix(const char* variable) {
+    std::string value;
+    try {
+        if (!CopyGuestEnvironment_nid_no_patch(variable, value)) return nullptr;
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+    return value.empty() ? nullptr : GuestCurlStrdup(value.c_str());
+}
+
+std::int32_t APS5_VABI curl_mime_type_nid_postfix(curl_mimepart* part, const char* mimetype) {
+    return ::curl_mime_type(part, mimetype);
+}
+
+
+
+void APS5_VABI curl_easy_reset_nid_postfix(CURL* handle) {
+    auto context = FindEasy(handle);
+    if (!context) throw std::invalid_argument("curl_easy_reset: unknown easy handle");
+    ::curl_easy_reset(handle);
+    ForgetEasyMime(handle);
+    *context = EasyContext{};
+    BindEasy(handle, context.get());
+}
+
+CURL* APS5_VABI curl_easy_init_nid_postfix() {
+    {
+        std::lock_guard lock(globalMutex);
+        if (!globalInitCount && GlobalInitWithGuestAllocator(CURL_GLOBAL_DEFAULT) != CURLE_OK) return nullptr;
+    }
+    auto* easy = ::curl_easy_init();
+    if (!easy) return nullptr;
+    std::shared_ptr<EasyContext> context;
+    try {
+        context = std::make_shared<EasyContext>();
+        std::lock_guard lock(contextMutex);
+        easies.insert_or_assign(easy, context);
+    } catch (const std::bad_alloc&) {
+        ::curl_easy_cleanup(easy);
+        return nullptr;
+    }
+    BindEasy(easy, context.get());
+    return easy;
+}
+
+std::int32_t APS5_VABI curl_mime_data_cb_nid_postfix(curl_mimepart* part, std::int64_t datasize, guest_curl_read_callback readfunc, guest_curl_seek_callback seekfunc, guest_curl_free_callback freefunc, void* arg) {
+    if (!part) return CURLE_BAD_FUNCTION_ARGUMENT;
+    if (!readfunc) {
+        const auto result = ::curl_mime_data_cb(part, datasize, nullptr, nullptr, nullptr, arg);
+        ReplacePartContent(part, nullptr, nullptr);
+        return result;
+    }
+    auto callback = std::make_shared<MimeCallback>(MimeCallback{readfunc, seekfunc, freefunc, arg});
+    const auto result = ::curl_mime_data_cb(part, datasize, MimeRead, seekfunc ? MimeSeek : nullptr, freefunc ? MimeFree : nullptr, callback.get());
+    ReplacePartContent(part, std::move(callback), nullptr);
+    return result;
+}
+
+std::int32_t APS5_VABI curl_multi_fdset_nid_postfix(CURLM* multi_handle, guest_fd_set* read_fd_set, guest_fd_set* write_fd_set, guest_fd_set* exc_fd_set, int* max_fd) {
+    const auto context = FindMulti(multi_handle);
+    if (!context) return CURLM_BAD_HANDLE;
+    if (!max_fd) NotImplemented_nid_no_patch(__func__);
+    return CurlSockets::Fdset_nid_no_patch(multi_handle, &context->sockets, read_fd_set, write_fd_set, exc_fd_set, max_fd);
+}
+
+std::int32_t APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
+    return ::curl_multi_wakeup(multi_handle);
+}
+
+std::int32_t APS5_VABI curl_multi_wait_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
+    if (!FindMulti(multi_handle)) return CURLM_BAD_HANDLE;
+    return CurlSockets::Wait_nid_no_patch(multi_handle, extra_fds, extra_nfds, timeout_ms, ret, false);
+}
+
+const struct guest_curl_easyoption* APS5_VABI curl_easy_option_next_nid_postfix(const struct guest_curl_easyoption* prev) {
+    const auto* opt = ::curl_easy_option_next(reinterpret_cast<const curl_easyoption*>(prev));
+    return reinterpret_cast<const guest_curl_easyoption*>(opt);
+}
+
+void APS5_VABI curl_global_cleanup_nid_postfix() {
+    std::lock_guard lock(globalMutex);
+    if (globalInitCount) --globalInitCount;
+    ::curl_global_cleanup();
+}
+
+std::int32_t APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLSHoption>(guestOption);
+    auto context = FindShare(share_handle);
+    if (!context) return CURLSHE_INVALID;
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, guestOption);
+#define CURL_SHARE_ARG(type) __builtin_va_arg(args, type)
+#else
+    std::va_list args;
+    va_start(args, guestOption);
+#define CURL_SHARE_ARG(type) va_arg(args, type)
+#endif
+    CURLSHcode result;
+    switch (option) {
+    case CURLSHOPT_SHARE:
+    case CURLSHOPT_UNSHARE:
+        result = ::curl_share_setopt(share_handle, option, CURL_SHARE_ARG(int));
+        break;
+    case CURLSHOPT_LOCKFUNC: {
+        auto callback = CURL_SHARE_ARG(guest_curl_lock_callback);
+        const auto previous = std::exchange(context->lock, callback);
+        result = ::curl_share_setopt(share_handle, option, callback ? ShareLock : nullptr);
+        if (result != CURLSHE_OK) context->lock = previous;
+        break;
+    }
+    case CURLSHOPT_UNLOCKFUNC: {
+        auto callback = CURL_SHARE_ARG(guest_curl_unlock_callback);
+        const auto previous = std::exchange(context->unlock, callback);
+        result = ::curl_share_setopt(share_handle, option, callback ? ShareUnlock : nullptr);
+        if (result != CURLSHE_OK) context->unlock = previous;
+        break;
+    }
+    case CURLSHOPT_USERDATA: {
+        auto* data = CURL_SHARE_ARG(void*);
+        result = ::curl_share_setopt(share_handle, option, context.get());
+        if (result == CURLSHE_OK) context->data = data;
+        break;
+    }
+    default:
+        result = ::curl_share_setopt(share_handle, option);
+        break;
+    }
+#undef CURL_SHARE_ARG
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
+
+struct guest_CURLMsg* APS5_VABI curl_multi_info_read_nid_postfix(CURLM* multi_handle, int* msgs_in_queue) {
+    GuestArena::HostWrite write(msgs_in_queue, msgs_in_queue ? sizeof(*msgs_in_queue) : 0);
+    return reinterpret_cast<guest_CURLMsg*>(::curl_multi_info_read(multi_handle, msgs_in_queue));
+}
+
+std::int32_t APS5_VABI curl_easy_upkeep_nid_postfix(CURL* handle) {
+    return ::curl_easy_upkeep(handle);
+}
+
+std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLMoption>(guestOption);
+    std::shared_ptr<MultiContext> context;
+    {
+        std::lock_guard lock(contextMutex);
+        auto found = multis.find(multi_handle);
+        if (found != multis.end()) context = found->second;
+    }
+    if (!context) return CURLM_BAD_HANDLE;
+    switch (option) {
+    case CURLMOPT_SOCKETFUNCTION:
+    case CURLMOPT_SOCKETDATA:
+    case CURLMOPT_TIMERFUNCTION:
+    case CURLMOPT_TIMERDATA:
+    case CURLMOPT_PUSHFUNCTION:
+    case CURLMOPT_PUSHDATA:
+    case CURLMOPT_PIPELINING:
+    case CURLMOPT_MAXCONNECTS:
+    case CURLMOPT_MAX_HOST_CONNECTIONS:
+    case CURLMOPT_MAX_PIPELINE_LENGTH:
+    case CURLMOPT_CONTENT_LENGTH_PENALTY_SIZE:
+    case CURLMOPT_CHUNK_LENGTH_PENALTY_SIZE:
+    case CURLMOPT_PIPELINING_SITE_BL:
+    case CURLMOPT_PIPELINING_SERVER_BL:
+    case CURLMOPT_MAX_TOTAL_CONNECTIONS:
+    case CURLMOPT_MAX_CONCURRENT_STREAMS:
+        break;
+    default:
+        return ::curl_multi_setopt(multi_handle, option, nullptr);
+    }
+    CURL_ARGS_START(guestOption);
+    CURLMcode result;
+    if (option == CURLMOPT_SOCKETFUNCTION || option == CURLMOPT_SOCKETDATA) {
+        auto* value = CURL_ARG(void*);
+        result = CurlSockets::SetMulti_nid_no_patch(multi_handle, &context->sockets, option, value);
+    } else if (option == CURLMOPT_TIMERFUNCTION) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, CURLMOPT_TIMERDATA, context.get());
+        if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Timer : nullptr);
+        if (result == CURLM_OK) context->timer = value;
+    } else if (option == CURLMOPT_TIMERDATA) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, option, context.get());
+        if (result == CURLM_OK) context->timerData = value;
+    } else if (option == CURLMOPT_PUSHFUNCTION) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, CURLMOPT_PUSHDATA, context.get());
+        if (result == CURLM_OK) result = ::curl_multi_setopt(multi_handle, option, value ? Push_nid_no_patch : nullptr);
+        if (result == CURLM_OK) context->push = value;
+    } else if (option == CURLMOPT_PUSHDATA) {
+        auto* value = CURL_ARG(void*);
+        result = ::curl_multi_setopt(multi_handle, option, context.get());
+        if (result == CURLM_OK) context->pushData = value;
+    } else if (static_cast<int>(option) / 10000 == 0) {
+        auto value = CURL_ARG(int64_t);
+        CURL_ARGS_END();
+        return ::curl_multi_setopt(multi_handle, option, HostLong(value));
+    } else if (static_cast<int>(option) / 10000 == 3) {
+        result = ::curl_multi_setopt(multi_handle, option, CURL_ARG(curl_off_t));
+    } else if (static_cast<int>(option) / 10000 == 1) {
+        result = ::curl_multi_setopt(multi_handle, option, CURL_ARG(void*));
+    } else result = ::curl_multi_setopt(multi_handle, option, nullptr);
+    CURL_ARGS_END();
+    return result;
+}
+
+curl_mimepart* APS5_VABI curl_mime_addpart_nid_postfix(curl_mime* mime) {
+    auto* part = ::curl_mime_addpart(mime);
+    if (part) {
+        std::lock_guard lock(mimeMutex);
+        mimeParts[mime].push_back(part);
+    }
+    return part;
+}
+
+const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_name_nid_postfix(const char* name) {
+    const auto* opt = ::curl_easy_option_by_name(name);
+    return reinterpret_cast<const guest_curl_easyoption*>(opt);
+}
+
+
+
+std::time_t APS5_VABI curl_getdate_nid_postfix(const char* p, const std::time_t* unused) {
+    return ::curl_getdate(p, unused);
+}
+
+std::int32_t APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const char* filename) {
+    if (!part || !filename) {
+        const auto result = ::curl_mime_filedata(part, filename);
+        if (part) ReplacePartContent(part, nullptr, nullptr);
+        return result;
+    }
+    char base[1024];
+    if (!basename_r_nid_postfix(filename, base))
+        throw std::length_error("curl_mime_filedata: the base name does not fit basename's buffer, and curl passes the null result to strdup");
+    std::filesystem::path host;
+    const std::string hostName = ResolvePathError_nid_no_patch(filename, host) == 0 ? host.string() : std::string{};
+    const auto result = ::curl_mime_filedata(part, hostName.c_str());
+    ReplacePartContent(part, nullptr, nullptr);
+    const auto named = ::curl_mime_filename(part, base);
+    return named == CURLE_OK ? result : named;
+}
+
+std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
+    if (!milliseconds) return CURLM_BAD_FUNCTION_ARGUMENT;
+    long host_ms = 0;
+    const CURLMcode res = ::curl_multi_timeout(multi_handle, &host_ms);
+    const std::int64_t value = host_ms;
+    if (res == CURLM_OK && !GuestCopyOut_nid_no_patch(milliseconds, &value, sizeof(value))) return CURLM_BAD_FUNCTION_ARGUMENT;
+    return res;
+}
+
+std::int32_t APS5_VABI curl_multi_add_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
+    return ::curl_multi_add_handle(multi_handle, easy_handle);
+}
+
+curl_mime* APS5_VABI curl_mime_init_nid_postfix(CURL* easy) {
+    return ::curl_mime_init(easy);
+}
+
+const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_id_nid_postfix(std::int32_t guestId) {
+    for (const auto* opt = ::curl_easy_option_next(nullptr); opt != nullptr; opt = ::curl_easy_option_next(opt)) {
+        if (static_cast<std::int32_t>(opt->id) == guestId && (opt->flags & CURLOT_FLAG_ALIAS) == 0) {
+            return reinterpret_cast<const guest_curl_easyoption*>(opt);
+        }
+    }
+    return nullptr;
+}
+
+std::int32_t APS5_VABI curl_mime_subparts_nid_postfix(curl_mimepart* part, curl_mime* subparts) {
+    bool unchanged = false;
+    if (part && subparts) {
+        std::lock_guard lock(mimeMutex);
+        const auto found = partSubparts.find(part);
+        unchanged = found != partSubparts.end() && found->second == subparts;
+    }
+    const auto result = ::curl_mime_subparts(part, subparts);
+    if (part && !unchanged) ReplacePartContent(part, nullptr, result == CURLE_OK ? subparts : nullptr);
+    return result;
+}
+
+struct guest_curl_version_info_data* APS5_VABI curl_version_info_nid_postfix(std::int32_t guestAge) {
+    const auto age = static_cast<CURLversion>(guestAge);
+    static guest_curl_version_info_data guest_info{};
+    const auto* info = ::curl_version_info(age);
+    if (!info) return nullptr;
+    guest_info.age = info->age;
+    guest_info.version = info->version;
+    guest_info.version_num = info->version_num;
+    guest_info.host = info->host;
+    guest_info.features = info->features;
+    guest_info.ssl_version = info->ssl_version;
+    guest_info.ssl_version_num = info->ssl_version_num;
+    guest_info.libz_version = info->libz_version;
+    guest_info.protocols = info->protocols;
+    guest_info.ares = info->ares;
+    guest_info.ares_num = info->ares_num;
+    guest_info.libidn = info->libidn;
+    guest_info.iconv_ver_num = info->iconv_ver_num;
+    guest_info.libssh_version = info->libssh_version;
+    guest_info.brotli_ver_num = info->brotli_ver_num;
+    guest_info.brotli_version = info->brotli_version;
+    guest_info.nghttp2_ver_num = info->nghttp2_ver_num;
+    guest_info.nghttp2_version = info->nghttp2_version;
+    guest_info.quic_version = info->quic_version;
+    guest_info.cainfo = info->cainfo;
+    guest_info.capath = info->capath;
+    guest_info.zstd_ver_num = info->zstd_ver_num;
+    guest_info.zstd_version = info->zstd_version;
+    guest_info.hyper_version = info->hyper_version;
+    guest_info.gsasl_version = info->gsasl_version;
+    return &guest_info;
+}
+
+std::int32_t APS5_VABI curl_mime_encoder_nid_postfix(curl_mimepart* part, const char* encoding) {
+    return ::curl_mime_encoder(part, encoding);
+}
+
+std::int32_t APS5_VABI curl_global_init_mem_nid_postfix(long long flags, guest_curl_malloc_callback m, guest_curl_free_callback f, guest_curl_realloc_callback r, guest_curl_strdup_callback s, guest_curl_calloc_callback c) {
+    if (!m || !f || !r || !s || !c) return CURLE_FAILED_INIT;
+    std::lock_guard lock(globalMutex);
+    const GuestAllocators callbacks{m, f, r, s, c};
+    return GlobalInitWithGuestAllocator(globalInitCount ? 0 : HostLong(flags), &callbacks);
+}
+
+std::int32_t APS5_VABI curl_mime_headers_nid_postfix(curl_mimepart* part, guest_curl_slist* headers, int take_ownership) {
+    return ::curl_mime_headers(part, reinterpret_cast<curl_slist*>(headers), take_ownership);
+}
+
+CURLM* APS5_VABI curl_multi_init_nid_postfix() {
+    auto* multi = ::curl_multi_init();
+    if (!multi) return nullptr;
+    try {
+        auto context = std::make_shared<MultiContext>();
+        CurlSockets::BindMulti_nid_no_patch(multi, &context->sockets);
+        std::lock_guard lock(contextMutex);
+        multis.emplace(multi, std::move(context));
+    } catch (const std::bad_alloc&) {
+        ::curl_multi_cleanup(multi);
+        return nullptr;
+    }
+    return multi;
+}
+
+std::int32_t APS5_VABI curl_multi_cleanup_nid_postfix(CURLM* multi_handle) {
+    auto result = ::curl_multi_cleanup(multi_handle);
+    if (result == CURLM_OK) {
+        std::lock_guard lock(contextMutex);
+        multis.erase(multi_handle);
+    }
+    return result;
+}
+
+std::int32_t APS5_VABI curl_easy_pause_nid_postfix(CURL* handle, int bitmask) {
+    return ::curl_easy_pause(handle, bitmask);
+}
+
+std::int32_t APS5_VABI curl_mime_filename_nid_postfix(curl_mimepart* part, const char* filename) {
+    return ::curl_mime_filename(part, filename);
+}
+
 
 char* APS5_VABI curl_escape(const char* string, int length) {
     return curl_easy_escape(nullptr, string, length);
 }
 
 char* APS5_VABI curl_easy_escape(void* handle, const char* string, int length) {
-    (void)handle;
     if (length < 0) return nullptr;
-    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
-    const auto size = length == 0 ? std::strlen(string) : static_cast<std::size_t>(length);
-    if (size > (std::numeric_limits<std::size_t>::max() - 1) / 3) return nullptr;
-    auto* output = static_cast<char*>(malloc_nid_postfix(size * 3 + 1));
-    if (output == nullptr) return nullptr;
-    constexpr char hex[] = "0123456789ABCDEF";
-    auto* destination = output;
-    for (std::size_t index = 0; index < size; ++index) {
-        const auto byte = static_cast<unsigned char>(string[index]);
-        if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-            (byte >= '0' && byte <= '9') || byte == '-' || byte == '.' || byte == '_' || byte == '~') {
-            *destination++ = static_cast<char>(byte);
-        } else {
-            *destination++ = '%';
-            *destination++ = hex[byte >> 4];
-            *destination++ = hex[byte & 15];
-        }
-    }
-    *destination = '\0';
-    return output;
-}
-
-int APS5_VABI curl_mvfprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_share_cleanup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_perform() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_remove_handle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvsprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_global_sslset() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_perform() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_version() {
-    NotImplemented_nid_no_patch(__func__);
+    if (!string) throw std::runtime_error(__func__);
+    return ::host_curl_easy_escape(static_cast<CURL*>(handle), string, length);
 }
 
 void APS5_VABI curl_free(void* pointer) {
-    free_nid_postfix(pointer);
-}
-
-int APS5_VABI curl_mvsnprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_socket_all() {
-    NotImplemented_nid_no_patch(__func__);
+    ::host_curl_free(pointer);
 }
 
 int APS5_VABI curl_strequal(const char* first, const char* second) {
-    if (!first || !second) NotImplemented_nid_no_patch(__func__);
-    while (*first && *second && RawUpper(*first) == RawUpper(*second)) {
-        ++first;
-        ++second;
+    if (!first || !second) throw std::runtime_error(__func__);
+    GuestText left(first);
+    GuestText right(second);
+    while (left.Peek(__func__) && right.Peek(__func__) && RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__))) {
+        left.Advance();
+        right.Advance();
     }
-    return RawUpper(*first) == RawUpper(*second);
-}
-
-int APS5_VABI curl_url_get() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_strerror() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_setopt() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_data() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mfprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_poll() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_cleanup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_name() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_global_init() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_duphandle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_share_init() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_getenv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_formget() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_type() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mprintf() {
-    NotImplemented_nid_no_patch(__func__);
+    return RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__));
 }
 
 CurlSlist* APS5_VABI curl_slist_append(CurlSlist* list, const char* string) {
-    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
-    const auto size = std::strlen(string);
-    if (size == std::numeric_limits<std::size_t>::max()) return nullptr;
-    auto* copy = static_cast<char*>(malloc_nid_postfix(size + 1));
-    if (copy == nullptr) return nullptr;
-    std::memcpy(copy, string, size + 1);
-    auto* node = static_cast<CurlSlist*>(malloc_nid_postfix(sizeof(CurlSlist)));
-    if (node == nullptr) {
-        free_nid_postfix(copy);
-        return nullptr;
-    }
-    node->data = copy;
-    node->next = nullptr;
-    if (list == nullptr) return node;
-    auto* tail = list;
-    while (tail->next != nullptr) tail = tail->next;
-    tail->next = node;
-    return list;
-}
-
-int APS5_VABI curl_easy_send() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_reset() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_strerror() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_init() {
-    NotImplemented_nid_no_patch(__func__);
+    if (!string) throw std::runtime_error(__func__);
+    return reinterpret_cast<CurlSlist*>(::host_curl_slist_append(reinterpret_cast<curl_slist*>(list), string));
 }
 
 int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max) {
-    if (!first || !second) NotImplemented_nid_no_patch(__func__);
-    while (*first && *second && max && RawUpper(*first) == RawUpper(*second)) {
+    if (!first || !second) throw std::runtime_error(__func__);
+    GuestText left(first);
+    GuestText right(second);
+    while (max && left.Peek(__func__) && right.Peek(__func__) && RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__))) {
         --max;
-        ++first;
-        ++second;
+        left.Advance();
+        right.Advance();
     }
     if (max == 0) return 1;
-    return RawUpper(*first) == RawUpper(*second);
-}
-
-int APS5_VABI curl_mime_data_cb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvaprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_url() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_msnprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_socket() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_fdset() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_wakeup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_assign() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_share_strerror() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_wait() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_url_set() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_option_next() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_global_cleanup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_getinfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_share_setopt() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_info_read() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_upkeep() {
-    NotImplemented_nid_no_patch(__func__);
+    return RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__));
 }
 
 char* APS5_VABI curl_unescape(const char* string, int length) {
     return curl_easy_unescape(nullptr, string, length, nullptr);
 }
 
-int APS5_VABI curl_multi_setopt() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_addpart() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_option_by_name() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_maprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI curl_slist_free_all(CurlSlist* list) {
-    while (list != nullptr) {
-        auto* next = list->next;
-        free_nid_postfix(list->data);
-        free_nid_postfix(list);
-        list = next;
-    }
-}
-
-int APS5_VABI curl_url_cleanup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_getdate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_filedata() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_timeout() {
-    NotImplemented_nid_no_patch(__func__);
+    ::host_curl_slist_free_all(reinterpret_cast<curl_slist*>(list));
 }
 
 char* APS5_VABI curl_easy_unescape(void* handle, const char* string, int length, int* outputLength) {
-    (void)handle;
     if (length < 0) return nullptr;
-    if (string == nullptr) NotImplemented_nid_no_patch(__func__);
-    const auto size = length == 0 ? std::strlen(string) : static_cast<std::size_t>(length);
-    if (size == std::numeric_limits<std::size_t>::max()) return nullptr;
-    auto* output = static_cast<char*>(malloc_nid_postfix(size + 1));
-    if (output == nullptr) return nullptr;
-    const auto hex = [](unsigned char byte) {
-        if (byte >= '0' && byte <= '9') return byte - '0';
-        if (byte >= 'A' && byte <= 'F') return byte - 'A' + 10;
-        if (byte >= 'a' && byte <= 'f') return byte - 'a' + 10;
-        return -1;
-    };
-    std::size_t written = 0;
-    for (std::size_t index = 0; index < size; ++index) {
-        auto byte = static_cast<unsigned char>(string[index]);
-        if (byte == '%' && size - index >= 3) {
-            const int high = hex(static_cast<unsigned char>(string[index + 1]));
-            const int low = hex(static_cast<unsigned char>(string[index + 2]));
-            if (high >= 0 && low >= 0) {
-                byte = static_cast<unsigned char>((high << 4) | low);
-                index += 2;
-            }
-        }
-        output[written++] = static_cast<char>(byte);
-    }
-    output[written] = '\0';
-    if (outputLength != nullptr) {
-        if (written > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            free_nid_postfix(output);
-            return nullptr;
-        }
-        *outputLength = static_cast<int>(written);
-    }
-    return output;
-}
-
-int APS5_VABI curl_multi_add_handle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_init() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_option_by_id() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_formfree() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_subparts() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_version_info() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_pushheader_byname() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_encoder() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mvprintf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_global_init_mem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_headers() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_url_dup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_init() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_multi_cleanup() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_easy_pause() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_mime_filename() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI curl_msprintf() {
-    NotImplemented_nid_no_patch(__func__);
+    if (!string) throw std::runtime_error(__func__);
+    return ::host_curl_easy_unescape(static_cast<CURL*>(handle), string, length, outputLength);
 }
 
 }

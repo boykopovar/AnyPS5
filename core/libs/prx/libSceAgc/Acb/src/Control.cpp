@@ -44,7 +44,7 @@ std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
-    return Agc::Command::WriteJump(buf, 1, cachePolicy, target, sizeInDwords, __func__);
+    return Agc::Command::WriteJump(buf, true, 1, cachePolicy, target, sizeInDwords, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
@@ -144,7 +144,7 @@ uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, 
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
-    return Agc::Marker::Pop(buf, __func__);
+    return Agc::Marker::PopTag(buf, 0u, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
@@ -152,6 +152,10 @@ uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint
     auto* packet = Agc::Marker::Push(buf, str, __func__);
     Agc::Marker::Pop(buf, __func__);
     return packet;
+}
+
+std::uint32_t* APS5_VABI sceAgcAcbAtomicGds(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData) {
+    return sceAgcAcbAtomicGds_0900(buf, control & ~0x80u, mode, gdsOp, src, offset, index, mask, data, compareData, extraData);
 }
 
 }

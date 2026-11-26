@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -142,6 +143,8 @@ void TestErrors() {
     Require(sceAudioOutGetLastOutputTime(0, &destination) == invalidPort, "handle 0 must be rejected");
     Require(sceAudioOutGetLastOutputTime(-1, &destination) == invalidPort, "a negative handle must be rejected");
     Require(sceAudioOutGetLastOutputTime(1000, &destination) == invalidPort, "an out of range handle must be rejected");
+    Require(sceAudioOutGetLastOutputTime(INT_MIN, &destination) == invalidPort, "the lowest handle must be rejected");
+    Require(sceAudioOutGetLastOutputTime(INT_MAX, &destination) == invalidPort, "the highest handle must be rejected");
     Require(sceAudioOutClose(handle) == 0, "port must close");
     constexpr int closedPort = -2144993279;
     Require(sceAudioOutGetLastOutputTime(handle, &destination) == closedPort, "a closed port must be rejected as closed");

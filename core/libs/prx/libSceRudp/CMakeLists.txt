@@ -3,6 +3,7 @@ add_library(libSceRudp SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/Time/TimedWait.cpp
 )
 target_include_directories(libSceRudp PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceRudp PRIVATE libSceNet)
 configure_windows_unwind(libSceRudp)
 
 if(BUILD_TESTING)
@@ -39,6 +40,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_rudp_listen PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_rudp_listen PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRudp>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_rudp_local_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestRudpLocalInfo.cpp)
+    target_include_directories(guest_rudp_local_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_rudp_local_info_tests PRIVATE libSceRudp libSceNet libc)
+    configure_windows_unwind(guest_rudp_local_info_tests)
+    add_test(NAME guest_rudp_local_info COMMAND guest_rudp_local_info_tests)
+    set_tests_properties(guest_rudp_local_info PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_rudp_local_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRudp>")
     endif()
 endif()

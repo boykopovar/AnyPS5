@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 
 namespace {
 
@@ -46,6 +49,16 @@ static_assert(std::all_of(SignatureAlgorithms.begin(), SignatureAlgorithms.end()
     return std::all_of(entry.begin(), entry.end(), [](int nid) { return nid >= 0 && nid < LibreSslObjectCount; });
 }));
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    return GuestPtr<const T>(source).CopyIn(destination);
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    return GuestPtr<T>(destination).CopyOut(value);
+}
+
 }
 
 extern "C" {
@@ -55,10 +68,15 @@ int APS5_VABI OBJ_find_sigid_algs_nid_postfix(int signatureNid, int* digestNid, 
         [](const auto& entry, int value) { return entry[0] < value; });
     if (found == SignatureAlgorithms.end() || (*found)[0] != signatureNid)
         return 0;
-    if (digestNid)
-        *digestNid = (*found)[1];
-    if (keyNid)
-        *keyNid = (*found)[2];
+    int previousDigest = 0;
+    const bool hadDigest = digestNid && CopyGuestInPreservingErrno(previousDigest, digestNid);
+    if (digestNid && !CopyGuestOutPreservingErrno(digestNid, (*found)[1]))
+        NotImplemented_nid_no_patch(__func__);
+    if (keyNid && !CopyGuestOutPreservingErrno(keyNid, (*found)[2])) {
+        if (hadDigest)
+            CopyGuestOutPreservingErrno(digestNid, previousDigest);
+        NotImplemented_nid_no_patch(__func__);
+    }
     return 1;
 }
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 import sys
 import shutil
@@ -36,6 +37,13 @@ class IntentionalSkipTests(unittest.TestCase):
                     self.assertEqual(checked.returncode, expected, checked.stdout + checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
                     self.assertIn("all expected" if expected == 0 else "error: gpu_skip skipped", checked.stdout)
+                    structured = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job, "--require-tests", "--json"],
+                                                capture_output=True, text=True, timeout=10)
+                    self.assertEqual(structured.returncode, expected, structured.stderr)
+                    data = json.loads(structured.stdout)
+                    self.assertEqual(data["skips"][0]["name"], "gpu_skip")
+                    self.assertEqual(data["skips"][0]["expected"], expected == 0)
+
 
     def test_real_return_code_skip_with_accepted_reason_passes(self):
         self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display", 77, 0)
@@ -48,6 +56,13 @@ class IntentionalSkipTests(unittest.TestCase):
 
     def test_real_regex_skip_with_unexpected_reason_fails(self):
         self.check_real_skip("SKIP_REGULAR_EXPRESSION", "skipped,", "skipped, flaky", 0, 1)
+
+    def test_device_skip_cannot_hide_a_different_skip_marker(self):
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display\nfixture: SKIP: unexpected failure", 77, 1)
+
+    def test_device_skip_accepts_both_reason_markers(self):
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display\nfixture: SKIP: no usable Vulkan device", 77, 0)
+        self.check_real_skip("SKIP_RETURN_CODE", "77", "SKIP: no display", 77, 0)
 
     def test_disabled_status_is_rejected_even_with_ctest_skip_marker(self):
         with tempfile.TemporaryDirectory() as directory:

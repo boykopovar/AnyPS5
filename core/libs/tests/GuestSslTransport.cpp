@@ -21,6 +21,7 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -49,6 +50,7 @@ constexpr int ErrorNetBadDescriptor = static_cast<int>(0x80410109);
 constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
+constexpr int ErrorNotTls = static_cast<int>(0x80951d78);
 constexpr std::uint32_t ServerVerify = 0x1, CnCheck = 0x4, NotAfterCheck = 0x8, NotBeforeCheck = 0x10, KnownCaCheck = 0x20;
 constexpr int VersionTls12 = 5;
 constexpr int GuestSocketLevel = 0xffff;
@@ -57,7 +59,7 @@ constexpr int GuestReceiveTimeout = 0x1006;
 constexpr int WaitRounds = 2000;
 const char* ServerProtocols[] = {"http/1.1", nullptr};
 
-enum class Serve { Close, Exchange, Drop, Reset, Alert };
+enum class Serve { Close, Exchange, Drop, Reset, Alert, HelloReset, HelloPlain };
 enum class Leaf { Valid, Expired, Future };
 
 struct GuestTimeval {
@@ -207,6 +209,8 @@ struct Server {
             failure = "server accept or setup failed";
         } else if (mode == Serve::Alert) {
             Alert(client);
+        } else if (mode == Serve::HelloReset || mode == Serve::HelloPlain) {
+            Refuse(client, mode == Serve::HelloPlain);
         } else {
             mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, nullptr);
             const int handshake = mbedtls_ssl_handshake(&ssl);
@@ -227,6 +231,43 @@ struct Server {
         }
         const unsigned char alert[] = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28};
         if (mbedtls_net_send(&client, alert, sizeof(alert)) != sizeof(alert)) failure = "server could not send the alert";
+    }
+
+    void Refuse(mbedtls_net_context& client, bool plain) {
+        std::array<unsigned char, 5> header{};
+        std::size_t received = 0;
+        while (received < header.size()) {
+            const int count = mbedtls_net_recv(&client, header.data() + received, header.size() - received);
+            if (count <= 0) {
+                failure = "server did not receive the client hello";
+                return;
+            }
+            received += static_cast<std::size_t>(count);
+        }
+        std::size_t remaining = (static_cast<std::size_t>(header[3]) << 8) | header[4];
+        std::array<unsigned char, 512> body{};
+        while (remaining) {
+            const int count = mbedtls_net_recv(&client, body.data(), std::min(remaining, body.size()));
+            if (count <= 0) {
+                failure = "server did not receive the whole client hello";
+                return;
+            }
+            remaining -= static_cast<std::size_t>(count);
+        }
+        if (plain) {
+            static constexpr char Reply[] = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+            if (mbedtls_net_send(&client, reinterpret_cast<const unsigned char*>(Reply), sizeof(Reply) - 1) != static_cast<int>(sizeof(Reply) - 1))
+                failure = "server could not send the plain reply";
+            return;
+        }
+        linger immediate{1, 0};
+        setsockopt(client.fd, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&immediate), sizeof(immediate));
+#ifdef _WIN32
+        closesocket(client.fd);
+#else
+        close(client.fd);
+#endif
+        client.fd = -1;
     }
 
     void Reset(mbedtls_ssl_context& ssl, mbedtls_net_context& client) {
@@ -318,6 +359,8 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Drop);
         server.Serve(Serve::Reset);
         server.Serve(Serve::Alert);
+        server.Serve(Serve::HelloReset);
+        server.Serve(Serve::HelloPlain);
         server.Serve(Serve::Close, true, Leaf::Expired);
         server.Serve(Serve::Close, true, Leaf::Expired);
         server.Serve(Serve::Close, true, Leaf::Future);
@@ -493,6 +536,16 @@ int main(int argc, char** argv) {
     Require(sceSslWrite(alerted, request, 4, 0) == ErrorSocketClosed, "a write after the fatal alert did not report the closed socket");
     Require(sceSslClose(alerted) == 0 && sceSslClose(alerted) == 0, "close after the fatal alert");
     Require(sceSslDeleteConnection(alerted) == 0 && sockets.Close(alertedSocket) == 0, "release the alerted connection");
+
+    const int helloResetSocket = sockets.Open(server.port);
+    const int helloReset = sceSslCreateConnection(context, helloResetSocket, "localhost");
+    Require(sceSslConnect(helloReset) == ErrorNetReset, "a reset during the handshake did not report the libSceNet reset code");
+    Require(sceSslDeleteConnection(helloReset) == 0 && sockets.Close(helloResetSocket) == 0, "release the connection reset during the handshake");
+
+    const int plainSocket = sockets.Open(server.port);
+    const int plain = sceSslCreateConnection(context, plainSocket, "localhost");
+    Require(sceSslConnect(plain) == ErrorNotTls, "a reply that is not TLS did not report it");
+    Require(sceSslDeleteConnection(plain) == 0 && sockets.Close(plainSocket) == 0, "release the connection answered in plain text");
 
     const int expiredSocket = sockets.Open(server.port);
     const int expired = sceSslCreateConnection(context, expiredSocket, "localhost");

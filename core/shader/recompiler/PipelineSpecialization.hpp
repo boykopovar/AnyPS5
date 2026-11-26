@@ -22,6 +22,9 @@ inline constexpr std::uint32_t ImageBase = 1024u;
 inline constexpr std::uint32_t ImageWords = 5u;
 inline constexpr std::uint32_t ImageComponentBase = 65536u;
 inline constexpr std::uint32_t ImageComponentBits = 2u;
+inline constexpr std::uint32_t NormalizedImageBase = 65664u;
+inline constexpr std::uint32_t D16TowardZeroBase = 65792u;
+inline constexpr std::uint32_t ImageNormalizedValues = 1u << (4u * ImageComponentBits);
 enum class ImageComponentConstant : std::uint32_t { None, Zero, IntegerOne, FloatOne };
 inline constexpr std::uint32_t VertexBase = 4096u;
 inline constexpr std::uint32_t VertexWords = 6u;
@@ -35,10 +38,13 @@ inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
 inline constexpr std::uint32_t MeshLayerBase = 8237u;
 inline constexpr std::uint32_t MeshLayerCount = 8238u;
+inline constexpr std::uint32_t StorePages = 8239u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
+inline constexpr std::uint32_t AtomicLockTableBase = 8244u;
+inline constexpr std::uint32_t AtomicLockTableWords = 2u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
@@ -47,12 +53,16 @@ inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
-inline constexpr std::uint32_t FmaskFormatBase = 57472u;
 inline constexpr std::uint32_t MirrorUnnormalizedBase = 57536u;
 inline constexpr std::uint32_t MinLodBase = 57600u;
-inline constexpr std::uint32_t VolumeGatherBase = 57664u;
 inline constexpr std::uint32_t SamplerLodBiasBase = 57728u;
 inline constexpr float SamplerLodBiasShaderThreshold = 15.0f;
+inline constexpr std::uint32_t GatherLodBase = 57792u;
+inline constexpr std::uint32_t GatherLodBiasBase = 57856u;
+inline constexpr std::uint32_t GatherImageMinLodBase = 57920u;
+inline constexpr std::uint32_t FmaskFormatBase = 58048u;
+inline constexpr std::uint32_t VolumeGatherBase = 58176u;
+inline constexpr std::uint32_t GatherImageShapeBase = 58432u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
@@ -60,6 +70,14 @@ inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint3
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {
     return id >= WorkgroupOffsetBase && id < WorkgroupOffsetBase + WorkgroupOffsetWords;
+}
+
+inline constexpr bool IsDispatchSupplied(std::uint32_t id) {
+    return IsWorkgroupOffset(id) || id == StorePages;
+}
+
+inline constexpr bool IsAtomicLockTable(std::uint32_t id) {
+    return id >= AtomicLockTableBase && id < AtomicLockTableBase + AtomicLockTableWords;
 }
 
 }

@@ -1,9 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -22,15 +23,16 @@ static bool validUserFileFlags(std::uint32_t userValue) {
     return coredumpSdkVersion.load(std::memory_order_relaxed) < 0x06500000 || (userValue & 0xc0000000u) != 0x40000000u;
 }
 
+static int userFileResult() {
+    return g_coredumpHandler.load(std::memory_order_relaxed) ? SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER : 0;
+}
+
 extern "C" {
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
     if (g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180002u);
     if (!handler || stack_size < 0x4000 || stack_size >= 0x20000000) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
-    coredumpSdkVersion.store(sdkVersion, std::memory_order_relaxed);
+    coredumpSdkVersion.store(ApplicationCompiledSdkVersion(), std::memory_order_relaxed);
     g_coredumpHandler.store(handler, std::memory_order_relaxed);
     g_coredumpContext.store(context, std::memory_order_relaxed);
     return 0;
@@ -45,14 +47,19 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
 
 int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
     (void)unknown;
-    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
+    std::string type;
+    std::string message;
+    const bool typeCopied = CopyGuestString_nid_no_patch(typeName, 65536, type) == 0;
+    const bool whatCopied = CopyGuestString_nid_no_patch(what, 65536, message) == 0;
+    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeCopied ? type.c_str() : "(unknown)", whatCopied ? ", what(): " : "", message.c_str());
     return 0;
 }
 
 int APS5_VABI sceCoredumpAttachUserFile(std::uint32_t userValue, const char* path) {
     if (!path || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    if (static_cast<std::int32_t>(std::strlen(path)) < 0) return 0;
-    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    std::string guestPath;
+    if (const int copied = CopyGuestPath_nid_no_patch(path, guestPath); copied != 0 && copied != 63) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
+    return userFileResult();
 }
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
@@ -64,7 +71,7 @@ int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size) {
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(std::uint32_t userValue, const void* mem, std::int32_t size, const char* name) {
     (void)mem;
     if (!name || !validUserFileFlags(userValue)) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
-    return size < 0 ? 0 : SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
+    return size < 0 ? 0 : userFileResult();
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type) {
@@ -76,8 +83,35 @@ void APS5_VABI sceCoredumpDebugTextOut(const char* str, int len) {
     if (len < 0 || (str == nullptr && len != 0))
         throw std::runtime_error(std::string(__func__) + ": null text or negative length");
     if (len == 0) return;
-    const int shown = str[len - 1] == '\n' ? len - 1 : len;
-    std::fprintf(stderr, "[coredump] %.*s\n", shown, str);
+    const auto address = reinterpret_cast<std::uintptr_t>(str);
+    const auto lastOffset = static_cast<std::size_t>(len - 1);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - lastOffset)
+        throw std::runtime_error(std::string(__func__) + ": unreadable text");
+    char last{};
+    if (!GuestCopyIn_nid_no_patch(&last, reinterpret_cast<const void*>(address + lastOffset), 1))
+        throw std::runtime_error(std::string(__func__) + ": unreadable text");
+    const auto shown = last == '\n' ? lastOffset : static_cast<std::size_t>(len);
+    std::string guestText;
+    std::array<char, 256> part{};
+    for (std::size_t offset = 0; offset < shown;) {
+        const auto remaining = shown - offset;
+        const auto count = remaining < part.size() ? remaining : part.size();
+        const auto* source = reinterpret_cast<const void*>(address + offset);
+        if (GuestCopyIn_nid_no_patch(part.data(), source, count)) {
+            const auto* end = static_cast<const char*>(std::memchr(part.data(), 0, count));
+            guestText.append(part.data(), end ? static_cast<std::size_t>(end - part.data()) : count);
+            if (end) break;
+            offset += count;
+            continue;
+        }
+        char byte{};
+        if (!GuestCopyIn_nid_no_patch(&byte, source, 1))
+            throw std::runtime_error(std::string(__func__) + ": unreadable text");
+        if (byte == 0) break;
+        guestText.push_back(byte);
+        ++offset;
+    }
+    std::fprintf(stderr, "[coredump] %s\n", guestText.c_str());
 }
 
 int64_t APS5_VABI sceCoredumpWriteUserData(const void* data, size_t size) {

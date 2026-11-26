@@ -74,6 +74,10 @@ public:
         target.featureDigestSealed = true;
     }
 
+    static std::array<std::uint64_t, 2> FeatureDigest(const SpirvTarget& target) {
+        return target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+    }
+
     // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
     static std::uint64_t HashCode(std::span<const std::uint32_t> code) {
         std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ (static_cast<std::uint64_t>(code.size()) * 0x100000001b3ull);
@@ -110,11 +114,14 @@ private:
     static void appendFallbacks(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         append(key, request.context.linkedCallFallbacks.size());
         for (const auto programCounter : request.context.linkedCallFallbacks) append(key, programCounter);
+        append(key, request.context.splitState.size());
+        for (const auto word : request.context.splitState) append(key, word);
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         if (request.shader.stage == ShaderStage::Fragment) {
             append(key, request.graphics && request.graphics->mesh);
+            if (request.graphics && request.graphics->emulateBarycentrics) append(key, 0x62617279ull);
             return;
         }
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
@@ -196,6 +203,8 @@ private:
         append(key, value.threadIdComponentCount);
         append(key, value.PartialGroups());
         append(key, value.scratchDwords);
+        append(key, value.granulatedVgprCount);
+        append(key, value.sharedVgprBlocks);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {
@@ -232,6 +241,7 @@ private:
         append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.ditheredAlphaSamples);
+        append(key, static_cast<std::uint8_t>(value.singleSampleDither));
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.iteratesSamples);
@@ -243,6 +253,11 @@ private:
             append(key, merge.target);
             append(key, merge.mask);
             append(key, merge.samples);
+            append(key, merge.packing);
+            append(key, merge.blendControl);
+            append(key, merge.layered);
+            append(key, merge.firstSlice);
+            append(key, merge.lastSlice);
             append(key, merge.depthStencilWrites);
             append(key, merge.depthStencilTests);
             if (!merge.blend.enabled) continue;
@@ -336,7 +351,7 @@ private:
     }
 
     static void appendFeatureDigest(std::vector<std::uint64_t>& key, const SpirvTarget& target) {
-        const auto digest = target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        const auto digest = FeatureDigest(target);
         key.push_back(digest[0]);
         key.push_back(digest[1]);
     }
@@ -366,6 +381,7 @@ private:
         append(key, value.tessellationEvaluationSubgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
+        append(key, value.spannedAnySubgroup);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
@@ -376,11 +392,15 @@ private:
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.ldsLockFences);
+        append(key, value.deviceAtomicWorkgroupMemoryBarriers);
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);
         append(key, value.shaderImageMinLod);
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
+        append(key, value.float16HostNans);
+        append(key, value.meshInlineFunctions);
+        append(key, value.spannedShuffleThroughMemory);
     }
 };
 

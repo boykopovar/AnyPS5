@@ -1,10 +1,17 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Require(bool value, int line) {
     if (value) return;
@@ -20,6 +27,12 @@ int main() {
     std::int64_t seconds = -1;
     const RtcTick zero{0};
     CHECK(sceNpRtcConvertToPosixTime(&zero, &seconds) == invalidArgument && seconds == -1);
+    errno = 71;
+    CHECK(sceNpRtcConvertToPosixTime(nullptr, &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(&zero, nullptr) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    CHECK(errno == 71);
     const RtcTick epoch{unixEpochTick};
     CHECK(sceNpRtcConvertToPosixTime(&epoch, &seconds) == 0 && seconds == 0);
     const RtcTick dayLater{unixEpochTick + 86400000000ull + 1500000ull};
@@ -27,9 +40,31 @@ int main() {
 
     char text[0x80];
     std::memset(text, 'x', sizeof(text));
-    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text) - 1, &epoch, 0) == bufferTooSmall && text[0] == 'x');
+    for (std::size_t sz : {std::size_t{0}, std::size_t{1}, std::size_t{0x7f}, sizeof(text) - 1}) {
+        CHECK(sceNpRtcFormatRFC3339(text, sz, &epoch, 0) == bufferTooSmall && text[0] == 'x');
+    }
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 0) == 0 && std::strcmp(text, "1970-01-01T00:00:00.00Z") == 0);
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 90) == 0 && std::strcmp(text, "1970-01-01T01:30:00.00+01:30") == 0);
+    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, -300) == 0 && std::strcmp(text, "1969-12-31T19:00:00.00-05:00") == 0);
+    {
+        constexpr std::size_t page = 0x10000;
+#ifdef _WIN32
+        auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        DWORD previous = 0;
+        CHECK(pages != nullptr && VirtualProtect(pages + page, page, PAGE_READONLY, &previous) != 0);
+#else
+        auto* pages = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        CHECK(pages != MAP_FAILED && mprotect(pages + page, page, PROT_READ) == 0);
+#endif
+        constexpr int invalidPointer = static_cast<int>(0x80B50002u);
+        errno = 71;
+        CHECK(sceNpRtcFormatRFC3339(pages, page + 0x80, &epoch, 0) == invalidPointer && errno == 71 && std::strcmp(pages, "1970-01-01T00:00:00.00Z") == 0);
+#ifdef _WIN32
+        VirtualFree(pages, 0, MEM_RELEASE);
+#else
+        munmap(pages, 2 * page);
+#endif
+    }
 
     NpTime now{0};
     CHECK(_ZN3sce2np4Time12GetUserClockEPS1_(&now) == 0 && now.tick > unixEpochTick);
@@ -38,6 +73,8 @@ int main() {
     CHECK(_ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(&time, &secondDay) == 0 && time.tick == unixEpochTick + 97445000006ull);
     RtcDateTime dateTime{};
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, &dateTime) == 0 && std::memcmp(&dateTime, &secondDay, sizeof(dateTime)) == 0);
+    errno = 71;
+    CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, reinterpret_cast<RtcDateTime*>(0x10)) == invalidArgument && errno == 71);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&time, &seconds) == 0 && seconds == 97445);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&zero, &seconds) == invalidArgument);
 
@@ -74,6 +111,10 @@ int main() {
     CHECK(_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(&later, &start, 2500000, &remainingShort) && remainingShort == 0);
     CHECK(!_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 4, &remaining) && remaining == 1);
     CHECK(_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 2, &remaining) && remaining == 0);
+    errno = 71;
+    CHECK(!_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(&later, &start, 3000000, reinterpret_cast<std::int64_t*>(0x10)));
+    CHECK(!_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(&later, &start, 2500001, reinterpret_cast<std::uint32_t*>(0x10)));
+    CHECK(!_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 4, reinterpret_cast<std::int64_t*>(0x10)) && errno == 71);
 
     std::memset(text, 'x', sizeof(text));
     CHECK(_ZNK3sce2np4Time13FormatRFC3339EPcmi(&epoch, text, sizeof(text) - 1, 0) == bufferTooSmall && text[0] == 'x');
@@ -138,6 +179,9 @@ int main() {
     parsed.tick = 1;
     CHECK(sceNpRtcParseRFC3339(&parsed, text) == 0 && parsed.tick == dayLater.tick);
     CHECK(sceNpRtcParseRFC3339(&parsed, "not a date") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01") < 0);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "2020-99-99T99:99:99.00Z") < 0);
     std::puts("NP common RTC tests passed");
     return 0;
 }

@@ -53,7 +53,8 @@ void defaults() {
     require(args.inputPath == "input.elf", "input path was not captured");
     require(args.outputPath == "output.elf", "output path was not captured");
     require(!args.dryRun && !args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
-        !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui,
+        !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui && !args.traceImports &&
+        !args.showHelp && !args.showVersion,
         "a flag defaulted to true");
     require(args.unusedFilterLevel == 0u, "unused filter level did not default to 0");
     require(args.runPath == "$ORIGIN/libs", "run path did not keep its default");
@@ -121,6 +122,9 @@ void rpath() {
 void omitUnavailableDependencies() {
     require(!parse({"input.elf", "output.elf"}).omitUnavailableDependencies, "dependencies were left out by default");
     require(parse({"--omit-unavailable-dependencies", "input.elf", "output.elf"}).omitUnavailableDependencies, "--omit-unavailable-dependencies was ignored");
+    const std::string message = "--omit-unavailable-dependencies cannot be used with --windows or --macos";
+    expectThrows({"--windows", "--omit-unavailable-dependencies", "input.elf", "output.exe"}, message);
+    expectThrows({"--omit-unavailable-dependencies", "--macos", "input.elf", "output"}, message);
 }
 
 void rpathConsumesNextTokenVerbatim() {
@@ -131,6 +135,25 @@ void rpathConsumesNextTokenVerbatim() {
 
 void rpathWithoutValue() {
     expectThrows({"--rpath"}, "--rpath requires a value");
+}
+
+void rpathRepeated() {
+    expectThrows({"--rpath", "/first", "--rpath", "/second", "input.elf", "output.elf"}, "--rpath cannot be repeated");
+}
+
+void traceImports() {
+    const auto args = parse({"--trace-imports", "input.elf", "output.elf"});
+    require(args.traceImports, "--trace-imports was ignored");
+    const std::string conflict = "--trace-imports conflicts with --lazy-binding";
+    expectThrows({"--trace-imports", "--lazy-binding", "input.elf", "output.elf"}, conflict);
+    expectThrows({"--lazy-binding", "--trace-imports", "input.elf", "output.elf"}, conflict);
+}
+
+void helpAndVersion() {
+    require(parse({"--help"}).showHelp, "--help was ignored");
+    require(parse({"--version"}).showVersion, "--version was ignored");
+    require(parse({"--help", "input.elf"}).showHelp, "--help with positionals was ignored");
+    require(parse({"--version", "input.elf"}).showVersion, "--version with positionals was ignored");
 }
 
 void excludeSceModule() {
@@ -336,6 +359,10 @@ void targetSelection() {
     const std::string rosettaConflict = "--to-rosetta conflicts with --windows";
     expectThrows({"--windows", "--to-rosetta", "input.elf", "output.elf"}, rosettaConflict);
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
+    const auto avx = parse({"--macos", "--to-avx", "input.elf", "output.elf"});
+    require(avx.toMacos && avx.toAvx && avx.toIntel && !avx.toRosetta, "--to-avx did not imply --to-intel on macOS");
+    expectThrows({"--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
+    expectThrows({"--windows", "--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
 }
 
 void patchOptions() {
@@ -371,6 +398,7 @@ void verifyMode() {
     expectThrows({"--verify-patches", "p.toml", "unused-filter=1", "in.elf"}, "unused-filter= cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--linux-fixed-base", "0x10000", "in.elf"}, "--linux-fixed-base cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--macos-fixed-base", "0x20000", "in.elf"}, "--macos-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--verify-patches", "q.toml", "in.elf"}, "--verify-patches cannot be repeated");
     expectThrows({"--verify-output", "in.elf", "out.elf"}, "--verify-output requires --verify-patches");
     expectThrows({"--verify-patches"}, "--verify-patches requires a file");
     expectUsage({"--verify-patches", "p.toml"});
@@ -400,9 +428,12 @@ int main() {
         singleDashIsPositional();
         optionTerminator();
         rpath();
+        rpathRepeated();
         omitUnavailableDependencies();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();
+        traceImports();
+        helpAndVersion();
         excludeSceModule();
         excludeSceModuleConsumesNextTokenVerbatim();
         excludeSceModuleWithoutValue();

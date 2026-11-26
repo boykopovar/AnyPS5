@@ -3,6 +3,13 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/GuestCpu.hpp"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -14,7 +21,7 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
-static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
+static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr std::uint32_t PROCESS_CPU_CLOCK = 0xC0000000u;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
 static constexpr std::int64_t NANOS_PER_MILLISECOND = 1000000LL;
@@ -38,10 +45,10 @@ static int CpuClock(Pthread thread) {
     return clockId;
 }
 
-static void BurnOwnCpu(std::int64_t nanos) {
+static void BurnOwnCpu(std::int64_t nanos, int clockId = GUEST_CLOCK_THREAD_CPUTIME_ID) {
     const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
-    const std::int64_t cpuStart = Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID);
-    while (Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID) - cpuStart < nanos)
+    const std::int64_t cpuStart = Nanos(clockId);
+    while (Nanos(clockId) - cpuStart < nanos)
         Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
 }
 
@@ -107,9 +114,9 @@ static void ProcessClocksNameOnlyTheGuest() {
     const int own = static_cast<int>(PROCESS_CPU_CLOCK | static_cast<std::uint32_t>(self));
     const int other = static_cast<int>(PROCESS_CPU_CLOCK | static_cast<std::uint32_t>(self + 1));
     const std::int64_t start = Nanos(own);
-    BurnOwnCpu(BURN_NANOS);
+    BurnOwnCpu(BURN_NANOS, own);
     const std::int64_t before = Nanos(own);
-    const std::int64_t reference = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const std::int64_t reference = Nanos(GUEST_CLOCK_PROF);
     const std::int64_t after = Nanos(own);
     Require(before - start >= BURN_NANOS - TICK_MARGIN_NANOS);
     Require(before <= reference + TICK_MARGIN_NANOS && reference <= after + TICK_MARGIN_NANOS);
@@ -127,11 +134,69 @@ static void ProcessClocksNameOnlyTheGuest() {
     }
 }
 
+static bool HostHasInvariantTsc() {
+#ifdef _WIN32
+    return GuestCpu::Cpuid(0x80000000u, 0)[0] >= 0x80000007u && (GuestCpu::Cpuid(0x80000007u, 0)[3] & (1u << 8u)) != 0;
+#else
+    return true;
+#endif
+}
+
+static std::int64_t ProcessCpuNanos() {
+#ifdef _WIN32
+    if (HostHasInvariantTsc()) {
+        ULONG64 cycles = 0;
+        Require(QueryProcessCycleTime(GetCurrentProcess(), &cycles) != 0);
+        const std::uint64_t frequency = HostTscFrequency_nid_no_patch();
+        return static_cast<std::int64_t>(cycles / frequency * 1000000000ULL + cycles % frequency * 1000000000ULL / frequency);
+    }
+#endif
+    constexpr int processCpuClock = 2;
+    return Nanos(processCpuClock);
+}
+
+static int DistinctReadingsWhileBurning(int clockId) {
+    constexpr std::int64_t coarseClockStep = 15625000;
+    const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    const std::int64_t processStart = ProcessCpuNanos();
+    const std::int64_t start = Nanos(clockId);
+    std::int64_t previous = start;
+    int distinct = 0;
+    while (previous - start < BURN_NANOS) {
+        Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
+        volatile std::uint32_t work = 0;
+        for (std::uint32_t i = 0; i < 1000; ++i)
+            work = work + i;
+        const std::int64_t now = Nanos(clockId);
+        Require(now >= previous);
+        if (now != previous)
+            ++distinct;
+        previous = now;
+    }
+    const std::int64_t process = ProcessCpuNanos() - processStart;
+    const std::int64_t wall = Nanos(GUEST_CLOCK_MONOTONIC) - wallStart;
+    Require(previous - start <= wall + wall / 50 + 2 * NANOS_PER_MILLISECOND);
+    Require(previous - start >= process - process / 10 - 2 * coarseClockStep);
+    return distinct;
+}
+
+static void ThreadClocksAdvanceInSmallSteps() {
+    constexpr int fewestReadings = 100;
+    const int threadReadings = DistinctReadingsWhileBurning(GUEST_CLOCK_THREAD_CPUTIME_ID);
+    const int ownReadings = DistinctReadingsWhileBurning(CpuClock(pthread_self_nid_postfix()));
+    if (!HostHasInvariantTsc())
+        return;
+    Require(threadReadings >= fewestReadings);
+    Require(ownReadings >= fewestReadings);
+}
+
 int main() {
     int clockId = 0;
     Require(pthread_getcpuclockid_nid_postfix(nullptr, &clockId) == GUEST_EINVAL);
     Require(pthread_getcpuclockid_nid_postfix(pthread_self_nid_postfix(), nullptr) == GUEST_EFAULT);
+    Require(pthread_getcpuclockid_nid_postfix(pthread_self_nid_postfix(), reinterpret_cast<int*>(0x10)) == GUEST_EFAULT);
     OwnClockFollowsThreadCpuTime();
     OtherThreadClockReadsThatThread();
     ProcessClocksNameOnlyTheGuest();
+    ThreadClocksAdvanceInSmallSteps();
 }

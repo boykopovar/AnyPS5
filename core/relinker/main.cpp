@@ -15,9 +15,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
-#include <memory>
+#include <iterator>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -46,6 +47,11 @@ struct ConvertedExecutable {
     std::optional<std::uint64_t> LinuxBase;
 };
 
+struct RegistryContents {
+    std::string Registry;
+    std::string Needed;
+};
+
 ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
     Io::FileReader fileReader;
     Relinker::ConversionInput input;
@@ -66,9 +72,11 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.Target = args.toWindows ? Relinker::TargetSystem::Windows : args.toMacos ? Relinker::TargetSystem::MacOs : Relinker::TargetSystem::Linux;
     options.ToIntel = args.toIntel;
     options.ToRosetta = args.toRosetta;
+    options.ToAvx = args.toAvx;
     options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
+    options.FunctionSymbolRoots = args.functionSymbolRoots;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
     options.OmitUnavailableDependencies = args.omitUnavailableDependencies;
@@ -135,9 +143,7 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
-                           std::filesystem::path& firstPath, std::filesystem::path& secondPath, const bool probeAliases) {
-    if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
-    if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
+                           const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
     if (!probeAliases) return false;
@@ -171,6 +177,22 @@ bool SameOutputDestination(const std::filesystem::path& first, const std::filesy
     }
 #endif
     return false;
+}
+
+bool OutputPathsCollide(const std::filesystem::path& first, const std::filesystem::path& second,
+                        const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
+    if (SameOutputDestination(first, second, firstPath, secondPath, probeAliases))
+        return true;
+
+    const auto firstDepth = std::distance(firstPath.begin(), firstPath.end());
+    const auto secondDepth = std::distance(secondPath.begin(), secondPath.end());
+    if (firstDepth == secondDepth)
+        return false;
+    const auto& possibleDirectory = firstDepth < secondDepth ? firstPath : secondPath;
+    auto ancestor = firstDepth < secondDepth ? secondPath : firstPath;
+    for (auto depth = std::max(firstDepth, secondDepth); depth > std::min(firstDepth, secondDepth); --depth)
+        ancestor = ancestor.parent_path();
+    return SameOutputDestination(possibleDirectory, ancestor, possibleDirectory, ancestor, probeAliases);
 }
 
 std::string ReadText(const std::string& path) {
@@ -390,8 +412,8 @@ int Run(const int argc, char* argv[]) {
             checkOutputInputs(desktopEntry->IconPath, "Icon");
             checkOutputInputs(desktopEntry->EntryPath, "Desktop entry");
         }
-        if (args.windowsDiagnostics)
-            checkOutputInputs(std::filesystem::absolute("windows-diagnostics-imports.txt"), "Windows import diagnostics");
+        const auto windowsDiagnosticsPath = Io::NativePath(absPath).parent_path() / "windows-diagnostics-imports.txt";
+        if (args.windowsDiagnostics) checkOutputInputs(windowsDiagnosticsPath, "Windows import diagnostics");
 
         std::vector<std::filesystem::path> registryPaths;
         std::vector<std::filesystem::path> neededPaths;
@@ -416,6 +438,18 @@ int Run(const int argc, char* argv[]) {
         if (!manifestPath.empty()) checkOutputInputs(manifestPath, "Patch manifest");
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
+        std::vector<RegistryContents> registryContents;
+        if (args.writeRegistry) {
+            Relinker::CallRegistryWriter registryWriter;
+            registryContents.reserve(registryPaths.size());
+            for (const auto& executable : executables)
+                registryContents.push_back({registryWriter.WriteCallRegistry(executable.Result.RegistryEntries),
+                                            registryWriter.WriteNeededLibraries(executable.Result.DynamicSection.NeededLibraries)});
+            for (const auto& artifact : guestArtifacts)
+                registryContents.push_back({registryWriter.WriteModuleImports(artifact.Imports),
+                                            registryWriter.WriteNeededLibraries(artifact.NeededLibraries)});
+        }
+
         std::vector<std::filesystem::path> outputPaths;
         for (const auto& executable : executables) outputPaths.push_back(Io::NativePath(executable.OutputPath));
         for (const auto& artifact : guestArtifacts) outputPaths.push_back(artifact.Path);
@@ -426,13 +460,16 @@ int Run(const int argc, char* argv[]) {
             outputPaths.push_back(desktopEntry->IconPath);
             outputPaths.push_back(desktopEntry->EntryPath);
         }
-        if (args.windowsDiagnostics) outputPaths.push_back(std::filesystem::absolute("windows-diagnostics-imports.txt"));
+        if (args.windowsDiagnostics) outputPaths.push_back(windowsDiagnosticsPath);
         std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
+            if (!args.dryRun && std::filesystem::is_fifo(outputPaths[index]))
+                throw Domain::RelinkerException("Output is a FIFO: " + Io::Utf8Path(outputPaths[index]));
+            canonicalOutputPaths[index] = std::filesystem::weakly_canonical(outputPaths[index]);
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
+                if (OutputPathsCollide(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }
@@ -448,7 +485,7 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write("windows-diagnostics-imports.txt", executables.front().Diagnostics);
+        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;
@@ -466,16 +503,9 @@ int Run(const int argc, char* argv[]) {
             }
             progress.Report({Domain::ProgressStage::Write, absPath, ++written, outputCount});
         }
-        if (args.writeRegistry) {
-            const auto registryWriter = std::make_shared<Relinker::CallRegistryWriter>();
-            for (std::size_t index = 0; index < executables.size(); ++index) {
-                fileWriter.Write(Io::Utf8Path(registryPaths[index]), registryWriter->WriteCallRegistry(executables[index].Result.RegistryEntries));
-                fileWriter.Write(Io::Utf8Path(neededPaths[index]), registryWriter->WriteNeededLibraries(executables[index].Result.DynamicSection.NeededLibraries));
-            }
-            for (std::size_t index = 0; index < guestArtifacts.size(); ++index) {
-                fileWriter.Write(Io::Utf8Path(registryPaths[executables.size() + index]), registryWriter->WriteModuleImports(guestArtifacts[index].Imports));
-                fileWriter.Write(Io::Utf8Path(neededPaths[executables.size() + index]), registryWriter->WriteNeededLibraries(guestArtifacts[index].NeededLibraries));
-            }
+        for (std::size_t index = 0; index < registryContents.size(); ++index) {
+            fileWriter.Write(Io::Utf8Path(registryPaths[index]), registryContents[index].Registry);
+            fileWriter.Write(Io::Utf8Path(neededPaths[index]), registryContents[index].Needed);
         }
         if (!manifestPath.empty()) fileWriter.Write(Io::Utf8Path(manifestPath), manifestText);
         progress.Finish();

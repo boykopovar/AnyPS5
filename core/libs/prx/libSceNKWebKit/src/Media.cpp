@@ -3,8 +3,10 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/MediaTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <string>
 #include <utility>
 
 namespace {
@@ -100,6 +103,117 @@ float mediaTimeToFloat(const WTF::MediaTime& t) {
     return static_cast<float>(t.m_timeValue) / t.m_timeScale;
 }
 
+std::string shortestNumber(double value) {
+    if (std::isnan(value)) return "NaN";
+    if (std::isinf(value)) return value < 0 ? "-Infinity" : "Infinity";
+    if (value == 0) return "0";
+    char buffer[32];
+    auto converted = std::to_chars(buffer, buffer + sizeof(buffer), std::fabs(value), std::chars_format::scientific);
+    std::string text(buffer, converted.ptr);
+    const std::size_t e = text.find('e');
+    const int exponent = std::stoi(text.substr(e + 1));
+    std::string digits = text.substr(0, e);
+    digits.erase(std::remove(digits.begin(), digits.end(), '.'), digits.end());
+    const int count = static_cast<int>(digits.size());
+    const int point = exponent + 1;
+    std::string result = value < 0 ? "-" : "";
+    if (point >= -5 && point <= 21) {
+        if (point <= 0) result += "0." + std::string(static_cast<std::size_t>(-point), '0') + digits;
+        else if (point >= count) result += digits + std::string(static_cast<std::size_t>(point - count), '0');
+        else result += digits.substr(0, point) + "." + digits.substr(point);
+        return result;
+    }
+    result += digits.substr(0, 1);
+    if (count > 1) result += "." + digits.substr(1);
+    result += exponent < 0 ? "e-" : "e+";
+    return result + std::to_string(exponent < 0 ? -exponent : exponent);
+}
+
+constexpr std::size_t mediaTimeFieldBytes = offsetof(WTF::MediaTime, m_timeFlags) + sizeof(uint8_t);
+
+bool loadMediaTime(WTF::MediaTime& time, const WTF::MediaTime* source) {
+    return GuestCopyIn_nid_no_patch(&time, source, mediaTimeFieldBytes);
+}
+
+bool storeMediaTime(WTF::MediaTime* destination, const WTF::MediaTime& time) {
+    return GuestCopyOut_nid_no_patch(destination, &time, mediaTimeFieldBytes);
+}
+
+void setMediaTimeScale(WTF::MediaTime& time, uint32_t timeScale, WTF::MediaTime::RoundingFlags flags) {
+    if (mediaTimeHasDoubleValue(time)) {
+        time = _ZN3WTF9MediaTime16createWithDoubleEdj(time.m_timeValueAsDouble, timeScale);
+        return;
+    }
+
+    if (!timeScale) {
+        time = time.m_timeValue < 0 ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
+        return;
+    }
+
+    if (timeScale == time.m_timeScale) {
+        return;
+    }
+
+    timeScale = std::min(WTF::MediaTime::MaximumTimeScale, timeScale);
+
+    __int128_t newValue = static_cast<__int128_t>(time.m_timeValue) * timeScale;
+    int64_t remainder = static_cast<int64_t>(newValue % time.m_timeScale);
+    newValue = newValue / time.m_timeScale;
+
+    if (newValue < std::numeric_limits<int64_t>::min()) {
+        time = _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
+        return;
+    }
+
+    if (newValue > std::numeric_limits<int64_t>::max()) {
+        time = _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
+        return;
+    }
+
+    time.m_timeValue = static_cast<int64_t>(newValue);
+    std::swap(time.m_timeScale, timeScale);
+
+    if (!remainder) {
+        return;
+    }
+
+    time.m_timeFlags |= WTF::MediaTime::HasBeenRounded;
+    switch (flags) {
+    case WTF::MediaTime::RoundingFlags::HalfAwayFromZero:
+        if (static_cast<int64_t>(std::abs(remainder)) * 2 >= static_cast<int64_t>(timeScale)) {
+            if (remainder < 0) {
+                time.m_timeValue--;
+            } else {
+                time.m_timeValue++;
+            }
+        }
+        break;
+
+    case WTF::MediaTime::RoundingFlags::TowardZero:
+        break;
+
+    case WTF::MediaTime::RoundingFlags::AwayFromZero:
+        if (remainder < 0) {
+            time.m_timeValue--;
+        } else {
+            time.m_timeValue++;
+        }
+        break;
+
+    case WTF::MediaTime::RoundingFlags::TowardPositiveInfinity:
+        if (remainder > 0) {
+            time.m_timeValue++;
+        }
+        break;
+
+    case WTF::MediaTime::RoundingFlags::TowardNegativeInfinity:
+        if (remainder < 0) {
+            time.m_timeValue--;
+        }
+        break;
+    }
+}
+
 bool rangeIsPointInRange(const WebCore::PlatformTimeRanges::Range& r, const WTF::MediaTime& point) {
     return _ZNK3WTF9MediaTimeleERKS0_(&r.start, point) && _ZNK3WTF9MediaTimeltERKS0_(&point, r.end);
 }
@@ -114,8 +228,8 @@ bool rangeIsContiguousWithRange(const WebCore::PlatformTimeRanges::Range& a, con
 
 WebCore::PlatformTimeRanges::Range rangeUnionWithOverlappingOrContiguousRange(const WebCore::PlatformTimeRanges::Range& a, const WebCore::PlatformTimeRanges::Range& b) {
     WebCore::PlatformTimeRanges::Range ret;
-    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&a.start, b.start) ? a.start : b.start;
-    ret.end = _ZNK3WTF9MediaTimegtERKS0_(&a.end, b.end) ? a.end : b.end;
+    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&b.start, a.start) ? b.start : a.start;
+    ret.end = _ZNK3WTF9MediaTimeltERKS0_(&a.end, b.end) ? b.end : a.end;
     return ret;
 }
 
@@ -189,7 +303,7 @@ WTF::MediaTime APS5_VABI _ZN3WTF9MediaTime15createWithFloatEfj(float floatTime, 
     if (!timeScale) {
         return std::signbit(floatTime) ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    while (floatTime * timeScale >= maxPlusOneInt64) {
+    while (floatTime * timeScale >= maxPlusOneInt64 || floatTime * timeScale < -maxPlusOneInt64) {
         timeScale /= 2;
     }
     WTF::MediaTime value{};
@@ -229,7 +343,7 @@ WTF::MediaTime APS5_VABI _ZN3WTF9MediaTime16createWithDoubleEdj(double doubleTim
     if (!timeScale) {
         return std::signbit(doubleTime) ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    while (doubleTime * timeScale >= maxPlusOneInt64) {
+    while (doubleTime * timeScale >= maxPlusOneInt64 || doubleTime * timeScale < -maxPlusOneInt64) {
         timeScale /= 2;
     }
     WTF::MediaTime value{};
@@ -240,9 +354,9 @@ WTF::MediaTime APS5_VABI _ZN3WTF9MediaTime16createWithDoubleEdj(double doubleTim
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC1Ev(WTF::MediaTime* self) {
-    self->m_timeValue = 0;
-    self->m_timeScale = WTF::MediaTime::DefaultTimeScale;
-    self->m_timeFlags = WTF::MediaTime::Valid;
+    const WTF::MediaTime time{0, WTF::MediaTime::DefaultTimeScale, WTF::MediaTime::Valid};
+    if (!storeMediaTime(self, time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC2Ev(WTF::MediaTime* self) {
@@ -250,9 +364,9 @@ void APS5_VABI _ZN3WTF9MediaTimeC2Ev(WTF::MediaTime* self) {
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC1ERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    self->m_timeValue = rhs.m_timeValue;
-    self->m_timeScale = rhs.m_timeScale;
-    self->m_timeFlags = rhs.m_timeFlags;
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, &rhs) || !storeMediaTime(self, time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC2ERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs) {
@@ -260,21 +374,13 @@ void APS5_VABI _ZN3WTF9MediaTimeC2ERKS0_(WTF::MediaTime* self, const WTF::MediaT
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC1Eljh(WTF::MediaTime* self, int64_t value, uint32_t scale, uint8_t flags) {
-    self->m_timeValue = value;
-    self->m_timeScale = scale;
-    self->m_timeFlags = flags;
-    if (scale || !(flags & WTF::MediaTime::Valid)) {
-        return;
+    WTF::MediaTime time{value, scale, flags};
+    if (!scale && (flags & WTF::MediaTime::Valid)) {
+        time = value < 0 ? WTF::MediaTime{-1, 1, WTF::MediaTime::NegativeInfinite | WTF::MediaTime::Valid}
+                         : WTF::MediaTime{0, 1, WTF::MediaTime::PositiveInfinite | WTF::MediaTime::Valid};
     }
-    if (value < 0) {
-        self->m_timeValue = -1;
-        self->m_timeScale = 1;
-        self->m_timeFlags = WTF::MediaTime::NegativeInfinite | WTF::MediaTime::Valid;
-    } else {
-        self->m_timeValue = 0;
-        self->m_timeScale = 1;
-        self->m_timeFlags = WTF::MediaTime::PositiveInfinite | WTF::MediaTime::Valid;
-    }
+    if (!storeMediaTime(self, time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3WTF9MediaTimeC2Eljh(WTF::MediaTime* self, int64_t value, uint32_t scale, uint8_t flags) {
@@ -282,130 +388,70 @@ void APS5_VABI _ZN3WTF9MediaTimeC2Eljh(WTF::MediaTime* self, int64_t value, uint
 }
 
 WTF::MediaTime& APS5_VABI _ZN3WTF9MediaTimeaSERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    self->m_timeValue = rhs.m_timeValue;
-    self->m_timeScale = rhs.m_timeScale;
-    self->m_timeFlags = rhs.m_timeFlags;
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, &rhs) || !storeMediaTime(self, time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
 void APS5_VABI _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(WTF::MediaTime* self, uint32_t timeScale, WTF::MediaTime::RoundingFlags flags) {
-    if (mediaTimeHasDoubleValue(*self)) {
-        *self = _ZN3WTF9MediaTime16createWithDoubleEdj(self->m_timeValueAsDouble, timeScale);
-        return;
-    }
-
-    if (!timeScale) {
-        *self = self->m_timeValue < 0 ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
-        return;
-    }
-
-    if (timeScale == self->m_timeScale) {
-        return;
-    }
-
-    timeScale = std::min(WTF::MediaTime::MaximumTimeScale, timeScale);
-
-    __int128_t newValue = static_cast<__int128_t>(self->m_timeValue) * timeScale;
-    int64_t remainder = static_cast<int64_t>(newValue % self->m_timeScale);
-    newValue = newValue / self->m_timeScale;
-
-    if (newValue < std::numeric_limits<int64_t>::min()) {
-        *self = _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
-        return;
-    }
-
-    if (newValue > std::numeric_limits<int64_t>::max()) {
-        *self = _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
-        return;
-    }
-
-    self->m_timeValue = static_cast<int64_t>(newValue);
-    std::swap(self->m_timeScale, timeScale);
-
-    if (!remainder) {
-        return;
-    }
-
-    self->m_timeFlags |= WTF::MediaTime::HasBeenRounded;
-    switch (flags) {
-    case WTF::MediaTime::RoundingFlags::HalfAwayFromZero:
-        if (static_cast<int64_t>(std::abs(remainder)) * 2 >= static_cast<int64_t>(timeScale)) {
-            if (remainder < 0) {
-                self->m_timeValue--;
-            } else {
-                self->m_timeValue++;
-            }
-        }
-        break;
-
-    case WTF::MediaTime::RoundingFlags::TowardZero:
-        break;
-
-    case WTF::MediaTime::RoundingFlags::AwayFromZero:
-        if (remainder < 0) {
-            self->m_timeValue--;
-        } else {
-            self->m_timeValue++;
-        }
-        break;
-
-    case WTF::MediaTime::RoundingFlags::TowardPositiveInfinity:
-        if (remainder > 0) {
-            self->m_timeValue++;
-        }
-        break;
-
-    case WTF::MediaTime::RoundingFlags::TowardNegativeInfinity:
-        if (remainder < 0) {
-            self->m_timeValue--;
-        }
-        break;
-    }
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    setMediaTimeScale(time, timeScale, flags);
+    if (!storeMediaTime(self, time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTime11toTimeScaleEjNS0_13RoundingFlagsE(const WTF::MediaTime* self, uint32_t scale, WTF::MediaTime::RoundingFlags flags) {
-    WTF::MediaTime result = *self;
-    _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&result, scale, flags);
+    WTF::MediaTime result;
+    if (!loadMediaTime(result, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    setMediaTimeScale(result, scale, flags);
     return result;
 }
 
 WTF::MediaTime::ComparisonFlags APS5_VABI _ZNK3WTF9MediaTime7compareERKS0_(const WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    auto andFlags = self->m_timeFlags & rhs.m_timeFlags;
+    WTF::MediaTime time;
+    WTF::MediaTime other;
+    if (!loadMediaTime(time, self) || !loadMediaTime(other, &rhs))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    auto andFlags = time.m_timeFlags & other.m_timeFlags;
     if (andFlags & (WTF::MediaTime::PositiveInfinite | WTF::MediaTime::NegativeInfinite | WTF::MediaTime::Indefinite)) {
         return WTF::MediaTime::EqualTo;
     }
 
-    auto orFlags = self->m_timeFlags | rhs.m_timeFlags;
+    auto orFlags = time.m_timeFlags | other.m_timeFlags;
     if (!(orFlags & WTF::MediaTime::Valid)) {
         return WTF::MediaTime::EqualTo;
     }
 
     if (!(andFlags & WTF::MediaTime::Valid)) {
-        return mediaTimeIsInvalid(*self) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
+        return mediaTimeIsInvalid(time) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
     }
 
     if (orFlags & WTF::MediaTime::NegativeInfinite) {
-        return mediaTimeIsNegativeInfinite(*self) ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
+        return mediaTimeIsNegativeInfinite(time) ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
     }
 
     if (orFlags & WTF::MediaTime::PositiveInfinite) {
-        return mediaTimeIsPositiveInfinite(*self) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
+        return mediaTimeIsPositiveInfinite(time) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
     }
 
     if (orFlags & WTF::MediaTime::Indefinite) {
-        return mediaTimeIsIndefinite(*self) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
+        return mediaTimeIsIndefinite(time) ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
     }
 
     if (andFlags & WTF::MediaTime::DoubleValue) {
-        if (self->m_timeValueAsDouble == rhs.m_timeValueAsDouble) {
+        if (time.m_timeValueAsDouble == other.m_timeValueAsDouble) {
             return WTF::MediaTime::EqualTo;
         }
-        return self->m_timeValueAsDouble < rhs.m_timeValueAsDouble ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
+        return time.m_timeValueAsDouble < other.m_timeValueAsDouble ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
     }
 
     if (orFlags & WTF::MediaTime::DoubleValue) {
-        double a = mediaTimeToDouble(*self);
-        double b = mediaTimeToDouble(rhs);
+        double a = mediaTimeToDouble(time);
+        double b = mediaTimeToDouble(other);
         if (a > b) {
             return WTF::MediaTime::GreaterThan;
         }
@@ -415,53 +461,53 @@ WTF::MediaTime::ComparisonFlags APS5_VABI _ZNK3WTF9MediaTime7compareERKS0_(const
         return WTF::MediaTime::EqualTo;
     }
 
-    if ((self->m_timeValue < 0) != (rhs.m_timeValue < 0)) {
-        return self->m_timeValue < 0 ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
+    if ((time.m_timeValue < 0) != (other.m_timeValue < 0)) {
+        return time.m_timeValue < 0 ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
     }
 
-    if (!self->m_timeValue && !rhs.m_timeValue) {
+    if (!time.m_timeValue && !other.m_timeValue) {
         return WTF::MediaTime::EqualTo;
     }
 
-    if (self->m_timeScale == rhs.m_timeScale) {
-        if (self->m_timeValue == rhs.m_timeValue) {
+    if (time.m_timeScale == other.m_timeScale) {
+        if (time.m_timeValue == other.m_timeValue) {
             return WTF::MediaTime::EqualTo;
         }
-        return self->m_timeValue < rhs.m_timeValue ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
+        return time.m_timeValue < other.m_timeValue ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
     }
 
-    if (self->m_timeValue == rhs.m_timeValue) {
-        return self->m_timeScale < rhs.m_timeScale ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
+    if (time.m_timeValue == other.m_timeValue) {
+        return time.m_timeScale < other.m_timeScale ? WTF::MediaTime::GreaterThan : WTF::MediaTime::LessThan;
     }
 
-    if (self->m_timeValue >= 0) {
-        if (self->m_timeValue < rhs.m_timeValue && self->m_timeScale > rhs.m_timeScale) {
+    if (time.m_timeValue >= 0) {
+        if (time.m_timeValue < other.m_timeValue && time.m_timeScale > other.m_timeScale) {
             return WTF::MediaTime::LessThan;
         }
-        if (self->m_timeValue > rhs.m_timeValue && self->m_timeScale < rhs.m_timeScale) {
+        if (time.m_timeValue > other.m_timeValue && time.m_timeScale < other.m_timeScale) {
             return WTF::MediaTime::GreaterThan;
         }
     } else {
-        if (self->m_timeValue < rhs.m_timeValue && self->m_timeScale < rhs.m_timeScale) {
+        if (time.m_timeValue < other.m_timeValue && time.m_timeScale < other.m_timeScale) {
             return WTF::MediaTime::LessThan;
         }
-        if (self->m_timeValue > rhs.m_timeValue && self->m_timeScale > rhs.m_timeScale) {
+        if (time.m_timeValue > other.m_timeValue && time.m_timeScale > other.m_timeScale) {
             return WTF::MediaTime::GreaterThan;
         }
     }
 
     int64_t lhsFactor;
     int64_t rhsFactor;
-    if (!__builtin_mul_overflow(self->m_timeValue, static_cast<int64_t>(rhs.m_timeScale), &lhsFactor)
-        && !__builtin_mul_overflow(rhs.m_timeValue, static_cast<int64_t>(self->m_timeScale), &rhsFactor)) {
+    if (!__builtin_mul_overflow(time.m_timeValue, static_cast<int64_t>(other.m_timeScale), &lhsFactor)
+        && !__builtin_mul_overflow(other.m_timeValue, static_cast<int64_t>(time.m_timeScale), &rhsFactor)) {
         if (lhsFactor == rhsFactor) {
             return WTF::MediaTime::EqualTo;
         }
         return lhsFactor < rhsFactor ? WTF::MediaTime::LessThan : WTF::MediaTime::GreaterThan;
     }
 
-    int64_t rhsWhole = rhs.m_timeValue / rhs.m_timeScale;
-    int64_t lhsWhole = self->m_timeValue / self->m_timeScale;
+    int64_t rhsWhole = other.m_timeValue / other.m_timeScale;
+    int64_t lhsWhole = time.m_timeValue / time.m_timeScale;
     if (lhsWhole > rhsWhole) {
         return WTF::MediaTime::GreaterThan;
     }
@@ -469,10 +515,10 @@ WTF::MediaTime::ComparisonFlags APS5_VABI _ZNK3WTF9MediaTime7compareERKS0_(const
         return WTF::MediaTime::LessThan;
     }
 
-    int64_t rhsRemain = rhs.m_timeValue % rhs.m_timeScale;
-    int64_t lhsRemain = self->m_timeValue % self->m_timeScale;
-    lhsFactor = lhsRemain * rhs.m_timeScale;
-    rhsFactor = rhsRemain * self->m_timeScale;
+    int64_t rhsRemain = other.m_timeValue % other.m_timeScale;
+    int64_t lhsRemain = time.m_timeValue % time.m_timeScale;
+    lhsFactor = lhsRemain * other.m_timeScale;
+    rhsFactor = rhsRemain * time.m_timeScale;
 
     if (lhsFactor == rhsFactor) {
         return WTF::MediaTime::EqualTo;
@@ -508,9 +554,12 @@ bool APS5_VABI _ZNK3WTF9MediaTime9isBetweenERKS0_S2_(const WTF::MediaTime* self,
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTimentEv(const WTF::MediaTime* self) {
-    return (self->m_timeFlags == WTF::MediaTime::Valid && !self->m_timeValue)
-        || (self->m_timeFlags == (WTF::MediaTime::Valid | WTF::MediaTime::DoubleValue) && !self->m_timeValueAsDouble)
-        || mediaTimeIsInvalid(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return (time.m_timeFlags == WTF::MediaTime::Valid && !time.m_timeValue)
+        || (time.m_timeFlags == (WTF::MediaTime::Valid | WTF::MediaTime::DoubleValue) && !time.m_timeValueAsDouble)
+        || mediaTimeIsInvalid(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTimecvbEv(const WTF::MediaTime* self) {
@@ -518,43 +567,87 @@ bool APS5_VABI _ZNK3WTF9MediaTimecvbEv(const WTF::MediaTime* self) {
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime12isIndefiniteEv(const WTF::MediaTime* self) {
-    return mediaTimeIsIndefinite(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeIsIndefinite(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime14hasBeenRoundedEv(const WTF::MediaTime* self) {
-    return mediaTimeHasBeenRounded(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeHasBeenRounded(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime14hasDoubleValueEv(const WTF::MediaTime* self) {
-    return mediaTimeHasDoubleValue(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeHasDoubleValue(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime18isNegativeInfiniteEv(const WTF::MediaTime* self) {
-    return mediaTimeIsNegativeInfinite(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeIsNegativeInfinite(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime18isPositiveInfiniteEv(const WTF::MediaTime* self) {
-    return mediaTimeIsPositiveInfinite(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeIsPositiveInfinite(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime7isValidEv(const WTF::MediaTime* self) {
-    return mediaTimeIsValid(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeIsValid(time);
 }
 
 bool APS5_VABI _ZNK3WTF9MediaTime9isInvalidEv(const WTF::MediaTime* self) {
-    return mediaTimeIsInvalid(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeIsInvalid(time);
 }
 
 float APS5_VABI _ZNK3WTF9MediaTime7toFloatEv(const WTF::MediaTime* self) {
-    return mediaTimeToFloat(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeToFloat(time);
 }
 
 double APS5_VABI _ZNK3WTF9MediaTime8toDoubleEv(const WTF::MediaTime* self) {
-    return mediaTimeToDouble(*self);
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return mediaTimeToDouble(time);
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF9MediaTime8toStringEv(const WTF::MediaTime* self) {
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::string text = "{";
+    if (!mediaTimeHasDoubleValue(time))
+        text += std::to_string(time.m_timeValue) + "/" + std::to_string(time.m_timeScale) + " = ";
+    text += shortestNumber(mediaTimeToDouble(time));
+    if (mediaTimeIsInvalid(time))
+        text += ", invalid";
+    text += "}";
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text.data()), static_cast<unsigned>(text.size()));
 }
 
 uint8_t APS5_VABI _ZNK3WTF9MediaTime9timeFlagsEv(const WTF::MediaTime* self) {
-    return self->m_timeFlags;
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return time.m_timeFlags;
 }
 
 const uint32_t& APS5_VABI _ZNK3WTF9MediaTime9timeScaleEv(const WTF::MediaTime* self) {
@@ -566,40 +659,44 @@ const int64_t& APS5_VABI _ZNK3WTF9MediaTime9timeValueEv(const WTF::MediaTime* se
 }
 
 WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimeplERKS0_(const WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    if (mediaTimeIsInvalid(rhs) || mediaTimeIsInvalid(*self)) {
+    WTF::MediaTime time;
+    WTF::MediaTime other;
+    if (!loadMediaTime(time, self) || !loadMediaTime(other, &rhs))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (mediaTimeIsInvalid(other) || mediaTimeIsInvalid(time)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsIndefinite(rhs) || mediaTimeIsIndefinite(*self)) {
+    if (mediaTimeIsIndefinite(other) || mediaTimeIsIndefinite(time)) {
         return _ZN3WTF9MediaTime14indefiniteTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self) && mediaTimeIsNegativeInfinite(rhs)) {
+    if (mediaTimeIsPositiveInfinite(time) && mediaTimeIsNegativeInfinite(other)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self) && mediaTimeIsPositiveInfinite(rhs)) {
+    if (mediaTimeIsNegativeInfinite(time) && mediaTimeIsPositiveInfinite(other)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self) || mediaTimeIsPositiveInfinite(rhs)) {
+    if (mediaTimeIsPositiveInfinite(time) || mediaTimeIsPositiveInfinite(other)) {
         return _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self) || mediaTimeIsNegativeInfinite(rhs)) {
+    if (mediaTimeIsNegativeInfinite(time) || mediaTimeIsNegativeInfinite(other)) {
         return _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
     }
-    if (mediaTimeHasDoubleValue(*self) && mediaTimeHasDoubleValue(rhs)) {
-        return _ZN3WTF9MediaTime16createWithDoubleEd(self->m_timeValueAsDouble + rhs.m_timeValueAsDouble);
+    if (mediaTimeHasDoubleValue(time) && mediaTimeHasDoubleValue(other)) {
+        return _ZN3WTF9MediaTime16createWithDoubleEd(time.m_timeValueAsDouble + other.m_timeValueAsDouble);
     }
-    if (mediaTimeHasDoubleValue(*self) || mediaTimeHasDoubleValue(rhs)) {
-        return _ZN3WTF9MediaTime16createWithDoubleEd(mediaTimeToDouble(*self) + mediaTimeToDouble(rhs));
+    if (mediaTimeHasDoubleValue(time) || mediaTimeHasDoubleValue(other)) {
+        return _ZN3WTF9MediaTime16createWithDoubleEd(mediaTimeToDouble(time) + mediaTimeToDouble(other));
     }
 
-    WTF::MediaTime a = *self;
-    WTF::MediaTime b = rhs;
+    WTF::MediaTime a = time;
+    WTF::MediaTime b = other;
 
     uint32_t commonTimeScale;
     if (!leastCommonMultiple(a.m_timeScale, b.m_timeScale, commonTimeScale) || commonTimeScale > WTF::MediaTime::MaximumTimeScale) {
         commonTimeScale = WTF::MediaTime::MaximumTimeScale;
     }
-    _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
-    _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+    setMediaTimeScale(a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+    setMediaTimeScale(b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
 
     int64_t result;
     while (__builtin_add_overflow(a.m_timeValue, b.m_timeValue, &result)) {
@@ -607,48 +704,52 @@ WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimeplERKS0_(const WTF::MediaTime* self, 
             return a.m_timeValue > 0 ? _ZN3WTF9MediaTime20positiveInfiniteTimeEv() : _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
         }
         commonTimeScale /= 2;
-        _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
-        _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+        setMediaTimeScale(a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+        setMediaTimeScale(b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
     }
     a.m_timeValue = result;
     return a;
 }
 
 WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimemiERKS0_(const WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    if (mediaTimeIsInvalid(rhs) || mediaTimeIsInvalid(*self)) {
+    WTF::MediaTime time;
+    WTF::MediaTime other;
+    if (!loadMediaTime(time, self) || !loadMediaTime(other, &rhs))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (mediaTimeIsInvalid(other) || mediaTimeIsInvalid(time)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsIndefinite(rhs) || mediaTimeIsIndefinite(*self)) {
+    if (mediaTimeIsIndefinite(other) || mediaTimeIsIndefinite(time)) {
         return _ZN3WTF9MediaTime14indefiniteTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self) && mediaTimeIsPositiveInfinite(rhs)) {
+    if (mediaTimeIsPositiveInfinite(time) && mediaTimeIsPositiveInfinite(other)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self) && mediaTimeIsNegativeInfinite(rhs)) {
+    if (mediaTimeIsNegativeInfinite(time) && mediaTimeIsNegativeInfinite(other)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self) || mediaTimeIsNegativeInfinite(rhs)) {
+    if (mediaTimeIsPositiveInfinite(time) || mediaTimeIsNegativeInfinite(other)) {
         return _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self) || mediaTimeIsPositiveInfinite(rhs)) {
+    if (mediaTimeIsNegativeInfinite(time) || mediaTimeIsPositiveInfinite(other)) {
         return _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
     }
-    if (mediaTimeHasDoubleValue(*self) && mediaTimeHasDoubleValue(rhs)) {
-        return _ZN3WTF9MediaTime16createWithDoubleEd(self->m_timeValueAsDouble - rhs.m_timeValueAsDouble);
+    if (mediaTimeHasDoubleValue(time) && mediaTimeHasDoubleValue(other)) {
+        return _ZN3WTF9MediaTime16createWithDoubleEd(time.m_timeValueAsDouble - other.m_timeValueAsDouble);
     }
-    if (mediaTimeHasDoubleValue(*self) || mediaTimeHasDoubleValue(rhs)) {
-        return _ZN3WTF9MediaTime16createWithDoubleEd(mediaTimeToDouble(*self) - mediaTimeToDouble(rhs));
+    if (mediaTimeHasDoubleValue(time) || mediaTimeHasDoubleValue(other)) {
+        return _ZN3WTF9MediaTime16createWithDoubleEd(mediaTimeToDouble(time) - mediaTimeToDouble(other));
     }
 
-    WTF::MediaTime a = *self;
-    WTF::MediaTime b = rhs;
+    WTF::MediaTime a = time;
+    WTF::MediaTime b = other;
 
     uint32_t commonTimeScale;
-    if (!leastCommonMultiple(self->m_timeScale, rhs.m_timeScale, commonTimeScale) || commonTimeScale > WTF::MediaTime::MaximumTimeScale) {
+    if (!leastCommonMultiple(time.m_timeScale, other.m_timeScale, commonTimeScale) || commonTimeScale > WTF::MediaTime::MaximumTimeScale) {
         commonTimeScale = WTF::MediaTime::MaximumTimeScale;
     }
-    _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
-    _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+    setMediaTimeScale(a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+    setMediaTimeScale(b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
 
     int64_t result;
     while (__builtin_sub_overflow(a.m_timeValue, b.m_timeValue, &result)) {
@@ -656,27 +757,30 @@ WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimemiERKS0_(const WTF::MediaTime* self, 
             return a.m_timeValue > 0 ? _ZN3WTF9MediaTime20positiveInfiniteTimeEv() : _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
         }
         commonTimeScale /= 2;
-        _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
-        _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+        setMediaTimeScale(a, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+        setMediaTimeScale(b, commonTimeScale, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
     }
     a.m_timeValue = result;
     return a;
 }
 
 WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimengEv(const WTF::MediaTime* self) {
-    if (mediaTimeIsInvalid(*self)) {
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (mediaTimeIsInvalid(time)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsIndefinite(*self)) {
+    if (mediaTimeIsIndefinite(time)) {
         return _ZN3WTF9MediaTime14indefiniteTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self)) {
+    if (mediaTimeIsPositiveInfinite(time)) {
         return _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self)) {
+    if (mediaTimeIsNegativeInfinite(time)) {
         return _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    WTF::MediaTime negativeTime = *self;
+    WTF::MediaTime negativeTime = time;
     if (mediaTimeHasDoubleValue(negativeTime)) {
         negativeTime.m_timeValueAsDouble = -negativeTime.m_timeValueAsDouble;
     } else {
@@ -686,31 +790,34 @@ WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimengEv(const WTF::MediaTime* self) {
 }
 
 WTF::MediaTime APS5_VABI _ZNK3WTF9MediaTimemlEi(const WTF::MediaTime* self, int32_t rhs) {
-    if (mediaTimeIsInvalid(*self)) {
+    WTF::MediaTime time;
+    if (!loadMediaTime(time, self))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (mediaTimeIsInvalid(time)) {
         return _ZN3WTF9MediaTime11invalidTimeEv();
     }
-    if (mediaTimeIsIndefinite(*self)) {
+    if (mediaTimeIsIndefinite(time)) {
         return _ZN3WTF9MediaTime14indefiniteTimeEv();
     }
     if (!rhs) {
         return _ZN3WTF9MediaTime8zeroTimeEv();
     }
-    if (mediaTimeIsPositiveInfinite(*self)) {
+    if (mediaTimeIsPositiveInfinite(time)) {
         return rhs > 0 ? _ZN3WTF9MediaTime20positiveInfiniteTimeEv() : _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
     }
-    if (mediaTimeIsNegativeInfinite(*self)) {
+    if (mediaTimeIsNegativeInfinite(time)) {
         return rhs > 0 ? _ZN3WTF9MediaTime20negativeInfiniteTimeEv() : _ZN3WTF9MediaTime20positiveInfiniteTimeEv();
     }
-    if (mediaTimeHasDoubleValue(*self)) {
-        return _ZN3WTF9MediaTime16createWithDoubleEd(self->m_timeValueAsDouble * rhs);
+    if (mediaTimeHasDoubleValue(time)) {
+        return _ZN3WTF9MediaTime16createWithDoubleEd(time.m_timeValueAsDouble * rhs);
     }
-    WTF::MediaTime a = *self;
+    WTF::MediaTime a = time;
     int64_t result;
     while (__builtin_mul_overflow(a.m_timeValue, rhs, &result)) {
         if (a.m_timeScale == 1) {
             return signum(a.m_timeValue) == signum(rhs) ? _ZN3WTF9MediaTime20positiveInfiniteTimeEv() : _ZN3WTF9MediaTime20negativeInfiniteTimeEv();
         }
-        _ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE(&a, a.m_timeScale / 2, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
+        setMediaTimeScale(a, a.m_timeScale / 2, WTF::MediaTime::RoundingFlags::HalfAwayFromZero);
     }
     a.m_timeValue = result;
     return a;
@@ -732,12 +839,14 @@ WTF::MediaTime APS5_VABI _ZN3WTF3absERKNS_9MediaTimeE(const WTF::MediaTime& rhs)
 }
 
 WTF::MediaTime& APS5_VABI _ZN3WTF9MediaTimepLERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    *self = _ZNK3WTF9MediaTimeplERKS0_(self, rhs);
+    if (!storeMediaTime(self, _ZNK3WTF9MediaTimeplERKS0_(self, rhs)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
 WTF::MediaTime& APS5_VABI _ZN3WTF9MediaTimemIERKS0_(WTF::MediaTime* self, const WTF::MediaTime& rhs) {
-    *self = _ZNK3WTF9MediaTimemiERKS0_(self, rhs);
+    if (!storeMediaTime(self, _ZNK3WTF9MediaTimemiERKS0_(self, rhs)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return *self;
 }
 
@@ -837,10 +946,6 @@ WebCore::PlatformTimeRanges& APS5_VABI _ZN7WebCore18PlatformTimeRangesaSERKS0_(W
 }
 
 void APS5_VABI _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(WebCore::PlatformTimeRanges* self, const WTF::MediaTime& start, const WTF::MediaTime& end) {
-    if (_ZNK3WTF9MediaTimegtERKS0_(&start, end)) {
-        return;
-    }
-
     WebCore::PlatformTimeRanges::Range addedRange{start, end};
     unsigned overlappingArcIndex = 0;
 

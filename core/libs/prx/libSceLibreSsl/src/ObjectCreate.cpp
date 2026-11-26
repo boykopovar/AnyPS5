@@ -96,6 +96,7 @@ int nextNid = LibreSslObjectCount;
 std::vector<std::unique_ptr<AddedObject>> objects;
 std::map<std::vector<unsigned char>, const AddedObject*> byData;
 std::map<int, const AddedObject*> byNid;
+std::map<std::string, const AddedObject*, std::less<>> byShortName;
 
 void Asn1Error(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
@@ -206,6 +207,18 @@ int LibreSslAddedObjectNid_nid_no_patch(const LibreSslAsn1Object* object) {
     return found == byData.end() ? 0 : found->second->object.nid;
 }
 
+bool LibreSslAddedObjectsExist_nid_no_patch() {
+    std::lock_guard lock(mutex);
+    return tableExists;
+}
+
+const LibreSslAsn1Object* LibreSslAddedObjectByNid_nid_no_patch(int nid) {
+    std::lock_guard lock(mutex);
+    if (!tableExists) return nullptr;
+    const auto found = byNid.find(nid);
+    return found == byNid.end() ? nullptr : &found->second->object;
+}
+
 const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName) {
     std::lock_guard lock(mutex);
     if (!tableExists) return nullptr;
@@ -215,6 +228,13 @@ const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName) {
         return nullptr;
     }
     return longName ? found->second->object.longName : found->second->object.shortName;
+}
+
+int LibreSslAddedObjectShortNameNid_nid_no_patch(const char* name) {
+    std::lock_guard lock(mutex);
+    if (!tableExists) return 0;
+    const auto found = byShortName.find(name);
+    return found == byShortName.end() ? 0 : found->second->object.nid;
 }
 
 int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, const char* longName) {
@@ -233,13 +253,22 @@ int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, con
     objects.reserve(objects.size() + 1);
     const auto indexed = byNid.try_emplace(nid, added.get()).first;
     std::map<std::vector<unsigned char>, const AddedObject*>::iterator encoding;
+    std::map<std::string, const AddedObject*, std::less<>>::iterator named;
+    bool namedInserted = false;
     try {
+        if (added->shortName) {
+            const auto result = byShortName.try_emplace(*added->shortName, nullptr);
+            named = result.first;
+            namedInserted = result.second;
+        }
         encoding = byData.try_emplace(added->data, nullptr).first;
     } catch (...) {
+        if (namedInserted) byShortName.erase(named);
         byNid.erase(indexed);
         throw;
     }
     encoding->second = added.get();
+    if (added->shortName) named->second = added.get();
     objects.push_back(std::move(added));
     return nid;
 }
@@ -248,6 +277,7 @@ void APS5_VABI OBJ_cleanup_nid_postfix(void) {
     std::lock_guard lock(mutex);
     byData.clear();
     byNid.clear();
+    byShortName.clear();
     objects.clear();
     tableExists = false;
 }

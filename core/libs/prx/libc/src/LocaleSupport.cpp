@@ -24,11 +24,14 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/GuestStringStorage.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
@@ -89,12 +92,7 @@ const GuestLocale::FacetVtable g_localeVtable{DestroyClassicLocale, DestroyClass
 const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, DestroyCopiedLocale, RetainCopiedLocale, ReleaseCopiedLocale};
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
-
-constexpr std::size_t GuestStringInlineCapacity = 15;
-constexpr std::size_t GuestStringCapacityMask = 15;
-constexpr std::size_t GuestStringLargeAllocation = 0x1000;
-constexpr std::size_t GuestLargeAllocationPadding = 0x27;
-constexpr std::uintptr_t GuestLargeAllocationAlignment = 0x20;
+std::atomic<GuestLocale::Implementation*> g_globalLocale{&g_classicLocale};
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
@@ -118,6 +116,23 @@ GuestLocale::Facet* APS5_VABI ReleaseFacet(GuestLocale::Facet* self) {
     return std::atomic_ref<std::uint32_t>(self->references).fetch_sub(1) == 1 ? self : nullptr;
 }
 
+void APS5_VABI DestroyLocimp(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp destroy: null object");
+    auto* implementation = reinterpret_cast<GuestLocale::Implementation*>(self);
+    if (implementation->facets != nullptr && implementation->facets != g_classicFacets) {
+        ApplicationHeapFree_nid_no_patch(implementation->facets);
+    }
+    implementation->facets = nullptr;
+    implementation->facetCount = 0;
+}
+
+void APS5_VABI DeleteLocimp(GuestLocale::Facet* self) {
+    DestroyLocimp(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+const GuestLocale::FacetVtable g_locimpVtable{DestroyLocimp, DeleteLocimp, RetainFacet, ReleaseFacet};
+
 int APS5_VABI CollateCompare(const GuestLocale::CollateFacet*, const char* first1, const char* last1, const char* first2, const char* last2) {
     ValidateCharacterRange(first1, last1, "collate::do_compare");
     ValidateCharacterRange(first2, last2, "collate::do_compare");
@@ -136,9 +151,9 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     const auto length = static_cast<std::size_t>(last - first);
     if (length != 0 && std::memchr(first, 0, length) != nullptr) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
@@ -216,13 +231,47 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
 
+constexpr std::size_t GuestStringMaxSize = std::numeric_limits<std::size_t>::max() - 1;
+constexpr std::size_t GuestWideStringMaxSize = std::numeric_limits<std::size_t>::max() / GuestWideCharacterSize - 1;
+
+GuestLocale::String* CopyStringUnits(GuestLocale::String* result, const GuestLocale::String* source, std::size_t unit, std::size_t inlineCapacity, std::size_t maxSize) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("basic_string copy: null string");
+    const std::size_t size = source->size;
+    if (size > maxSize) throw std::invalid_argument("basic_string copy: size beyond max_size");
+    const char* data = source->capacity > inlineCapacity ? source->pointer : source->buffer;
+    if (data == nullptr) throw std::invalid_argument("basic_string copy: null storage");
+    if (size <= inlineCapacity) {
+        std::memmove(result->buffer, data, sizeof(result->buffer));
+        result->size = size;
+        result->capacity = inlineCapacity;
+        return result;
+    }
+    const std::size_t capacity = std::min(size | inlineCapacity, maxSize);
+    auto* copy = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * unit));
+    std::memcpy(copy, data, (size + 1) * unit);
+    result->pointer = copy;
+    result->size = size;
+    result->capacity = capacity;
+    return result;
+}
+
+std::int32_t APS5_VABI MessagesOpen(const GuestLocale::Facet*, const GuestLocale::String*, const void*) {
+    return -1;
+}
+
+GuestLocale::String* APS5_VABI MessagesGet(GuestLocale::String* result, const GuestLocale::Facet*, std::int32_t, std::int32_t, std::int32_t, const GuestLocale::String* fallback) {
+    return CopyStringUnits(result, fallback, 1, GuestLocale::StringInlineCapacity, GuestStringMaxSize);
+}
+
+void APS5_VABI MessagesClose(const GuestLocale::Facet*, std::int32_t) {}
+
 GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     const std::size_t length = std::strlen(source);
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, source, length);
@@ -321,6 +370,28 @@ void PutCharacter(GuestLocale::OutputIterator& out, char character) {
     if (buffer->vtable->overflow(buffer, static_cast<unsigned char>(character)) == -1) out.failed = true;
 }
 
+void PutWideElement(GuestLocale::OutputIterator& out, std::uint16_t element) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    char* next = *buffer->putNext;
+    const auto bytes = static_cast<std::intptr_t>(reinterpret_cast<std::uintptr_t>(*buffer->putEnd) - reinterpret_cast<std::uintptr_t>(next));
+    if (next != nullptr && static_cast<std::int32_t>(static_cast<std::uint32_t>(bytes / static_cast<std::intptr_t>(GuestWideCharacterSize))) > 0) {
+        *buffer->putNext = next + GuestWideCharacterSize;
+        std::memcpy(next, &element, GuestWideCharacterSize);
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, element) == -1) out.failed = true;
+}
+
+char NarrowWideElement(const GuestLocale::Facet* ctype, std::uint16_t element) {
+    if (ctype != nullptr) return reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable)->narrow(ctype, element, '\0');
+    const int narrowed = _Wctob_nid_postfix(element);
+    return narrowed == -1 ? '\0' : static_cast<char>(narrowed);
+}
+
 GuestLocale::OutputIterator APS5_VABI TimePutDoPut(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, char, const GuestTm* time, char format, char modifier) {
     const char pattern[] = {'!', '%', modifier != 0 ? modifier : format, modifier != 0 ? format : '\0', '\0'};
     std::string text;
@@ -348,7 +419,7 @@ constexpr std::int32_t IosFixed = 0x1000;
 constexpr std::int32_t IosHexFloat = 0x1800;
 constexpr std::int32_t IosBoolAlpha = 0x8000;
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id, GuestLocale::GlobalLocaleHold& hold) {
     std::atomic_ref<std::uint64_t> slot(id);
     if (slot.load() == 0) {
         _Locksyslock_nid_postfix();
@@ -359,12 +430,11 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return hold.Find(index);
 }
 
-const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream) {
-    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix)) return facet;
+const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream, GuestLocale::GlobalLocaleHold& hold) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold)) return facet;
     static GuestLocale::Facet* const fallback = [] {
         GuestLocale::Facet* created = nullptr;
         _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
@@ -389,15 +459,16 @@ const GuestLocale::NumpunctFacet* RequireNumpunct(const GuestLocale::NumpunctFac
 std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
     GuestLocale::String value{};
     method(&value, AsNumpunct(facet));
-    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
     return text;
 }
 
 std::string Widen(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
     std::string result(text, count);
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
     return result;
 }
 
@@ -439,7 +510,8 @@ GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLoc
     std::size_t prefix = SignPrefix(digits, count);
     if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
     return PutField(out, stream, fill, text, prefix);
@@ -453,7 +525,8 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
     const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
     const std::size_t pointOffset = std::strcspn(digits, point);
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     const char separator = Punctuation(punct).thousandsSep(AsNumpunct(punct));
     std::size_t offset = exponent;
@@ -499,7 +572,8 @@ template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestL
 
 GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
     if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     return PutField(out, stream, fill, TakeString(value ? Punctuation(punct).truename : Punctuation(punct).falsename, punct), 0);
 }
 
@@ -535,6 +609,12 @@ GuestLocale::OutputIterator APS5_VABI NumPutPointer(const GuestLocale::Facet*, G
 
 const GuestLocale::NumPutVtable g_numPutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumPutBool, NumPutLong, NumPutUnsignedLong, NumPutLongLong, NumPutUnsignedLongLong, NumPutDouble, NumPutLongDouble, NumPutPointer};
 const GuestLocale::TimePutVtable g_timePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, TimePutDoPut};
+
+GuestLocale::OutputIterator APS5_VABI WideTimePutDoPut(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
+    return LibcWideTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
+}
+
+const GuestLocale::WideTimePutVtable g_wideTimePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideTimePutDoPut};
 
 constexpr std::size_t GuestTimePutFacetSize = 0xb8;
 
@@ -585,30 +665,367 @@ int ClassifyCharacter(int value, short mask) {
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
     if (value < 0) return value;
-    const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
-    const auto character = static_cast<char>(value);
-    return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
+    return (upper ? g_upperTable : g_lowerTable)[static_cast<std::size_t>(value) + 1];
 }
 
+struct SceV2Cvtvec {
+    std::uint32_t page;
+    std::uint32_t maxLength;
+    std::uint32_t reserved[8];
+};
+
+inline constexpr SceV2Cvtvec SceV2ClassicCvtvec{1, 1, {}};
+
+struct SceV2CtypeFacet {
+    GuestLocale::Facet base;
+    const short* table;
+    std::int32_t deleteMode;
+};
+
+struct SceV2WideCtypeFacet {
+    GuestLocale::Facet base;
+    const short* table;
+    std::int32_t deleteMode;
+    std::uint32_t reserved;
+    SceV2Cvtvec conversion;
+};
+
+struct SceV2WideCodecvtFacet {
+    const GuestLocale::FacetVtable* vtable;
+    std::uint32_t references;
+    SceV2Cvtvec conversion;
+};
+
+template<typename Text> struct SceV2MoneypunctFacet {
+    GuestLocale::Facet base;
+    const char* grouping;
+    Text decimalPoint;
+    Text thousandsSep;
+    const Text* currency;
+    const Text* positiveSign;
+    const Text* negativeSign;
+    std::int32_t fractionDigits;
+    char positivePattern[4];
+    char negativePattern[4];
+    bool international;
+    SceV2Cvtvec conversion;
+};
+
+template<typename Text> struct SceV2TimeGetFacet {
+    GuestLocale::Facet base;
+    const Text* days;
+    const Text* months;
+    const Text* amPm;
+    std::int32_t dateOrder;
+    SceV2Cvtvec conversion;
+};
+
+struct SceV2TimePutFacet {
+    GuestLocale::Facet base;
+    void* names;
+};
+
+static_assert(sizeof(SceV2Cvtvec) == 0x28);
+static_assert(sizeof(SceV2CtypeFacet) == 0x20);
+static_assert(offsetof(SceV2CtypeFacet, deleteMode) == 0x18);
+static_assert(sizeof(SceV2WideCtypeFacet) == 0x48);
+static_assert(offsetof(SceV2WideCtypeFacet, conversion) == 0x20);
+static_assert(sizeof(SceV2WideCodecvtFacet) == 0x38);
+static_assert(offsetof(SceV2WideCodecvtFacet, conversion) == 0xc);
+static_assert(sizeof(SceV2MoneypunctFacet<char>) == 0x70);
+static_assert(sizeof(SceV2MoneypunctFacet<std::uint16_t>) == 0x70);
+static_assert(offsetof(SceV2MoneypunctFacet<char>, thousandsSep) == 0x19);
+static_assert(offsetof(SceV2MoneypunctFacet<std::uint16_t>, thousandsSep) == 0x1a);
+static_assert(offsetof(SceV2MoneypunctFacet<char>, fractionDigits) == 0x38);
+static_assert(offsetof(SceV2MoneypunctFacet<char>, international) == 0x44);
+static_assert(offsetof(SceV2MoneypunctFacet<char>, conversion) == 0x48);
+static_assert(sizeof(SceV2TimeGetFacet<char>) == 0x58);
+static_assert(offsetof(SceV2TimeGetFacet<char>, dateOrder) == 0x28);
+static_assert(offsetof(SceV2TimeGetFacet<char>, conversion) == 0x2c);
+static_assert(sizeof(SceV2TimePutFacet) == 0x18);
+
+template<std::size_t Virtuals> struct SceV2FacetVtable {
+    GuestLocale::FacetVtable facet;
+    void (APS5_VABI *virtuals[Virtuals])();
+};
+
+template<const char* Family> void APS5_VABI SceV2FacetVirtual_nid_no_patch() {
+    NotImplemented_nid_no_patch(Family);
+}
+
+using SceV2FacetDestroy = void (APS5_VABI *)(GuestLocale::Facet*);
+
+template<SceV2FacetDestroy Destroy> void APS5_VABI DeleteSceV2Facet_nid_no_patch(GuestLocale::Facet* self) {
+    Destroy(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+void APS5_VABI DestroySceV2PlainFacet_nid_no_patch(GuestLocale::Facet*) {}
+
+void APS5_VABI DestroySceV2CtypeFacet_nid_no_patch(GuestLocale::Facet* self) {
+    auto* facet = reinterpret_cast<SceV2CtypeFacet*>(self);
+    if (facet->deleteMode > 0) free_nid_postfix(const_cast<short*>(facet->table));
+    else if (facet->deleteMode < 0 && facet->table != nullptr) _ZdaPv_nid_postfix(const_cast<short*>(facet->table));
+}
+
+void APS5_VABI DestroySceV2WideCtypeFacet_nid_no_patch(GuestLocale::Facet* self) {
+    auto* facet = reinterpret_cast<SceV2WideCtypeFacet*>(self);
+    if (facet->deleteMode != 0) free_nid_postfix(const_cast<short*>(facet->table));
+}
+
+void APS5_VABI DestroySceV2TimePutFacet_nid_no_patch(GuestLocale::Facet* self) {
+    free_nid_postfix(reinterpret_cast<SceV2TimePutFacet*>(self)->names);
+}
+
+void APS5_VABI DestroySceV2UshortNumpunctFacet_nid_no_patch(GuestLocale::Facet* self) {
+    auto* facet = reinterpret_cast<GuestLocale::WideNumpunctFacet*>(self);
+    free_nid_postfix(const_cast<char*>(facet->grouping));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->falsename));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->truename));
+}
+
+void APS5_VABI DestroySceV2UshortMoneypunctFacet_nid_no_patch(GuestLocale::Facet* self) {
+    auto* facet = reinterpret_cast<SceV2MoneypunctFacet<std::uint16_t>*>(self);
+    free_nid_postfix(const_cast<char*>(facet->grouping));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->currency));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->positiveSign));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->negativeSign));
+}
+
+void APS5_VABI DestroySceV2UshortTimeGetFacet_nid_no_patch(GuestLocale::Facet* self) {
+    auto* facet = reinterpret_cast<SceV2TimeGetFacet<std::uint16_t>*>(self);
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->days));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->months));
+    free_nid_postfix(const_cast<std::uint16_t*>(facet->amPm));
+}
+
+template<std::size_t Virtuals, const char* Family, SceV2FacetDestroy Destroy = DestroySceV2PlainFacet_nid_no_patch>
+constexpr SceV2FacetVtable<Virtuals> MakeSceV2FacetVtable() {
+    SceV2FacetVtable<Virtuals> vtable{{Destroy, DeleteSceV2Facet_nid_no_patch<Destroy>, RetainFacet, ReleaseFacet}, {}};
+    for (auto& slot : vtable.virtuals) slot = SceV2FacetVirtual_nid_no_patch<Family>;
+    return vtable;
+}
+
+template<std::size_t Size> constexpr std::array<std::uint16_t, Size> WidenSceV2Text(const char (&text)[Size]) {
+    std::array<std::uint16_t, Size> wide{};
+    for (std::size_t index = 0; index < Size; ++index) wide[index] = static_cast<unsigned char>(text[index]);
+    return wide;
+}
+
+constexpr char g_sceV2CtypeFamily[] = "std::__sce_v2::ctype virtual";
+constexpr char g_sceV2NumGetFamily[] = "std::__sce_v2::num_get virtual";
+constexpr char g_sceV2NumpunctFamily[] = "std::__sce_v2::numpunct virtual";
+constexpr char g_sceV2NumPutFamily[] = "std::__sce_v2::num_put virtual";
+constexpr char g_sceV2CodecvtFamily[] = "std::__sce_v2::codecvt virtual";
+constexpr char g_sceV2CollateFamily[] = "std::__sce_v2::collate virtual";
+constexpr char g_sceV2MessagesFamily[] = "std::__sce_v2::messages virtual";
+constexpr char g_sceV2MoneyGetFamily[] = "std::__sce_v2::money_get virtual";
+constexpr char g_sceV2MoneypunctFamily[] = "std::__sce_v2::moneypunct virtual";
+constexpr char g_sceV2MoneyPutFamily[] = "std::__sce_v2::money_put virtual";
+constexpr char g_sceV2TimeGetFamily[] = "std::__sce_v2::time_get virtual";
+constexpr char g_sceV2TimePutFamily[] = "std::__sce_v2::time_put virtual";
+
+constexpr auto g_sceV2CtypeCharVtable = MakeSceV2FacetVtable<8, g_sceV2CtypeFamily, DestroySceV2CtypeFacet_nid_no_patch>();
+constexpr auto g_sceV2CtypeWideVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
+constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
+constexpr auto g_sceV2NumGetCharVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
+constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
+constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
+constexpr auto g_sceV2NumPutCharVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
+constexpr auto g_sceV2NumPutWideVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
+constexpr auto g_sceV2NumPutUshortVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
+constexpr auto g_sceV2NumpunctCharVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
+constexpr auto g_sceV2NumpunctWideVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
+constexpr auto g_sceV2NumpunctUshortVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily, DestroySceV2UshortNumpunctFacet_nid_no_patch>();
+constexpr auto g_sceV2CodecvtCharVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
+constexpr auto g_sceV2CodecvtWideVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
+constexpr auto g_sceV2CodecvtUshortVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
+constexpr auto g_sceV2CollateCharVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
+constexpr auto g_sceV2CollateWideVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
+constexpr auto g_sceV2CollateUshortVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
+constexpr auto g_sceV2MessagesCharVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
+constexpr auto g_sceV2MessagesWideVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
+constexpr auto g_sceV2MessagesUshortVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
+constexpr auto g_sceV2MoneyGetCharVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
+constexpr auto g_sceV2MoneyGetWideVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
+constexpr auto g_sceV2MoneyGetUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
+constexpr auto g_sceV2MoneyPutCharVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
+constexpr auto g_sceV2MoneyPutWideVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
+constexpr auto g_sceV2MoneyPutUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
+constexpr auto g_sceV2MoneypunctCharVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily>();
+constexpr auto g_sceV2MoneypunctCharIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily>();
+constexpr auto g_sceV2MoneypunctWideVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily>();
+constexpr auto g_sceV2MoneypunctWideIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily>();
+constexpr auto g_sceV2MoneypunctUshortVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
+constexpr auto g_sceV2MoneypunctUshortIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
+constexpr auto g_sceV2TimeGetCharVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily>();
+constexpr auto g_sceV2TimeGetWideVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily>();
+constexpr auto g_sceV2TimeGetUshortVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily, DestroySceV2UshortTimeGetFacet_nid_no_patch>();
+constexpr auto g_sceV2TimePutCharVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
+constexpr auto g_sceV2TimePutWideVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
+constexpr auto g_sceV2TimePutUshortVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
+
+constexpr char g_sceV2Empty[] = "";
+constexpr char g_sceV2FalseName[] = "false";
+constexpr char g_sceV2TrueName[] = "true";
+constexpr char g_sceV2Minus[] = "-";
+constexpr char g_sceV2Days[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
+constexpr char g_sceV2Months[] = ":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August:Sep:September:Oct:October:Nov:November:Dec:December";
+constexpr char g_sceV2AmPm[] = ":AM:am:PM:pm";
+constexpr char g_sceV2DefaultMoneyPattern[] = "$+xv";
+constexpr auto g_sceV2WideEmpty = WidenSceV2Text(g_sceV2Empty);
+constexpr auto g_sceV2WideFalseName = WidenSceV2Text(g_sceV2FalseName);
+constexpr auto g_sceV2WideTrueName = WidenSceV2Text(g_sceV2TrueName);
+constexpr auto g_sceV2WideMinus = WidenSceV2Text(g_sceV2Minus);
+constexpr auto g_sceV2WideDays = WidenSceV2Text(g_sceV2Days);
+constexpr auto g_sceV2WideMonths = WidenSceV2Text(g_sceV2Months);
+constexpr auto g_sceV2WideAmPm = WidenSceV2Text(g_sceV2AmPm);
+
+constexpr std::array<char, 4> MakeSceV2MoneyPattern(unsigned csPrecedes, unsigned sepBySpace, unsigned signPosn) {
+    const char first = csPrecedes ? '$' : 'v';
+    const char second = csPrecedes ? 'v' : '$';
+    std::array<char, 3> items{};
+    if (signPosn < 2) items = {'+', first, second};
+    else if (signPosn == 2) items = {first, second, '+'};
+    else if (signPosn == 3) items = csPrecedes ? std::array<char, 3>{'+', '$', 'v'} : std::array<char, 3>{'v', '+', '$'};
+    else items = csPrecedes ? std::array<char, 3>{'$', '+', 'v'} : std::array<char, 3>{'v', '$', '+'};
+    std::size_t anchor = 0;
+    std::size_t symbol = 0;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i] == (sepBySpace == 1 ? 'v' : '+')) anchor = i;
+        if (items[i] == '$') symbol = i;
+    }
+    const std::size_t gap = sepBySpace == 0 ? items.size() : anchor < symbol ? anchor + 1 : anchor;
+    const char filler = sepBySpace == 0 || (sepBySpace == 2 && signPosn == 0) ? 'x' : ' ';
+    std::array<char, 4> pattern{};
+    for (std::size_t i = 0, j = 0; i < pattern.size(); ++i) pattern[i] = i == gap ? filler : items[j++];
+    return pattern;
+}
+
+}
+
+extern "C" GuestLocale::OutputIterator LibcTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
+    return TimePutDoPut(self, out, stream, fill, time, format, modifier);
+}
+
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
+    return AssignCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source) {
+    return AssignWideCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcCopyString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source) {
+    return CopyStringUnits(result, source, 1, GuestLocale::StringInlineCapacity, GuestStringMaxSize);
+}
+
+extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source) {
+    return CopyStringUnits(result, source, GuestWideCharacterSize, GuestWideInlineCapacity, GuestWideStringMaxSize);
+}
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix, hold);
+    const auto put = reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put;
+    for (; first != last; ++first) {
+        if (NarrowWideElement(ctype, *first) != '%') {
+            PutWideElement(out, *first);
+        } else if (++first == last) {
+            PutWideElement(out, first[-1]);
+            break;
+        } else {
+            const std::uint16_t raw = *first;
+            char specifier = NarrowWideElement(ctype, raw);
+            char modifier = '\0';
+            const std::uint16_t percent = first[-1];
+            if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
+                if (++first == last) {
+                    PutWideElement(out, percent);
+                    PutWideElement(out, raw);
+                    break;
+                }
+                modifier = specifier;
+                specifier = NarrowWideElement(ctype, *first);
+            }
+            out = put(self, out, stream, fill, time, specifier, modifier);
+        }
+    }
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, std::uint16_t, const GuestTm* time, char format, char modifier) {
+    const auto widen = [](char value) {
+        const auto byte = static_cast<unsigned char>(value);
+        return static_cast<std::uint16_t>(byte | (byte >= 0x80 ? 0xff00 : 0));
+    };
+    const auto specifier = widen(format);
+    const auto prefix = widen(modifier);
+    const std::uint16_t conversion = prefix != 0 ? prefix : specifier;
+    const std::uint16_t modified = prefix != 0 ? specifier : 0;
+    const std::uint16_t pattern[] = {'!', '%', conversion, modified, 0};
+    std::vector<std::uint16_t> text;
+    std::size_t length = 0;
+    for (std::size_t grow = 16; length == 0; grow *= 2) {
+        text.resize(text.size() + grow);
+        length = wcsftime_nid_postfix(text.data(), text.size(), pattern, time);
+    }
+    for (std::size_t index = 1; index < length; ++index) PutWideElement(out, text[index]);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcPutWideElements_nid_no_patch(GuestLocale::OutputIterator out, const std::uint16_t* elements, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) PutWideElement(out, elements[index]);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcRepeatWideElement_nid_no_patch(GuestLocale::OutputIterator out, std::uint16_t element, std::size_t count) {
+    for (; count != 0; --count) PutWideElement(out, element);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    return PutInteger(out, stream, fill, digits, count);
+}
+
+extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold);
+    const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };
+    const auto put = reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put;
+    for (; first != last; ++first) {
+        if (narrow(*first) != '%') {
+            PutCharacter(out, *first);
+        } else if (++first == last) {
+            PutCharacter(out, first[-1]);
+            break;
+        } else {
+            char specifier = narrow(*first);
+            char modifier = '\0';
+            const char percent = first[-1];
+            if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
+                if (++first == last) {
+                    PutCharacter(out, percent);
+                    PutCharacter(out, specifier);
+                    break;
+                }
+                modifier = specifier;
+                specifier = narrow(*first);
+            }
+            out = put(self, out, stream, fill, time, specifier, modifier);
+        }
+    }
+    return out;
 }
 
 void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
+    return GuestStringStorage::Allocate(bytes);
 }
 
 void GuestLocale::ReleaseStringStorage(String& string) {
-    if (string.capacity > GuestStringInlineCapacity) {
-        void* storage = string.pointer;
-        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
-        _ZdlPv_nid_postfix(storage);
-    }
+    if (string.capacity > StringInlineCapacity) GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
     string = {};
-    string.capacity = GuestStringInlineCapacity;
+    string.capacity = StringInlineCapacity;
 }
 
 extern "C" {
@@ -640,7 +1057,22 @@ int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
+std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&CtypeDestroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDelete_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoTolower_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoTolowerRange_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoToupper_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoToupperRange_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix),
+};
 std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
@@ -655,13 +1087,64 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateTransform),
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
-std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {};
-std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {};
+std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&NumpunctDestroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&NumpunctDelete_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_groupingEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt8numpunctIcE11do_truenameEv_nid_postfix),
+};
+std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&MessagesOpen),
+    reinterpret_cast<std::uintptr_t>(&MessagesGet),
+    reinterpret_cast<std::uintptr_t>(&MessagesClose),
+};
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
-std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {};
+std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&CodecvtAlwaysNoconv),
+    reinterpret_cast<std::uintptr_t>(&CodecvtConstantOne),
+    reinterpret_cast<std::uintptr_t>(&CodecvtConstantOne),
+    reinterpret_cast<std::uintptr_t>(&CodecvtNoConversion),
+    reinterpret_cast<std::uintptr_t>(&CodecvtNoConversion),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUnshift),
+    reinterpret_cast<std::uintptr_t>(&CodecvtLength),
+};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {};
+std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&NumPutBool),
+    reinterpret_cast<std::uintptr_t>(&NumPutLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutUnsignedLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutLongLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutUnsignedLongLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutDouble),
+    reinterpret_cast<std::uintptr_t>(&NumPutLongDouble),
+    reinterpret_cast<std::uintptr_t>(&NumPutPointer),
+};
 std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17] {};
 std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
@@ -672,11 +1155,46 @@ std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
+std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
+std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots] {};
+std::uint64_t _ZNSt7codecvtIDsc9_MbstatetE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix[kCodecvtUtfVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Destroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDsc9_MbstatetED0Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE16do_always_noconvEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16MaxLength_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE11do_encodingEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE5do_inERS0_PKcS4_RS4_PDsS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE6do_outERS0_PKDsS4_RS4_PcS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Unshift_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Length_nid_no_patch),
+};
+std::uint64_t _ZNSt7codecvtIDic9_MbstatetE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7codecvtIDic9_MbstatetE_nid_postfix[kCodecvtUtfVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDic9_MbstatetED1Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDic9_MbstatetED0Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE16do_always_noconvEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32MaxLength_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32Encoding_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE5do_inERS0_PKcS4_RS4_PDiS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32Unshift_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix),
+};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -734,7 +1252,7 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     if (!g_localeInitialized) {
         g_localeInitialized = true;
     }
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* self) {
@@ -747,7 +1265,7 @@ void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* se
 }
 
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 namespace {
@@ -772,7 +1290,14 @@ struct SceV2CallbackNode {
 static_assert(sizeof(SceV2StreamNode) == 0x20);
 static_assert(sizeof(SceV2CallbackNode) == 0x18);
 
-std::vector<GuestLocale::Facet*> g_sceV2RegisteredFacets;
+struct SceV2FacetNode {
+    SceV2FacetNode* next;
+    GuestLocale::Facet* facet;
+};
+
+static_assert(sizeof(SceV2FacetNode) == 0x10);
+
+SceV2FacetNode* g_sceV2FacetNodes = nullptr;
 std::atomic<GuestLocale::Implementation*> g_sceV2GlobalLocale{&g_classicLocale};
 GuestLocaleFacade g_sceV2ClassicLocaleFacade{&g_classicLocale};
 constexpr std::uint32_t SceV2AllLocaleCategories = 0x3f;
@@ -840,9 +1365,12 @@ GuestLocale::Implementation* NewSceV2Locimp(bool transparent) {
     return self;
 }
 
+bool ValidSceV2LocaleName(const char* localeName) {
+    return localeName != nullptr && (*localeName == 0 || std::strcmp(localeName, "C") == 0);
+}
+
 void CheckSceV2LocaleName(const char* localeName) {
-    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
-        _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
+    if (!ValidSceV2LocaleName(localeName)) _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
 }
 
 }
@@ -852,6 +1380,35 @@ std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v28numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v25ctypeItE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtItc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28numpunctIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDiDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDic9_MbstatetE2idE_nid_postfix = 0;
+bool _ZNSt8__sce_v28ios_base5_SyncE_nid_postfix = true;
+std::int32_t _ZNSt8__sce_v28ios_base6_IndexE_nid_postfix = 0;
 std::int32_t _ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix = 0;
 GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix = &g_classicLocale;
 alignas(16) unsigned char _ZNSt8__sce_v24coutE_nid_postfix[0x400] {};
@@ -862,6 +1419,31 @@ alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24clogE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[0x400] {};
+unsigned char _ZSt10adopt_lock_nid_postfix = 0;
+unsigned char _ZSt10defer_lock_nid_postfix = 0;
+unsigned char _ZSt11try_to_lock_nid_postfix = 0;
+unsigned char _ZSt6ignore_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_1E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_2E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_3E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_4E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_5E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_6E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_7E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_8E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders2_9E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_10E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_11E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_12E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_13E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_14E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_15E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_16E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_17E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_18E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_19E_nid_postfix = 0;
+unsigned char _ZNSt12placeholders3_20E_nid_postfix = 0;
+void (*_ZSt14_Raise_handler_nid_postfix)() = nullptr;
 unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix = _ZNSt8__sce_v23cinE_nid_postfix;
 unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix = _ZNSt8__sce_v24coutE_nid_postfix;
 unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix = _ZNSt8__sce_v24cerrE_nid_postfix;
@@ -928,9 +1510,67 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
     self->locale = nullptr;
 }
 
+namespace {
+
+constexpr std::size_t SceV2FlagsOffset = 0x18;
+constexpr std::size_t SceV2PrecisionOffset = 0x20;
+
+std::uint32_t SceV2Flags(const GuestLocale::SceV2IosBase* stream) {
+    std::uint32_t flags;
+    std::memcpy(&flags, reinterpret_cast<const unsigned char*>(stream) + SceV2FlagsOffset, sizeof(flags));
+    return flags;
+}
+
+void SetSceV2Flags(GuestLocale::SceV2IosBase* stream, std::uint32_t flags) {
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2FlagsOffset, &flags, sizeof(flags));
+}
+
+void APS5_VABI ResetSceV2Flags_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("resetiosflags: null stream");
+    SetSceV2Flags(stream, SceV2Flags(stream) & ~static_cast<std::uint32_t>(mask));
+}
+
+void APS5_VABI SetSceV2FlagBits_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("setiosflags: null stream");
+    const auto bits = static_cast<std::uint32_t>(mask);
+    SetSceV2Flags(stream, (SceV2Flags(stream) & ~bits) | (bits & 0xffffu));
+}
+
+void APS5_VABI SetSceV2Base_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t base) {
+    if (stream == nullptr) throw std::invalid_argument("setbase: null stream");
+    const auto value = static_cast<std::int32_t>(base);
+    const std::uint32_t field = value == 8 ? 0x400u : value == 10 ? 0x200u : value == 16 ? 0x800u : 0u;
+    SetSceV2Flags(stream, (SceV2Flags(stream) & 0xfffff1ffu) | field);
+}
+
+void APS5_VABI SetSceV2Precision_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t precision) {
+    if (stream == nullptr) throw std::invalid_argument("setprecision: null stream");
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2PrecisionOffset, &precision, sizeof(precision));
+}
+
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v213resetiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&ResetSceV2Flags_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v211setiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&SetSceV2FlagBits_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v27setbaseEi_nid_postfix(std::int32_t base) {
+    return {&SetSceV2Base_nid_no_patch, static_cast<std::uint32_t>(base)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v212setprecisionEx_nid_postfix(std::int64_t precision) {
+    return {&SetSceV2Precision_nid_no_patch, static_cast<std::uint64_t>(precision)};
+}
+
 void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet) {
-    std::lock_guard<std::mutex> lock(g_localeInitMutex);
-    g_sceV2RegisteredFacets.push_back(facet);
+    auto* node = static_cast<SceV2FacetNode*>(_Znwm_nid_postfix(sizeof(SceV2FacetNode)));
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    *node = {g_sceV2FacetNodes, facet};
+    g_sceV2FacetNodes = node;
 }
 
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_ctorEPS1_RKS1__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
@@ -1023,6 +1663,420 @@ GuestLocale::SceV2Locinfo* APS5_VABI _ZNSt8__sce_v28_Locinfo16_Locinfo_AddcatsEP
     return self;
 }
 
+extern "C++" {
+namespace {
+
+std::uint64_t g_sceV2NumGetUshortId = 0;
+std::uint64_t g_sceV2NumPutUshortId = 0;
+std::uint64_t g_sceV2NumpunctUshortId = 0;
+std::uint64_t g_sceV2CollateUshortId = 0;
+std::uint64_t g_sceV2MessagesUshortId = 0;
+std::uint64_t g_sceV2MoneyGetUshortId = 0;
+std::uint64_t g_sceV2MoneyPutUshortId = 0;
+std::uint64_t g_sceV2MoneypunctUshortId = 0;
+std::uint64_t g_sceV2MoneypunctUshortIntlId = 0;
+std::uint64_t g_sceV2TimeGetUshortId = 0;
+std::uint64_t g_sceV2TimePutUshortId = 0;
+
+struct SceV2FacetKind {
+    std::uint64_t* id;
+    std::size_t size;
+    const GuestLocale::FacetVtable* vtable;
+    bool (*initialize)(GuestLocale::Facet* facet, bool isDefault);
+    GuestLocale::Facet* cached;
+};
+
+struct SceV2FacetStep {
+    std::int32_t category;
+    SceV2FacetKind* kind;
+};
+
+constexpr std::int32_t SceV2CollateCategory = 0x1;
+constexpr std::int32_t SceV2CtypeCategory = 0x2;
+constexpr std::int32_t SceV2MonetaryCategory = 0x4;
+constexpr std::int32_t SceV2NumericCategory = 0x8;
+constexpr std::int32_t SceV2TimeCategory = 0x10;
+constexpr std::int32_t SceV2MessagesCategory = 0x20;
+
+std::uint16_t WidenSceV2Byte(char byte) {
+    return static_cast<unsigned char>(byte);
+}
+
+char* CopySceV2Bytes(const char* text) {
+    const std::size_t size = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(calloc_nid_postfix(size, 1));
+    if (copy != nullptr) std::memcpy(copy, text, size);
+    return copy;
+}
+
+std::uint16_t* CopySceV2Ushorts(const char* text) {
+    const std::size_t length = std::strlen(text);
+    auto* copy = static_cast<std::uint16_t*>(calloc_nid_postfix(length + 1, sizeof(std::uint16_t)));
+    if (copy == nullptr) return nullptr;
+    for (std::size_t index = 0; index < length; ++index) copy[index] = WidenSceV2Byte(text[index]);
+    return copy;
+}
+
+bool InitializeSceV2PlainFacet(GuestLocale::Facet*, bool) {
+    return true;
+}
+
+bool InitializeSceV2CtypeFacet(GuestLocale::Facet* self, bool) {
+    auto* facet = reinterpret_cast<SceV2CtypeFacet*>(self);
+    facet->table = _Getpctype_nid_postfix();
+    facet->deleteMode = 0;
+    return true;
+}
+
+bool InitializeSceV2WideCtypeFacet(GuestLocale::Facet* self, bool) {
+    auto* facet = reinterpret_cast<SceV2WideCtypeFacet*>(self);
+    facet->table = _Getpctype_nid_postfix();
+    facet->deleteMode = 0;
+    facet->conversion = SceV2ClassicCvtvec;
+    return true;
+}
+
+bool InitializeSceV2WideCodecvtFacet(GuestLocale::Facet* self, bool) {
+    reinterpret_cast<SceV2WideCodecvtFacet*>(self)->conversion = SceV2ClassicCvtvec;
+    return true;
+}
+
+bool InitializeSceV2NumpunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<GuestLocale::NumpunctFacet*>(self);
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    facet->grouping = g_sceV2Empty;
+    facet->falsename = g_sceV2FalseName;
+    facet->truename = g_sceV2TrueName;
+    facet->decimalPoint = isDefault ? '.' : *conventions->decimal_point;
+    facet->thousandsSep = isDefault ? ',' : *conventions->thousands_sep;
+    return true;
+}
+
+void SetSceV2WideNumpunctSeparators(GuestLocale::WideNumpunctFacet* facet, const SonyLconv* conventions, bool isDefault) {
+    facet->decimalPoint = isDefault ? '.' : WidenSceV2Byte(*conventions->decimal_point);
+    facet->thousandsSep = isDefault ? ',' : WidenSceV2Byte(*conventions->thousands_sep);
+}
+
+bool InitializeSceV2WideNumpunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<GuestLocale::WideNumpunctFacet*>(self);
+    facet->grouping = g_sceV2Empty;
+    facet->falsename = g_sceV2WideFalseName.data();
+    facet->truename = g_sceV2WideTrueName.data();
+    SetSceV2WideNumpunctSeparators(facet, localeconv_nid_postfix(), isDefault);
+    return true;
+}
+
+bool InitializeSceV2UshortNumpunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<GuestLocale::WideNumpunctFacet*>(self);
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    facet->grouping = nullptr;
+    facet->falsename = nullptr;
+    facet->truename = nullptr;
+    facet->grouping = CopySceV2Bytes(isDefault ? g_sceV2Empty : conventions->grouping);
+    if (facet->grouping == nullptr) return false;
+    facet->falsename = CopySceV2Ushorts(g_sceV2FalseName);
+    if (facet->falsename == nullptr) return false;
+    facet->truename = CopySceV2Ushorts(g_sceV2TrueName);
+    if (facet->truename == nullptr) return false;
+    SetSceV2WideNumpunctSeparators(facet, conventions, isDefault);
+    return true;
+}
+
+template<typename Text> void SetSceV2MoneyFormats(SceV2MoneypunctFacet<Text>* facet, const SonyLconv* conventions, bool isDefault) {
+    const auto* chars = reinterpret_cast<const unsigned char*>(conventions->chars);
+    facet->conversion = SceV2ClassicCvtvec;
+    const unsigned char digits = chars[facet->international ? 7 : 0];
+    facet->fractionDigits = digits < CHAR_MAX ? digits : 0;
+    std::memcpy(facet->positivePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->positivePattern));
+    if (!facet->international && chars[6] < 5 && chars[5] < 3 && chars[4] < 2) std::memcpy(facet->positivePattern, MakeSceV2MoneyPattern(chars[4], chars[5], chars[6]).data(), sizeof(facet->positivePattern));
+    std::memcpy(facet->negativePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->negativePattern));
+    if (!facet->international && chars[3] < 5 && chars[1] < 2 && chars[2] < 3) std::memcpy(facet->negativePattern, MakeSceV2MoneyPattern(chars[1], chars[2], chars[3]).data(), sizeof(facet->negativePattern));
+    if (isDefault) {
+        std::memcpy(facet->positivePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->positivePattern));
+        std::memcpy(facet->negativePattern, g_sceV2DefaultMoneyPattern, sizeof(facet->negativePattern));
+    }
+}
+
+template<bool International> bool InitializeSceV2MoneypunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<SceV2MoneypunctFacet<char>*>(self);
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    facet->international = International;
+    facet->grouping = g_sceV2Empty;
+    facet->currency = g_sceV2Empty;
+    facet->positiveSign = g_sceV2Empty;
+    facet->negativeSign = g_sceV2Minus;
+    facet->decimalPoint = *conventions->monetary[2];
+    facet->thousandsSep = *conventions->monetary[4];
+    SetSceV2MoneyFormats(facet, conventions, isDefault);
+    return true;
+}
+
+template<bool International> bool InitializeSceV2WideMoneypunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<SceV2MoneypunctFacet<std::uint16_t>*>(self);
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    facet->international = International;
+    facet->grouping = g_sceV2Empty;
+    facet->currency = g_sceV2WideEmpty.data();
+    facet->positiveSign = g_sceV2WideEmpty.data();
+    facet->negativeSign = g_sceV2WideMinus.data();
+    facet->decimalPoint = WidenSceV2Byte(*conventions->monetary[2]);
+    facet->thousandsSep = WidenSceV2Byte(*conventions->monetary[4]);
+    SetSceV2MoneyFormats(facet, conventions, isDefault);
+    return true;
+}
+
+template<bool International> bool InitializeSceV2UshortMoneypunctFacet(GuestLocale::Facet* self, bool isDefault) {
+    auto* facet = reinterpret_cast<SceV2MoneypunctFacet<std::uint16_t>*>(self);
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    const auto* chars = reinterpret_cast<const unsigned char*>(conventions->chars);
+    facet->international = International;
+    facet->grouping = nullptr;
+    facet->currency = nullptr;
+    facet->positiveSign = nullptr;
+    facet->negativeSign = nullptr;
+    facet->grouping = CopySceV2Bytes(conventions->monetary[3]);
+    if (facet->grouping == nullptr) return false;
+    facet->currency = CopySceV2Ushorts(conventions->monetary[International ? 1 : 0]);
+    if (facet->currency == nullptr) return false;
+    facet->positiveSign = CopySceV2Ushorts(chars[6] < 5 ? conventions->monetary[6] : g_sceV2Empty);
+    if (facet->positiveSign == nullptr) return false;
+    facet->negativeSign = CopySceV2Ushorts(chars[3] < 5 ? conventions->monetary[5] : g_sceV2Minus);
+    if (facet->negativeSign == nullptr) return false;
+    facet->decimalPoint = WidenSceV2Byte(*conventions->monetary[2]);
+    facet->thousandsSep = WidenSceV2Byte(*conventions->monetary[4]);
+    SetSceV2MoneyFormats(facet, conventions, isDefault);
+    return true;
+}
+
+bool InitializeSceV2TimeGetFacet(GuestLocale::Facet* self, bool) {
+    auto* facet = reinterpret_cast<SceV2TimeGetFacet<char>*>(self);
+    facet->days = g_sceV2Days;
+    facet->months = g_sceV2Months;
+    facet->amPm = g_sceV2AmPm;
+    facet->dateOrder = 2;
+    facet->conversion = SceV2ClassicCvtvec;
+    return true;
+}
+
+bool InitializeSceV2WideTimeGetFacet(GuestLocale::Facet* self, bool) {
+    auto* facet = reinterpret_cast<SceV2TimeGetFacet<std::uint16_t>*>(self);
+    facet->days = g_sceV2WideDays.data();
+    facet->months = g_sceV2WideMonths.data();
+    facet->amPm = g_sceV2WideAmPm.data();
+    facet->dateOrder = 2;
+    facet->conversion = SceV2ClassicCvtvec;
+    return true;
+}
+
+bool InitializeSceV2UshortTimeGetFacet(GuestLocale::Facet* self, bool) {
+    auto* facet = reinterpret_cast<SceV2TimeGetFacet<std::uint16_t>*>(self);
+    facet->days = nullptr;
+    facet->months = nullptr;
+    facet->amPm = nullptr;
+    facet->conversion = SceV2ClassicCvtvec;
+    facet->days = CopySceV2Ushorts(g_sceV2Days);
+    if (facet->days == nullptr) return false;
+    facet->months = CopySceV2Ushorts(g_sceV2Months);
+    if (facet->months == nullptr) return false;
+    facet->amPm = CopySceV2Ushorts(g_sceV2AmPm);
+    if (facet->amPm == nullptr) return false;
+    facet->dateOrder = 2;
+    return true;
+}
+
+bool InitializeSceV2TimePutFacet(GuestLocale::Facet* self, bool) {
+    reinterpret_cast<SceV2TimePutFacet*>(self)->names = nullptr;
+    return true;
+}
+
+SceV2FacetKind g_sceV2CtypeChar{&_ZNSt8__sce_v25ctypeIcE2idE_nid_postfix, sizeof(SceV2CtypeFacet), &g_sceV2CtypeCharVtable.facet, InitializeSceV2CtypeFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetChar{&_ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutChar{&_ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumpunctChar{&_ZNSt8__sce_v28numpunctIcE2idE_nid_postfix, sizeof(GuestLocale::NumpunctFacet), &g_sceV2NumpunctCharVtable.facet, InitializeSceV2NumpunctFacet, nullptr};
+SceV2FacetKind g_sceV2CodecvtChar{&_ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CodecvtCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2CollateChar{&_ZNSt8__sce_v27collateIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesChar{&_ZNSt8__sce_v28messagesIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyGetChar{&_ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneypunctChar{&_ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctCharVtable.facet, InitializeSceV2MoneypunctFacet<false>, nullptr};
+SceV2FacetKind g_sceV2MoneypunctCharIntl{&_ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctCharIntlVtable.facet, InitializeSceV2MoneypunctFacet<true>, nullptr};
+SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetCharVtable.facet, InitializeSceV2TimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutCharVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2CtypeWide{&_ZNSt8__sce_v25ctypeIwE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeWideVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumpunctWide{&_ZNSt8__sce_v28numpunctIwE2idE_nid_postfix, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctWideVtable.facet, InitializeSceV2WideNumpunctFacet, nullptr};
+SceV2FacetKind g_sceV2CollateWide{&_ZNSt8__sce_v27collateIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesWide{&_ZNSt8__sce_v28messagesIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyGetWide{&_ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneypunctWide{&_ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctWideVtable.facet, InitializeSceV2WideMoneypunctFacet<false>, nullptr};
+SceV2FacetKind g_sceV2MoneypunctWideIntl{&_ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctWideIntlVtable.facet, InitializeSceV2WideMoneypunctFacet<true>, nullptr};
+SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetWideVtable.facet, InitializeSceV2WideTimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutWide{&_ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutWideVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2CodecvtWide{&_ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtWideVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
+SceV2FacetKind g_sceV2CtypeUshort{&_ZNSt8__sce_v25ctypeItE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeUshortVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetUshort{&g_sceV2NumGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumGetUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutUshort{&g_sceV2NumPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumPutUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumpunctUshort{&g_sceV2NumpunctUshortId, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctUshortVtable.facet, InitializeSceV2UshortNumpunctFacet, nullptr};
+SceV2FacetKind g_sceV2CollateUshort{&g_sceV2CollateUshortId, sizeof(GuestLocale::Facet), &g_sceV2CollateUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesUshort{&g_sceV2MessagesUshortId, sizeof(GuestLocale::Facet), &g_sceV2MessagesUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyGetUshort{&g_sceV2MoneyGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutUshort{&g_sceV2MoneyPutUshortId, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneypunctUshort{&g_sceV2MoneypunctUshortId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctUshortVtable.facet, InitializeSceV2UshortMoneypunctFacet<false>, nullptr};
+SceV2FacetKind g_sceV2MoneypunctUshortIntl{&g_sceV2MoneypunctUshortIntlId, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctUshortIntlVtable.facet, InitializeSceV2UshortMoneypunctFacet<true>, nullptr};
+SceV2FacetKind g_sceV2TimeGetUshort{&g_sceV2TimeGetUshortId, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetUshortVtable.facet, InitializeSceV2UshortTimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutUshort{&g_sceV2TimePutUshortId, sizeof(SceV2TimePutFacet), &g_sceV2TimePutUshortVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2CodecvtUshort{&_ZNSt8__sce_v27codecvtItc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtUshortVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
+
+const SceV2FacetStep g_sceV2NarrowLeadSteps[] = {
+    {SceV2CtypeCategory, &g_sceV2CtypeChar},
+    {SceV2NumericCategory, &g_sceV2NumGetChar},
+    {SceV2NumericCategory, &g_sceV2NumPutChar},
+    {SceV2NumericCategory, &g_sceV2NumpunctChar},
+    {SceV2CtypeCategory, &g_sceV2CodecvtChar},
+};
+
+const SceV2FacetStep g_sceV2NarrowExtraSteps[] = {
+    {SceV2CollateCategory, &g_sceV2CollateChar},
+    {SceV2MessagesCategory, &g_sceV2MessagesChar},
+    {SceV2MonetaryCategory, &g_sceV2MoneyGetChar},
+    {SceV2MonetaryCategory, &g_sceV2MoneyPutChar},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctChar},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctCharIntl},
+    {SceV2TimeCategory, &g_sceV2TimeGetChar},
+    {SceV2TimeCategory, &g_sceV2TimePutChar},
+};
+
+const SceV2FacetStep g_sceV2WideSteps[] = {
+    {SceV2CtypeCategory, &g_sceV2CtypeWide},
+    {SceV2NumericCategory, &g_sceV2NumGetWide},
+    {SceV2NumericCategory, &g_sceV2NumPutWide},
+    {SceV2NumericCategory, &g_sceV2NumpunctWide},
+    {SceV2CollateCategory, &g_sceV2CollateWide},
+    {SceV2MessagesCategory, &g_sceV2MessagesWide},
+    {SceV2MonetaryCategory, &g_sceV2MoneyGetWide},
+    {SceV2MonetaryCategory, &g_sceV2MoneyPutWide},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctWide},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctWideIntl},
+    {SceV2TimeCategory, &g_sceV2TimeGetWide},
+    {SceV2TimeCategory, &g_sceV2TimePutWide},
+    {SceV2CtypeCategory, &g_sceV2CodecvtWide},
+};
+
+const SceV2FacetStep g_sceV2UshortSteps[] = {
+    {SceV2CtypeCategory, &g_sceV2CtypeUshort},
+    {SceV2NumericCategory, &g_sceV2NumGetUshort},
+    {SceV2NumericCategory, &g_sceV2NumPutUshort},
+    {SceV2NumericCategory, &g_sceV2NumpunctUshort},
+    {SceV2CollateCategory, &g_sceV2CollateUshort},
+    {SceV2MessagesCategory, &g_sceV2MessagesUshort},
+    {SceV2MonetaryCategory, &g_sceV2MoneyGetUshort},
+    {SceV2MonetaryCategory, &g_sceV2MoneyPutUshort},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctUshort},
+    {SceV2MonetaryCategory, &g_sceV2MoneypunctUshortIntl},
+    {SceV2TimeCategory, &g_sceV2TimeGetUshort},
+    {SceV2TimeCategory, &g_sceV2TimePutUshort},
+    {SceV2CtypeCategory, &g_sceV2CodecvtUshort},
+};
+
+std::uint64_t SceV2FacetId(std::uint64_t& id) {
+    std::atomic_ref<std::uint64_t> slot(id);
+    if (slot.load() == 0) {
+        _Locksyslock_nid_postfix();
+        if (slot.load() == 0) slot.store(static_cast<std::uint64_t>(++_ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix));
+        _Unlocksyslock_nid_postfix();
+    }
+    return slot.load();
+}
+
+GuestLocale::Facet* BuildSceV2Facet(const SceV2FacetKind& kind, GuestLocale::Facet* facet, bool isDefault) {
+    facet->vtable = kind.vtable;
+    facet->references = 0;
+    if (!kind.initialize(facet, isDefault)) {
+        facet->vtable->deleteObject(facet);
+        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    }
+    return facet;
+}
+
+GuestLocale::Facet* FindSceV2Facet(const SceV2FacetKind& kind, const GuestLocale::Implementation* locale, std::uint64_t id) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    if (id < locale->facetCount && locale->facets[id] != nullptr) return locale->facets[id];
+    if (locale->transparent) {
+        const GuestLocale::Implementation* global = g_sceV2GlobalLocale.load();
+        if (id < global->facetCount && global->facets[id] != nullptr) return global->facets[id];
+    }
+    return kind.cached;
+}
+
+GuestLocale::Facet* CacheSceV2Facet(SceV2FacetKind& kind, GuestLocale::Facet* facet, SceV2FacetNode* node) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    if (kind.cached != nullptr) return kind.cached;
+    *node = {g_sceV2FacetNodes, facet};
+    g_sceV2FacetNodes = node;
+    facet->vtable->retain(facet);
+    kind.cached = facet;
+    return facet;
+}
+
+GuestLocale::Facet* UseSceV2Facet(SceV2FacetKind& kind, const GuestLocale::Implementation* locale) {
+    if (GuestLocale::Facet* found = FindSceV2Facet(kind, locale, SceV2FacetId(*kind.id))) return found;
+    auto* storage = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(kind.size));
+    if (!ValidSceV2LocaleName(locale->name)) {
+        _ZdlPv_nid_postfix(storage);
+        _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
+    }
+    GuestLocale::Facet* facet = BuildSceV2Facet(kind, storage, true);
+    auto* node = static_cast<SceV2FacetNode*>(_Znwm_nid_postfix(sizeof(SceV2FacetNode)));
+    GuestLocale::Facet* cached = CacheSceV2Facet(kind, facet, node);
+    if (cached != facet) {
+        _ZdlPv_nid_postfix(node);
+        facet->vtable->deleteObject(facet);
+    }
+    return cached;
+}
+
+template<std::size_t Count> void InstallSceV2Facets(const SceV2FacetStep (&steps)[Count], std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale) {
+    for (const SceV2FacetStep& step : steps) {
+        if ((category & step.category) == 0) continue;
+        SceV2FacetKind& kind = *step.kind;
+        GuestLocale::Facet* facet = locale != nullptr
+            ? UseSceV2Facet(kind, locale->implementation)
+            : BuildSceV2Facet(kind, static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(kind.size)), false);
+        if (!AddSceV2Facet(self, facet, SceV2FacetId(*kind.id))) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    }
+}
+
+}
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp9_MakexlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo*, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale) {
+    if (self == nullptr) throw std::invalid_argument("_Makexloc: null object");
+    InstallSceV2Facets(g_sceV2NarrowExtraSteps, category, self, locale);
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp9_MakewlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo*, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale) {
+    if (self == nullptr) throw std::invalid_argument("_Makewloc: null object");
+    InstallSceV2Facets(g_sceV2WideSteps, category, self, locale);
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_MakeushlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo*, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale) {
+    if (self == nullptr) throw std::invalid_argument("_Makeushloc: null object");
+    InstallSceV2Facets(g_sceV2UshortSteps, category, self, locale);
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp8_MakelocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(const GuestLocale::SceV2Locinfo* info, std::int32_t category, GuestLocale::Implementation* self, const GuestLocaleFacade* locale) {
+    if (info == nullptr || self == nullptr) throw std::invalid_argument("_Makeloc: null object");
+    InstallSceV2Facets(g_sceV2NarrowLeadSteps, category, self, locale);
+    _ZNSt8__sce_v26locale7_Locimp9_MakexlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(info, category, self, locale);
+    _ZNSt8__sce_v26locale7_Locimp9_MakewlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(info, category, self, locale);
+    _ZNSt8__sce_v26locale7_Locimp11_MakeushlocERKNS_8_LocinfoEiPS1_PKS0__nid_postfix(info, category, self, locale);
+    self->category |= static_cast<std::uint32_t>(category);
+    self->name = info->classicName;
+    return self;
+}
+
 namespace {
 
 GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
@@ -1030,6 +2084,61 @@ GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 
 GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
+}
+
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
+}
+
+const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch() {
+    return &g_locimpVtable;
+}
+
+GuestLocale::Implementation* LibcAcquireGlobalLocale_nid_no_patch() {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    GuestLocale::Implementation* global = g_globalLocale.load();
+    if (global != nullptr) global->base.vtable->retain(&global->base);
+    return global;
+}
+
+void LibcReleaseLocale_nid_no_patch(GuestLocale::Implementation* locale) {
+    if (locale == nullptr) return;
+    auto* base = &locale->base;
+    if (auto* released = base->vtable->release(base)) released->vtable->deleteObject(released);
+}
+
+GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next) {
+    if (next == nullptr || next->base.vtable == nullptr || next->base.vtable->retain == nullptr || next->base.vtable->release == nullptr || next->base.vtable->deleteObject == nullptr) {
+        throw std::invalid_argument("locale::global: null locale");
+    }
+    if (next->facetCount != 0 && next->facets == nullptr) {
+        throw std::invalid_argument("locale::global: null facet vector");
+    }
+    if (next->name == nullptr) {
+        throw std::invalid_argument("locale::global: null locale name");
+    }
+    std::string localeName;
+    if (CopyGuestString_nid_no_patch(next->name, 2, localeName) != 0) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    if (localeName != "*" && setlocale_nid_postfix(0, next->name) == nullptr) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    GuestLocale::Implementation* previous = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_localeInitMutex);
+        previous = g_globalLocale.load();
+        if (previous == nullptr || previous->base.vtable == nullptr || previous->base.vtable->retain == nullptr || previous->base.vtable->release == nullptr || previous->base.vtable->deleteObject == nullptr) {
+            throw std::runtime_error("locale::global: invalid global locale");
+        }
+        if (previous == next) {
+            previous->base.vtable->retain(&previous->base);
+            return previous;
+        }
+        next->base.vtable->retain(&next->base);
+        g_globalLocale.store(next);
+    }
+    return previous;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
@@ -1045,6 +2154,113 @@ std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
 GuestLocale::String* APS5_VABI _ZNKSt7collateIcE9transformEPKcS2__nid_postfix(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last) {
     if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument("collate::transform: null facet");
     return reinterpret_cast<const GuestLocale::CollateVtable*>(self->base.vtable)->transform(result, self, first, last);
+}
+
+static const char* CopyCtypeRange(const char* first, const char* last, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE8do_widenEc_nid_postfix(const GuestLocale::Facet*, char character) {
+    return character;
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix(const GuestLocale::Facet*, const char* first, const char* last, char* destination) {
+    return CopyCtypeRange(first, last, destination);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix(const GuestLocale::Facet*, char character, char) {
+    return character;
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix(const GuestLocale::Facet*, const char* first, const char* last, char, char* destination) {
+    return CopyCtypeRange(first, last, destination);
+}
+
+static const void* CtypeFieldAddress(const void* base, std::size_t offset) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (!base || offset > std::numeric_limits<std::uintptr_t>::max() - address) APS5_INVALID_ARG_EX;
+    return reinterpret_cast<const void*>(address + offset);
+}
+
+static std::uint8_t MapCtypeCharacter(const GuestLocale::CtypeFacet* self, std::uint8_t character, std::size_t tableOffset) {
+    const std::int16_t* table;
+    if (!GuestCopyIn_nid_no_patch(&table, CtypeFieldAddress(self, tableOffset), sizeof(table))) APS5_INVALID_ARG_EX;
+    std::uint8_t mapped;
+    if (!GuestCopyIn_nid_no_patch(&mapped, CtypeFieldAddress(table, sizeof(std::int16_t) * character), sizeof(mapped))) {
+        APS5_INVALID_ARG_EX;
+    }
+    return mapped;
+}
+
+static const char* MapCtypeRange(const GuestLocale::CtypeFacet* self, char* first, const char* last, std::size_t tableOffset) {
+    auto current = reinterpret_cast<std::uintptr_t>(first);
+    const auto end = reinterpret_cast<std::uintptr_t>(last);
+    if (current > end) APS5_INVALID_ARG_EX;
+    while (current != end) {
+        auto* destination = reinterpret_cast<void*>(current);
+        std::uint8_t character;
+        if (!GuestCopyIn_nid_no_patch(&character, destination, sizeof(character))) APS5_INVALID_ARG_EX;
+        const std::uint8_t mapped = MapCtypeCharacter(self, character, tableOffset);
+        if (!GuestCopyOut_nid_no_patch(destination, &mapped, sizeof(mapped))) APS5_INVALID_ARG_EX;
+        ++current;
+    }
+    return last;
+}
+
+char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character) {
+    return static_cast<char>(MapCtypeCharacter(self, static_cast<std::uint8_t>(character), offsetof(GuestLocale::CtypeFacet, lower)));
+}
+
+const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return MapCtypeRange(self, first, last, offsetof(GuestLocale::CtypeFacet, lower));
+}
+
+char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character) {
+    return static_cast<char>(MapCtypeCharacter(self, static_cast<std::uint8_t>(character), offsetof(GuestLocale::CtypeFacet, upper)));
+}
+
+const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return MapCtypeRange(self, first, last, offsetof(GuestLocale::CtypeFacet, upper));
+}
+
+void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    auto* table = const_cast<std::int16_t*>(self->classification);
+    if (self->deleteTable > 0) {
+        free_nid_postfix(table);
+    } else if (self->deleteTable < 0) {
+        _ZdaPv_nid_postfix(table);
+    }
+}
+
+void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self) {
+    CtypeDestroy_nid_no_patch(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(const GuestLocale::CtypeFacet* self, char character) {
+    return CtypeDoTolower_nid_no_patch(self, character);
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return CtypeDoTolowerRange_nid_no_patch(self, first, last);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(const GuestLocale::CtypeFacet* self, char character) {
+    return CtypeDoToupper_nid_no_patch(self, character);
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return CtypeDoToupperRange_nid_no_patch(self, first, last);
+}
+
+void APS5_VABI _ZNSt5ctypeIcED1Ev_nid_postfix(GuestLocale::CtypeFacet* self) {
+    CtypeDestroy_nid_no_patch(self);
+}
+
+void APS5_VABI _ZNSt5ctypeIcED0Ev_nid_postfix(GuestLocale::CtypeFacet* self) {
+    CtypeDelete_nid_no_patch(self);
 }
 
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
@@ -1084,44 +2300,202 @@ std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
     return 4;
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return RequireNumpunct(self, "numpunct::do_decimal_point")->decimalPoint;
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return RequireNumpunct(self, "numpunct::do_thousands_sep")->thousandsSep;
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_grouping")->grouping);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_falsename")->falsename);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_truename")->truename);
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::decimal_point")->base).decimalPoint(self);
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::thousands_sep")->base).thousandsSep(self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::grouping")->base).grouping(result, self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::falsename")->base).falsename(result, self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::truename")->base).truename(result, self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoDecimalPoint_nid_no_patch(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoThousandsSep_nid_no_patch(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoGrouping_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoFalsename_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoTruename_nid_no_patch(result, self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDecimalPoint_nid_no_patch(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctThousandsSep_nid_no_patch(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctGrouping_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctFalsename_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctTruename_nid_no_patch(result, self);
+}
+
+namespace {
+
+struct NumpunctLocinfo {
+    explicit NumpunctLocinfo(const char* name) { _ZNSt8_LocinfoC1EPKc_nid_postfix(&storage, name); }
+    ~NumpunctLocinfo() { _ZNSt8_LocinfoD1Ev_nid_postfix(&storage); }
+    NumpunctLocinfo(const NumpunctLocinfo&) = delete;
+    NumpunctLocinfo& operator=(const NumpunctLocinfo&) = delete;
+
+    GuestLocale::LocinfoStorage storage;
+};
+
+char* MakeNumpunctString(const char* text) {
+    const std::size_t count = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(_Znam_nid_postfix(count));
+    if (copy == nullptr) throw std::bad_alloc();
+    std::memcpy(copy, text, count);
+    return copy;
+}
+
+void ConstructNumpunctBase(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    self->base.vtable = reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt8numpunctIcE_nid_postfix[2]);
+    self->base.references = static_cast<std::uint32_t>(references);
+}
+
+}
+
+void APS5_VABI NumpunctTidy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    _ZdaPv_nid_postfix(const_cast<char*>(self->grouping));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->falsename));
+    _ZdaPv_nid_postfix(const_cast<char*>(self->truename));
+}
+
+void APS5_VABI NumpunctInit_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage*, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    const SonyLconv* conventions = localeconv_nid_postfix();
+    self->grouping = nullptr;
+    self->falsename = nullptr;
+    self->truename = nullptr;
+    try {
+        self->grouping = MakeNumpunctString(isDefault ? "" : conventions->grouping);
+        self->falsename = MakeNumpunctString("false");
+        self->truename = MakeNumpunctString("true");
+    } catch (...) {
+        NumpunctTidy_nid_no_patch(self);
+        throw;
+    }
+    if (isDefault) {
+        self->decimalPoint = '.';
+        self->thousandsSep = ',';
+    } else {
+        self->decimalPoint = conventions->decimal_point[0];
+        self->thousandsSep = conventions->thousands_sep[0];
+    }
+}
+
+void APS5_VABI NumpunctConstruct_nid_no_patch(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo("C");
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, false);
+    if (self->thousandsSep == 0) self->thousandsSep = ',';
+}
+
+void APS5_VABI NumpunctConstructFromLocinfo_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+APS5_EXPORT("Cb1hI+w9nyU", NumpunctConstructFromLocinfo_nid_no_patch);
+
+void APS5_VABI NumpunctConstructNamed_nid_no_patch(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    ConstructNumpunctBase(self, references);
+    const NumpunctLocinfo locinfo(name);
+    NumpunctInit_nid_no_patch(self, &locinfo.storage, isDefault);
+}
+APS5_EXPORT("WK24j1F3rCU", NumpunctConstructNamed_nid_no_patch);
+
+void APS5_VABI NumpunctDestroy_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+APS5_EXPORT("xFva4yxsVW8", NumpunctDestroy_nid_no_patch);
+
+void APS5_VABI NumpunctDelete_nid_no_patch(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
+    _ZdlPv_nid_postfix(self);
+}
+APS5_EXPORT("Lf6h5krl2fA", NumpunctDelete_nid_no_patch);
+
+void APS5_VABI _ZNSt8numpunctIcE5_InitERKSt8_Locinfob_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault) {
+    NumpunctInit_nid_no_patch(self, locinfo, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcE5_TidyEv_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctTidy_nid_no_patch(self);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2Em_nid_postfix(GuestLocale::NumpunctFacet* self, std::size_t references) {
+    NumpunctConstruct_nid_no_patch(self, references);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC1ERKSt8_Locinfomb_nid_postfix(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault) {
+    NumpunctConstructFromLocinfo_nid_no_patch(self, locinfo, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcEC2EPKcmb_nid_postfix(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault) {
+    NumpunctConstructNamed_nid_no_patch(self, name, references, isDefault);
+}
+
+void APS5_VABI _ZNSt8numpunctIcED1Ev_nid_postfix(GuestLocale::NumpunctFacet* self) {
+    NumpunctDestroy_nid_no_patch(self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
@@ -1143,8 +2517,24 @@ std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIc
     return 5;
 }
 
+extern "C" std::size_t LibcWideTimePutGetcat_nid_no_patch(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    if (facet != nullptr && *facet == nullptr) {
+        if (locale == nullptr) NotImplementedAt_nid_no_patch("_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix", __FILE__, __LINE__);
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        *object = {&g_wideTimePutVtable.facet, 0, 0};
+        *facet = object;
+    }
+    return 5;
+}
+
+std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return LibcWideTimePutGetcat_nid_no_patch(facet, locale);
+}
+
 void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName) {
-    if (self == nullptr || localeName == nullptr || std::strcmp(localeName, "C") != 0) throw std::invalid_argument("_Locinfo: only the C locale is supported");
+    std::string name;
+    if (self == nullptr || localeName == nullptr || CopyGuestString_nid_no_patch(localeName, 2, name) != 0 || name != "C")
+        throw std::invalid_argument("_Locinfo: only the C locale is supported");
     new (self) GuestLocale::LocinfoStorage{};
 }
 
@@ -1155,7 +2545,8 @@ void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self)
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName) {
     if (self == nullptr) throw std::invalid_argument("_Locinfo: null object");
     self->name = setlocale_nid_postfix(0x3f, nullptr);
-    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
+    std::string name;
+    if (localeName == nullptr || CopyGuestString_nid_no_patch(localeName, 2, name) != 0 || (!name.empty() && name != "C"))
         _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
     self->classicName = self->name;
 }
@@ -1291,7 +2682,7 @@ void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
 }
 
 SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 }

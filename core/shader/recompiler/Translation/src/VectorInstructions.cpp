@@ -1,13 +1,8 @@
-#include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateVectorInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
-}
 
 namespace {
 
@@ -80,6 +75,8 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VFloorF32:
     case RdnaOpcode::VCeilF32:
     case RdnaOpcode::VFrexpMantF32:
+    case RdnaOpcode::VSinF32:
+    case RdnaOpcode::VCosF32:
         if (floatMode.has_value() && ((floatMode->floatMode >> 4u) & 3u) == 2u) return 1u;
         if (floatMode.has_value() && ((floatMode->floatMode >> 4u) & 3u) == 1u) {
             if (inst.op == RdnaOpcode::VFrexpMantF32) return 0u;
@@ -90,20 +87,19 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         }
         flush = 3u;
         break;
-    case RdnaOpcode::VSinF32:
-    case RdnaOpcode::VCosF32:
-        flush = 3u;
-        break;
     case RdnaOpcode::VMacF32:
     case RdnaOpcode::VMadmkF32:
     case RdnaOpcode::VMadakF32:
     case RdnaOpcode::VFmaF32:
         if (roundsProductSeparately(inst)) break;
-        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u && ((floatMode->floatMode >> 4u) & 3u) == 2u) {
-            if (!float32DenormPreserve || float32FlushToZero) {
-                throw std::runtime_error("f32 denormal mode 2 at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+            const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
+            if (denormals == 1u || denormals == 2u) {
+                if (!float32DenormPreserve || float32FlushToZero) {
+                    throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+                }
+                return denormals == 1u ? 2u : 1u;
             }
-            return 1u;
         }
         flush = 3u;
         break;
@@ -145,7 +141,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VDivScaleF32:
     case RdnaOpcode::VDivFixupF32:
-        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+        if (floatMode.has_value() && ((floatMode->floatMode & 3u) == 0u || inst.op == RdnaOpcode::VDivFixupF32)) {
             const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
             if (denormals == 2u) return 1u;
             if (denormals == 1u && inst.op == RdnaOpcode::VDivFixupF32) return 0u;
@@ -160,6 +156,16 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         break;
     case RdnaOpcode::VMadMixloF16:
     case RdnaOpcode::VMadMixhiF16:
+        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+            const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
+            if (denormals == 2u) return 1u;
+            if (denormals == 1u) {
+                if (!float32DenormPreserve || float32FlushToZero) {
+                    throw std::runtime_error("f32 denormal mode 1 at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+                }
+                return 0u;
+            }
+        }
         flush = 1u;
         break;
     case RdnaOpcode::VMadLegacyF32:
@@ -180,7 +186,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     }
     if (!ExactF32Arithmetic()) return 0u;
     if (denormals != 0u) return 0u;
-    return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 0u : flush;
+    return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 4u : flush;
 }
 
 bool TranslationContext::emitVector(const RdnaInstruction& inst) {
@@ -1083,6 +1089,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return floatUnary(inst, IrOpcode::FPLog2);
     case RdnaOpcode::VRsqF32:
         return floatUnary(inst, IrOpcode::FPRecipSqrt32);
+    case RdnaOpcode::VRsqClampF32:
+        return floatUnaryClampInfinity(inst, IrOpcode::FPRecipSqrt32);
     case RdnaOpcode::VSqrtF32:
         return floatUnary(inst, IrOpcode::FPSqrt);
     case RdnaOpcode::VSinF32:
@@ -1308,10 +1316,6 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateVectorInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
 }
 
 }

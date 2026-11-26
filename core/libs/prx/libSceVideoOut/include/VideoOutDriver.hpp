@@ -20,6 +20,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #ifndef __EMSCRIPTEN__
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceVideoOut/include/HostDisplayMode.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
 #endif
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
@@ -32,6 +33,9 @@
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
+static constexpr int VIDEO_OUT_ERROR_INVALID_PITCH = static_cast<int>(0x80290004u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_TILING_MODE = static_cast<int>(0x80290007u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO = static_cast<int>(0x80290008u);
 static constexpr int VIDEO_OUT_ERROR_INVALID_ADDRESS = -2144796670;
 static constexpr int VIDEO_OUT_ERROR_INVALID_HANDLE = -2144796661;
 static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE = -2144796660;
@@ -77,6 +81,7 @@ static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED = 0;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED = 1;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE = 0;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY = 8;
+static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR = 7;
 static constexpr std::uint32_t VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT = 0x10026c;
 
 static constexpr int VIDEO_OUT_EVENT_FLIP = 0;
@@ -233,6 +238,7 @@ public:
     std::shared_ptr<VideoOutConfig> GetConfig(int handle);
     bool IsOpen(int handle);
     bool HasConfig(int handle);
+    int GetBusType(int handle);
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
     std::uint32_t GetDisplayResolution();
@@ -266,6 +272,7 @@ private:
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
     std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};
+    std::optional<HostDisplayMode> knownDisplayMode;
 
     std::jthread presentThread;
     std::jthread vblankThread;

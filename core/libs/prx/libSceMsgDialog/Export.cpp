@@ -1,12 +1,15 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include "prx/libSceMsgDialog/include/HostMessageBox.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <chrono>
 
@@ -22,7 +25,7 @@ constexpr int kStatusFinished = 3;
 
 constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003u);
-constexpr int kErrBusy = static_cast<int>(0x80B80007u);
+constexpr int kErrInvalidState = static_cast<int>(0x80B80006u);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int kErrParam = static_cast<int>(0x80B80001u);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
@@ -31,6 +34,11 @@ constexpr int kButtonIdOk = MsgDialog::ButtonIdOk;
 constexpr int kButtonIdNo = MsgDialog::ButtonIdNo;
 constexpr int kModeUserMsg = MsgDialog::ModeUserMsg;
 constexpr int kModeProgressBar = MsgDialog::ModeProgressBar;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 
 std::mutex g_lock;
 int g_status = kStatusNone;
@@ -71,6 +79,12 @@ int Poll() {
     }
     return g_status;
 }
+
+int MsgDialogResultStatus(int& buttonId) {
+    std::lock_guard g(g_lock);
+    buttonId = g_buttonId;
+    return g_status;
+}
 }
 
 extern "C" {
@@ -91,10 +105,27 @@ int APS5_VABI sceMsgDialogTerminate(void) {
 }
 int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (param == nullptr) return kErrArgNull;
- std::lock_guard g(g_lock);
- if (g_status == kStatusRunning) return kErrBusy;
+ std::unique_lock g(g_lock);
+ if (g_status == kStatusRunning) return kErrInvalidState;
  const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
  Inspect(parsed);
+ ModalDialogRequest hostRequest;
+ if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
+  g_presented = false;
+  g_pollsLeft = std::numeric_limits<int>::max();
+  g_status = kStatusRunning;
+  g.unlock();
+  const auto answer = MsgDialog::ShowHostMessageBox(parsed.text, hostRequest);
+  g.lock();
+  if (answer) {
+   const std::size_t fallback = hostRequest.cancel != ModalDialogNoButton ? hostRequest.cancel : 0;
+   g_buttonId = MsgDialog::ButtonIdOf(answer->chosen ? *answer->chosen : fallback);
+   g_status = kStatusFinished;
+   APS5_HIT("MSGDIALOG", "open: buttons=%zu -> host box, button %d", hostRequest.buttons.size(), g_buttonId);
+   return kErrOk;
+  }
+  APS5_HIT("MSGDIALOG", "open: host box unavailable, using the in-game dialog");
+ }
  g_presented = Present(parsed);
  if (parsed.hasText) APS5_HIT("MSGDIALOG", "open: buttons=%d text=\"%s\" -> %s", parsed.buttonType, MsgDialog::LogText(parsed.text).c_str(), g_presented ? "shown" : "auto answer");
  g_pollsLeft = 2;
@@ -136,3 +167,5 @@ int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
  return kErrOk;
 }
 }
+
+#include "../libSceMsgDialog.native/Result.cpp"

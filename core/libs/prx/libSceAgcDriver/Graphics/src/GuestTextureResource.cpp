@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 
@@ -261,7 +265,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         Require(fmaskLayout.has_value(), "guest FMASK format is not implemented");
         Require(!writeCompress && (!metaCompress || metaAddr != 0u), "FMASK CMASK compression is not implemented without readable metadata");
         Require(!metaCompress || metaPipeAligned, "FMASK CMASK metadata must be pipe aligned");
-        Require(!metaCompress || format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8), "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+        Require(!metaCompress || format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8) || format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask8_S2_F2), "FMASK CMASK compression is implemented only for 2-sample, 2-fragment and 8-sample, 8-fragment FMASK");
         Require((typeRaw == 9u || typeRaw == 13u) && tileModeRaw == 24u && baseLevel == 0u && lastLevel == 0u && maxMip == 0u, "FMASK reads require a single-mip 2D or 2D-array Z_64KB_X surface");
         const bool identity = format != static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8) && dstSelX == 4u && dstSelY == 5u && dstSelZ == 6u && dstSelW == 7u;
         for (const auto selector : {dstSelX, dstSelY, dstSelZ, dstSelW}) Require(identity || selector == 0u || selector == 1u || selector == 4u, "FMASK destination channel selector is not implemented");
@@ -277,6 +281,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         throw std::runtime_error(std::string(error.what()) + describe());
     }
     std::uint32_t samples = 1;
+    if (dimension == TextureDimension::k2DMsaa && baseLevel == 0 && lastLevel == 0 && maxMip == 0) dimension = TextureDimension::k2D;
     if (dimension == TextureDimension::k2DMsaa) {
         Require(baseLevel == 0 && lastLevel >= 1u && lastLevel <= 4u && maxMip == lastLevel, "guest multisampled texture descriptor does not hold the same sample count of 2 to 16 in its last level and its last mip, which is not implemented" + describe());
         samples = 1u << lastLevel;
@@ -320,7 +325,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         case TextureDimension::k1DArray:
             Require(height == 1, "guest 1D array texture descriptor has a nonzero height");
             Require(baseArray <= depth, "guest 1D array texture descriptor has a base array past its last array slice");
-            Require(tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use");
+            Require(gcn || tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use" + describe());
             break;
         case TextureDimension::kCube:
             Require(width == height, "guest cube texture descriptor is not square");
@@ -342,7 +347,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     result.lastLevel = lastLevel;
     result.tileMode = tileMode;
     result.dimension = dimension;
-    result.format = !fmask ? format : static_cast<std::uint32_t>(fmaskLayout->storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : fmaskLayout->storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : ShaderRecompiler::IrBufferFormat::Format32UInt);
+    result.format = !fmask ? format : static_cast<std::uint32_t>(fmaskLayout->storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : fmaskLayout->storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : fmaskLayout->storageBits == 32u ? ShaderRecompiler::IrBufferFormat::Format32UInt : ShaderRecompiler::IrBufferFormat::Format32_32UInt);
     result.dstSelX = static_cast<std::uint8_t>(dstSelX);
     result.dstSelY = static_cast<std::uint8_t>(dstSelY);
     result.dstSelZ = static_cast<std::uint8_t>(dstSelZ);
@@ -373,10 +378,66 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     return result;
 }
 
+namespace {
+
+using RejectionKey = std::array<std::uint32_t, 9>;
+
+struct RememberedRejections {
+    std::shared_mutex mutex;
+    std::map<RejectionKey, std::shared_ptr<const std::string>> entries;
+};
+
+RememberedRejections& rememberedRejections() {
+    static RememberedRejections remembered;
+    return remembered;
+}
+
+}
+
+TextureResourceDecode TryDecodeTextureResource(std::span<const std::uint32_t> words) {
+    TextureResourceDecode decoded;
+    if (words.size() != 8) {
+        try {
+            decoded.resource = DecodeTextureResource(words);
+        } catch (const std::runtime_error& error) {
+            decoded.rejection = std::make_shared<const std::string>(error.what());
+        }
+        return decoded;
+    }
+    RejectionKey key{};
+    std::copy(words.begin(), words.end(), key.begin());
+    key[8] = ShaderRecompiler::GcnGuestShaders() ? 1u : 0u;
+    auto& remembered = rememberedRejections();
+    {
+        std::shared_lock lock(remembered.mutex);
+        if (const auto found = remembered.entries.find(key); found != remembered.entries.end()) {
+            decoded.rejection = found->second;
+            return decoded;
+        }
+    }
+    try {
+        decoded.resource = DecodeTextureResource(words);
+    } catch (const std::runtime_error& error) {
+        decoded.rejection = std::make_shared<const std::string>(error.what());
+        std::unique_lock lock(remembered.mutex);
+        if (remembered.entries.size() >= RememberedTextureRejections) remembered.entries.clear();
+        remembered.entries.emplace(key, decoded.rejection);
+    }
+    return decoded;
+}
+
+std::size_t RememberedTextureRejectionCount() {
+    auto& remembered = rememberedRejections();
+    std::shared_lock lock(remembered.mutex);
+    return remembered.entries.size();
+}
+
 std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource) {
     const bool multisampled = resource.dimension == TextureDimension::k2DMsaa;
-    Require((resource.dimension == TextureDimension::k2D && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D and multisampled 2D surfaces have a texture descriptor encoding");
-    Require(resource.mipCount == 1u && resource.allocatedMipCount <= 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u && resource.linearPitch == 0u, "only single-level, single-layer surfaces without metadata have a texture descriptor encoding");
+    const bool array = resource.dimension == TextureDimension::k2DArray;
+    Require(((resource.dimension == TextureDimension::k2D || array) && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D, 2D array and multisampled 2D surfaces have a texture descriptor encoding");
+    Require(resource.mipCount >= 1u && resource.mipCount <= 16u && (resource.allocatedMipCount == 0u || resource.allocatedMipCount == resource.mipCount) && resource.baseLevel <= resource.lastLevel && resource.lastLevel < resource.mipCount && (array ? resource.baseArray <= resource.depthOrLastArray && resource.depthOrLastArray <= 0x1fffu : resource.depthOrLastArray == 0u && resource.baseArray == 0u), "the surface's mip levels or array slices have no texture descriptor encoding");
+    Require((!multisampled || resource.mipCount == 1u) && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u && resource.linearPitch == 0u, "only single-level multisampled surfaces and surfaces without metadata have a texture descriptor encoding");
     Require(resource.width >= 1u && resource.width <= 0x4000u && resource.height >= 1u && resource.height <= 0x4000u && resource.format < 0x200u, "the surface's extent or format has no texture descriptor encoding");
     const auto xorMask = resource.tileMode == TextureTileMode::kS4KBX || resource.tileMode == TextureTileMode::kD4KBX ? 0xfffull : 0xffffull;
     Require(XorSwizzleMode(resource.tileMode) != 0 ? (resource.baseAddress & xorMask) == 0 && (resource.pipeBankXor & ~xorMask) == 0 : resource.pipeBankXor == 0, "the surface's pipe and bank XOR has no texture descriptor encoding");
@@ -405,8 +466,10 @@ std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& r
     words[0] = static_cast<std::uint32_t>(base);
     words[1] = static_cast<std::uint32_t>(base >> 32u) | (resource.format << 20u) | (((resource.width - 1u) & 3u) << 30u);
     words[2] = ((resource.width - 1u) >> 2u) | ((resource.height - 1u) << 14u);
-    words[3] = resource.dstSelX | (resource.dstSelY << 3u) | (resource.dstSelZ << 6u) | (resource.dstSelW << 9u) | (sampleLevel << 16u) | (tileMode << 20u) | ((multisampled ? 14u : 9u) << 28u);
-    words[5] = sampleLevel << 4u;
+    const auto lastLevel = multisampled ? sampleLevel : resource.lastLevel;
+    words[3] = resource.dstSelX | (resource.dstSelY << 3u) | (resource.dstSelZ << 6u) | (resource.dstSelW << 9u) | (resource.baseLevel << 12u) | (lastLevel << 16u) | (tileMode << 20u) | ((multisampled ? 14u : array ? 13u : 9u) << 28u);
+    words[4] = resource.depthOrLastArray | (resource.baseArray << 16u);
+    words[5] = (multisampled ? sampleLevel : resource.mipCount - 1u) << 4u;
     return words;
 }
 

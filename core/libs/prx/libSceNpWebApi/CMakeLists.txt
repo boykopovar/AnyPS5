@@ -1,5 +1,6 @@
-add_library(libSceNpWebApi SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
+add_library(libSceNpWebApi SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp ParseNpId.cpp)
 target_include_directories(libSceNpWebApi PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpWebApi PRIVATE libSceNpCommon)
 configure_windows_unwind(libSceNpWebApi)
 
 if(BUILD_TESTING)

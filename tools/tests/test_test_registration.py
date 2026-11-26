@@ -14,9 +14,49 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
 
+CXX_BUILD_TOOLS = shutil.which("cmake") and shutil.which("ninja") and (
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl"))
+
 
 class RegistrationJsonTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
+    def test_multi_config_report_checks_release_executables_and_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+            library = root / "core/libs/prx/libProbe"
+            library.mkdir(parents=True)
+            (library / "common.cpp").write_text("int common() { return 0; }\n", encoding="utf-8")
+            (library / "release.cpp").write_text(
+                "#define APS5_VABI\nint APS5_VABI release_only() { return 0; }\n", encoding="utf-8")
+            cmake = root / "CMakeLists.txt"
+            project = (
+                'cmake_minimum_required(VERSION 3.20)\n'
+                'project(fixture CXX)\n'
+                'enable_testing()\n'
+                'add_executable(probe main.cpp)\n'
+                'set_target_properties(probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests"\n'
+                '  OUTPUT_NAME_DEBUG debug_probe OUTPUT_NAME_RELEASE release_probe)\n'
+                'add_library(probe_library STATIC core/libs/prx/libProbe/common.cpp\n'
+                '  $<$<CONFIG:Release>:core/libs/prx/libProbe/release.cpp>)\n'
+                'add_test(NAME debug COMMAND probe CONFIGURATIONS Debug)\n')
+            build = root / "build"
+            for expected, extra_test in ((["release_probe"], ""), ([], "add_test(NAME release COMMAND probe CONFIGURATIONS Release)\n")):
+                with self.subTest(unregistered=expected):
+                    cmake.write_text(project + extra_test, encoding="utf-8")
+                    subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja Multi-Config",
+                                    "-DCMAKE_CONFIGURATION_TYPES=Debug;Release", "-DCMAKE_DEFAULT_BUILD_TYPE=Debug"],
+                                   check=True, capture_output=True)
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        status = check_test_registration.main([str(build), "--json"])
+                    report = json.loads(output.getvalue())
+                    self.assertEqual(report["tests"], ["debug_probe", "release_probe"])
+                    self.assertEqual(report["new_unregistered"], expected)
+                    self.assertEqual(report["unbuilt_exports"], [])
+                    self.assertEqual(status, int(bool(expected)))
+
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_executable_report(self):
         import json
         import shutil
@@ -52,9 +92,9 @@ class RegistrationJsonTests(unittest.TestCase):
             data = json.loads(output.getvalue())
             self.assertEqual(data["registered"], ["tools/test_a.py"])
             self.assertEqual(data, {"mode": "scripts", "tests": ["tools/test_a.py", "tools/test_b.py"],
-                                    "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"]})
+                                    "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"], "unselected": {}})
 
-    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    @unittest.skipUnless(CXX_BUILD_TOOLS, "CMake, Ninja and a C++ compiler are required")
     def test_real_cmake_report_matches_every_text_mode_decision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -235,16 +275,38 @@ class RegistrationTests(unittest.TestCase):
 
     def test_looping_subdirectory_is_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            loop = build / "first"
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            original_resolve = Path.resolve
+
+            def resolve(path):
+                if path == loop:
+                    raise RuntimeError("Symlink loop")
+                return original_resolve(path)
+
+            for root, expected in ((build, {"buffer_bounds_tests"}), (loop, set())):
+                with self.subTest(root=root), patch.object(Path, "resolve", autospec=True, side_effect=resolve) as resolving:
+                    self.assertEqual(check_test_registration.registered(root), expected)
+                    resolving.assert_any_call(loop)
+
+    def test_real_looping_subdirectory_is_skipped_where_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
             (build / "nested").mkdir()
             try:
-                os.symlink("second", build / "first")
-                os.symlink("first", build / "second")
+                os.symlink("second", build / "first", target_is_directory=True)
+                os.symlink("first", build / "second", target_is_directory=True)
+            except NotImplementedError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             except OSError as error:
                 if os.name == "nt" and getattr(error, "winerror", None) == 1314:
-                    self.skipTest("creating symlinks requires Windows privileges")
+                    self.skipTest(f"symbolic link privilege is unavailable: {error}")
                 raise
-            (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
             self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
@@ -677,6 +739,15 @@ class ScriptRegistrationTests(unittest.TestCase):
                                     "tools/tests/test_env.py": "", "tools/tests/test_later.py": ""}),
                          ["tools/tests/test_env.py", "tools/tests/test_later.py", "tools/tests/test_name.py"])
 
+    def test_folded_workflow_run_registers_a_script_on_the_following_line(self):
+        script = "tools/tests/test_folded.py"
+        for scalar, separator, missing in ((">-", "\n", []), (">2-", "\n", []), ("|", "\n", [script]), (">", "\n\n", [script]),
+                                            (">", "\n  ", [script])):
+            with self.subTest(scalar=scalar, separator=separator):
+                workflow = (f"jobs:\n  t:\n    steps:\n      - run: {scalar}\n"
+                            f"          python3{separator}          {script}\n")
+                self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow, script: ""}), missing)
+
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja"),
                      "CMake, CTest and Ninja are required")
@@ -720,6 +791,75 @@ class DisabledScriptRegistrationTests(unittest.TestCase):
         self.assertNotIn("registration-probe-ran", output)
         self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
         self.assertIn(f"error: {self.script} is a test script that no add_test or workflow runs", audit.stdout)
+
+    def test_set_property_disabled_matches_ctest(self):
+        cases = (("set_property(TEST probe PROPERTY DISABLED TRUE)", True),
+                 ("set_property(TEST probe PROPERTY DISABLED ON)\nset_property(TEST probe PROPERTY DISABLED)", False),
+                 ("set_property(TEST probe PROPERTY DISABLED TRUE FALSE)", False),
+                 ("set_property(TEST probe APPEND PROPERTY DISABLED TRUE)", True),
+                 ("set_tests_properties(probe PROPERTIES DISABLED ON)\nset_property(TEST probe APPEND PROPERTY DISABLED FALSE)", False),
+                 ("set_tests_properties(probe PROPERTIES DISABLED ON)\nset_property(TEST probe APPEND PROPERTY DISABLED)", True),
+                 ("set_property(TEST probe PROPERTY DISABLED TR)\nset_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)", True),
+                 ("set_property(TEST probe APPEND_STRING PROPERTY DISABLED T RUE)", False))
+        for properties, disabled in cases:
+            with self.subTest(properties=properties):
+                output, audit = self.run_project(self.registration + properties + "\n")
+                self.assertEqual("registration-probe-ran" not in output, disabled, output)
+                self.assertEqual(audit.returncode, int(disabled), audit.stdout + audit.stderr)
+                if disabled:
+                    self.assertIn("Not Run (Disabled)", output)
+                    self.assertIn(self.script, audit.stdout)
+
+    def test_set_property_disables_multiple_modern_and_legacy_registrations(self):
+        output, audit = self.run_project(
+            self.registration +
+            'add_test(legacy "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_probe.py")\n'
+            'set_property(TEST probe legacy PROPERTY DISABLED TRUE)\n')
+        self.assertEqual(output.count("Not Run (Disabled)"), 2)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_conditional_set_property_preserves_possible_coverage(self):
+        for properties in ('if(FALSE)\nset_property(TEST probe PROPERTY DISABLED TRUE)\nendif()\n',
+                           'set_property(TEST probe PROPERTY DISABLED TR)\n'
+                           'if(TRUE)\nset_property(TEST probe PROPERTY DISABLED ON)\nendif()\n'
+                           'set_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)\n'):
+            with self.subTest(properties=properties):
+                output, audit = self.run_project(self.registration + properties)
+                self.assertIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_conditional_true_spellings_preserve_definite_disabled_state(self):
+        for command in ('set_property(TEST probe PROPERTY DISABLED TRUE)',
+                        'set_tests_properties(probe PROPERTIES DISABLED TRUE)'):
+            for append in ('', 'set_property(TEST probe APPEND_STRING PROPERTY DISABLED UE)\n'):
+                with self.subTest(command=command, append=append):
+                    output, audit = self.run_project(
+                        self.registration + 'set_tests_properties(probe PROPERTIES DISABLED ON)\n'
+                        f'if(FALSE)\n{command}\nendif()\n' + append)
+                    disabled = not append
+                    self.assertEqual('registration-probe-ran' not in output, disabled, output)
+                    self.assertEqual(audit.returncode, int(disabled), audit.stdout + audit.stderr)
+
+    def test_set_property_in_shared_and_alternative_scopes_matches_ctest(self):
+        disabled = self.registration + 'set_property(TEST probe PROPERTY DISABLED TRUE)\n'
+        output, audit = self.run_project('if(TRUE)\n' + disabled + 'else()\n' + disabled + 'endif()\n')
+        self.assertIn("Disabled", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_unrelated_set_properties_do_not_disable_a_registration(self):
+        for command in ('set_property(DIRECTORY PROPERTY DISABLED TRUE)',
+                        'set_property(TEST probe PROPERTY LABELS DISABLED TRUE)',
+                        'set_property(TEST PROPERTY DISABLED TRUE)'):
+            with self.subTest(command=command):
+                output, audit = self.run_project(self.registration + command + "\n")
+                self.assertIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_cross_directory_properties_do_not_disable_local_tests(self):
+        content = self.registration + 'set_property(TEST probe DIRECTORY other PROPERTY DISABLED TRUE)\n'
+        (self.source / 'CMakeLists.txt').write_text(content, encoding='utf-8')
+        self.assertEqual(check_test_registration.run_scripts(self.source, ['CMakeLists.txt']), {self.script})
 
     def test_conditional_disable_does_not_hide_an_enabled_registration(self):
         output, audit = self.run_project(
@@ -847,7 +987,8 @@ class CheckRegistrationCliTests(unittest.TestCase):
                 self.assertNotIn("Traceback", errors.getvalue())
 
     def test_main_scripts_with_explicit_argv(self):
-        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])):
+        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])), \
+                patch.object(check_test_registration, "unselected_classes", return_value={}):
             with contextlib.redirect_stdout(io.StringIO()):
                 code = check_test_registration.main(["--scripts"])
             self.assertEqual(code, 0)
@@ -878,6 +1019,94 @@ class CheckRegistrationCliTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class ScriptClassSelectionTests(unittest.TestCase):
+    CASES = ("import unittest\n\n\nclass ATests(unittest.TestCase):\n    def test_a(self):\n        pass\n\n\n"
+             "class BTests(unittest.TestCase):\n    def test_b(self):\n        pass\n")
+    SCRIPT = "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_a.py"
+
+    def unselected(self, files):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for name, content in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(content, encoding="utf-8")
+            return check_test_registration.unselected_classes(root)
+
+    def test_class_that_no_selective_add_test_names_is_reported(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_naming_every_class_or_running_the_whole_script_is_clean(self):
+        for cmake in (f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\nadd_test(NAME b COMMAND python {self.SCRIPT} BTests)\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} ATests BTests)\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\nadd_test(NAME b COMMAND python {self.SCRIPT})\n",
+                      f"add_test(NAME a COMMAND python {self.SCRIPT} --shard 0/2 ${{CMAKE_COMMAND}})\n"):
+            with self.subTest(cmake=cmake):
+                self.assertEqual(self.unselected({"CMakeLists.txt": cmake, "tools/tests/test_a.py": self.CASES}), {})
+
+    def test_classes_registered_in_a_loop_through_a_variable_count_as_selected(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f'set(a_source "{self.SCRIPT}")\nadd_test(NAME a COMMAND python {self.SCRIPT} ATests)\n'
+                              "foreach(test_class IN ITEMS BTests)\n"
+                              '    add_test(NAME a_${test_class} COMMAND python "${a_source}" ${test_class})\nendforeach()\n',
+            "tools/tests/test_a.py": self.CASES}), {})
+
+    def test_a_method_selector_does_not_run_its_whole_class(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests.test_a BTests)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["ATests"]})
+
+    def test_disabled_selective_add_test_does_not_select(self):
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n"
+                              f"add_test(NAME b COMMAND python {self.SCRIPT} BTests)\n"
+                              "set_tests_properties(b PROPERTIES DISABLED ON)\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_classes_without_tests_and_mixins_need_no_selection(self):
+        script = ("import unittest\n\n\nclass Fixture(unittest.TestCase):\n    def setUp(self):\n        pass\n\n\n"
+                  "class Helpers:\n    def test_helper(self):\n        pass\n\n\n"
+                  "class ATests(Fixture, Helpers):\n    def test_a(self):\n        pass\n\n\n"
+                  "class Inherited(Fixture):\n    pass\n")
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n",
+            "tools/tests/test_a.py": script}), {})
+
+    def test_inherited_tests_need_their_class_selected(self):
+        script = self.CASES + "\n\nclass CTests(ATests):\n    pass\n"
+        self.assertEqual(self.unselected({
+            "CMakeLists.txt": f"add_test(NAME a COMMAND python {self.SCRIPT} ATests BTests)\n",
+            "tools/tests/test_a.py": script}), {"tools/tests/test_a.py": ["CTests"]})
+
+    def test_workflow_class_selection_is_checked(self):
+        self.assertEqual(self.unselected({
+            ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: python3 \"./tools/tests/test_a.py\" ATests && echo BTests\n",
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_folded_workflow_class_selection_is_checked(self):
+        self.assertEqual(self.unselected({
+            ".github/workflows/ci.yml": ("jobs:\n  t:\n    steps:\n      - run: >-\n"
+                                         "          python3 tools/tests/test_a.py\n          ATests\n"),
+            "tools/tests/test_a.py": self.CASES}), {"tools/tests/test_a.py": ["BTests"]})
+
+    def test_cli_fails_when_a_class_is_never_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            (root / "tools/tests").mkdir(parents=True)
+            (root / "tools/tests/test_a.py").write_text(self.CASES, encoding="utf-8")
+            (root / "CMakeLists.txt").write_text(f"add_test(NAME a COMMAND python {self.SCRIPT} ATests)\n", encoding="utf-8")
+            with patch.object(check_test_registration, "__file__", str(root / "tools/tool.py")):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(check_test_registration.main(["--scripts"]), 1)
+                self.assertIn("error: tools/tests/test_a.py runs only some of its test classes; never run: BTests", output.getvalue())
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(check_test_registration.main(["--scripts", "--json"]), 1)
+                self.assertEqual(json.loads(output.getvalue())["unselected"], {"tools/tests/test_a.py": ["BTests"]})
 
 
 
