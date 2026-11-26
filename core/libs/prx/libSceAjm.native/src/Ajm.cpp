@@ -1794,10 +1794,7 @@ int RegisterBatch(std::uint32_t context, AjmBatchError* error, std::uint32_t* ba
         if (!CopyGuestOut(error, &cleared, sizeof(cleared))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     }
     const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
-    if (!CopyGuestOut(batch, &id, sizeof(id))) {
-        g_nextBatch.fetch_sub(1, std::memory_order_relaxed);
-        return SCE_AJM_ERROR_INVALID_PARAMETER;
-    }
+    if (!CopyGuestOut(batch, &id, sizeof(id))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::lock_guard lock(g_batchLock);
     g_batches.emplace(id, context);
     return 0;
