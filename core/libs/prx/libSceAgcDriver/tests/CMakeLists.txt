@@ -1,0 +1,1 @@
+add_library(agc_execution_test_not_built OBJECT EXCLUDE_FROM_ALL ExecutionTestNotBuilt.cpp)

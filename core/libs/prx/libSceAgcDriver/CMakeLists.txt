@@ -726,6 +726,11 @@ endforeach()
 
 set(ANYPS5_AGC_EXECUTION_TESTS "" CACHE STRING "tests/execution sources to build, by file name without extension; the others build a stub that reports a skip. Empty builds all")
 
+if(ANYPS5_AGC_EXECUTION_TESTS)
+    add_subdirectory(tests)
+    set_source_files_properties(tests/ExecutionTestNotBuilt.cpp PROPERTIES HEADER_FILE_ONLY ON)
+endif()
+set(agcExecutionPchTarget)
 file(GLOB agcExecutionTestSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/*.cpp)
 set(agcExecutionTests)
 foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
@@ -735,10 +740,13 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     endif()
     if(ANYPS5_AGC_EXECUTION_TESTS AND NOT agcExecutionTestName IN_LIST ANYPS5_AGC_EXECUTION_TESTS)
         set(agcExecutionTestSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExecutionTestNotBuilt.cpp)
+        set(agcExecutionTestObjects $<TARGET_OBJECTS:agc_execution_test_not_built>)
+    else()
+        set(agcExecutionTestObjects)
     endif()
     string(REGEX REPLACE "([a-z0-9])([A-Z])" "\\1_\\2" agcExecutionTestName "${agcExecutionTestName}")
     string(TOLOWER "agc_driver_${agcExecutionTestName}_tests" agcExecutionTest)
-    add_test_executable(${agcExecutionTest} EXCLUDE_FROM_ALL ${agcExecutionTestSource})
+    add_test_executable(${agcExecutionTest} EXCLUDE_FROM_ALL ${agcExecutionTestSource} ${agcExecutionTestObjects})
     target_include_directories(${agcExecutionTest} PRIVATE
             ${LIBS_INCLUDE_DIR}
             $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
@@ -754,13 +762,15 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
         target_compile_options(${agcExecutionTest} PRIVATE
                 -include ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/TestEnvironment.hpp)
     endif()
-    if(agcExecutionTests)
-        list(GET agcExecutionTests 0 agcExecutionPchTarget)
-        target_precompile_headers(${agcExecutionTest} REUSE_FROM ${agcExecutionPchTarget})
-    else()
-        target_precompile_headers(${agcExecutionTest} PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/VulkanTestDevice.hpp
-                <array> <iostream> <span> <string> <vector>)
+    if(NOT agcExecutionTestObjects)
+        if(agcExecutionPchTarget)
+            target_precompile_headers(${agcExecutionTest} REUSE_FROM ${agcExecutionPchTarget})
+        else()
+            set(agcExecutionPchTarget ${agcExecutionTest})
+            target_precompile_headers(${agcExecutionTest} PRIVATE
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/VulkanTestDevice.hpp
+                    <array> <iostream> <span> <string> <vector>)
+        endif()
     endif()
     if(CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache")
         set_target_properties(${agcExecutionTest} PROPERTIES CXX_COMPILER_LAUNCHER
