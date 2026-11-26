@@ -196,6 +196,8 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
     parser.add_argument("--json", action="store_true", help="emit a dry-run plan as JSON")
     args = parser.parse_args(argv)
+    if args.pr is not None and args.pr < 1:
+        parser.error("--pr must be positive")
     if args.json and not args.dry_run:
         parser.error("--json requires --dry-run")
     try:

@@ -67,6 +67,18 @@ class LabelPlanJsonTests(unittest.TestCase):
         self.assertEqual(data["plans"][0]["error"], "read failed")
         self.assertEqual(run.call_count, 2)
 
+    def test_nonpositive_pr_numbers_are_rejected_without_lookup(self):
+        for number in ("0", "-2"):
+            with self.subTest(number=number):
+                errors = io.StringIO()
+                with patch.object(pr_labels, "repository") as repo, patch.object(pr_labels, "gh") as gh, \
+                        contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    pr_labels.main(["--pr", number, "--dry-run"])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("--pr must be positive", errors.getvalue())
+                repo.assert_not_called()
+                gh.assert_not_called()
+
     def test_json_requires_dry_run_before_any_access(self):
         with patch.object(pr_labels, "gh", side_effect=AssertionError("unexpected access")), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
             pr_labels.main(["--pr", "42", "--json"])
