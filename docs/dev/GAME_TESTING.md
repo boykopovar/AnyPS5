@@ -8,6 +8,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 
 - Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
 - `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
+  Add `--strict` to reject a branch that is behind the base even when the test merge is clean.
+  A conflict or a strict-mode rejection exits with status 1. Use `--json` to inspect the counts in scripts.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
   - Linux: `relinker --registry src/eboot.elf app.elf`
   - Windows: `relinker --windows --registry src/eboot.elf app.exe`. Without `--windows` the output is an ELF file whatever its name, and Windows refuses to start it (exit code 216, "not compatible with the version of Windows").
