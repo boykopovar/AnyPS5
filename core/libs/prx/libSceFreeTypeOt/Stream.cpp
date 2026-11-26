@@ -192,7 +192,7 @@ std::uint64_t Read(GuestStreamRec* stream, int* error, const char* function) {
     auto& record = Stream(stream, function);
     if (!error) Unsupported(function, "null error");
     *error = 0;
-    if (record.pos + (Bytes - 1) >= record.size) {
+    if (record.pos > record.size || record.size - record.pos < Bytes) {
         *error = InvalidStreamOperation;
         return 0;
     }
