@@ -425,7 +425,10 @@ void RequireMultistream(int callerApplication) {
     out = 0;
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
     Require(out == 1);
-    RequireThrows([&] { sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2); });
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2) == EncoderError(0x0C));
+    Require(errno == 71);
+    Require(Word(state.data(), 0x38u) == 1u);
     out = 99;
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_GET_FORCE_CHANNELS_REQUEST, &out) == 0);
     Require(out == 1);
@@ -479,7 +482,9 @@ void RequireMultistream(int callerApplication) {
 
     Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_RESET_STATE) == 0);
     Require(Word(state.data(), 0x9Cu) == 0u);
-    RequireThrows([&] { sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2); });
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCtl(ToMultistreamState(state), OPUS_SET_FORCE_CHANNELS_REQUEST, 2) == EncoderError(0x0C));
+    Require(errno == 71);
     Require(Word(state.data(), 0x9Cu) == 0u);
     Require(Word(state.data(), 0x38u) == 0u);
     out = 99;
