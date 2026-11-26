@@ -7652,7 +7652,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
                 const auto at = static_cast<std::size_t>(first - region.begin);
                 if (at > cursor) std::memset(target.data() + cursor, 0, at - cursor);
                 const auto piece = target.subspan(at, static_cast<std::size_t>(last - first));
-                GuestMemory::Read(first, piece);
+                GuestMemory::ReadCommitted(first, piece);
                 readBytes += piece.size();
                 if (written) region.uploaded.insert(region.uploaded.end(), piece.begin(), piece.end());
                 cursor = at + piece.size();
