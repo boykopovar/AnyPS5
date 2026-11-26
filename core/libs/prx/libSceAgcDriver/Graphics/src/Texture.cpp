@@ -1696,13 +1696,15 @@ std::uint32_t Float16StorageComponents(VkFormat format) {
     }
 }
 
-bool Float16TransfersKeepBits(const Context& context, VkFormat format) {
+bool Float16TransfersKeepBits(const Context& context, VkFormat format, bool colorAttachment) {
     const auto components = Float16StorageComponents(format);
     if (components == 0u) return true;
     static AgcDriver::Mutex mutex;
-    static std::map<std::pair<VkDevice, VkFormat>, bool> known;
+    using ProbeKey = std::pair<std::pair<VkDevice, VkFormat>, bool>;
+    static std::map<ProbeKey, bool> known;
+    const auto key = std::pair{std::pair{context.device, format}, colorAttachment};
     std::lock_guard lock(mutex);
-    if (const auto found = known.find({context.device, format}); found != known.end()) return found->second;
+    if (const auto found = known.find(key); found != known.end()) return found->second;
 
     constexpr std::uint32_t width = 128u;
     constexpr std::uint32_t height = 128u;
@@ -1737,6 +1739,7 @@ bool Float16TransfersKeepBits(const Context& context, VkFormat format) {
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (colorAttachment) info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage fp16 storage transfer probe");
@@ -1776,12 +1779,12 @@ bool Float16TransfersKeepBits(const Context& context, VkFormat format) {
     batch.SubmitAndWait();
 
     const bool keeps = std::memcmp(upload.Bytes().data(), readback.Bytes().data(), bytes) == 0;
-    known.emplace(std::pair{context.device, format}, keeps);
+    known.emplace(key, keeps);
     return keeps;
 }
 
-VkFormat StorageImageFormatFor(const Context& context, VkFormat storageFormat) {
-    if (std::getenv("APS5_NO_FP16_UINT_STORAGE_BACKING") != nullptr || Float16TransfersKeepBits(context, storageFormat)) return storageFormat;
+VkFormat StorageImageFormatFor(const Context& context, VkFormat storageFormat, bool colorAttachment) {
+    if (std::getenv("APS5_NO_FP16_UINT_STORAGE_BACKING") != nullptr || Float16TransfersKeepBits(context, storageFormat, colorAttachment)) return storageFormat;
     const auto uintFormat = UintStorageViewFormat(storageFormat);
     Require(uintFormat != VK_FORMAT_UNDEFINED, "an fp16 storage transfer probe failed without a compatible UINT backing format");
     return uintFormat;
@@ -1959,7 +1962,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         Require(mipLevel < descriptor.mipCount, "storage texture mip level is outside the texture");
         const auto vkFormat = StorageFormatFor(context, ResolveTextureFormat(descriptor.format));
         storageFormat = vkFormat;
-        imageFormat = descriptor.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float) && storageFormat == VK_FORMAT_R32_UINT ? VK_FORMAT_R8G8B8A8_UINT : StorageImageFormatFor(context, storageFormat);
+        VkFormatProperties storageProperties{};
+        context.formatProperties(context.physical, vkFormat, &storageProperties);
+        attachable = (descriptor.dimension == TextureDimension::k2D || descriptor.dimension == TextureDimension::k3D || descriptor.dimension == TextureDimension::k2DArray) && (storageProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
+        imageFormat = descriptor.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float) && storageFormat == VK_FORMAT_R32_UINT ? VK_FORMAT_R8G8B8A8_UINT : StorageImageFormatFor(context, storageFormat, attachable);
 #ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "StorageTexture address=0x%llx %ux%u mips=%u mip=%u layers=%u base=%u dim=%d tile=%d format=%u vk=%d", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, mipLevel,
                      descriptor.depthOrLastArray, descriptor.baseArray, static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat));
@@ -2003,12 +2009,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        {
-            VkFormatProperties properties{};
-            context.formatProperties(context.physical, vkFormat, &properties);
-            attachable = (descriptor.dimension == TextureDimension::k2D || descriptor.dimension == TextureDimension::k3D || descriptor.dimension == TextureDimension::k2DArray) && (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
-            if (attachable) imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        }
+        if (attachable) imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
