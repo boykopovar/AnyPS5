@@ -280,7 +280,7 @@ void* AllocateStringStorage(std::size_t size) {
     return storage;
 }
 
-void DropStringReference(StringImpl* impl) {
+void DropReferenceKeepingStorage(StringImpl* impl) {
     if (!impl) return;
     if (impl->refCount > 2) {
         impl->refCount -= 2;
@@ -337,7 +337,7 @@ void Replace(StringReference* string, const RegularExpression* target, const Str
     }
     if (!changed) return;
     StringImpl* next = AllocateString(text, input.is8Bit && replacementUnits.is8Bit);
-    DropStringReference(string->impl);
+    DropReferenceKeepingStorage(string->impl);
     string->impl = next;
 }
 
