@@ -1227,7 +1227,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_np_common_runtime_tests tests/GuestNpCommonRuntime.cpp)
     target_include_directories(guest_np_common_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_np_common_runtime_tests PRIVATE libSceNpCommon libkernel libc)
+    target_link_libraries(guest_np_common_runtime_tests PRIVATE libSceNpCommon libSceUserService libkernel libc)
     configure_windows_unwind(guest_np_common_runtime_tests)
     add_test(NAME guest_np_common_runtime COMMAND guest_np_common_runtime_tests)
     set_tests_properties(guest_np_common_runtime PROPERTIES TIMEOUT 20)
