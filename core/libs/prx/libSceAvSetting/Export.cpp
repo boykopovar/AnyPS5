@@ -2,9 +2,7 @@
 #include "prx/libSceAvSetting/include/InventoryExports.hpp"
 #include "prx/libSceAvSetting/include/Api.hpp"
 #include <algorithm>
-#include <cerrno>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -19,21 +17,11 @@ template <typename TValue>
 bool ReadAvSettingField(const void* object, std::size_t offset, TValue& value) noexcept {
     const auto address = reinterpret_cast<std::uintptr_t>(object);
     if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
-    const int savedErrno = errno;
     try {
-        const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
-        errno = savedErrno;
-        return copied;
+        return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
     } catch (...) {
-        errno = savedErrno;
         return false;
     }
-}
-
-void CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
 }
 
 }
@@ -51,17 +39,15 @@ bool ProcessAttributeAccepted(std::uint32_t attribute, std::uint32_t flag) {
 }
 
 bool ReadWord(const void* source, std::uint32_t& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
 }
 
 } // namespace
 
 extern "C" {
 
-int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void) {
+int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void* argument1) {
+    if (argument1 == nullptr) return Error0002;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -87,13 +73,12 @@ int APS5_VABI sceAvControlSetMonitorFakeMode(void) {
 }
 
 int APS5_VABI sceAvControlGetCurrentOutputSysMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(std::uint64_t, void* info) {
+    if (info == nullptr) return Error0001;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvControlGetRawMonitorInfo(std::uint64_t argument1, void* info) {
@@ -383,7 +368,7 @@ int APS5_VABI sceAvControlSetHdrMetadata(std::uint64_t type) {
 
 void APS5_VABI sceAvControlSetVideoOutSource(std::int32_t* out, std::int32_t source) {
     if (out != nullptr) {
-        CopyOutPreservingErrno(out, &source, sizeof(source));
+        GuestCopyOut_nid_no_patch(out, &source, sizeof(source));
     }
 }
 
@@ -414,7 +399,7 @@ void InitializeCallbackFuncs_nid_no_patch(void* callbacks, std::uint32_t size) {
     for (std::uint32_t i = 0; i < sizeof(size) && i < size; ++i) {
         buffer[i] = static_cast<std::uint8_t>(size >> (8 * i));
     }
-    CopyOutPreservingErrno(callbacks, buffer.data(), size);
+    GuestCopyOut_nid_no_patch(callbacks, buffer.data(), size);
 }
 
 }
@@ -530,29 +515,31 @@ int APS5_VABI sceAvSettingGetCurrentOutputMode_() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingGetDetailedHdcpStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetDetailedHdcpStatus(void* status) {
+    if (status == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetDeviceInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetDeviceInfo(std::uint64_t argument1, void* info) {
+    if (info == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdcpStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdcpStatus(void* status) {
+    if (status == nullptr) return Error0002;
+    const std::uint32_t source = 7;
+    GuestCopyOut_nid_no_patch(status, &source, sizeof(source));
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum(void* number) {
+    if (number == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
-int APS5_VABI sceAvSettingGetHdmiKsvList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAvSettingGetHdmiKsvList(std::uint64_t argument1, void* list) {
+    if (list == nullptr) return Error0002;
+    return ErrorNotInitialized;
 }
 
 int APS5_VABI sceAvSettingGetHdmiMonitorInfo() {
@@ -656,7 +643,7 @@ void APS5_VABI sceAvSettingSetAudioOutModeAny_(void* out, std::int32_t value) {
     const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
     std::vector<std::uint8_t> buffer(totalBytes, 0xff);
     std::memcpy(buffer.data(), &value, sizeof(value));
-    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
+    GuestCopyOut_nid_no_patch(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetAudioOutModeInvalid_(void* out, std::int32_t value) {
@@ -665,7 +652,7 @@ void APS5_VABI sceAvSettingSetAudioOutModeInvalid_(void* out, std::int32_t value
     const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
     std::vector<std::uint8_t> buffer(totalBytes, 0x00);
     std::memcpy(buffer.data(), &value, sizeof(value));
-    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
+    GuestCopyOut_nid_no_patch(out, buffer.data(), totalBytes);
 }
 
 int APS5_VABI sceAvSettingSetAvOutputMode(std::uint32_t mode, const void* argument2) {
@@ -702,7 +689,7 @@ void APS5_VABI sceAvSettingSetVideoOutModeAny_(void* out, std::int32_t value) {
     const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
     std::vector<std::uint8_t> buffer(totalBytes, 0xff);
     std::memcpy(buffer.data(), &value, sizeof(value));
-    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
+    GuestCopyOut_nid_no_patch(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetVideoOutModeInvalid_(void* out, std::int32_t value) {
@@ -711,12 +698,12 @@ void APS5_VABI sceAvSettingSetVideoOutModeInvalid_(void* out, std::int32_t value
     const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
     std::vector<std::uint8_t> buffer(totalBytes, 0x00);
     std::memcpy(buffer.data(), &value, sizeof(value));
-    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
+    GuestCopyOut_nid_no_patch(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetVideoOutSource(std::int32_t* out, std::int32_t source) {
     if (out != nullptr) {
-        CopyOutPreservingErrno(out, &source, sizeof(source));
+        GuestCopyOut_nid_no_patch(out, &source, sizeof(source));
     }
 }
 
@@ -774,7 +761,7 @@ APS5_EXPORT("7kywfNahIbw", libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch);
 void APS5_VABI libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch(void* object) {
     if (object == nullptr) return;
     const std::uint64_t zero = 0;
-    CopyOutPreservingErrno(object, &zero, sizeof(zero));
+    GuestCopyOut_nid_no_patch(object, &zero, sizeof(zero));
 }
 APS5_EXPORT("A143jTEYkNw", libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch);
 
@@ -844,7 +831,7 @@ APS5_EXPORT("cANt7oF1VsA", libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch);
 void APS5_VABI libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch(void* object) {
     if (object == nullptr) return;
     const std::array<std::uint64_t, 2> zero{};
-    CopyOutPreservingErrno(object, zero.data(), sizeof(zero));
+    GuestCopyOut_nid_no_patch(object, zero.data(), sizeof(zero));
 }
 APS5_EXPORT("cK+dKi9GYYA", libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch);
 
@@ -873,7 +860,7 @@ APS5_EXPORT("m1Wi0Yp38v0", libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch);
 void APS5_VABI libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch(void* object) {
     if (object == nullptr) return;
     const std::uint64_t zero = 0;
-    CopyOutPreservingErrno(object, &zero, sizeof(zero));
+    GuestCopyOut_nid_no_patch(object, &zero, sizeof(zero));
 }
 APS5_EXPORT("mp2s52Yr4pc", libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch);
 

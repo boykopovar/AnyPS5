@@ -46,3 +46,7 @@ extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* ha
 extern "C" void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location) {
     SeekDirectoryUnlocked_nid_no_patch(handle, location);
 }
+
+extern "C" void APS5_VABI _reclaim_telldir_nid_postfix(void* handle) {
+    if (!handle) *__error_nid_postfix() = 9;
+}

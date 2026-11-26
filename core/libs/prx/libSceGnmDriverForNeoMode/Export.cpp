@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriver/include/CommandWriters.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
@@ -33,6 +34,16 @@ bool ReadShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, Words>&
     return regs && GuestCopyIn_nid_no_patch(out.data(), regs, sizeof(out)) && out[1] == 0;
 }
 
+template <std::size_t Words, typename Fn>
+int WriteSharedCommandBuffer(std::uint32_t* cmdbuf, Fn&& write) {
+    if (!cmdbuf) return CommandFailed;
+    std::array<std::uint32_t, Words> local{};
+    if (!GuestCopyIn_nid_no_patch(local.data(), cmdbuf, sizeof(local))) return CommandFailed;
+    const int result = write(local.data());
+    if (result != 0) return result;
+    return GuestCopyOut_nid_no_patch(cmdbuf, local.data(), sizeof(local)) ? 0 : CommandFailed;
+}
+
 template <std::size_t Words>
 int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::array<std::uint32_t, Words>& state) {
     if (!cmdbuf) return CommandFailed;
@@ -56,13 +67,6 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
 }
 
 constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
-
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 0x10, sizeof(version));
-    return version;
-}
 
 constexpr std::uint32_t OpSetContextReg = 0x69;
 constexpr std::uint32_t OpSetShReg = 0x76;
@@ -223,36 +227,17 @@ int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t, std::uint32_t, std::uint6
 
 int APS5_VABI sceGnmDispatchDirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
     if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return CommandFailed;
-    return WriteCommandBuffer<9>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x15, 4, true, flags & 1);
-        buf[1] = threadsX;
-        buf[2] = threadsY;
-        buf[3] = threadsZ;
-        buf[4] = (flags & 0x18) + 1;
-        Nop(buf + 5, 3);
-    });
+    return WriteSharedCommandBuffer<9>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchDirect(buf, size, threadsX, threadsY, threadsZ, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags) {
     if (!cmdbuf || size != 7) return CommandFailed;
-    return WriteCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x16, 2, true, flags & 1);
-        buf[1] = dataOffset;
-        buf[2] = (flags & 0x18) + 1;
-        Nop(buf + 3, 3);
-    });
+    return WriteSharedCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchIndirect(buf, size, dataOffset, flags); });
 }
 
 int APS5_VABI sceGnmDispatchIndirectOnMec(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier) {
     if (!cmdbuf || size != 8 || args == 0 || (args & 3) != 0) return CommandFailed;
-    return WriteCommandBuffer<8>(cmdbuf, [&](std::uint32_t* buf) {
-        buf[0] = Header(0x16, 3, true, modifier & 1);
-        buf[1] = static_cast<std::uint32_t>(args);
-        buf[2] = static_cast<std::uint32_t>(args >> 32);
-        buf[3] = (modifier & 0x18) | 1;
-        buf[4] = Header(OpNop, 3);
-        buf[5] = 0;
-    });
+    return WriteSharedCommandBuffer<8>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::DispatchIndirectOnMec(buf, size, args, modifier); });
 }
 
 int APS5_VABI sceGnmDrawIndex(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint64_t indexAddress, std::uint32_t flags, std::uint32_t) {
@@ -415,12 +400,12 @@ int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std:
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
     return sceGnmDrawInitToDefaultContextState400(cmdbuf, size);
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    if (ApplicationCompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
     return 0x100;
 }
 
@@ -683,13 +668,7 @@ int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t
     if (!cmdbuf || size <= 0x18 || !regs || (modifier & 0xfffffc3fu) != 0) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? localRegs[2] : (localRegs[2] & 0xfffffc3fu) | modifier;
-    return WriteCommandBuffer<0x19>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x20c, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x212, rsrc1, localRegs[3]});
-        at = EmitPacket(at, OpSetShReg, {0x207, localRegs[4], localRegs[5], localRegs[6]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x19>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::SetCsShaderWithModifier(buf, size, localRegs.data(), modifier); });
 }
 
 int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
@@ -728,27 +707,9 @@ int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, st
 
 int APS5_VABI sceGnmSetPsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x203, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-            Nop(at, 0x1d);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {8, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {10, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpSetContextReg, {0x1c4, localRegs[4], localRegs[5]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b3, localRegs[6], localRegs[7]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b6, localRegs[8]});
-        at = EmitPacket(at, OpSetContextReg, {0x1b8, localRegs[9]});
-        at = EmitPacket(at, OpSetContextReg, {0x203, localRegs[10]});
-        at = EmitPacket(at, OpSetContextReg, {0x8f, localRegs[11]});
-        Nop(at, 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::SetPsShader350(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmSetResourceRegistrationUserMemory(void) {
@@ -813,76 +774,35 @@ int APS5_VABI sceGnmUpdateGsShader(std::uint32_t* cmdbuf, std::uint32_t size, co
     if (!cmdbuf || size < 0x1d || !regs) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x88, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x8a, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e02e5u, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e029bu, localRegs[5]});
-        at = EmitPacket(at, OpNop, {0xc01e02e4u, localRegs[6]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateGsShader(buf, size, localRegs.data()); });
 }
 
 int APS5_VABI sceGnmUpdateHsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t lsHsConfig) {
     if (!cmdbuf || size <= 0x1c || !regs) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x108, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x10a, localRegs[2], localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e0286u, localRegs[5], localRegs[6]});
-        at = EmitPacket(at, OpNop, {0xc01e02dbu, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e02d6u, lsHsConfig});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateHsShader(buf, size, localRegs.data(), lsHsConfig); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-            Nop(at, 0x20);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        Nop(UpdatePsRegisters(buf, localRegs.data()), 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdatePsShader(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdatePsShader350(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs) {
     if (!cmdbuf || size <= 0x27) return CommandFailed;
-    if (!regs) {
-        return WriteCommandBuffer<0x28>(cmdbuf, [](std::uint32_t* buf) {
-            auto* at = EmitPacket(buf, OpSetShReg, {8, 0, 0});
-            at = EmitPacket(at, OpNop, {0xc01e0203u, 0});
-            at = EmitPacket(at, OpSetContextReg, {0x8f, 0xf});
-            Nop(at, 0x1d);
-        });
-    }
     std::array<std::uint32_t, 12> localRegs{};
-    if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    return WriteCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) {
-        Nop(UpdatePsRegisters(buf, localRegs.data()), 11);
-    });
+    if (regs && !ReadShaderRegs(regs, localRegs)) return CommandFailed;
+    return WriteSharedCommandBuffer<0x28>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdatePsShader350(buf, size, regs ? localRegs.data() : nullptr); });
 }
 
 int APS5_VABI sceGnmUpdateVsShader(std::uint32_t* cmdbuf, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier) {
     if (!cmdbuf || size <= 0x1c || !regs || (modifier & 0xfcfffc3fu) != 0) return CommandFailed;
     std::array<std::uint32_t, 7> localRegs{};
     if (!ReadShaderRegs(regs, localRegs)) return CommandFailed;
-    const std::uint32_t rsrc1 = modifier == 0 ? localRegs[2] : (localRegs[2] & 0xfcfffc3fu) | modifier;
-    return WriteCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = EmitPacket(buf, OpSetShReg, {0x48, localRegs[0], 0});
-        at = EmitPacket(at, OpSetShReg, {0x4a, rsrc1, localRegs[3]});
-        at = EmitPacket(at, OpNop, {0xc01e0207u, localRegs[6]});
-        at = EmitPacket(at, OpNop, {0xc01e01b1u, localRegs[4]});
-        at = EmitPacket(at, OpNop, {0xc01e01c3u, localRegs[5]});
-        Nop(at, 11);
-    });
+    return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::UpdateVsShader(buf, size, localRegs.data(), modifier); });
 }
 
 int APS5_VABI sceGnmValidateDisableDiagnostics(void) {

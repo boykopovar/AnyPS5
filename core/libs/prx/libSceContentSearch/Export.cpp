@@ -3,6 +3,7 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <limits>
@@ -277,10 +278,8 @@ int APS5_VABI sceContentSearchSearchApplication(const void* columnSet, std::uint
     int userId = 0;
     const int userResult = sceUserServiceGetInitialUser(&userId);
     if (userResult < 0) return userResult;
-    std::int32_t sdkVersion = 0;
-    const int sdkResult = sceKernelGetCompiledSdkVersion(&sdkVersion);
-    if (sdkResult != 0) return sdkResult;
-    return static_cast<std::uint32_t>(sdkVersion) < DirectServiceErrorSdk ? ErrorLegacyServiceUnavailable : ErrorServiceUnavailable;
+    const auto sdkVersion = ApplicationCompiledSdkVersion();
+    return sdkVersion < DirectServiceErrorSdk ? ErrorLegacyServiceUnavailable : ErrorServiceUnavailable;
 }
 
 }

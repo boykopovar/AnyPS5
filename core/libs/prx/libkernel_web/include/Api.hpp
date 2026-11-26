@@ -7,7 +7,7 @@
 extern "C" {
 
 int APS5_VABI __freeze_nid_disambig1_nid_postfix();
-int APS5_VABI __sceKernelGetGPI_nid_disambig1_nid_postfix();
+std::uint64_t APS5_VABI __sceKernelGetGPI_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_debug_init_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_dl_get_info_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_dl_get_info_2_nid_disambig1_nid_postfix();
@@ -37,10 +37,10 @@ int APS5_VABI __sys_opmc_set_hw_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_osem_close_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_osem_open_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix(const char* set, char* get, std::size_t* length);
-int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix();
+int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix(int pid, int fd);
 int APS5_VABI __sys_regmgr_call_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_set_uevt_nid_disambig1_nid_postfix();
-int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix();
+int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix(int s);
 int APS5_VABI __sys_test_debug_rwmem_nid_disambig1_nid_postfix();
 int APS5_VABI __sys_workaround8849_nid_disambig1_nid_postfix();
 int APS5_VABI _dup2_nid_disambig1_nid_postfix(int from, int to);

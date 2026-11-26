@@ -1701,8 +1701,35 @@ const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 18>
     {"eviction", colorMemoResidentEviction}
 }};
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 33> Scenarios{{
+void volumeSlicesReuseMemo(AgcDriver::VulkanDevice& device) {
+    ColorTarget slice0{};
+    slice0.address = address(OuterStorage.data());
+    slice0.surfaceAddress = slice0.address;
+    slice0.extent = {Width, Height};
+    slice0.surfaceExtent = slice0.extent;
+    slice0.format = VK_FORMAT_R8G8B8A8_UNORM;
+    slice0.elementBytes = 4;
+    slice0.tileMode = ColorTileMode::RenderTarget;
+    slice0.volume = true;
+    slice0.depth = 4;
+    slice0.depthSlice = 0;
+    slice0.layers = 1;
+    slice0.bytes = OuterStorage.size();
+    slice0.componentMapping = 0xe4u;
+    slice0.clearWords = {Clear, 0};
+    auto slice1 = slice0;
+    slice1.depthSlice = 1;
+    reset(device, slice0);
+    arm(device, slice0);
+    mustRepeat(device, slice1, "a 3D volume draw stepping depthSlice missed TargetMemo");
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    StorageTexture::FlushPending(slice0.address, slice0.bytes, nullptr, "test");
+    device.WaitIdle();
+}
+
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 34> Scenarios{{
     {"repeated draws", repeatedDraws},
+    {"volume slices reuse memo", volumeSlicesReuseMemo},
     {"CPU write", cpuWrite},
     {"driver store", driverStore},
     {"driver store over pending results", driverStoreOverPendingResults},
