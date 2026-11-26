@@ -156,6 +156,7 @@ void APS5_VABI _ZN3WTF10WorkerPool8postTaskEONS_8FunctionIFvvEEE(WorkerPool* sel
     {
         std::lock_guard lock(state.mutex);
         if (!state.waiting && state.threads.size() < state.numberOfWorkers) {
+            state.threads.reserve(state.threads.size() + 1);
             Pthread thread = nullptr;
             if (const int error = pthread_create_nid_postfix(&thread, nullptr, &RunWorker, &state))
                 throw std::runtime_error("WTF::WorkerPool: pthread_create failed with " + std::to_string(error));
