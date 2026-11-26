@@ -104,7 +104,11 @@ std::int64_t AllocateZeroed(void** out, std::size_t size) {
 struct AllocationGuard {
     void* pointer = nullptr;
     ~AllocationGuard() {
-        if (pointer) free_nid_postfix(pointer);
+        if (pointer) {
+            const int savedErrno = errno;
+            free_nid_postfix(pointer);
+            errno = savedErrno;
+        }
     }
     void Release() { pointer = nullptr; }
 };
@@ -149,6 +153,7 @@ std::int64_t APS5_VABI PKFree_nid_postfix(void** memory) {
         errno = savedErrno;
         if (!wrote) APS5_INVALID_ARG_EX;
         free_nid_postfix(target);
+        errno = savedErrno;
     }
     return WmpErrSuccess;
 }
