@@ -53,7 +53,7 @@ class PaginationTests(unittest.TestCase):
         served = ServedPages(pages, last=3)
         found = self.open_prs(served)
         self.assertEqual(set(found), set(range(1, 251)))
-        self.assertEqual(served.requested, [1, 3, 2, 1])
+        self.assertEqual(served.requested, [1, 3, 2, 1, 2, 3])
         self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "branch": "branch250", "author": "author250", "title": "", "depends": set(), "fixes": set()})
 
     def test_a_single_page_needs_one_request(self):
@@ -75,7 +75,7 @@ class PaginationTests(unittest.TestCase):
 
         found = self.open_prs(next_only)
         self.assertEqual(set(found), set(range(1, 6)))
-        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1, 2, 3])
 
     def test_next_only_full_final_page_checks_for_a_new_following_page(self):
         pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
@@ -90,7 +90,7 @@ class PaginationTests(unittest.TestCase):
             return result
 
         self.assertEqual(set(self.open_prs(next_only)), set(range(1, 202)))
-        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1, 2, 3])
 
     def test_invalid_or_repeated_next_pages_are_rejected(self):
         for query in ("per_page=100", "page=one", "page=0", "page=1", "page=3", "page=2&page=3", "page=&page=2"):
@@ -106,12 +106,12 @@ class PaginationTests(unittest.TestCase):
         pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
         served = ServedPages(pages, last=2)
         self.assertEqual(set(self.open_prs(served)), set(range(1, 202)))
-        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1, 2, 3])
 
     def test_a_full_last_page_followed_by_an_empty_one_stops(self):
         served = ServedPages({1: range(1, 101), 2: range(101, 201)}, last=2)
         self.assertEqual(set(self.open_prs(served)), set(range(1, 201)))
-        self.assertEqual(served.requested, [1, 2, 3, 1])
+        self.assertEqual(served.requested, [1, 2, 3, 1, 2])
 
     def test_a_pull_request_shifted_onto_two_pages_retries_the_scan(self):
         served = ServedPages({1: range(1, 101), 2: range(101, 151)}, last=2)
@@ -123,7 +123,7 @@ class PaginationTests(unittest.TestCase):
             return result
 
         self.assertEqual(set(self.open_prs(duplicate_once)), set(range(1, 151)))
-        self.assertEqual(served.requested, [1, 2, 1, 1, 2, 1])
+        self.assertEqual(served.requested, [1, 2, 1, 1, 2, 1, 2])
 
     def test_a_short_intermediate_page_fails_after_one_retry_without_duplicates(self):
         pages = {1: range(1, 101), 2: range(102, 201), 3: range(201, 251)}

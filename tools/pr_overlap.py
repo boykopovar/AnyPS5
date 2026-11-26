@@ -266,7 +266,7 @@ def open_pr_pages(url):
     head, first = read_pr_pages(url, 1)
     last_link = LAST_PAGE.search(head)
     if not last_link and not NEXT_LINK.search(head):
-        return first
+        return first, 1
     if len(first) != 1:
         raise ValueError("gh api returned multiple JSON arrays for pull request page 1")
     observed = {1: first[0]}
@@ -307,7 +307,16 @@ def open_pr_pages(url):
         if number in observed and [pr["number"] for pr in rows] != [pr["number"] for pr in observed[number]]:
             raise PaginationChanged(f"pull request IDs changed on page {number}")
         descending.append(rows)
-    return reversed(descending)
+    return reversed(descending), last
+
+
+def verify_open_prs(url, rows, last):
+    newest = max(rows, default=0)
+    for number in range(2, last + 1):
+        _, found = numbered_pr_page(url, number)
+        for pr in found:
+            if pr["number"] not in rows and pr["number"] < newest:
+                raise PaginationChanged(f"pull request #{pr['number']} on page {number} was missing from the scan")
 
 
 def open_prs(base):
@@ -316,12 +325,14 @@ def open_prs(base):
     for attempt in range(2):
         try:
             rows = {}
-            for found in open_pr_pages(url):
+            pages, last = open_pr_pages(url)
+            for found in pages:
                 for pr in found:
                     number = pr["number"]
                     if number in rows:
                         raise PaginationChanged(f"duplicate pull request #{number} in paginated results")
                     rows[number] = pr
+            verify_open_prs(url, rows, last)
             break
         except PaginationChanged as error:
             if attempt:

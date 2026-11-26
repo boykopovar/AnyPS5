@@ -102,7 +102,47 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "page", side_effect=page):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(2, 251)))
-        self.assertEqual(requested, [1, 3, 2, 1, 1, 3, 2, 1])
+        self.assertEqual(requested, [1, 3, 2, 1, 1, 3, 2, 1, 2, 3])
+
+    def test_pull_request_reopened_during_the_scan_does_not_hide_another(self):
+        requested = []
+
+        def page(url):
+            number = int(parse_qs(urlsplit(url).query)["page"][0])
+            opened = [item for item in range(1, 252) if item != 150 or len(requested) >= 2]
+            requested.append(number)
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in opened[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(requested, [1, 3, 2, 1, 2, 3, 1, 3, 2, 1, 2, 3])
+        self.assertEqual(set(found), set(range(1, 252)))
+
+    def test_pull_request_opened_during_verification_is_not_a_missing_one(self):
+        requested = []
+
+        def page(url):
+            number = int(parse_qs(urlsplit(url).query)["page"][0])
+            opened = list(range(1, 251)) + ([251] if len(requested) >= 4 else [])
+            requested.append(number)
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in opened[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(requested, [1, 3, 2, 1, 2, 3])
+        self.assertEqual(set(found), set(range(1, 251)))
 
     def test_single_page_preserves_author_head_and_dependencies(self):
         pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha", "ref": "contrib/topic"},
