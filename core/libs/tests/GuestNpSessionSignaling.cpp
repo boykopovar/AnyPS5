@@ -22,6 +22,8 @@ constexpr int AlreadyInitialized = static_cast<int>(0x80553302u);
 constexpr int ContextLimit = static_cast<int>(0x80553307u);
 constexpr int ContextNotFound = static_cast<int>(0x80553308u);
 constexpr int GroupNotFound = static_cast<int>(0x8055330Au);
+constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
+constexpr int NpSignedOut = static_cast<int>(0x80550006u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -48,6 +50,10 @@ int main() {
     Require(sceNpSessionSignalingGetCustomProperty(0, nullptr) == NotInitialized, "custom property before initialize");
     Require(sceNpSessionSignalingSetCustomProperty(0, nullptr, nullptr) == NotInitialized, "set custom property before initialize");
     Require(sceNpSessionSignalingRegisterInternalCallback(0, nullptr, nullptr) == NotInitialized, "register callback before initialize");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(nullptr, nullptr, nullptr) == NotInitialized, "manual UDP create-join before initialize");
+    Require(sceNpSessionSignalingManualUdpJoin(nullptr, nullptr, nullptr, nullptr) == NotInitialized, "manual UDP join before initialize");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(0, 0) == NotInitialized, "manual UDP establish before initialize");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(0) == NotInitialized, "manual UDP abort before initialize");
     Require(sceNpSessionSignalingInitialize(nullptr) == InvalidArgument, "null initialize parameter");
     errno = 71;
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument, "unmapped initialize parameter");
@@ -88,6 +94,28 @@ int main() {
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), nullptr) == InvalidArgument, "null context2 id");
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == 0, "context creation failed");
     const auto firstId = contextId;
+    unsigned char manualParam[0x28] = {};
+    std::uint32_t manualId = 0x5A5A5A5Au;
+    Require(sceNpSessionSignalingManualUdpCreateJoin(nullptr, &manualId, nullptr) == InvalidArgument, "manual UDP create-join without a parameter");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, nullptr, &manualId) == InvalidArgument, "manual UDP create-join without an id output");
+    Require(sceNpSessionSignalingManualUdpJoin(nullptr, "name", &manualId, nullptr) == InvalidArgument, "manual UDP join without a parameter");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, nullptr, &manualId, nullptr) == InvalidArgument, "manual UDP join without a name");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "name", nullptr, &manualId) == InvalidArgument, "manual UDP join without an id output");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "", &manualId, nullptr) == InvalidArgument, "manual UDP join with an empty name");
+    Require(manualId == 0x5A5A5A5Au, "a refused manual UDP call wrote the id");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(firstId, 0) == GroupNotFound, "manual UDP establish on a context with no group");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(firstId) == GroupNotFound, "manual UDP abort on a context with no group");
+    const std::int32_t manualUser = 1;
+    std::memcpy(manualParam, &manualUser, sizeof(manualUser));
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == NpSignedOut, "manual UDP create-join did not return NpManager's answer for the user");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "name", &manualId, nullptr) == NpSignedOut, "manual UDP join did not return NpManager's answer for the user");
+    const std::int32_t invalidUser = -1;
+    std::memcpy(manualParam, &invalidUser, sizeof(invalidUser));
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == NpInvalidArgument, "manual UDP create-join did not return NpManager's answer for user -1");
+    std::memcpy(manualParam, &manualUser, sizeof(manualUser));
+    Require(manualId == 0x5A5A5A5Au, "a refused manual UDP call wrote the id");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(firstId + 1000, 0) == ContextNotFound, "manual UDP establish on an unknown context");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(firstId + 1000) == ContextNotFound, "manual UDP abort on an unknown context");
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "duplicate user context");
     Require(contextId == firstId, "duplicate context modified output");
     std::array<std::uint32_t, 9> otherContexts{};
@@ -95,9 +123,11 @@ int main() {
         std::memcpy(contextParam, &userId, sizeof(userId));
         Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &otherContexts[userId - 1]) == 0, "create remaining contexts");
     }
+    Require(otherContexts[0] == firstId + 1 + 3 * 10, "three refused manual UDP calls did not each release the next slot");
     const std::int32_t overflowUser = 10;
     std::memcpy(contextParam, &overflowUser, sizeof(overflowUser));
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "context limit");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == ContextLimit, "manual UDP create-join with every context slot in use");
     Require(contextId == firstId, "context limit modified output");
     Require(sceNpSessionSignalingDestroyContext(firstId) == 0, "destroy first context");
     Require(sceNpSessionSignalingDestroyContext(firstId) == ContextNotFound, "destroy stale context");

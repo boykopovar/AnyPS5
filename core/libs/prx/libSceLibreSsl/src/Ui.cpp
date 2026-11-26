@@ -39,18 +39,12 @@ const char* Characters(const char* characters, const char* function) {
 
 template <typename T>
 bool ReadField(const T* field, T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, field, sizeof(T));
 }
 
 template <typename T>
 bool WriteField(T* field, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(field, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(field, &value, sizeof(T));
 }
 
 std::string GuestText(const char* result, const char* function, const char* what) {
@@ -60,9 +54,7 @@ std::string GuestText(const char* result, const char* function, const char* what
     char chunk[Page];
     for (;;) {
         const std::size_t size = Page - address % Page;
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
         const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
         text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
@@ -72,14 +64,44 @@ std::string GuestText(const char* result, const char* function, const char* what
 }
 
 void WriteResult(char* buffer, const char* bytes, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(buffer, bytes, size);
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable result buffer");
 }
+
+char DefaultUiMethodName[] = "OpenSSL default user interface";
+
+int APS5_VABI OpenConsole(void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL open_console");
+}
+
+int APS5_VABI WriteString(void*, void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL write_string");
+}
+
+int APS5_VABI ReadString(void*, void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL read_string");
+}
+
+int APS5_VABI CloseConsole(void*) {
+    NotImplemented_nid_no_patch("UI_OpenSSL close_console");
+}
+
+LibreSslUiMethod DefaultUiMethod {
+    DefaultUiMethodName,
+    OpenConsole,
+    WriteString,
+    nullptr,
+    ReadString,
+    CloseConsole,
+    nullptr,
+};
 }
 
 extern "C" {
+LibreSslUiMethod* APS5_VABI UI_OpenSSL_nid_postfix(void) {
+    return &DefaultUiMethod;
+}
+
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
     const std::string text = name ? GuestText(name, __func__, "name") : std::string();
     auto* method = static_cast<LibreSslUiMethod*>(malloc_nid_postfix(sizeof(LibreSslUiMethod)));

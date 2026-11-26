@@ -13,6 +13,9 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
+#include <map>
+#include <unordered_map>
 #include <unordered_set>
 #include <bit>
 #include <optional>
@@ -106,20 +109,22 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, state.stencilRefVariable);
         const auto reference = Unary(state, spv::OpBitcast, TypeU32(state), value);
-        const auto masked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), reference, ConstantU32(state, 0xffu));
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StencilReferenceOffset, state.program.Metadata().bindings.stencilReferenceDword);
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
         const auto expected = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
         if (state.stencilReplayLateStore) {
-            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffu)), [&] {
+            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffffu)), [&] {
                 const auto address = state.module.AllocateId();
                 state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), ConstantU32(state, 0u)));
                 state.module.AddFunction(spv::OpStore, address, ConstantU32(state, 0u), spv::MemoryAccessAlignedMask, 4u);
             });
         }
-        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
+        const auto ignored = Binary(state, spv::OpShiftRightLogical, TypeU32(state), expected, ConstantU32(state, 8u));
+        const auto checked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpNot, TypeU32(state), ignored), ConstantU32(state, 0xffu));
+        const auto differs = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpBitwiseXor, TypeU32(state), reference, expected), checked);
+        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), differs, ConstantU32(state, 0u)));
     }
     EmitReturnReleasingScratch(state);
 }
@@ -320,6 +325,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
         case IrOpcode::WindowLaneGuard: return Invoke(EmitWindowLaneGuard, ctx, inst);
         case IrOpcode::DescriptorFault: return Invoke(EmitDescriptorFault, ctx, inst);
+        case IrOpcode::SplitStateGuard: return Invoke(EmitSplitStateGuard, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
         case IrOpcode::ShaderClock: return Invoke(EmitShaderClock, ctx, inst);
@@ -343,6 +349,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SetVectorRegister: return Invoke(EmitSetVectorRegister, ctx, inst);
         case IrOpcode::LoadVectorWindow: return Invoke(EmitLoadVectorWindow, ctx, inst);
         case IrOpcode::StoreVectorWindow: return Invoke(EmitStoreVectorWindow, ctx, inst);
+        case IrOpcode::LoadSplitState: return Invoke(EmitLoadSplitState, ctx, inst);
+        case IrOpcode::StoreSplitState: return Invoke(EmitStoreSplitState, ctx, inst);
         case IrOpcode::GetGotoVariable: return Invoke(EmitGetGotoVariable, ctx, inst);
         case IrOpcode::SetGotoVariable: return Invoke(EmitSetGotoVariable, ctx, inst);
         case IrOpcode::GetScc: return Invoke(EmitGetScc, ctx, inst);
@@ -729,6 +737,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicAnd64: return Invoke(EmitImageAtomicAnd64, ctx, inst);
         case IrOpcode::ImageAtomicOr64: return Invoke(EmitImageAtomicOr64, ctx, inst);
         case IrOpcode::ImageAtomicXor64: return Invoke(EmitImageAtomicXor64, ctx, inst);
+        case IrOpcode::ImageAtomicInc64: return Invoke(EmitImageAtomicInc64, ctx, inst);
+        case IrOpcode::ImageAtomicDec64: return Invoke(EmitImageAtomicDec64, ctx, inst);
         case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
@@ -1023,7 +1033,8 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         members.erase(region[first++]);
     }
     const auto suffix = std::span(region).subspan(first);
-    auto exact = ctx;
+    std::vector<const IrValue*> fastDefined;
+    ctx.definitions.RecordAdded(&fastDefined);
     auto& state = ctx.state;
     const auto exceptional = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -1056,23 +1067,191 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
     }
     EmitLabel(state, exceptional);
-    for (const auto* value : suffix) EmitDirectInstruction(exact, *value);
+    ctx.definitions.RecordAdded(nullptr);
+    std::vector<std::pair<const IrValue*, std::uint32_t>> fastIds;
+    fastIds.reserve(fastDefined.size());
+    for (const auto* value : fastDefined) {
+        fastIds.emplace_back(value, *ctx.definitions.Find(value));
+        ctx.definitions.Erase(value);
+    }
+    std::vector<const IrValue*> exactDefined;
+    ctx.definitions.RecordAdded(&exactDefined);
+    for (const auto* value : suffix) EmitDirectInstruction(ctx, *value);
+    std::vector<std::uint32_t> exactIds;
+    exactIds.reserve(suffix.size());
+    for (const auto* output : suffix) exactIds.push_back(ctx.Def(output));
+    ctx.definitions.RecordAdded(nullptr);
+    for (const auto* value : exactDefined) ctx.definitions.Erase(value);
+    for (const auto& [value, id] : fastIds) ctx.definitions.Emplace(value, id);
     const auto exactLabel = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
-    for (const auto* output : suffix) {
+    for (std::size_t index = 0; index < suffix.size(); ++index) {
+        const auto* output = suffix[index];
         const auto result = state.module.AllocateId();
-        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
+        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exactIds[index], exactLabel);
         ctx.definitions.Erase(output);
         ctx.definitions.Emplace(output, result);
     }
     return true;
 }
 
+bool SelectArmArithmetic(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::BitCastF32U32: case IrOpcode::BitCastU32F32:
+    case IrOpcode::BitwiseAnd32: case IrOpcode::BitwiseOr32: case IrOpcode::BitwiseXor32:
+    case IrOpcode::IAdd32: case IrOpcode::ISub32: case IrOpcode::IMul32:
+    case IrOpcode::IEqual32: case IrOpcode::INotEqual32:
+    case IrOpcode::UGreaterThan32: case IrOpcode::ULessThan32:
+    case IrOpcode::LogicalAnd: case IrOpcode::LogicalOr: case IrOpcode::LogicalNot:
+    case IrOpcode::FPIsNan32: case IrOpcode::FPOrdLessThan32: case IrOpcode::FPUnordGreaterThanEqual32:
+    case IrOpcode::SelectU32: case IrOpcode::SelectF32: case IrOpcode::NanPropagateF32:
+    case IrOpcode::FPMul32: case IrOpcode::FPMad32: case IrOpcode::FPFma32:
+    case IrOpcode::FPAdd32: case IrOpcode::FPSub32: case IrOpcode::FPMin32: case IrOpcode::FPMinTri32:
+    case IrOpcode::FPFract32: case IrOpcode::FPFloor32: case IrOpcode::FPSaturate32:
+    case IrOpcode::FPSin: case IrOpcode::FPCos: case IrOpcode::FPSqrt:
+    case IrOpcode::CompositeExtractU32x4:
+        return true;
+    default: return false;
+    }
+}
+
+bool SelectConditionOperation(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::GetUserData: case IrOpcode::GetShaderBase: case IrOpcode::GetSrtResource:
+    case IrOpcode::GetBufferResource: case IrOpcode::ReadConst: case IrOpcode::ReadConstBuffer:
+    case IrOpcode::BitCastF32U32: case IrOpcode::BitCastU32F32:
+    case IrOpcode::BitwiseAnd32: case IrOpcode::BitwiseOr32: case IrOpcode::BitwiseXor32:
+    case IrOpcode::IEqual32: case IrOpcode::INotEqual32:
+    case IrOpcode::UGreaterThan32: case IrOpcode::ULessThan32:
+    case IrOpcode::LogicalAnd: case IrOpcode::LogicalOr: case IrOpcode::LogicalNot:
+    case IrOpcode::FPIsNan32: case IrOpcode::FPOrdLessThan32: case IrOpcode::FPUnordGreaterThanEqual32:
+        return true;
+    default: return false;
+    }
+}
+
+bool SelectEntryOperation(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    if (SelectArmArithmetic(inst.Opcode()) || SelectConditionOperation(inst.Opcode())) return true;
+    switch (inst.Opcode()) {
+    case IrOpcode::InstPrefetch: case IrOpcode::Waitcnt:
+    case IrOpcode::GetInterpolationParameter:
+    case IrOpcode::GetAttribute: case IrOpcode::GetBuiltin: case IrOpcode::GetAddressResource:
+    case IrOpcode::GetImageResource: case IrOpcode::GetSamplerResource: case IrOpcode::MakeImageAddress:
+    case IrOpcode::ImageSampleRaw:
+        return true;
+    case IrOpcode::LoadAddressU32:
+        return ctx.Memory(inst).planningOnly;
+    default: return false;
+    }
+}
+
+struct UniformSelectRegion {
+    const IrValue* condition = nullptr;
+    std::size_t arm = 1u;
+    std::vector<const IrValue*> outputs;
+    std::vector<const IrValue*> body;
+    std::unordered_set<const IrValue*> deferred;
+};
+
+UniformSelectRegion FindUniformSelectRegion(SpirvValueEmitContext& ctx, const IrBlock* block) {
+    auto& state = ctx.state;
+    UniformSelectRegion best;
+    if (state.laneCount != 1u || !state.requirements.readOnlyStorage || state.requirements.coherentBuffers || state.faultBufferVariable != 0u) return best;
+    const auto& info = state.program.Info();
+    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; }) ||
+        std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; })) return best;
+    std::vector<const IrBlock*> prefix;
+    for (auto* at = block;;) {
+        prefix.push_back(at);
+        if (at == state.program.BlockOrder().front()) {
+            if (!at->Predecessors().empty()) return best;
+            break;
+        }
+        if (at->Predecessors().size() != 1u || at->Predecessors().front()->Successors().size() != 1u || std::ranges::find(prefix, at->Predecessors().front()) != prefix.end()) return best;
+        at = at->Predecessors().front();
+    }
+    std::ranges::reverse(prefix);
+    std::unordered_set<const IrValue*> uniform;
+    std::map<std::uint32_t, std::vector<const IrValue*>> groups;
+    std::unordered_map<const IrValue*, std::size_t> positions;
+    std::vector<const IrValue*> order;
+    for (const auto* prior : prefix) {
+        for (const auto* inst : prior->Instructions()) {
+            if (!SelectEntryOperation(ctx, *inst)) {
+                if (prior != block) return best;
+                break;
+            }
+            if (inst->Opcode() == IrOpcode::GetUserData || (SelectConditionOperation(inst->Opcode()) && std::ranges::all_of(inst->Arguments(), [&](const IrValue* value) { value = value->Resolve(); return value->HasImmediate() || uniform.contains(value); }))) uniform.insert(inst);
+            if (prior != block) continue;
+            positions.emplace(inst, order.size());
+            order.push_back(inst);
+            if (inst->Opcode() == IrOpcode::SelectU32 && uniform.contains(inst->Argument(0)->Resolve())) groups[inst->Argument(0)->Resolve()->Id()].push_back(inst);
+        }
+    }
+    for (const auto& [id, outputs] : groups) {
+        const auto* condition = outputs.front()->Argument(0)->Resolve();
+        const auto insertion = positions.at(outputs.front());
+        for (const auto arm : {1u, 2u}) {
+            std::unordered_set<const IrValue*> members;
+            std::vector<const IrValue*> pending;
+            for (const auto* output : outputs) pending.push_back(output->Argument(arm)->Resolve());
+            while (!pending.empty()) {
+                const auto* value = pending.back();
+                pending.pop_back();
+                if (value->HasImmediate() || !positions.contains(value) || members.contains(value)) continue;
+                if (!SelectArmArithmetic(value->Opcode()) && value->Opcode() != IrOpcode::ImageSampleRaw && value->Opcode() != IrOpcode::MakeImageAddress) continue;
+                members.insert(value);
+                for (const auto* argument : value->Arguments()) pending.push_back(argument->Resolve());
+            }
+            for (const auto* output : outputs) members.erase(output);
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (auto it = members.begin(); it != members.end();) {
+                    const auto* value = *it;
+                    const bool escapes = std::ranges::any_of(value->Uses(), [&](const IrValue* user) {
+                        if (members.contains(user)) return false;
+                        return std::ranges::find(outputs, user) == outputs.end() || user->Argument(0)->Resolve() == value || user->Argument(3u - arm)->Resolve() == value;
+                    }) || std::ranges::any_of(state.program.Metadata().blockInfo, [&](const BlockInfo& blockInfo) { return blockInfo.condition != nullptr && blockInfo.condition->Resolve() == value; });
+                    if (escapes) { it = members.erase(it); changed = true; }
+                    else ++it;
+                }
+            }
+            if (members.size() <= best.body.size() || std::ranges::none_of(members, [](const IrValue* value) { return value->Opcode() == IrOpcode::ImageSampleRaw; })) continue;
+            const auto available = [&](const IrValue* value) { value = value->Resolve(); return value->HasImmediate() || members.contains(value) || value->Parent() != block || (positions.contains(value) && positions.at(value) < insertion); };
+            if (std::ranges::any_of(members, [&](const IrValue* value) { return !std::ranges::all_of(value->Arguments(), available); }) ||
+                std::ranges::any_of(outputs, [&](const IrValue* value) { return !std::ranges::all_of(value->Arguments(), available); })) continue;
+            best = {condition, arm, outputs, {}, std::move(members)};
+            for (const auto* value : order) if (best.deferred.contains(value)) best.body.push_back(value);
+        }
+    }
+    return best;
+}
+
+void EmitUniformSelectRegion(SpirvValueEmitContext& ctx, const UniformSelectRegion& region) {
+    auto& state = ctx.state;
+    const auto outside = state.currentLabel;
+    const auto body = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+    state.module.AddFunction(spv::OpBranchConditional, ctx.Def(region.condition), region.arm == 1u ? body : merge, region.arm == 1u ? merge : body);
+    EmitLabel(state, body);
+    for (const auto* value : region.body) EmitDirectInstruction(ctx, *value);
+    const auto inside = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    for (const auto* output : region.outputs) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, TypeU32(state), result, ctx.Def(output->Argument(region.arm)), inside, ctx.Def(output->Argument(3u - region.arm)), outside);
+        ctx.Define(*output, result);
+    }
+}
+
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {
     auto& state = ctx.state;
     state.currentBlock = block;
     EmitLabel(state, ctx.Label(block));
+    const auto selected = FindUniformSelectRegion(ctx, block);
     std::unordered_map<const IrValue*, std::vector<const IrValue*>> regions;
     std::unordered_set<const IrValue*> grouped;
     const auto* info = BlockInfoFor(state.program, block);
@@ -1090,7 +1269,8 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             region.clear();
         };
         for (const auto* value : block->Instructions()) {
-            if (RegionArithmetic(value)) region.push_back(value);
+            if (selected.deferred.contains(value) || std::ranges::find(selected.outputs, value) != selected.outputs.end()) finish();
+            else if (RegionArithmetic(value)) region.push_back(value);
             else finish();
         }
         finish();
@@ -1101,6 +1281,9 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     bool ldsWritten = true;
     bool ldsRead = false;
     for (const IrValue* inst : block->Instructions()) {
+        if (selected.deferred.contains(inst)) continue;
+        if (!selected.outputs.empty() && inst == selected.outputs.front()) EmitUniformSelectRegion(ctx, selected);
+        if (std::ranges::find(selected.outputs, inst) != selected.outputs.end()) continue;
         if (const auto found = regions.find(inst); found != regions.end()) {
             if (!EmitNanRegion(ctx, found->second)) for (const auto* value : found->second) EmitDirectInstruction(ctx, *value);
         }
@@ -1343,6 +1526,12 @@ void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
     auto& state = ctx.state;
     if (state.faultBufferVariable == 0) ctx.Fail(inst, "reports an invalid descriptor without a fault buffer");
     EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, low, high, ConstantU32(state, 0u), programCounter, BdaAbi::FaultReason::InvalidDescriptor); });
+}
+
+void EmitSplitStateGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t saved, std::uint32_t current, std::uint32_t reg) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks an assumed split state register without a fault buffer");
+    EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, saved, current, reg, ConstantU32(state, 0u), BdaAbi::FaultReason::SplitState); });
 }
 
 void EmitControlNop(SpirvValueEmitContext& context) {

@@ -31,9 +31,7 @@ int APS5_VABI libSceVnaWebsocketUnknown_94G0OCEujjA_nid_no_patch() {
 }
 APS5_EXPORT("94G0OCEujjA", libSceVnaWebsocketUnknown_94G0OCEujjA_nid_no_patch);
 
-int APS5_VABI libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch() {}
 APS5_EXPORT("Bw0-YBkPNm4", libSceVnaWebsocketUnknown_Bw0_minus_YBkPNm4_nid_no_patch);
 
 int APS5_VABI libSceVnaWebsocketUnknown_DP4477brt60_nid_no_patch() {

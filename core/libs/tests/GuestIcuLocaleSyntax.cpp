@@ -118,7 +118,15 @@ void CheckKeywordUpdates() {
         {"de@collation=phonebook", "collation", nullptr, "de"},
         {"en_US", "calendar", nullptr, "en_US"},
         {"en_US", "calendar", "", "en_US"},
-        {"en_US@ calendar = islamic", "calendar", "japanese", "en_US@calendar=japanese"}
+        {"en_US@ calendar = islamic", "calendar", "japanese", "en_US@calendar=japanese"},
+        {"", "currency", "EUR", "@currency=EUR"},
+        {"", "Calendar", "japanese", "@calendar=japanese"},
+        {"@x=y", "calendar", "japanese", "@calendar=japanese;x=y"},
+        {"@calendar=gregorian", "calendar", "japanese", "@calendar=japanese"},
+        {"@x=y", "x", nullptr, ""},
+        {"@x=y", "x", "", ""},
+        {"@calendar=gregorian", "calendar", nullptr, ""},
+        {"@x=y", "calendar", nullptr, "@x=y"}
     };
     for (const auto& item : cases) {
         const auto initialLength = static_cast<std::int32_t>(std::strlen(item.initial));

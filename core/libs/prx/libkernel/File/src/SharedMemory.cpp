@@ -867,7 +867,11 @@ public:
         return ::fstat(descriptor, &status) == 0;
 #endif
     }
+#ifdef _WIN32
+    struct _stat64 status{};
+#else
     struct stat status{};
+#endif
 
 private:
     static int Duplicate(int value) {

@@ -75,6 +75,37 @@ class BenchmarkCompareTests(unittest.TestCase):
                 self.series_run("B2", "candidate", "2", [2000] * 500),
                 self.series_run("A2", "baseline", "2", [2500] * 400)]
 
+    def test_capture_changed_while_reading_is_rejected(self):
+        path = self.write_capture(compressed=False)
+        before = path.stat()
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns - 2_000_000_000))
+        after = path.stat()
+        with patch.object(benchmark_compare.os, "fstat", side_effect=[before, after]):
+            with self.assertRaisesRegex(ValueError, "input changed while reading"):
+                benchmark_compare.read_benchmark_json(path)
+
+    def test_exponent_overflow_in_an_extension_is_rejected_as_nonfinite_json(self):
+        path = self.root / "capture.json"
+        path.write_text('{"extension":{"time":1e999}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+            benchmark_compare.read_benchmark_json(path)
+
+    def test_series_rejects_a_capture_path_containing_nul_at_validation(self):
+        path = self.write_series([{"id": "A", "arm": "baseline", "pair": "1", "capture": "bad\0.json"}])
+        with self.assertRaisesRegex(ValueError, "capture contains a NUL character"):
+            benchmark_compare.load_benchmark_series(path)
+
+    def test_case_variants_of_full_git_hashes_do_not_indicate_build_drift(self):
+        for length in (40, 64):
+            with self.subTest(length=length):
+                sha = "a" * length
+                runs = [self.series_run("A1", "baseline", "1", [1000], sha),
+                        self.series_run("B1", "candidate", "1", [2000]),
+                        self.series_run("A2", "baseline", "2", [3000], sha.upper()),
+                        self.series_run("B2", "candidate", "2", [4000])]
+                report = benchmark_compare.compare_benchmark_runs(self.write_series(runs), require_matching_context=True)
+                self.assertEqual(report["runs"][2]["summary"]["metadata"]["commit"], sha.upper())
+
     def cli(self, *arguments):
         status = 0
         with patch.object(sys, "stdout", new_callable=io.StringIO) as output, \
@@ -163,6 +194,11 @@ class BenchmarkCompareTests(unittest.TestCase):
         for key in ("fps", "mean_frame_ms", "gpu_busy_ms_per_frame"):
             self.assertIsNone(metrics[key])
         self.assertTrue(all(value is None for value in metrics["frame_ms"].values()))
+
+    def test_zero_frame_interval_does_not_claim_a_serialization_mismatch(self):
+        result = self.summarize(benchmark_capture([benchmark_interval([])]))
+        self.assertTrue(any("no recorded frame intervals" in warning for warning in result["warnings"]))
+        self.assertFalse(any("serialization precision" in warning for warning in result["warnings"]))
 
     def test_zero_microsecond_frames_are_legal_without_infinite_throughput(self):
         metrics = self.summarize(benchmark_capture([benchmark_interval([0, 0], end=0.001)]))["metrics"]
@@ -315,6 +351,25 @@ class BenchmarkCompareTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     benchmark_compare.compare_benchmark_runs(path, require_matching_context=True)
 
+    def test_trace_output_directory_is_not_comparison_context(self):
+        for directories in (("baseline", "candidate"), (None, "candidate"), ("baseline", None)):
+            with self.subTest(directories=directories):
+                runs = self.abba()[:2]
+                environments = []
+                for run, directory in zip(runs, directories):
+                    capture = self.root / run["capture"]
+                    data = json.loads(gzip.decompress(capture.read_bytes()))
+                    if directory is not None:
+                        data["env"]["APS5_TRACE_DIR"] = directory
+                    environments.append(data["env"])
+                    self.write_capture(capture.name, data)
+                result = self.cli("compare", self.write_series(runs), "--require-matching-context", "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["configuration_differences"], [])
+                self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+                self.assertEqual([run["summary"]["metadata"]["env"] for run in report["runs"]], environments)
+
     def test_same_context_different_arm_commits_is_allowed_but_arm_drift_is_reported(self):
         path = self.write_series(self.abba())
         self.assertEqual(benchmark_compare.compare_benchmark_runs(path, True)["configuration_differences"], [])
@@ -382,6 +437,19 @@ class BenchmarkCompareTests(unittest.TestCase):
         runs[1]["capture"] = alias.name
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
+
+    def test_missing_inode_uses_capture_hashes(self):
+        runs = self.abba()[:2]
+        path = self.write_series(runs)
+        captures = [benchmark_compare.load_benchmark(self.root / run["capture"]) for run in runs]
+        for capture in captures:
+            capture["source"]["_identity"] = (1, 0)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=captures):
+            report = benchmark_compare.compare_benchmark_runs(path)
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=[captures[0]] * 2):
+            with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                benchmark_compare.compare_benchmark_runs(path)
 
     def test_expected_raw_hash_is_verified_and_retained(self):
         runs = self.abba()[:2]
@@ -599,6 +667,61 @@ class BenchmarkHelperTests(unittest.TestCase):
                 benchmark_compare.read_benchmark_json(root)
             with self.assertRaisesRegex(ValueError, "input must be a regular file"):
                 benchmark_compare.read_benchmark_json(root / "missing.json")
+
+class BenchmarkMetricsTests(unittest.TestCase):
+    def test_quantiles_fps_and_means_from_one_interval(self):
+        interval = {"frame_us": [3000, 1000, 2000], "start_s": 0.0, "end_s": 1.5, "gpu_busy_ms": 3.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["frames"], 3)
+        self.assertEqual(metrics["elapsed_s"], 1.5)
+        self.assertEqual(metrics["fps"], 2.0)
+        self.assertEqual(metrics["mean_frame_ms"], 2.0)
+        self.assertEqual(metrics["frame_ms"], {"p50": 2.0, "p90": 3.0, "p99": 3.0, "max": 3.0})
+        self.assertEqual(metrics["gpu_busy_ms_per_frame"], 1.0)
+        self.assertEqual((metrics["zero_frames"], metrics["saturated_frames"]), (0, 0))
+
+    def test_no_frames_gives_no_rates(self):
+        metrics = benchmark_compare.benchmark_metrics([])
+        self.assertEqual(metrics["frames"], 0)
+        self.assertIsNone(metrics["fps"])
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["gpu_busy_ms_per_frame"])
+        self.assertEqual(metrics["frame_ms"], {"p50": None, "p90": None, "p99": None, "max": None})
+
+    def test_saturated_frame_hides_mean_and_its_quantile(self):
+        interval = {"frame_us": [1000, benchmark_compare.UINT32_MAX], "start_s": 0.0, "end_s": 1.0, "gpu_busy_ms": 0.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertEqual(metrics["saturated_frames"], 1)
+        self.assertIsNone(metrics["mean_frame_ms"])
+        self.assertIsNone(metrics["frame_ms"]["max"])
+
+    def test_zero_length_wall_span_has_no_fps_and_counts_zero_frames(self):
+        interval = {"frame_us": [0, 5000], "start_s": 2.0, "end_s": 2.0, "gpu_busy_ms": 1.0}
+        metrics = benchmark_compare.benchmark_metrics([interval])
+        self.assertIsNone(metrics["fps"])
+        self.assertEqual(metrics["zero_frames"], 1)
+
+
+class BenchmarkContextTests(unittest.TestCase):
+    def test_collects_identity_environment_and_selection(self):
+        summary = {
+            "metadata": {"gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+                         "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000, "env": {"A": "1", "B": "2"}},
+            "intervals": [{"ordinal": 1, "resolution": "1080p"}, {"ordinal": 3, "resolution": "4k"}],
+        }
+        self.assertEqual(benchmark_compare.benchmark_context(summary), {
+            "gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+            "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000,
+            "env.A": "1", "env.B": "2",
+            "selection.ordinals": [1, 3], "selection.resolutions": ["1080p", "4k"],
+        })
+
+    def test_missing_identity_fields_are_none(self):
+        context = benchmark_compare.benchmark_context({"metadata": {"env": {}}, "intervals": []})
+        self.assertIsNone(context["gpu"])
+        self.assertIsNone(context["memory_mib"])
+        self.assertEqual(context["selection.ordinals"], [])
+        self.assertFalse([key for key in context if key.startswith("env.")])
 
 
 if __name__ == "__main__":

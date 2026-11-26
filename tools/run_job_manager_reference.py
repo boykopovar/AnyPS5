@@ -117,6 +117,7 @@ def run(args, directory):
     if args.host:
         environment["ANYPS5_JOB_MANAGER_HOST"] = "1"
     results = []
+    attempts = {}
     for case in args.cases:
         environment["ANYPS5_JOB_MANAGER_CASE"] = case
         try:
@@ -128,8 +129,11 @@ def run(args, directory):
         except subprocess.TimeoutExpired as error:
             log = (error.stdout or b"") + (error.stderr or b"")
             status, code = "timeout", None
-        (directory / f"{case}.log").write_bytes(log)
-        results.append({"case": case, "status": status, "returncode": code})
+        attempt = attempts.get(case, 0) + 1
+        attempts[case] = attempt
+        filename = f"{case}.log" if attempt == 1 else f"{case}-{attempt}.log"
+        (directory / filename).write_bytes(log)
+        results.append({"case": case, "status": status, "returncode": code, "log": filename})
         print(json.dumps(results[-1]), flush=True)
     summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash,
                "selection": getattr(args, "suite", None) or "custom",

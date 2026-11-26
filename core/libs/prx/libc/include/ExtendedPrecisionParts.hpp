@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 
 namespace LibcDetail {
@@ -321,5 +322,123 @@ T* ScaleWide(T* p, int n, int exponent) {
     return p;
 }
 
+
+struct ExtendedWords {
+    std::uint64_t mantissa;
+    std::uint16_t signExponent;
+};
+
+struct ExtendedStep {
+    short code;
+    bool stored;
+};
+
+inline constexpr short FiniteCode = -1;
+inline constexpr short ZeroCode = 0;
+inline constexpr short InfiniteCode = 1;
+
+inline ExtendedWords WordsOf(const long double& value) {
+    ExtendedWords words;
+    std::memcpy(&words.mantissa, &value, sizeof(words.mantissa));
+    std::memcpy(&words.signExponent, reinterpret_cast<const unsigned char*>(&value) + 8, sizeof(words.signExponent));
+    return words;
+}
+
+inline void StoreWords(long double& value, const ExtendedWords& words) {
+    std::memcpy(&value, &words.mantissa, sizeof(words.mantissa));
+    std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &words.signExponent, sizeof(words.signExponent));
+}
+
+inline short SpecialCode(const ExtendedWords& words) {
+    return (words.mantissa & 0x7fffffffffffffffull) != 0 ? NotANumber : InfiniteCode;
+}
+
+inline short TestWords(const ExtendedWords& words) {
+    if ((words.signExponent & 0x7fff) == 0x7fff) return SpecialCode(words);
+    if ((words.mantissa >> 63) != 0) return FiniteCode;
+    return (words.signExponent & 0x7fff) != 0 || words.mantissa != 0 ? short{-2} : ZeroCode;
+}
+
+inline ExtendedStep TruncateExtended(long double& value, short scale) {
+    ExtendedWords words = WordsOf(value);
+    const int field = words.signExponent & 0x7fff;
+    if (field == 0x7fff) return {SpecialCode(words), false};
+    if (words.mantissa == 0) return {ZeroCode, false};
+    const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
+    if (drop <= 0) return {ZeroCode, false};
+    if (drop >= 64) {
+        StoreWords(value, {0, static_cast<std::uint16_t>(words.signExponent & 0x8000)});
+        return {FiniteCode, true};
+    }
+    const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
+    const std::uint64_t lost = words.mantissa & mask;
+    words.mantissa &= ~mask;
+    StoreWords(value, words);
+    return {lost != 0 ? FiniteCode : ZeroCode, true};
+}
+
+inline ExtendedStep ScaleExtendedBits(long double& value, std::int64_t exponent) {
+    const ExtendedWords words = WordsOf(value);
+    if ((words.signExponent & 0x7fff) == 0x7fff) return {SpecialCode(words), false};
+    if (words.mantissa == 0) {
+        StoreWords(value, {0, static_cast<std::uint16_t>(words.signExponent & 0x8000)});
+        return {ZeroCode, true};
+    }
+    const std::uint16_t sign = words.signExponent & 0x8000;
+    const int field = words.signExponent & 0x7fff;
+    const int shift = std::countl_zero(words.mantissa);
+    const std::uint64_t mantissa = words.mantissa << shift;
+    const std::int64_t normalized = (field != 0 ? field : 1) - shift;
+    ExtendedWords scaled{mantissa, sign};
+    short code = FiniteCode;
+    if (exponent > 0 && 0x7fff - normalized <= exponent) {
+        scaled = {0x8000000000000000ull, static_cast<std::uint16_t>(sign | 0x7fff)};
+        code = InfiniteCode;
+    } else if (-normalized < exponent) {
+        scaled.signExponent = static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(normalized + exponent));
+    } else if (normalized + exponent < -63) {
+        scaled = {0, 0};
+        code = ZeroCode;
+    } else {
+        const int dropped = static_cast<int>(1 - normalized - exponent);
+        const std::uint64_t lost = dropped == 64 ? mantissa : mantissa & ((std::uint64_t{1} << dropped) - 1);
+        scaled.mantissa = dropped == 64 ? 0 : mantissa >> dropped;
+        if (lost != 0) {
+            const std::uint64_t half = std::uint64_t{1} << (dropped - 1);
+            const int rounding = _Fltrounds_nid_postfix();
+            const bool up = rounding == 3 ? sign != 0 : rounding == 2 ? sign == 0 : rounding != 0 && (lost > half || (lost == half && (scaled.mantissa & 1) != 0));
+            if (up) ++scaled.mantissa;
+        }
+        if (scaled.mantissa == 0x8000000000000000ull) scaled.signExponent = static_cast<std::uint16_t>(sign | 1);
+        if (scaled.mantissa == 0) code = ZeroCode;
+    }
+    StoreWords(value, scaled);
+    return {code, true};
+}
+
+inline ExtendedStep UnscaleExtended(short& exponent, long double& value) {
+    const ExtendedWords words = WordsOf(value);
+    exponent = 0;
+    if ((words.signExponent & 0x7fff) == 0x7fff) return {SpecialCode(words), false};
+    if (words.mantissa == 0) return {ZeroCode, false};
+    const int field = words.signExponent & 0x7fff;
+    const int shift = std::countl_zero(words.mantissa);
+    exponent = static_cast<short>((field != 0 ? field - 0x3ffe : -16381) - shift);
+    StoreWords(value, {words.mantissa << shift, static_cast<std::uint16_t>((words.signExponent & 0x8000) | 0x3ffe)});
+    return {FiniteCode, true};
+}
+
+template<>
+struct Precision<long double> {
+    static constexpr short PartBits = 32;
+    static constexpr std::int64_t FirstExponent = 0x8000;
+    static constexpr long double NanBits = std::numeric_limits<long double>::quiet_NaN();
+    static short Test(long double* value) { return TestWords(WordsOf(*value)); }
+    static short Unscale(short* exponent, long double* value) { return UnscaleExtended(*exponent, *value).code; }
+    static void Truncate(long double* value, short bits) { TruncateExtended(*value, bits); }
+    static void Scale(long double* value, std::int64_t exponent) { ScaleExtendedBits(*value, exponent); }
+    static long double Ldexp(long double value, int exponent) { return ldexpl_nid_postfix(value, exponent); }
+    static void Raise(int exceptions) { _Feraise_nid_postfix(exceptions); }
+};
 
 }

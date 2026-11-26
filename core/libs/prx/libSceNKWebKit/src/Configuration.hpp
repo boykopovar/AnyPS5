@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceNKWebKit/src/Object.hpp"
+#include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
 #include <optional>
@@ -9,6 +10,31 @@
 #include <vector>
 
 namespace NKWebKit {
+
+class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
+public:
+    Retained<Object> context;
+    Retained<Object> pageGroup;
+    Retained<Object> userContentController;
+    Retained<Object> preferences;
+    Retained<Object> relatedPage;
+    Retained<Object> websiteDataStore;
+    bool initialCapitalizationEnabled = false;
+    double cpuLimit = 0.0;
+
+    Retained<PageConfiguration> Duplicate() const {
+        auto copy = Make<PageConfiguration>();
+        copy->context = context;
+        copy->pageGroup = pageGroup;
+        copy->userContentController = userContentController;
+        copy->preferences = preferences;
+        copy->relatedPage = relatedPage;
+        copy->websiteDataStore = websiteDataStore;
+        copy->initialCapitalizationEnabled = initialCapitalizationEnabled;
+        copy->cpuLimit = cpuLimit;
+        return copy;
+    }
+};
 
 class Page : public ObjectOf<ObjectType::Page> {
 public:
@@ -24,7 +50,6 @@ public:
     SizeValue fixedLayoutSize{ 0.0, 0.0 };
     std::uint32_t paginationMode = 0;
     bool paginationBehavesLikeColumns = false;
-    bool paginationLineGridEnabled = false;
     double gapBetweenPages = 0.0;
     double pageLength = 0.0;
     bool isPinnedToLeftSide = true;
@@ -42,6 +67,7 @@ public:
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
     bool isClosed = false;
+    bool activeDOMObjectsAndAnimationsSuspended = false;
     std::optional<std::u16string> title;
     Retained<URL> activeURL;
     Retained<URL> provisionalURL;
@@ -51,8 +77,24 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::vector<std::string> loadedSubresourceDomains;
+    bool userMediaStateCleared = false;
+    bool wheelEventTestMonitorCleared = false;
+    bool pointerLockAllowed = false;
+    bool isTerminated = false;
+    std::int32_t processIdentifier = 1000;
+    std::vector<Retained<Object>> relatedPages;
+    Retained<Object> websitePolicies;
+    std::uint32_t layoutMilestones = 0;
+    std::uint32_t mockCameraOrientation = 0;
+    float mediaVolume = 1.0f;
+    std::uint32_t mutedState = 0;
+    bool mayStartMediaWhenInWindow = true;
+    std::uint32_t mediaState = 0;
+    bool allowsRemoteInspection = false;
+    Retained<URL> pendingAPIRequestURL;
+    Retained<PageConfiguration> configuration;
 };
-class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
@@ -83,7 +125,6 @@ public:
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
-    std::vector<std::u16string> overrideLanguages;
 
     Retained<ProcessPoolConfiguration> Duplicate() const {
         auto copy = Make<ProcessPoolConfiguration>();
@@ -102,7 +143,6 @@ public:
         copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
         copy->usesWebProcessCache = usesWebProcessCache;
         copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
-        copy->overrideLanguages = overrideLanguages;
         return copy;
     }
 };
@@ -115,7 +155,6 @@ public:
     Retained<ProcessPoolConfiguration> configuration;
     mutable Retained<GeolocationManager> geolocationManager;
     bool usesSingleWebProcess = false;
-    std::uint32_t cacheModel = 0;
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
     std::vector<std::string> visitedLinks;
@@ -133,31 +172,31 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
-};
-
-class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
-public:
-    Retained<Object> context;
-    Retained<Object> pageGroup;
-    Retained<Object> userContentController;
-    Retained<Object> preferences;
-    Retained<Object> relatedPage;
-    Retained<Object> websiteDataStore;
-    bool initialCapitalizationEnabled = false;
-    double cpuLimit = 0.0;
+    bool initialProcessWarmed = false;
+    bool useSeparateServiceWorkerProcess = false;
+    bool currentModifierStateCleared = false;
+std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
+    std::uint32_t processModel = 0;
+    bool usesNetworkProcess = true;
+    bool diskCacheSpeculativeValidationEnabled = false;
+    bool canHandleHTTPSServerTrustEvaluation = true;
+    Retained<String> customWebContentServiceBundleIdentifier;
+    std::uint32_t terminatedNetworkProcessesCount = 0;
+mutable Retained<IconDatabase> iconDatabase;
+    std::optional<std::u16string> iconDatabasePath;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
 public:
-    std::optional<std::u16string> applicationCacheDirectory;
-    std::optional<std::u16string> networkCacheDirectory;
-    std::optional<std::u16string> indexedDBDatabaseDirectory;
-    std::optional<std::u16string> localStorageDirectory;
-    std::optional<std::u16string> webSQLDatabaseDirectory;
-    std::optional<std::u16string> cacheStorageDirectory;
-    std::optional<std::u16string> mediaKeysStorageDirectory;
-    std::optional<std::u16string> resourceLoadStatisticsDirectory;
-    std::optional<std::u16string> serviceWorkerRegistrationDirectory;
+    std::optional<std::u16string> applicationCacheDirectory = u"/app0/applications";
+    std::optional<std::u16string> networkCacheDirectory = u"/app0/WebKitCache";
+    std::optional<std::u16string> indexedDBDatabaseDirectory = u"/app0/indexeddb";
+    std::optional<std::u16string> localStorageDirectory = u"/app0/local";
+    std::optional<std::u16string> webSQLDatabaseDirectory = u"/app0/websql";
+    std::optional<std::u16string> cacheStorageDirectory = u"/app0/CacheStorage";
+    std::optional<std::u16string> mediaKeysStorageDirectory = u"/app0/mediakeys";
+    std::optional<std::u16string> resourceLoadStatisticsDirectory = u"/app0/itp";
+    std::optional<std::u16string> serviceWorkerRegistrationDirectory = u"/app0/serviceworkers";
     std::optional<std::u16string> cookieStorageFile;
     std::uint64_t perOriginStorageQuota = 1000ULL * 1024ULL * 1024ULL;
     bool networkCacheSpeculativeValidationEnabled = false;
@@ -185,6 +224,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserStyleSheet final : public ObjectOf<ObjectType::UserStyleSheet> {
@@ -196,6 +236,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserContentController final : public ObjectOf<ObjectType::UserContentController> {
@@ -248,12 +289,15 @@ public:
 class PageGroup final : public ObjectOf<ObjectType::PageGroup> {
 public:
     explicit PageGroup(std::u16string identifier)
-        : identifier(std::move(identifier)), userContentController(Make<UserContentController>()) {}
+        : identifier(std::move(identifier)),
+          preferences(Make<Preferences>(this->identifier)),
+          userContentController(Make<UserContentController>()) {}
 
     std::u16string identifier;
     Retained<Object> preferences;
     Retained<UserContentController> userContentController;
     std::vector<Retained<Object>> userStyleSheets;
+    std::u16string userStyleSheetLocation;
 };
 
 }  // namespace NKWebKit

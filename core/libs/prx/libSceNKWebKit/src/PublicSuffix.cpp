@@ -29,6 +29,7 @@
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstring>
@@ -39,7 +40,16 @@
 namespace {
 
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
+
+String LoadString(const String* string, const char* operation) {
+    if (!string) throw std::invalid_argument(std::string(operation) + ": null string");
+    StringImpl* impl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&impl, string, sizeof(impl))) throw std::invalid_argument(std::string(operation) + ": unreadable string");
+    if (impl) impl->refCount += 2;
+    return String(impl);
+}
 
 const psl_ctx_t* BuiltinSuffixes(const char* operation) {
     const psl_ctx_t* suffixes = psl_builtin();
@@ -90,18 +100,17 @@ String TopPrivatelyControlledDomainInternal(const psl_ctx_t* suffixes, const cha
 }
 
 extern "C" bool APS5_VABI _ZN7WebCore14isPublicSuffixERKN3WTF6StringE(const String* domain) {
-    if (!domain) throw std::invalid_argument("WebCore::isPublicSuffix: null string");
-    return IsPublicSuffix(*domain);
+    return IsPublicSuffix(LoadString(domain, "WebCore::isPublicSuffix"));
 }
 
 extern "C" String APS5_VABI _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE(const String* domain) {
     constexpr const char* operation = "WebCore::topPrivatelyControlledDomain";
-    if (!domain) throw std::invalid_argument(std::string(operation) + ": null string");
-    if (!domain->impl || !domain->impl->length) return String();
-    const auto view = NKWebKit::WtfAbi::ViewOf(domain->impl);
+    String string = LoadString(domain, operation);
+    if (!string.impl || !string.impl->length) return String();
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
     if (!view.data) throw std::invalid_argument(std::string(operation) + ": null character buffer");
-    if (_ZN3WTF3URL15hostIsIPAddressENS_10StringViewE(view) || !ContainsOnlyASCII(view)) return *domain;
-    auto lowercase = _ZNK3WTF6String23convertToASCIILowercaseEv(domain);
+    if (_ZN3WTF3URL15hostIsIPAddressENS_10StringViewE(view) || !ContainsOnlyASCII(view)) return string;
+    auto lowercase = _ZNK3WTF6String23convertToASCIILowercaseEv(&string);
     if (Equals(NKWebKit::WtfAbi::ViewOf(lowercase.impl), "localhost")) return lowercase;
     if (IsPublicSuffix(lowercase)) return String();
     const auto utf8 = Utf8(lowercase, operation);
