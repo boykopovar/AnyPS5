@@ -2201,8 +2201,11 @@ std::future<bool> failedSerialWait(Recorder& recorder, std::uint64_t serial) {
     const auto entered = countedSerialWaits.load();
     auto waited = std::async(std::launch::async, [&recorder, serial] {
         countingSerialWaits = true;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         try {
-            recorder.WaitSerial(serial);
+            while (!recorder.WaitSerialFor(serial, 100'000'000ull)) {
+                if (std::chrono::steady_clock::now() > deadline) return false;
+            }
         } catch (const std::exception&) {
             return true;
         }
