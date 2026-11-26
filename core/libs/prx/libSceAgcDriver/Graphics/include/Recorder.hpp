@@ -240,6 +240,7 @@ public:
     }
 
     void KeepBytes(const void* owner, std::size_t bytes);
+    void CountRetainedBytes(const void* owner, std::size_t bytes);
     void ForgetKeptBytes(const void* owner);
     enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);

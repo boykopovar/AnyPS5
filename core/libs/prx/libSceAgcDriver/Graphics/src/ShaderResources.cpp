@@ -2095,10 +2095,17 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                     }
                     std::vector<std::shared_ptr<ShaderResources>> resources;
                     const bool removed = SharedResourceCache().TryRemoveImage(image.get(), &resources);
-                    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
-                        for (auto& resource : resources) recorder->Keep(std::move(resource));
+                    auto* recorder = Recorder::Active();
+                    if (recorder != nullptr && recorder->Recording()) {
+                        for (auto& resource : resources) {
+                            resource->KeepStorageImageBytes(*recorder);
+                            recorder->Keep(std::move(resource));
+                        }
                     }
                     resources.clear();
+                    if (recorder != nullptr && image.use_count() > 1) {
+                        recorder->CountRetainedBytes(image.get(), static_cast<std::size_t>(heldBytes(*image)));
+                    }
                     ++storageEntries;
                     image.reset();
                     freed = ImageMemoryReleasedBytes() - releasedBefore;

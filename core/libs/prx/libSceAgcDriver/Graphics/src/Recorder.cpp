@@ -3788,6 +3788,20 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (open->keptOwners.emplace(owner, bytes).second) open->keptBytes += bytes;
 }
 
+void Recorder::CountRetainedBytes(const void* owner, std::size_t bytes) {
+    GuestMemory::AssertGpuLockHeld("Recorder::CountRetainedBytes");
+    if (owner == nullptr || bytes == 0) return;
+    const auto count = [&](Batch& batch) -> std::size_t {
+        if (batch.keptOwners.contains(owner)) return 0;
+        if (std::none_of(batch.kept.begin(), batch.kept.end(), [owner](const auto& kept) { return kept.get() == owner; })) return 0;
+        batch.keptOwners.emplace(owner, bytes);
+        batch.keptBytes += bytes;
+        return bytes;
+    };
+    if (open != nullptr) count(*open);
+    for (auto& batch : inFlight) inFlightKeptBytes += count(*batch);
+}
+
 void Recorder::ForgetKeptBytes(const void* owner) {
     if (owner == nullptr) return;
     const auto forget = [&](Batch& batch) {

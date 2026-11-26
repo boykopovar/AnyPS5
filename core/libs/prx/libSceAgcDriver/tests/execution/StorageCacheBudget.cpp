@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -16,6 +17,12 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+}
 
 namespace {
 
@@ -84,7 +91,32 @@ std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint
     return StorageTexture::FindLive(address, SurfaceBytes);
 }
 
-int RetainedBatch() {
+enum class RetainedBatchCase { Budget, ReleaseOpen, ReleaseSubmitted };
+
+void CheckReleasedUpload(AgcDriver::VulkanDevice& device, Recorder& recorder, std::uint64_t address, bool submitted) {
+    std::weak_ptr<StorageTexture> uploaded;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(address));
+        auto image = AgcDriver::Graphics::CachedStorageSurface(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), resource);
+        Require(image && image->Cached() && !image->Dirty() && Recorder::Presents() == 0, "expected a clean cached upload before the first present");
+        const auto bytes = image->BudgetBytes();
+        uploaded = image;
+        image.reset();
+        if (submitted) recorder.Submit();
+        const auto retainedBytes = [&] { return submitted ? recorder.InFlightKeptBytes() : recorder.OpenKeptBytes(); };
+        const auto before = retainedBytes();
+        Require(AgcDriver::Graphics::ReleaseTextureCaches(bytes) == 0, "cache release physically freed an upload still held by a batch");
+        const auto held = uploaded.lock();
+        Require(held && !held->Cached(), "cache release did not evict the batch's upload");
+        Require(retainedBytes() == before + bytes, "cache release did not charge the evicted upload to its batch");
+        Require(!submitted || !recorder.Recording(), "cache release opened a new batch for a submitted upload");
+    }
+    device.WaitIdle();
+    Require(uploaded.expired(), "the evicted upload survived completion of its batch");
+}
+
+int RetainedBatch(RetainedBatchCase scenario) {
 #ifdef _WIN32
     Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
     Require(_putenv_s("APS5_NO_RESOURCE_CACHE", "1") == 0, "cannot disable the resource cache for the retained-batch test");
@@ -115,13 +147,17 @@ int RetainedBatch() {
         const auto retainedBytes = retained->BudgetBytes();
         auto* recorder = Recorder::Active();
         Require(recorder != nullptr && recorder->Recording(), "the surface dispatch was not left in an open batch");
-        const auto beforeEviction = recorder->OpenKeptBytes();
-        const auto capacity = static_cast<std::uint32_t>(TestBudget / retainedBytes);
-        Require(capacity + 1u < MaxSurfaces, "the eviction set exceeds the test storage");
-        retained.reset();
-        for (std::uint32_t surface = 1; surface <= capacity; ++surface) Record(*device, base + surface * Stride);
-        Require(StorageTexture::FindLive(base, SurfaceBytes) == nullptr, "surface 0 remained cached after the storage budget was exceeded");
-        Require(recorder->OpenKeptBytes() >= beforeEviction + retainedBytes, "an evicted storage image held by a batch without a shared resource-cache entry was not charged to that batch");
+        if (scenario == RetainedBatchCase::Budget) {
+            const auto beforeEviction = recorder->OpenKeptBytes();
+            const auto capacity = static_cast<std::uint32_t>(TestBudget / retainedBytes);
+            Require(capacity + 1u < MaxSurfaces, "the eviction set exceeds the test storage");
+            retained.reset();
+            for (std::uint32_t surface = 1; surface <= capacity; ++surface) Record(*device, base + surface * Stride);
+            Require(StorageTexture::FindLive(base, SurfaceBytes) == nullptr, "surface 0 remained cached after the storage budget was exceeded");
+            Require(recorder->OpenKeptBytes() >= beforeEviction + retainedBytes, "an evicted storage image held by a batch without a shared resource-cache entry was not charged to that batch");
+        } else {
+            CheckReleasedUpload(*device, *recorder, base + (MaxSurfaces - 1u) * Stride, scenario == RetainedBatchCase::ReleaseSubmitted);
+        }
     } catch (...) {
         release();
         throw;
@@ -134,7 +170,9 @@ int RetainedBatch() {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string(argv[1]) == "--retained-batch") return RetainedBatch();
+        if (argc == 2 && std::string(argv[1]) == "--retained-batch") return RetainedBatch(RetainedBatchCase::Budget);
+        if (argc == 2 && std::string(argv[1]) == "--release-open") return RetainedBatch(RetainedBatchCase::ReleaseOpen);
+        if (argc == 2 && std::string(argv[1]) == "--release-submitted") return RetainedBatch(RetainedBatchCase::ReleaseSubmitted);
         const bool budgetOnly = argc == 2 && std::string(argv[1]) == "--budget-only";
         Require(argc == 1 || budgetOnly, "storage cache budget: unknown arguments");
 #ifdef _WIN32

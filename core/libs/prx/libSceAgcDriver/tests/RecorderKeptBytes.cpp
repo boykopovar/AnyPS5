@@ -298,6 +298,25 @@ void ForgottenOwnerLeavesTheBudget() {
     recorder.Sync();
 }
 
+void ChargeFollowsRetainingBatches() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    auto owner = std::make_shared<int>(0);
+    auto other = std::make_shared<int>(1);
+    recorder.Keep(owner);
+    recorder.Submit();
+    recorder.CountRetainedBytes(owner.get(), 128);
+    Expect(!recorder.Recording() && recorder.InFlightKeptBytes() == 128, "charging a submitted owner opened another batch or lost its bytes");
+    recorder.Keep(owner);
+    recorder.CountRetainedBytes(owner.get(), 128);
+    recorder.CountRetainedBytes(owner.get(), 128);
+    recorder.CountRetainedBytes(other.get(), 64);
+    Expect(recorder.OpenKeptBytes() == 128 && recorder.InFlightKeptBytes() == 128, "each retaining batch must count the owner once");
+    recorder.Sync();
+    Expect(recorder.OpenKeptBytes() == 0 && recorder.InFlightKeptBytes() == 0, "completed uploads retained their byte charges");
+}
+
 template<typename Condition>
 bool EventuallyTrue(Condition&& condition) {
     for (int attempt = 0; attempt < 5000 && !condition(); ++attempt) {
@@ -491,6 +510,7 @@ int main() {
         RetentionAfterFailedSubmission();
         SubmittedWorkRunningFollowsTheLastBatch();
         ForgottenOwnerLeavesTheBudget();
+        ChargeFollowsRetainingBatches();
         SeparateStoresOfOneRunAreOrdered();
         FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS);
         FailedSubmission(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_SUCCESS);
