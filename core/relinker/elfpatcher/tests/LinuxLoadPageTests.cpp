@@ -80,7 +80,7 @@ std::vector<Domain::ProgramHeader> OutputLoads(const Bytes& output) {
     return loads;
 }
 
-std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
+std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output, const bool clearsEmptyLoadPage) {
     std::map<std::uint64_t, std::uint8_t> memory;
     for (const auto& load : OutputLoads(output)) {
         const auto prefix = load.MappedAddress % kPage;
@@ -92,8 +92,9 @@ std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
             memory[address] = offset < output.size() ? output[offset] : 0;
         }
         if (load.MemorySize > load.FileSize) {
+            const auto zeroStart = load.FileSize == 0 && clearsEmptyLoadPage ? load.MappedAddress - prefix : fileEnd;
             const auto memoryPageEnd = (load.MappedAddress + load.MemorySize + kPage - 1) & ~(kPage - 1);
-            for (auto address = fileEnd; address < memoryPageEnd; ++address)
+            for (auto address = zeroStart; address < memoryPageEnd; ++address)
                 memory[address] = 0;
         }
     }
@@ -101,17 +102,20 @@ std::map<std::uint64_t, std::uint8_t> MapLikeLinux(const Bytes& output) {
 }
 
 void RequireImage(const Bytes& output, const Bytes& source, const std::vector<Domain::ProgramHeader>& headers, const std::string& what) {
-    const auto memory = MapLikeLinux(output);
-    for (const auto& load : headers) {
-        for (std::uint64_t relative = 0; relative < load.MemorySize; ++relative) {
-            const auto address = load.MappedAddress + relative;
-            const auto found = memory.find(address);
-            Require(found != memory.end(), what + ": address not mapped");
-            const std::uint8_t expected = relative < load.FileSize ? source[load.Offset + relative] : 0;
-            if (found->second != expected) {
-                char text[96];
-                std::snprintf(text, sizeof(text), ": byte at 0x%llx reads 0x%02x, not 0x%02x", static_cast<unsigned long long>(address), found->second, expected);
-                Require(false, what + text);
+    for (const bool clearsEmptyLoadPage : {false, true}) {
+        const auto memory = MapLikeLinux(output, clearsEmptyLoadPage);
+        const auto context = what + (clearsEmptyLoadPage ? " on Linux 6.7 or later" : " on Linux before 6.7");
+        for (const auto& load : headers) {
+            for (std::uint64_t relative = 0; relative < load.MemorySize; ++relative) {
+                const auto address = load.MappedAddress + relative;
+                const auto found = memory.find(address);
+                Require(found != memory.end(), context + ": address not mapped");
+                const std::uint8_t expected = relative < load.FileSize ? source[load.Offset + relative] : 0;
+                if (found->second != expected) {
+                    char text[96];
+                    std::snprintf(text, sizeof(text), ": byte at 0x%llx reads 0x%02x, not 0x%02x", static_cast<unsigned long long>(address), found->second, expected);
+                    Require(false, context + text);
+                }
             }
         }
     }
@@ -179,6 +183,71 @@ void ZeroFileBytesStayInPlace() {
     const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
     RequireImage(output, source, headers, "zero bytes below the next segment");
     Require(OutputOffset(output, 0x2c20) == 0x2c20, "a segment whose page already reads right was moved");
+}
+
+void EmptyLoadInsideSharedPagePreservesAlignment() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0x5A});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x2000, 0x800, 0x800, 6),
+        Load(0x1800, 0x2800, 0, 0x800, 6, 0x8000),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "mid-page zero-file-size segment with a large alignment");
+    Require(OutputOffset(output, 0x2800) != 0x1800, "mid-page zero-file-size segment was not moved");
+    Require(OutputAlignment(output, 0x2800) == kPage, "moved zero-file-size segment retained its large alignment");
+    Require(MaximumAlignment(output) == 0x8000, "zero-file-size segment lost the original base alignment");
+}
+
+void DataBelowASegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x1800, source.begin() + 0x2000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "data in the first page of a segment without file bytes");
+}
+
+void ZeroFillBelowASegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0x55});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "bss in the first page of a segment without file bytes");
+}
+
+void IncongruentSegmentWithoutFileBytes() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1800, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x2000, source.begin() + 0x3000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x2010, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "segment without file bytes whose offset differs within its page");
+}
+
+void ZeroPageBelowASegmentWithoutFileBytesStaysInPlace() {
+    auto source = Fixture(0x3000);
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x800, 0x800, 6),
+        Load(0x1800, 0x1800, 0, 0x1000, 6),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "zero bytes below a segment without file bytes");
+    Require(OutputOffset(output, 0x1800) == 0x1800, "a segment without file bytes whose page already reads right was moved");
 }
 
 std::uint64_t VaddrOf(const Bytes& output, const std::uint64_t fileOffset) {
@@ -338,6 +407,39 @@ void CongruentLargeAlignmentOnASharedPage() {
     Require(MaximumAlignment(fixed) == 0x4000, "the largest PT_LOAD alignment at a fixed base fell to " + std::to_string(MaximumAlignment(fixed)));
 }
 
+void RepairsIncongruentLargeAlignmentAtPageStart() {
+    auto source = Fixture(0x2000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x5000, 0x100, 0x100, 6, 0x8000),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "page-aligned segment with an incongruent large alignment");
+    Require(OutputOffset(output, 0x5000) != 0x1000, "segment with an incongruent large alignment was not moved");
+    Require(OutputAlignment(output, 0x5000) == kPage, "repaired segment still declares an incongruent large alignment");
+    Require(MaximumAlignment(output) == 0x8000, "the original base alignment was not preserved");
+    const auto fixed = Patcher(0x400000).Patch(source, headers, {}, 0, "$ORIGIN/libs", false, false, {});
+    Require(MaximumAlignment(fixed) == 0x8000, "the original base alignment was not preserved at a fixed base");
+
+    const std::vector<Domain::ProgramHeader> bssHeaders{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x5000, 0, 0x100, 6, 0x8000),
+    };
+    const auto bssOutput = Patcher().Patch(source, bssHeaders, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(bssOutput, source, bssHeaders, "zero-file-size segment with an incongruent large alignment");
+    Require(OutputAlignment(bssOutput, 0x5000) == kPage, "zero-file-size segment still declares an incongruent large alignment");
+    Require(MaximumAlignment(bssOutput) == 0x8000, "zero-file-size segment lost the original base alignment");
+
+    const std::vector<Domain::ProgramHeader> unalignedBssHeaders{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1100, 0x5000, 0, 0x100, 6, 0x8000),
+    };
+    const auto unalignedBssOutput = Patcher().Patch(source, unalignedBssHeaders, {}, 0, "$ORIGIN/libs", true, false, {});
+    Require(OutputAlignment(unalignedBssOutput, 0x5000) == 1, "zero-file-size segment with a page-incongruent offset retained an invalid alignment");
+    Require(MaximumAlignment(unalignedBssOutput) == 0x8000, "page-incongruent zero-file-size segment lost the original base alignment");
+}
+
 void LargeAlignmentAtAFixedBaseIsRefused() {
     for (const auto alignment : {std::uint64_t{0x80000000}, std::uint64_t{0x8000000000000000}}) {
         auto source = Fixture(0x2000);
@@ -363,6 +465,11 @@ int main() {
         ZeroFillBelowTheNextSegment();
         DataAndZeroFillBelowTheNextSegment();
         ZeroFileBytesStayInPlace();
+        ZeroPageBelowASegmentWithoutFileBytesStaysInPlace();
+        IncongruentSegmentWithoutFileBytes();
+        ZeroFillBelowASegmentWithoutFileBytes();
+        DataBelowASegmentWithoutFileBytes();
+        EmptyLoadInsideSharedPagePreservesAlignment();
         TrampolineDisplacementAcrossInt64Max();
         TrampolineDisplacementBeyondInt64Range();
         IncongruentSegmentAtPageStart();
@@ -371,6 +478,7 @@ int main() {
         LargeAlignmentMovesToThePage();
         LargeAlignmentOnASharedPage();
         CongruentLargeAlignmentOnASharedPage();
+        RepairsIncongruentLargeAlignmentAtPageStart();
         LargeAlignmentAtAFixedBaseIsRefused();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
