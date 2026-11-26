@@ -24,13 +24,13 @@ if(BUILD_TESTING)
     agc_add_default_test(agc_driver_target_memo_tests)
     agc_add_draw_pipeline_test(agc_driver_target_memo)
     set_property(TEST agc_driver_target_memo agc_driver_target_memo_draw_pipeline APPEND PROPERTY ENVIRONMENT APS5_PROFILE_DRAW=1)
-    set_property(TEST agc_driver_target_memo_draw_pipeline agc_driver_target_memo_plan_verify APPEND PROPERTY ENVIRONMENT APS5_NO_PASS_ATTACHMENT_MEMO=1)
+    set_property(TEST agc_driver_target_memo agc_driver_target_memo_draw_pipeline agc_driver_target_memo_plan_verify APPEND PROPERTY ENVIRONMENT APS5_NO_PASS_ATTACHMENT_MEMO=1)
     add_test(NAME agc_driver_target_memo_verify COMMAND agc_driver_target_memo_tests)
     add_test(NAME agc_driver_target_memo_disabled COMMAND agc_driver_target_memo_tests)
     foreach(mode IN ITEMS verify disabled)
         set_tests_properties(agc_driver_target_memo_${mode} PROPERTIES
                 TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1")
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1")
         if(WIN32)
             set_tests_properties(agc_driver_target_memo_${mode} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
@@ -45,7 +45,7 @@ if(BUILD_TESTING)
             add_test(NAME ${test} COMMAND agc_driver_target_memo_tests --r3 ${scenario})
             set_tests_properties(${test} PROPERTIES
                     TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-                    ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1")
+                    ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1")
             if(mode STREQUAL "disabled")
                 set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT APS5_NO_TARGET_MEMO=1 APS5_NO_PASS_ATTACHMENT_MEMO=1)
             elseif(mode STREQUAL "verify")
@@ -75,7 +75,7 @@ if(BUILD_TESTING)
         add_test(NAME ${test} COMMAND agc_driver_target_memo_tests --r3 memo-order)
         set_tests_properties(${test} PROPERTIES
                 TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1;${extra}"
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1;${extra}"
                 PASS_REGULAR_EXPRESSION "memo order: pass attachment memo ${pass}, target memo ${target}.*target state memo tests passed"
                 FAIL_REGULAR_EXPRESSION "differ from the full lookup")
         if(WIN32)
@@ -94,6 +94,6 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         add_test(NAME agc_driver_target_memo_watched_imports COMMAND agc_driver_target_memo_tests)
         set_tests_properties(agc_driver_target_memo_watched_imports PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PROFILE_DRAW=1;APS5_WRITE_WATCH_IMPORTS=watch;APS5_NO_PASS_ATTACHMENT_MEMO=1")
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1;APS5_WRITE_WATCH_IMPORTS=watch;APS5_NO_PASS_ATTACHMENT_MEMO=1")
     endif()
 endif()
