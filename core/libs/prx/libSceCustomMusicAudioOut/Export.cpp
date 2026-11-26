@@ -20,6 +20,7 @@ constexpr int ErrorNotInitialized = static_cast<int>(0x81380102);
 constexpr int AudioOutErrorOutOfMemory = static_cast<int>(0x80260002);
 constexpr int AudioOutErrorInvalidArg = static_cast<int>(0x80260006);
 constexpr int AudioOutErrorPortFull = static_cast<int>(0x8026000D);
+constexpr int AudioOutErrorAlreadyInitialized = static_cast<int>(0x8026000E);
 
 constexpr std::int32_t DefaultLevel = 0x4000;
 constexpr double LevelScale = 32768.0;
@@ -83,7 +84,10 @@ int APS5_VABI sceCustomMusicAudioOutInitialize(int a1, int a2, int a3) {
         return ErrorInvalidArgument;
     }
     if (!g_audioOutInited) {
-        sceAudioOutInit();
+        const int initRc = sceAudioOutInit();
+        if (initRc < 0 && initRc != AudioOutErrorAlreadyInitialized) {
+            return MapAudioOutError(initRc);
+        }
         g_audioOutInited = true;
     }
     if (g_portHandle >= 0) {
@@ -213,6 +217,9 @@ int APS5_VABI sceCustomMusicAudioOutOutput(void* buf) {
         return ErrorNotInitialized;
     }
     const int rc = sceAudioOutOutput(g_portHandle, buf);
+    if (rc > 0) {
+        return rc;
+    }
     return MapAudioOutError(rc);
 }
 

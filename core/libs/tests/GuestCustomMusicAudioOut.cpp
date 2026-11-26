@@ -130,7 +130,7 @@ int main() {
     std::uint64_t beforeTime = 0;
     Require(sceCustomMusicAudioOutGetLastOutputTime(&beforeTime) == 0);
     std::array<std::int16_t, 256 * 2> pcm{};
-    Require(sceCustomMusicAudioOutOutput(pcm.data()) == 0);
+    Require(sceCustomMusicAudioOutOutput(pcm.data()) == 256);
     std::uint64_t afterTime = 0;
     Require(sceCustomMusicAudioOutGetLastOutputTime(&afterTime) == 0);
     Require(afterTime >= beforeTime && afterTime > 0);
@@ -140,6 +140,11 @@ int main() {
     Require(sceCustomMusicAudioOutOutput(pcm.data()) == kErrNotInit);
     Require(sceCustomMusicAudioOutGetLastOutputTime(&afterTime) == kErrNotInit);
     Require(sceCustomMusicAudioOutFinalize() == kErrNotInit);
+
+    Require(sceCustomMusicAudioOutInitialize(512, 1, 4) == 0);
+    std::array<float, 512 * 2> pcmFloat{};
+    Require(sceCustomMusicAudioOutOutput(pcmFloat.data()) == 512);
+    Require(sceCustomMusicAudioOutFinalize() == 0);
 
     return 0;
 }
