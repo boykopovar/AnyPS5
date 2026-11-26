@@ -37,6 +37,16 @@ set(MINI_OPTION "value" CACHE STRING "An option, not a check result")
 
 
 class ConfigureSeedStdoutTests(unittest.TestCase):
+    def test_redirected_stdout_matches_the_seed_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "CMakeCache.txt"
+            cache.write_text("//Test FIRST\nFIRST:INTERNAL=1\n//Test SECOND\nSECOND:INTERNAL=\n", encoding="utf-8")
+            seed = root / "seed.cmake"
+            subprocess.run([sys.executable, str(TOOL), str(cache), str(seed)], check=True, capture_output=True)
+            captured = subprocess.check_output([sys.executable, str(TOOL), str(cache), "--stdout"])
+            self.assertEqual(captured, seed.read_bytes())
+
     def stdout_seed(self, root):
         import contextlib
         import io
