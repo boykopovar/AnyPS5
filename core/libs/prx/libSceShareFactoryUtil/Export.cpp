@@ -22,13 +22,13 @@ bool IsInitialized() {
     return g_initRefCount.load(std::memory_order_acquire) > 0;
 }
 
-bool CopyGuestParam(const void* param, std::size_t size) {
-    if (param == nullptr || size == 0 || size > PARAM_SIZE) {
+bool CopyGuestParam(const void* param) {
+    if (param == nullptr) {
         return false;
     }
     std::array<std::uint8_t, PARAM_SIZE> copy{};
     const auto savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(copy.data(), param, size);
+    const bool ok = GuestCopyIn_nid_no_patch(copy.data(), param, PARAM_SIZE);
     errno = savedErrno;
     return ok;
 }
@@ -62,11 +62,12 @@ int APS5_VABI sceShareFactoryUtilTerminate(void) {
     return 0;
 }
 
-int APS5_VABI sceShareFactoryUtilLaunchShareFactory(const void* param, std::uint32_t size) {
+int APS5_VABI sceShareFactoryUtilLaunchShareFactory(const void* param, std::uint32_t option) {
+    (void)option;
     if (!IsInitialized()) {
         return ERROR_NOT_INITIALIZED;
     }
-    if (!CopyGuestParam(param, size)) {
+    if (!CopyGuestParam(param)) {
         return ERROR_INVALID_PARAM;
     }
     return ERROR_NOT_LAUNCHED;
@@ -79,7 +80,7 @@ int APS5_VABI sceShareFactoryUtilGetLaunchStatus(void* status, const void* param
     if (!IsInitialized()) {
         return ERROR_NOT_INITIALIZED;
     }
-    if (!CopyGuestParam(param, PARAM_SIZE) || !CheckGuestStatusWritable(status)) {
+    if (!CopyGuestParam(param) || !CheckGuestStatusWritable(status)) {
         return ERROR_INVALID_PARAM;
     }
     return ERROR_NOT_LAUNCHED;
@@ -89,7 +90,7 @@ int APS5_VABI sceShareFactoryUtilBackToGameFromShareFactory(const void* param) {
     if (!IsInitialized()) {
         return ERROR_NOT_INITIALIZED;
     }
-    if (!CopyGuestParam(param, PARAM_SIZE)) {
+    if (!CopyGuestParam(param)) {
         return ERROR_INVALID_PARAM;
     }
     return ERROR_NOT_LAUNCHED;
@@ -102,7 +103,7 @@ int APS5_VABI sceShareFactoryUtilGetLaunchStatusOfShareFactory(void* status, con
     if (!IsInitialized()) {
         return ERROR_NOT_INITIALIZED;
     }
-    if (!CopyGuestParam(param, PARAM_SIZE) || !CheckGuestStatusWritable(status)) {
+    if (!CopyGuestParam(param) || !CheckGuestStatusWritable(status)) {
         return ERROR_INVALID_PARAM;
     }
     return ERROR_NOT_LAUNCHED;
