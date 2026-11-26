@@ -466,6 +466,11 @@ static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info
   return 0;
  }
  const auto best = GuestAllocations::GuestAllocationsLookup_nid_postfix(address, (flags & findNext) != 0);
+ if (best != nullptr && best->address > address && GuestReservation(best->address, &reservedStart, &reservedEnd)) {
+  info->start = reservedStart;
+  info->end = reservedEnd;
+  return 0;
+ }
  if (best != nullptr) {
   info->start = best->address;
   info->end = best->address + best->bytes;

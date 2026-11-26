@@ -669,6 +669,39 @@ static void CheckVirtualQueryFindsNeighbours() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(high), page) == 0);
 }
 
+static void CheckVirtualQueryFindsNextReservation() {
+    constexpr std::size_t page = 0x4000;
+    void* free = nullptr;
+    Require(sceKernelReserveVirtualRange(&free, page * 3, 0, 0) == 0 && free != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(free), page * 3) == 0);
+    void* reserved = static_cast<unsigned char*>(free) + page;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 2, 0x10, 0) == 0 && reserved == static_cast<unsigned char*>(free) + page);
+    VirtualQueryInfo direct{};
+    VirtualQueryInfo next{};
+    Require(sceKernelVirtualQuery(reserved, 0, &direct, sizeof(direct)) == 0);
+    Require(direct.start == reinterpret_cast<std::uintptr_t>(reserved) && direct.end == reinterpret_cast<std::uintptr_t>(reserved) + page * 2 && direct.is_committed == 0 && direct.is_flexible == 0);
+    Require(sceKernelVirtualQuery(free, 0, &next, sizeof(next)) != 0);
+    Require(sceKernelVirtualQuery(free, 1, &next, sizeof(next)) == 0);
+    Require(std::memcmp(&direct, &next, sizeof(direct)) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * 2) == 0);
+
+    Require(sceKernelReserveVirtualRange(&reserved, page * 2, 0x10, 0) == 0 && reserved == static_cast<unsigned char*>(free) + page);
+    void* mapped = reserved;
+    Require(sceKernelMapFlexibleMemory(&mapped, page, 3, 0x10) == 0 && mapped == reserved);
+    VirtualQueryInfo fragment{};
+    Require(sceKernelVirtualQuery(static_cast<unsigned char*>(reserved) + page, 0, &fragment, sizeof(fragment)) == 0);
+    Require(fragment.start == reinterpret_cast<std::uintptr_t>(reserved) + page && fragment.end == reinterpret_cast<std::uintptr_t>(reserved) + page * 2 && fragment.is_committed == 0);
+    Require(sceKernelVirtualQuery(free, 1, &next, sizeof(next)) == 0);
+    Require(next.start == reinterpret_cast<std::uintptr_t>(reserved) && next.end == reinterpret_cast<std::uintptr_t>(reserved) + page && next.is_flexible != 0);
+    Require(sceKernelVirtualQuery(reinterpret_cast<void*>(next.start), 0, &direct, sizeof(direct)) == 0);
+    Require(std::memcmp(&direct, &next, sizeof(direct)) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
+    Require(sceKernelVirtualQuery(free, 1, &next, sizeof(next)) == 0);
+    Require(sceKernelVirtualQuery(reinterpret_cast<void*>(next.start), 0, &direct, sizeof(direct)) == 0);
+    Require(std::memcmp(&direct, &next, sizeof(direct)) == 0 && std::memcmp(&fragment, &next, sizeof(next)) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved) + page, page) == 0);
+}
+
 static void CheckReleaseFindsEveryDirectMapping() {
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t pieces = 48;
@@ -4876,6 +4909,7 @@ int main(int argc, char** argv) {
     CheckOverlapQueriesSeeRangesStartingBelowTheAddress();
     CheckMappedLeasesPreserveReadableRuns();
     CheckVirtualQuerySplitFlexibleRanges();
+    CheckVirtualQueryFindsNextReservation();
     CheckVirtualQueryForNonReadableGuestRange();
     CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
