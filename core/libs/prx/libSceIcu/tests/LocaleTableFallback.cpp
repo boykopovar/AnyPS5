@@ -214,7 +214,7 @@ void CheckFallback() {
         {"pt_BR", "Countries", nullptr, "YU", u"replacement", U_ZERO_ERROR},
         {"de", "labels", nullptr, "missing", {}, U_MISSING_RESOURCE_ERROR},
         {"de", "labels", nullptr, "none", {}, U_MISSING_RESOURCE_ERROR, 0},
-        {"de_AT", "labels", nullptr, "yes", u"ja", U_USING_FALLBACK_WARNING},
+        {"de_QM", "labels", nullptr, "yes", u"ja", U_USING_FALLBACK_WARNING},
         {"en", "layout", nullptr, "ltr", u"left-to-right", U_ZERO_ERROR},
     };
     for (const auto& item : cases) {
