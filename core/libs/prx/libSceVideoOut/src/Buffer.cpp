@@ -37,6 +37,11 @@ AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, co
 
 namespace {
 
+AgcDriver::DisplayBuffer DescribeBufferMemory(const VideoOutBuffer& buffer, BufferAttributeGroup group) {
+    if (group.ps4) group.attribute.option &= ~VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR;
+    return DescribeVideoOutBuffer(buffer, group);
+}
+
 int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const BufferAttributeGroup& group) {
     std::unique_lock lock(cfg.mutex);
     cfg.Check();
@@ -65,7 +70,7 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
     std::array<VideoOutBuffer, VIDEO_OUT_BUFFER_NUM_MAX> registered{};
     for (int i = 0; i < bufferNum; ++i) {
         registered[i] = {setIndex, reinterpret_cast<uint64_t>(buffers[i].data), reinterpret_cast<uint64_t>(buffers[i].metadata)};
-        const auto display = DescribeVideoOutBuffer(registered[i], group);
+        const auto display = DescribeBufferMemory(registered[i], group);
         AgcDriverCheckGuestMemory_nid_postfix(buffers[i].data, AgcDriverDisplayBufferSize_nid_postfix(display), display.alignment);
     }
     cfg.groups[setIndex] = group;
@@ -96,7 +101,8 @@ uint32_t Ps4TiledPitch(uint32_t tilingMode, uint32_t width, uint32_t pitchInPixe
 }
 
 bool Ps4BufferOptionAccepted(uint32_t option) {
-    return option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE || option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY;
+    const std::uint64_t rest = (option & VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR) == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR ? option & ~VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR : option;
+    return rest == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE || rest == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY;
 }
 
 }
@@ -278,7 +284,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
     group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
         if (cfg->buffers[i].groupIndex != setIndex) continue;
-        const auto display = DescribeVideoOutBuffer(cfg->buffers[i], group);
+        const auto display = DescribeBufferMemory(cfg->buffers[i], group);
         AgcDriverCheckGuestMemory_nid_postfix(reinterpret_cast<const void*>(display.address), AgcDriverDisplayBufferSize_nid_postfix(display), display.alignment);
     }
     cfg->groups[setIndex] = group;
@@ -288,24 +294,20 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
 }
 
 int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, const VideoOutBufferAttribute2* attribute, void* option) try {
-    auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    if (cfg == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
+    auto& driver = VideoOutDriver::Get();
+    if (!driver.HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    auto cfg = driver.GetConfig(handle);
     if (attribute == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
-    if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
-    }
-    if (option != nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
-    }
+    if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX) return VIDEO_OUT_ERROR_INVALID_INDEX;
+    if (option != nullptr) return VIDEO_OUT_ERROR_INVALID_OPTION;
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    if (cfg->closing || !cfg->groups[setIndex].occupied) {
+    if (cfg->closing) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
+    if (!cfg->groups[setIndex].occupied) return VIDEO_OUT_ERROR_INVALID_INDEX;
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
     auto group = cfg->groups[setIndex];
     group.attribute = *attribute;

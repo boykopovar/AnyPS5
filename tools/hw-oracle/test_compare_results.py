@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,106 @@ class CompareResultsTests(unittest.TestCase):
         self.assertIn("gfx1030 -> gfx1100", result.stdout)
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
         self.assertEqual(result.stderr, "")
+
+    def test_gfx12_reports_without_removed_kernel_modes_compare(self):
+        self.report["assembly_target"] = "gfx1201"
+        self.report["floating_point_modes"] |= {"ieee": None, "dx10_clamp": None}
+        after = copy.deepcopy(self.report)
+        after["assembly_target"] = "gfx1200"
+        result = self.cli(after=after)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("gfx1201 -> gfx1200", result.stdout)
+        self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
+
+    def test_removed_kernel_modes_differ_from_explicit_modes(self):
+        after = copy.deepcopy(self.report)
+        after["assembly_target"] = "gfx1201"
+        after["floating_point_modes"] |= {"ieee": None, "dx10_clamp": None}
+        result = self.cli(after=after)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("floating_point_modes differs", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_removed_kernel_modes_are_null_only_on_gfx12(self):
+        for target in ("gfx1030", "gfx1100", "gfx1151"):
+            for mode in ("ieee", "dx10_clamp"):
+                with self.subTest(target=target, mode=mode):
+                    report = copy.deepcopy(self.report)
+                    report["assembly_target"] = target
+                    report["floating_point_modes"][mode] = None
+                    result = self.cli(before=report, after=report)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{mode} must be an integer from 0 to 1 on {target}", result.stderr)
+                    self.assertEqual(result.stdout, "")
+        for target in ("gfx1200", "gfx1201", "gfx12-generic"):
+            for mode, other in (("ieee", "dx10_clamp"), ("dx10_clamp", "ieee")):
+                for value in (0, 1):
+                    with self.subTest(target=target, mode=mode, value=value):
+                        report = copy.deepcopy(self.report)
+                        report["assembly_target"] = target
+                        report["floating_point_modes"] |= {mode: value, other: None}
+                        result = self.cli(before=report, after=report)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertIn(f"{mode} must be null on {target}", result.stderr)
+                        self.assertEqual(result.stdout, "")
+
+    def test_only_removed_kernel_modes_may_be_null(self):
+        for mode in MODES.keys() - {"ieee", "dx10_clamp"}:
+            with self.subTest(mode=mode):
+                after = copy.deepcopy(self.report)
+                after["floating_point_modes"][mode] = None
+                result = self.cli(after=after)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("invalid floating_point_modes", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_duplicate_output_cannot_hide_a_difference_on_either_side(self):
+        original = json.dumps(self.report)
+        ambiguous = original.replace('"output": [0, 2147483648]',
+                                     '"output": [1, 2147483648], "output": [0, 2147483648]', 1)
+        self.assertNotEqual(ambiguous, original)
+        for side in (self.before, self.after):
+            with self.subTest(side=side.name):
+                self.before.write_text(original, encoding="utf-8")
+                self.after.write_text(original, encoding="utf-8")
+                side.write_text(ambiguous, encoding="utf-8-sig")
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("duplicate JSON field 'output'", result.stderr)
+                self.assertIn(str(side), result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_duplicate_settings_are_rejected_at_every_object_depth(self):
+        original = json.dumps(self.report)
+        cases = [('"wave_size": 32', '"wave_size": 64, "wave_size": 32', "wave_size"),
+                 ('"wave_size": 32', '"wave_size": 32, "wave_size": 32', "wave_size"),
+                 ('"ieee": 0', '"ieee": 1, "ieee": 0', "ieee"),
+                 ('"input": [0, 2147483648, 4294967295, 0]',
+                  '"input": [1, 2147483648, 4294967295, 0], "input": [0, 2147483648, 4294967295, 0]', "input")]
+        for field, replacement, name in cases:
+            with self.subTest(name=name, replacement=replacement):
+                ambiguous = original.replace(field, replacement, 1)
+                self.assertNotEqual(ambiguous, original)
+                self.before.write_text(original, encoding="utf-8")
+                self.after.write_text(ambiguous, encoding="utf-8")
+                result = self.compare()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"duplicate JSON field {name!r}", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_targets_outside_the_console_encoding_do_not_turn_a_match_into_a_difference(self):
+        self.report["assembly_target"] = "gfx1030-中"
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        self.after.write_text(json.dumps(self.report), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                capture_output=True, encoding="utf-8", timeout=10,
+                                env=dict(os.environ, PYTHONIOENCODING="cp1252"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("gfx1030-中 -> gfx1030-中", result.stdout)
+        self.assertIn("0 differing words", result.stdout)
 
     def test_bit_differences_include_signed_zero_nan_payload_and_unsigned_words(self):
         after = copy.deepcopy(self.report)

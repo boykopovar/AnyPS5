@@ -66,6 +66,22 @@ class AbCsvTests(unittest.TestCase):
             expected = ab_split_csv.render(ab_split.split(lines)).encode("utf-8")
             self.assertEqual(completed.stdout, expected)
 
+    def test_both_commands_explain_a_powershell_utf16_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            text = "".join(log()).replace("\n", "\r\n")
+            for encoding in ("utf-16-le", "utf-16-be"):
+                path.write_bytes(("﻿" + text).encode(encoding))
+                for tool in (ab_split_csv, ab_split):
+                    with self.subTest(encoding=encoding, tool=tool.__name__):
+                        completed = subprocess.run([sys.executable, str(Path(tool.__file__)), str(path)],
+                                                   capture_output=True, text=True, encoding="utf-8")
+                        self.assertEqual(completed.returncode, 2, completed.stderr)
+                        self.assertEqual(completed.stdout, "")
+                        self.assertIn("is UTF-16, as Windows PowerShell 5.1 writes", completed.stderr)
+                        self.assertIn('cmd /d /c "<command> 2> run.log"', completed.stderr)
+                        self.assertNotIn("was APS5_AB set", completed.stderr)
+
     def test_cli_preserves_producer_decoding_and_line_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.txt"
@@ -79,6 +95,45 @@ class AbCsvTests(unittest.TestCase):
                     expected = ab_split_csv.render(json.loads(original.stdout)).encode("utf-8")
                     self.assertEqual(completed.stdout, expected)
 
+    def test_render_without_metrics_is_header_only(self):
+        text = ab_split_csv.render({"config": "c", "phases": [], "metrics": []})
+        self.assertEqual(text, ",".join(ab_split_csv.COLUMNS) + "\r\n")
+
+    def test_render_keeps_full_noise_and_blank_missing_values(self):
+        metric = {"metric": "m", "a": 1.5, "b": None, "change": None, "change_pct": None,
+                  "noise": {"mean": 0.5, "se": 0.25, "sd": 0.75, "n": 4}}
+        result = {"config": "cfg", "phases": [1, 2, 3], "metrics": [metric]}
+        rows = list(csv.DictReader(io.StringIO(ab_split_csv.render(result), newline="")))
+        self.assertEqual(rows, [{"config": "cfg", "phases": "3", "metric": "m", "a": "1.5", "b": "",
+                                 "change": "", "change_pct": "", "noise_mean": "0.5",
+                                 "noise_se": "0.25", "noise_sd": "0.75", "noise_n": "4"}])
+
+    def test_colliding_class_filters_emit_no_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            path.write_text("".join(log()), encoding="utf-8")
+            for tool in (ab_split, ab_split_csv):
+                for name in ("gputime", "0x1000"):
+                    with self.subTest(tool=tool.__name__, name=name):
+                        args = [sys.executable, tool.__file__, str(path), "--program", "0x1000", "--class", name]
+                        result = subprocess.run(args, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{name} ms/present", result.stderr)
+
+    def test_utf32_logs_report_the_encoding_in_both_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            for encoding, bom in (("utf-32-le", b"\xff\xfe\x00\x00"), ("utf-32-be", b"\x00\x00\xfe\xff")):
+                path.write_bytes(bom + "".join(log()).encode(encoding))
+                for tool in (ab_split, ab_split_csv):
+                    with self.subTest(tool=tool.__name__, encoding=encoding):
+                        completed = subprocess.run([sys.executable, tool.__file__, str(path)], capture_output=True)
+                        self.assertEqual(completed.returncode, 2)
+                        self.assertEqual(completed.stdout, b"")
+                        self.assertIn(b"capture.txt is UTF-32", completed.stderr)
+                        self.assertIn(b"cmd /d /c", completed.stderr)
+
     def test_invalid_inputs_emit_no_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "log.txt"
@@ -89,6 +144,30 @@ class AbCsvTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
+
+    def test_spreadsheet_safe_prefixes_formula_cells_only_when_requested(self):
+        for trigger in ("=1+1", "+cmd", "-1", "@SUM(A1)", "\t=1+1"):
+            with self.subTest(trigger=trigger):
+                result = {"config": trigger, "phases": [1, 2],
+                          "metrics": [{"metric": trigger, "a": 1.0, "b": 2.0, "change": 1.0, "change_pct": 100.0, "noise": None},
+                                      {"metric": "frame_ms", "a": 1.0, "b": 2.0, "change": 1.0, "change_pct": 100.0, "noise": None}]}
+                raw = list(csv.DictReader(io.StringIO(ab_split_csv.render(result), newline="")))
+                safe = list(csv.DictReader(io.StringIO(ab_split_csv.render(result, spreadsheet_safe=True), newline="")))
+                self.assertEqual(raw[0]["config"], trigger)
+                self.assertEqual(raw[0]["metric"], trigger)
+                self.assertEqual(safe[0]["config"], "\t" + trigger)
+                self.assertEqual(safe[0]["metric"], "\t" + trigger)
+                self.assertEqual(safe[1]["metric"], "frame_ms")
+                self.assertEqual(safe[0]["phases"], "2")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.txt"
+            path.write_text("".join(log()), encoding="utf-8")
+            completed = subprocess.run([sys.executable, str(Path(ab_split_csv.__file__)), str(path), "--spreadsheet-safe"],
+                                       capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            expected = ab_split_csv.render(ab_split.split(log()), spreadsheet_safe=True)
+            self.assertEqual(completed.stdout.decode("utf-8"), expected)
+            self.assertIn('"[ab] in-run A/B:', expected)
 
 
 if __name__ == "__main__":

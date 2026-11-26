@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel_web/include/Api.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 extern "C" {
 
@@ -74,9 +75,8 @@ int APS5_VABI __sys_get_proc_type_info_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_is_development_mode_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_disambig1_nid_postfix() {
+    return GuestIsDevelopmentMode_nid_no_patch();
 }
 
 int APS5_VABI __sys_kqueueex_nid_disambig1_nid_postfix() {
@@ -84,14 +84,12 @@ int APS5_VABI __sys_kqueueex_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_namedobj_create_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_namedobj_create_nid_disambig1_nid_postfix(const char* name, void* object, std::uint32_t type) {
+    return GuestNamedObjectCreate_nid_no_patch(name, object, type);
 }
 
-int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_namedobj_delete_nid_disambig1_nid_postfix(std::uint32_t id, std::uint32_t type) {
+    return GuestNamedObjectDelete_nid_no_patch(id, type);
 }
 
 int APS5_VABI __sys_netabort_nid_disambig1_nid_postfix() {
@@ -164,9 +162,8 @@ int APS5_VABI __sys_randomized_path_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_rdup_nid_disambig1_nid_postfix(int pid, int fd) {
+    return GuestRdup_nid_no_patch(pid, fd);
 }
 
 int APS5_VABI __sys_regmgr_call_nid_disambig1_nid_postfix() {
@@ -179,9 +176,8 @@ int APS5_VABI __sys_set_uevt_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sys_socketclose_nid_disambig1_nid_postfix(int s) {
+    return GuestSocketClose_nid_no_patch(s);
 }
 
 int APS5_VABI __sys_test_debug_rwmem_nid_disambig1_nid_postfix() {
@@ -195,20 +191,19 @@ int APS5_VABI __sys_workaround8849_nid_disambig1_nid_postfix() {
 }
 
 int APS5_VABI _dup2_nid_disambig1_nid_postfix(int from, int to) {
-    return _dup2_nid_postfix(from, to);
+    return GuestDup2_nid_no_patch(from, to);
 }
 
 int APS5_VABI _execve_nid_disambig1_nid_postfix(const char* path, char* const* argv, char* const* envp) {
-    return _execve_nid_postfix(path, argv, envp);
+    return GuestExecve_nid_no_patch(path, argv, envp);
 }
 
 int APS5_VABI _execvpe_nid_disambig1_nid_postfix(const char* name, char* const* argv, char* const* envp) {
-    return _execvpe_nid_postfix(name, argv, envp);
+    return GuestExecvpe_nid_no_patch(name, argv, envp);
 }
 
-int APS5_VABI _wait4_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _wait4_nid_disambig1_nid_postfix(int pid, int* status, int options, void* usage) {
+    return wait4_nid_postfix(pid, status, options, usage);
 }
 
 int APS5_VABI sceKernelGetPrefixVersion() {

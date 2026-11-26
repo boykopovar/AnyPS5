@@ -10,7 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <string_view>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -45,6 +44,34 @@ void Check(LocaleFunction function, bool wholeOnly, std::initializer_list<Case> 
     }
 }
 
+void CheckLongLanguageTag() {
+    for (const LocaleFunction function : {uloc_getBaseName, uloc_canonicalize}) {
+        for (const int groups : {16, 17, 20}) {
+            std::string tag = "en-a";
+            std::string unconverted = "A";
+            for (int group = 0; group < groups; ++group) {
+                tag += "-abcdefgh";
+                unconverted += "_ABCDEFGH";
+            }
+            const bool fits = groups == 16;
+            const std::string expected = !fits ? unconverted : function == uloc_getBaseName ? "en" : "en@a=" + tag.substr(5);
+            for (const std::int32_t capacity : {0, 8, 240}) {
+                std::array<char, 256> buffer{};
+                buffer.fill('Q');
+                std::int32_t status = 0;
+                const auto length = function(tag.c_str(), buffer.data(), capacity, &status);
+                assert(length == static_cast<std::int32_t>(expected.size()));
+                assert(status == (!fits || capacity < length ? 15 : 0));
+                const auto copied = static_cast<std::size_t>(std::min(capacity, length));
+                assert(std::memcmp(buffer.data(), expected.data(), copied) == 0);
+                if (fits && capacity > length) assert(buffer[copied] == '\0');
+                for (std::size_t index = copied + (fits && capacity > length ? 1 : 0); index < buffer.size(); ++index)
+                    assert(buffer[index] == 'Q');
+            }
+        }
+    }
+}
+
 void CheckKeyword(const char* locale, const char* keyword, const char* expected,
                   std::int32_t expectedStatus = 0) {
     for (const std::int32_t capacity : {0, 1, 2, 3, 4, 5, 8, 64}) {
@@ -74,6 +101,9 @@ int main() {
         {"root", ""}, {"und", ""}, {"_US", ""}, {"i-klingon", "i-klingon"},
         {"x-private", "x-private"}, {"zh_Hans_CN", "zh"}, {"eng_USA", "en"},
         {"DEU", "de"}, {"zho_Hant_TWN", "zh"}, {"tlh", "tlh"}, {"xyz_US", "xyz"},
+        {"x-foo", "x-foo"}, {"I_Enochian", "i-enochian"}, {"x-foo_US", "x-foo"}, {"X-", "x-"},
+        {"i-klingon-Latn-DE", "i-klingon"}, {"x", "x"}, {"i.utf8", "i"},
+        {"i-hakka_MT_XEMXIJA", "i-hakka"}, {"I-hakka_MX", "i-hakka"}, {"X-KLINGON_us_SANJOSE", "x-klingon"},
     });
     Check(uloc_getCountry, true, {
         {"en", ""}, {"en_US", "US"}, {"en-US", "US"}, {"zh_Hant_TW", "TW"},
@@ -81,11 +111,12 @@ int main() {
         {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"}, {"eng_USA", "US"},
         {"de-deu", "DE"}, {"zho_Hant_TWN", "TW"}, {"sr_Latn_SRB", "RS"}, {"en_XYZ", "XYZ"},
         {"en_XEA", "XEA"}, {"en_a1", "A1"}, {"en_12", "12"}, {"en_1ab", "1AB"},
-        {"en__US", ""}, {"en_Latn__US", ""},
+        {"en__US", ""}, {"en_Latn__US", ""}, {"x-foo_US", "US"}, {"i-klingon-Latn-DE", "DE"},
+        {"I-hakka_MX", "MX"}, {"X-KLINGON_us_SANJOSE", "US"},
     });
     Check(uloc_getScript, true, {
         {"en_US", ""}, {"zh_Hant_TW", "Hant"}, {"eN_LatN_us", "Latn"},
-        {"sr_Latn_RS@currency=EUR", "Latn"}, {"_US", ""},
+        {"sr_Latn_RS@currency=EUR", "Latn"}, {"_US", ""}, {"i-klingon-Latn-DE", "Latn"},
     });
     Check(uloc_getBaseName, false, {
         {"en-US", "en_US"}, {"en_US_POSIX", "en_US_POSIX"},
@@ -94,6 +125,13 @@ int main() {
         {"i-klingon", "tlh"}, {"x-private", ""}, {"root", ""}, {"und", ""},
         {"eng_USA_POSIX", "en_US_POSIX"}, {"fra-can", "fr_CA"},
         {"en_a1_POSIX", "en_A1_POSIX"}, {"en__US", "en__US"},
+        {"en-u-attr2-attr1", "en"}, {"de-DE-x-ab", "de_DE"}, {"sr-Latn-RS-a-bbb", "sr_Latn_RS"},
+        {"en-u-ca-buddhist", "en"}, {"en-u-ca-gregory-nu-thai", "en"}, {"de-DE-u-co-phonebk", "de_DE"},
+        {"en-US-u-va-posix", "en_US_POSIX"}, {"sr-Latn-RS-u-attr1-ca-islamic-civil", "sr_Latn_RS"},
+        {"i-default", "en"}, {"i-hakka_MT_XEMXIJA", "i-hakka_MT_XEMXIJA"}, {"x-piglatin_ML.MBE", "x-piglatin_ML.MBE"},
+        {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
+        {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
+        {"zh_YUE", "zh_YUE"}, {"art_LOJBAN", "art__LOJBAN"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -103,7 +141,23 @@ int main() {
         {"fr@collation=phonebook", "fr@collation=phonebook"},
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
+        {"en-u-attr2-attr1", "en@attribute=attr1-attr2"}, {"de-DE-x-ab", "de_DE@x=ab"},
+        {"en-u-ca-buddhist", "en@calendar=buddhist"}, {"en-u-ca-gregory-nu-thai", "en@calendar=gregorian;numbers=thai"},
+        {"de-DE-u-co-phonebk", "de_DE@collation=phonebook"}, {"en-US-u-va-posix", "en_US_POSIX"},
+        {"sr-Latn-RS-u-attr1-ca-islamic-civil", "sr_Latn_RS@attribute=attr1;calendar=islamic-civil"},
+        {"i-default", "en@x=i-default"}, {"x-piglatin_ML.MBE", "x-piglatin_ML"},
+        {"i-cherokee_US.utf7", "i-cherokee_US"}, {"x-filfli_MT_FILFLA.gb-18030", "x-filfli_MT_FILFLA"},
+        {"X-KLINGON_us_SANJOSE", "x-klingon_US_SANJOSE"},
+        {"sr-Latn-RS-a-bbb", "sr_Latn_RS@a=bbb"}, {"x-elmer", "@x=elmer"},
+        {"en-a-bbb-x-foo", "en@a=bbb;x=foo"}, {"i-klingon@currency=EUR", "i-klingon@currency=EUR"},
+        {"x_foo", "x-foo"},
+        {"zh_YUE", "yue"}, {"zh-yue", "yue"}, {"ZH_gan", "gan"}, {"zh_MIN_NAN", "nan"}, {"zh_WUU", "wuu"},
+        {"zh_GUOYU", "zh"}, {"zh__HAKKA", "hak"}, {"zh_XIANG", "hsn"}, {"art_LOJBAN", "jbo"},
+        {"art-lojban", "jbo"}, {"hy_AREVELA", "hy"}, {"hy__AREVMDA", "hyw"}, {"zh_YUE.utf8", "yue"},
+        {"zh_min_nan@collation=pinyin", "nan@collation=pinyin"}, {"zh_Hant_YUE", "zh_Hant_YUE"},
+        {"zh_YUE_FOO", "zh_YUE_FOO"}, {"zh_MIN", "zh_MIN"}, {"yue", "yue"},
     });
+    CheckLongLanguageTag();
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");
     CheckKeyword("en@Currency=USD", "CURRENCY", "USD");
@@ -145,25 +199,36 @@ int main() {
     for (const LocaleFunction function : std::array<LocaleFunction, 5>{
              uloc_getLanguage, uloc_getCountry, uloc_getScript, uloc_getBaseName, uloc_canonicalize}) {
         status = 0;
-        bool thrown = false;
-        try {
-            function(nullptr, output.data(), 16, &status);
-        } catch (const std::runtime_error&) {
-            thrown = true;
-        }
-        assert(thrown && status == 0 && output[0] == 'Q');
+        std::array<char, 32> expected{};
+        const std::int32_t expectedLength = function(uloc_getDefault(), expected.data(), 32, &status);
+        assert(status <= 0);
+        status = 0;
+        output.fill('Q');
+        assert(function(nullptr, output.data(), 16, &status) == expectedLength);
+        assert(status <= 0 && std::string_view(output.data(), static_cast<std::size_t>(std::min(expectedLength, 16))) ==
+                                  std::string_view(expected.data(), static_cast<std::size_t>(std::min(expectedLength, 16))));
+        output.fill('Q');
         status = 15;
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
+        status = -124;
+        output.fill('Q');
+        const std::int32_t length = function("en_Latn_US", output.data(), 16, &status);
+        assert(length > 0 && length < 16 && output[static_cast<std::size_t>(length)] == '\0' && status == 0);
+        status = -128;
+        assert(function("en_Latn_US", output.data(), 16, &status) == length && status == -128);
+        status = 0;
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        assert(function("en_Latn_US", output.data(), length, &status) == length && status == -124);
+        output.fill('Q');
     }
     status = 0;
-    bool keywordThrown = false;
-    try {
-        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        keywordThrown = true;
-    }
-    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 8);
+    assert(status == 0 && std::string_view(output.data()) == "buddhist");
+    output.fill('Q');
+    assert(uloc_getKeywordValue("en-u-ca-gregory-nu-thai", "numbers", output.data(), 16, &status) == 4);
+    assert(status == 0 && std::string_view(output.data()) == "thai");
+    output.fill('Q');
     status = 15;
     assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');
@@ -184,13 +249,13 @@ int main() {
         {"en_US.utf8", "en"}, {"en@x_y", "en@x"},
     });
     status = 0;
-    bool parentThrown = false;
-    try {
-        uloc_getParent(nullptr, output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        parentThrown = true;
-    }
-    assert(parentThrown && status == 0 && output[0] == 'Q');
+    std::array<char, 32> defaultParent{};
+    const std::int32_t defaultLength = uloc_getParent(uloc_getDefault(), defaultParent.data(), 32, &status);
+    assert(status == 0);
+    output.fill('Q');
+    assert(uloc_getParent(nullptr, output.data(), 16, &status) == defaultLength);
+    assert(status == 0 && std::string_view(output.data()) == std::string_view(defaultParent.data()));
+    output.fill('Q');
     status = 15;
     assert(uloc_getParent(nullptr, output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');
@@ -249,15 +314,8 @@ int main() {
     checkIso3Country("en_XEA", "");
     checkIso3Country("en@x=y", "");
     checkIso3Country("root", "");
-    for (const auto function : std::array{&uloc_getISO3Language, &uloc_getISO3Country}) {
-        bool iso3Thrown = false;
-        try {
-            function(nullptr);
-        } catch (const std::runtime_error&) {
-            iso3Thrown = true;
-        }
-        assert(iso3Thrown);
-    }
+    for (const auto function : std::array{&uloc_getISO3Language, &uloc_getISO3Country})
+        assert(std::string_view(function(nullptr)) == std::string_view(function(uloc_getDefault())));
 
     const char* const* languages = uloc_getISOLanguages();
     assert(languages[0] == std::string_view("aa") && languages[1] == std::string_view("ab"));

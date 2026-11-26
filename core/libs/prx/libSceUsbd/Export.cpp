@@ -3,16 +3,22 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include <libusb.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -34,6 +40,7 @@ constexpr std::uint8_t TRANSFER_TYPE_INTERRUPT = 3;
 constexpr std::int32_t CONTROL_SETUP_SIZE = 8;
 constexpr std::uint8_t SUPPORTED_TRANSFER_FLAGS = LIBUSB_TRANSFER_SHORT_NOT_OK | LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 constexpr std::uint16_t STRING_DESCRIPTOR_SIZE = 255;
+constexpr std::size_t HID_REPORT_ID_SLACK = 1;
 constexpr std::uint32_t STRING_DESCRIPTOR_TIMEOUT = 1000;
 
 static_assert(offsetof(UsbdTransfer, timeout) == 12 && offsetof(UsbdTransfer, callback) == 32 && offsetof(UsbdTransfer, numIsoPackets) == 56 && offsetof(UsbdTransfer, isoPacketDescriptors) == 60);
@@ -115,7 +122,7 @@ void DropDeviceReference(UsbdState& state, libusb_device* device) {
 
 struct UsbdEvents {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::atomic<std::thread::id> owner{};
     std::atomic<std::thread::id> handler{};
     std::atomic<std::uint64_t> completions{0};
@@ -128,6 +135,12 @@ UsbdEvents& Events() {
 
 bool ValidTimeout(const UsbdTimeval* timeout) {
     return timeout == nullptr || (timeout->seconds >= 0 && timeout->seconds <= INT_MAX && timeout->microseconds >= 0 && timeout->microseconds < 1000000);
+}
+
+const UsbdTimeval* CopyGuestTimeout(const UsbdTimeval* timeout, UsbdTimeval& copy, const char* function) {
+    if (timeout == nullptr) return nullptr;
+    if (!GuestCopyIn_nid_no_patch(&copy, timeout, sizeof(copy))) throw std::runtime_error(std::string(function) + ": an unreadable timeout has no known result");
+    return &copy;
 }
 
 void AcquireEvents(UsbdEvents& events, const char* function) {
@@ -156,7 +169,7 @@ void UnlockEventsAndRelease(UsbdEvents& events, const char* function) {
     RequireEventLock(events, function);
     if (events.handler.load() == std::this_thread::get_id()) {
         events.handler.store(std::thread::id{});
-        events.changed.notify_all();
+        events.changed.NotifyAll();
     }
     ReleaseEvents(events, function);
 }
@@ -167,10 +180,10 @@ int WaitForChange(UsbdEvents& events, const UsbdTimeval* timeout) {
     events.owner.store(std::thread::id{});
     bool timedOut = false;
     if (timeout == nullptr) {
-        events.changed.wait(guard);
+        events.changed.Wait(guard);
     } else {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->seconds) + std::chrono::microseconds(timeout->microseconds);
-        timedOut = events.changed.wait_until(guard, deadline) == std::cv_status::timeout;
+        const auto micros = static_cast<std::uint64_t>(timeout->seconds) * 1000000ULL + static_cast<std::uint64_t>(timeout->microseconds);
+        timedOut = !events.changed.WaitUntil(guard, TimedWait::DeadlineNanos(micros));
     }
     guard.release();
     events.owner.store(self);
@@ -188,7 +201,8 @@ int HandleAsHandler(UsbdEvents& events, const UsbdTimeval* timeout) {
     libusb_context* context = CurrentContext();
     int result = 0;
     if (timeout != nullptr && context == nullptr) {
-        std::this_thread::sleep_for(std::chrono::seconds(timeout->seconds) + std::chrono::microseconds(timeout->microseconds));
+        const auto micros = static_cast<unsigned long long>(timeout->seconds) * 1000000ULL + static_cast<unsigned long long>(timeout->microseconds);
+        PreciseSleepUs(micros);
     } else if (timeout != nullptr) {
         timeval host{};
         host.tv_sec = static_cast<decltype(host.tv_sec)>(timeout->seconds);
@@ -207,7 +221,7 @@ int HandleAsHandler(UsbdEvents& events, const UsbdTimeval* timeout) {
     }
     events.lock.lock();
     events.owner.store(self);
-    events.changed.notify_all();
+    events.changed.NotifyAll();
     return result;
 }
 
@@ -268,6 +282,38 @@ bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descript
     return result >= 0 && descriptor[1] == LIBUSB_DT_STRING;
 }
 
+bool GuestOutputWritable(void* destination, std::size_t bytes) {
+    const GuestArena::HostWrite write(destination, bytes);
+    return write.Open() && GuestWritable_nid_no_patch(destination, bytes);
+}
+
+bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int32_t length) {
+    if (length <= 0) return true;
+    const auto bytes = static_cast<std::size_t>(length);
+    if ((endpoint & LIBUSB_ENDPOINT_IN) != 0) return GuestOutputWritable(data, bytes);
+    std::array<std::uint8_t, 4096> chunk{};
+    for (std::size_t offset = 0; offset < bytes; offset += chunk.size()) {
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), data + offset, std::min(chunk.size(), bytes - offset))) return false;
+    }
+    return true;
+}
+
+using SyncTransferFunction = int (LIBUSB_CALL*)(libusb_device_handle*, unsigned char, unsigned char*, int, int*, unsigned int);
+
+std::int32_t TransferThroughHostCopy(SyncTransferFunction transfer, libusb_device_handle* handle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t& moved, std::uint32_t timeout) {
+    const std::int32_t requested = std::max(length, 0);
+    const std::unique_ptr<std::uint8_t[]> host(new (std::nothrow) std::uint8_t[static_cast<std::size_t>(requested) + HID_REPORT_ID_SLACK]);
+    if (host == nullptr) return ToGuestError(LIBUSB_ERROR_NO_MEM);
+    const bool deviceToHost = (endpoint & LIBUSB_ENDPOINT_IN) != 0;
+    if (!deviceToHost && requested > 0 && !GuestCopyIn_nid_no_patch(host.get(), data, static_cast<std::size_t>(requested))) return SCE_USBD_ERROR_INVALID_ARG;
+    int hostMoved = 0;
+    const int result = transfer(handle, endpoint, host.get(), length, &hostMoved, timeout);
+    const std::int32_t received = std::clamp(hostMoved, 0, requested);
+    moved = received;
+    if (deviceToHost && received > 0 && !GuestCopyOut_nid_no_patch(data, host.get(), static_cast<std::size_t>(received))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
+}
+
 }
 
 extern "C" {
@@ -305,18 +351,24 @@ void APS5_VABI sceUsbdExit() {
 
 std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list) {
     if (list == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(list, sizeof(*list))) return SCE_USBD_ERROR_INVALID_ARG;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.context == nullptr) {
-        *list = g_emptyDeviceList;
+        void** const empty = g_emptyDeviceList;
+        if (!GuestCopyOut_nid_no_patch(list, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
         return 0;
     }
     libusb_device** devices = nullptr;
     const ssize_t count = libusb_get_device_list(state.context, &devices);
     if (count < 0) return ToGuestError(static_cast<int>(count));
+    void** const stored = reinterpret_cast<void**>(devices);
+    if (!GuestCopyOut_nid_no_patch(list, &stored, sizeof(stored))) {
+        libusb_free_device_list(devices, 1);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     for (ssize_t index = 0; index < count; ++index) AddDeviceReference(state, devices[index]);
     state.lists.insert(devices);
-    *list = reinterpret_cast<void**>(devices);
     return count;
 }
 
@@ -333,11 +385,16 @@ void APS5_VABI sceUsbdFreeDeviceList(void** list, std::int32_t unrefDevices) {
 }
 
 std::int32_t APS5_VABI sceUsbdHandleEventsTimeout(const UsbdTimeval* timeout) {
-    if (timeout == nullptr || timeout->seconds < 0 || timeout->microseconds < 0 || timeout->microseconds >= 1000000) return SCE_USBD_ERROR_INVALID_ARG;
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a timeout of more than INT_MAX seconds is not supported");
+    if (timeout == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    UsbdTimeval copy{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, timeout, sizeof(copy));
+    errno = savedErrno;
+    if (!copied || copy.seconds < 0 || copy.microseconds < 0 || copy.microseconds >= 1000000) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!ValidTimeout(&copy)) throw std::runtime_error(std::string(__func__) + ": a timeout of more than INT_MAX seconds is not supported");
     auto& events = Events();
     LockEventsAndClaim(events, __func__);
-    const std::int32_t result = HandleEventsLocked(events, timeout);
+    const std::int32_t result = HandleEventsLocked(events, &copy);
     UnlockEventsAndRelease(events, __func__);
     return result;
 }
@@ -468,7 +525,8 @@ std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endp
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
     std::int32_t moved = 0;
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
-    const std::int32_t result = ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestTransferDataUsable(endpoint, data, length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = TransferThroughHostCopy(libusb_bulk_transfer, KnownHandle(deviceHandle, __func__), endpoint, data, length, moved, timeout);
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     return result;
 }
@@ -478,7 +536,8 @@ std::int32_t APS5_VABI sceUsbdInterruptTransfer(void* deviceHandle, std::uint8_t
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
     std::int32_t moved = 0;
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
-    const std::int32_t result = ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestTransferDataUsable(endpoint, data, length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = TransferThroughHostCopy(libusb_interrupt_transfer, KnownHandle(deviceHandle, __func__), endpoint, data, length, moved, timeout);
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     return result;
 }
@@ -543,7 +602,13 @@ void APS5_VABI sceUsbdClose(void* deviceHandle) {
 
 std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint8_t* data, std::uint16_t length, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
-    return ToGuestError(libusb_control_transfer(KnownHandle(deviceHandle, __func__), requestType, request, value, index, data, length, timeout));
+    std::vector<std::uint8_t> host(length);
+    if (length != 0 && !GuestCopyIn_nid_no_patch(host.data(), data, length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const bool deviceToHost = (requestType & LIBUSB_ENDPOINT_IN) != 0;
+    if (deviceToHost && length != 0 && !GuestCopyOut_nid_no_patch(data, host.data(), length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const int result = libusb_control_transfer(KnownHandle(deviceHandle, __func__), requestType, request, value, index, host.data(), length, timeout);
+    if (deviceToHost && result > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
 }
 
 std::int32_t APS5_VABI sceUsbdGetActiveConfigDescriptor(void* device, void** config) {
@@ -595,14 +660,18 @@ std::uint8_t APS5_VABI sceUsbdGetDeviceAddress(void* device) {
 
 std::int32_t APS5_VABI sceUsbdGetDeviceDescriptor(void* device, void* descriptor) {
     if (device == nullptr || descriptor == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    return ToGuestError(libusb_get_device_descriptor(KnownDevice(device, __func__), static_cast<libusb_device_descriptor*>(descriptor)));
+    libusb_device_descriptor host{};
+    const int result = libusb_get_device_descriptor(KnownDevice(device, __func__), &host);
+    if (result != 0) return ToGuestError(result);
+    if (!GuestOutputWritable(descriptor, sizeof(host)) || !GuestCopyOut_nid_no_patch(descriptor, &host, sizeof(host))) return SCE_USBD_ERROR_INVALID_ARG;
+    return 0;
 }
 
 std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* data, std::int32_t length) {
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
     if (length > 65535) length = 65535;
     const std::uint8_t empty = 0;
-    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(data, static_cast<std::size_t>(length)) || !GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(deviceHandle, __func__);
     std::vector<std::uint8_t> local(static_cast<std::size_t>(length));
     const int result = libusb_get_string_descriptor(handle, descriptorIndex, languageId, local.data(), length);
@@ -754,6 +823,7 @@ std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint
 
 std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration) {
     if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(configuration, sizeof(*configuration))) return SCE_USBD_ERROR_INVALID_ARG;
     int host = 0;
     const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
     if (result == 0) {
@@ -765,9 +835,12 @@ std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t*
 
 std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
-    auto* handle = KnownHandle(deviceHandle, __func__);
     if (length > 65535) length = 65535;
-    return ToGuestError(libusb_get_descriptor(handle, descriptorType, descriptorIndex, data, length));
+    std::vector<std::uint8_t> host(static_cast<std::size_t>(length));
+    if (!GuestCopyIn_nid_no_patch(host.data(), data, host.size()) || !GuestCopyOut_nid_no_patch(data, host.data(), host.size())) return SCE_USBD_ERROR_INVALID_ARG;
+    const int result = libusb_get_descriptor(KnownHandle(deviceHandle, __func__), descriptorType, descriptorIndex, host.data(), length);
+    if (result > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
 }
 
 void* APS5_VABI sceUsbdGetDevice(void* deviceHandle) {
@@ -798,7 +871,7 @@ std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
     if (length > 65535) length = 65535;
     const std::uint8_t empty = 0;
-    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(data, static_cast<std::size_t>(length)) || !GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(deviceHandle, __func__);
     std::uint8_t descriptor[STRING_DESCRIPTOR_SIZE];
     if (!RequestStringDescriptor(handle, 0, 0, descriptor)) return SCE_USBD_ERROR_OTHER;
@@ -838,10 +911,12 @@ std::int32_t APS5_VABI sceUsbdHandleEvents() {
 }
 
 std::int32_t APS5_VABI sceUsbdHandleEventsLocked(UsbdTimeval* timeout) {
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
+    UsbdTimeval copy{};
+    const UsbdTimeval* local = CopyGuestTimeout(timeout, copy, __func__);
+    if (!ValidTimeout(local)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
     auto& events = Events();
     RequireEventLock(events, __func__);
-    return HandleEventsLocked(events, timeout);
+    return HandleEventsLocked(events, local);
 }
 
 void APS5_VABI sceUsbdLockEventWaiters() {
@@ -910,10 +985,12 @@ void APS5_VABI sceUsbdUnlockEvents() {
 }
 
 std::int32_t APS5_VABI sceUsbdWaitForEvent(UsbdTimeval* timeout) {
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
+    UsbdTimeval copy{};
+    const UsbdTimeval* local = CopyGuestTimeout(timeout, copy, __func__);
+    if (!ValidTimeout(local)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
     auto& events = Events();
     RequireEventLock(events, __func__);
-    return WaitForChange(events, timeout);
+    return WaitForChange(events, local);
 }
 
 }

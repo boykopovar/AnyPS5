@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -74,6 +75,7 @@ struct Registry {
     std::unordered_map<AudioPropagationHandle, Object> objects;
     std::unordered_map<AudioPropagationHandle, Object> orphans;
     std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
+    std::unordered_map<AudioPropagationHandle, SourceInfo> sourceInfos;
     std::unordered_map<AudioPropagationHandle, PathState> paths;
     std::mutex reportMutex;
     std::condition_variable reportChanged;
@@ -123,11 +125,21 @@ void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32
     require(desc != nullptr && desc->id == id && desc->size == size, function);
 }
 
-void requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
+std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
     require(count == 0 || attributes != nullptr, function);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        require(attributes[index].value != nullptr && attributes[index].valueSize != 0, function);
+    constexpr std::uint32_t Chunk = 2048;
+    std::vector<Attribute> copied;
+    for (std::uint32_t done = 0; done < count;) {
+        const std::uint32_t step = std::min(Chunk, count - done);
+        copied.resize(done + step);
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(copied.data() + done, attributes + done, step * sizeof(Attribute));
+        errno = savedErrno;
+        require(read, function);
+        done += step;
     }
+    for (const auto& attribute : copied) require(attribute.value != nullptr && attribute.valueSize != 0, function);
+    return copied;
 }
 
 bool liveSystem(Registry& state, AudioPropagationHandle system) {
@@ -175,6 +187,7 @@ void destroyObject(AudioPropagationHandle system, AudioPropagationHandle handle,
             state.objects.erase(path);
         }
         state.sourcePaths.erase(handle);
+        state.sourceInfos.erase(handle);
     }
     state.objects.erase(handle);
 }
@@ -202,6 +215,65 @@ bool copyGuestOut(T* dst, const T& src) {
     const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
     errno = savedErrno;
     return copied;
+}
+
+SourceInfo DefaultSourceInfo(AudioPropagationHandle system) {
+    SourceInfo info{};
+    info.system = system;
+    info.direction[2] = 1.0f;
+    info.attribute2Mode = 3;
+    info.attribute2Values[0] = 100.0f;
+    info.attribute2Values[1] = 1.0f;
+    info.attribute2Values[2] = 1.0f;
+    info.attribute3Values[0] = 1.0f;
+    info.attribute3Values[1] = 30.0f;
+    info.attribute3Values[2] = 0.7f;
+    info.attribute3Values[3] = 270.0f;
+    info.pathCapacity = MaxPaths;
+    return info;
+}
+
+bool StoreSourceAttribute(SourceInfo& info, const Attribute& attribute) {
+    if (attribute.id > 3) return true;
+    if (attribute.valueSize != 16) return false;
+    std::array<std::uint32_t, 4> words{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(words.data(), attribute.value, sizeof(words));
+    errno = savedErrno;
+    if (!copied) return false;
+    switch (attribute.id) {
+        case 0: std::memcpy(info.position, words.data(), sizeof(info.position)); break;
+        case 1: std::memcpy(info.direction, words.data(), sizeof(info.direction)); break;
+        case 2:
+            info.attribute2Mode = words[0];
+            std::memcpy(info.attribute2Values, words.data() + 1, sizeof(info.attribute2Values));
+            break;
+        case 3: std::memcpy(info.attribute3Values, words.data(), sizeof(info.attribute3Values)); break;
+        default: break;
+    }
+    return true;
+}
+
+struct PathResult {
+    std::uint32_t pointCount;
+    std::uint32_t flags;
+};
+
+static_assert(offsetof(AudioPath, flags) == offsetof(AudioPath, pointCount) + sizeof(std::uint32_t));
+
+PathState validatedPath(Registry& state, AudioPropagationHandle path, const AudioPath* data, float gain, const char* function) {
+    const auto system = requireObject(state, path, Kind::Path, function).system;
+    AudioPath replacement{};
+    require(data != nullptr && copyGuestIn(replacement, data), function);
+    requireDescriptor(&replacement.desc, PathId, sizeof(AudioPath), function);
+    require(std::isfinite(gain) && gain >= 0.0f && replacement.pointCount <= MaxPathPoints && (replacement.flags & ~(PathInvalid | PathPortal)) == 0, function);
+    for (std::uint32_t index = 0; index < replacement.pointCount; ++index) {
+        const auto& point = replacement.points[index];
+        requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), function);
+        require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), function);
+        if (point.material != 0) require(requireObject(state, point.material, Kind::Material, function).system == system, function);
+    }
+    return PathState{replacement, gain};
 }
 
 }
@@ -306,6 +378,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
     if (lockFound == state.systemLocks.end() || lockFound->second != systemLock || !liveSystem(state, system)) return ErrorInvalidHandle;
     std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.sourcePaths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
+    std::erase_if(state.sourceInfos, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.objects, [&](const auto& entry) {
         if (entry.second.system != system) return false;
         if (entry.second.kind != Kind::Path) state.orphans.insert(entry);
@@ -416,11 +489,14 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle sy
             state.paths.emplace(handle, path);
         }
         state.sourcePaths.emplace(source, handles);
+        state.sourceInfos.emplace(source, DefaultSourceInfo(system));
     } catch (...) {
         for (const auto handle : handles) {
             state.paths.erase(handle);
             state.objects.erase(handle);
         }
+        state.sourceInfos.erase(source);
+        state.sourcePaths.erase(source);
         state.objects.erase(source);
         throw;
     }
@@ -436,14 +512,18 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
-    requireAttributes(attributes, count, __func__);
+    const auto copied = requireAttributes(attributes, count, __func__);
+    SourceInfo updated = state.sourceInfos.at(source);
+    for (const auto& attribute : copied) require(StoreSourceAttribute(updated, attribute), __func__);
+    state.sourceInfos.at(source) = updated;
     return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagationHandle source, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    requireObject(state, source, Kind::Source, __func__);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;
@@ -460,9 +540,20 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     return 0;
 }
 
+std::int32_t APS5_VABI sceAudioPropagationSourceQueryAudioPaths(AudioPropagationHandle source, std::uint64_t* paths, std::size_t size) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+    if (!paths) return ErrorNullPointer;
+    static_cast<void>(size);
+    return 0;
+}
+
 std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
+    if (state.objects.find(path) == state.objects.end()) return ErrorInvalidHandle;
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
     if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
@@ -483,6 +574,19 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     const auto found = state.objects.find(source);
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!rays || !paths) return ErrorNullPointer;
+    if (rayCount == 0 && reflectionOrder != 0 && pathCount != 0) {
+        auto* outputs = static_cast<std::byte*>(paths);
+        for (std::uint32_t index = 0; index < pathCount; ++index) {
+            AudioPropagationStructDescriptor desc{};
+            require(copyGuestIn(desc, reinterpret_cast<const AudioPropagationStructDescriptor*>(outputs + index * sizeof(AudioPath) + offsetof(AudioPath, desc))), __func__);
+            requireDescriptor(&desc, PathId, sizeof(AudioPath), __func__);
+        }
+        const PathResult none{0, PathInvalid};
+        for (std::uint32_t index = 0; index < pathCount; ++index) {
+            require(copyGuestOut(reinterpret_cast<PathResult*>(outputs + index * sizeof(AudioPath) + offsetof(AudioPath, pointCount)), none), __func__);
+        }
+        return 0;
+    }
     if (rayCount != 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -492,25 +596,25 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
-    static_cast<void>(entries);
-    requireNoPropagation(count == 0, __func__);
+    require(count == 0 || entries != nullptr, __func__);
+    const auto& owned = state.sourcePaths.at(source);
+    std::vector<std::pair<AudioPropagationHandle, PathState>> updates;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        PathEntry entry{};
+        require(copyGuestIn(entry, static_cast<const PathEntry*>(entries) + index), __func__);
+        requireDescriptor(&entry.desc, PathEntryId, PathEntrySize, __func__);
+        require(std::find(owned.begin(), owned.end(), entry.path) != owned.end(), __func__);
+        require(std::none_of(updates.begin(), updates.end(), [&](const auto& update) { return update.first == entry.path; }), __func__);
+        updates.emplace_back(entry.path, validatedPath(state, entry.path, entry.data, entry.gain, __func__));
+    }
+    for (const auto& [path, update] : updates) state.paths.at(path) = update;
     return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHandle path, const AudioPath* data, float gain) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    const auto system = requireObject(state, path, Kind::Path, __func__).system;
-    requireDescriptor(data != nullptr ? &static_cast<const AudioPath*>(data)->desc : nullptr, PathId, sizeof(AudioPath), __func__);
-    const auto replacement = *static_cast<const AudioPath*>(data);
-    require(std::isfinite(gain) && gain >= 0.0f && replacement.pointCount <= MaxPathPoints && (replacement.flags & ~(PathInvalid | PathPortal)) == 0, __func__);
-    for (std::uint32_t index = 0; index < replacement.pointCount; ++index) {
-        const auto& point = replacement.points[index];
-        requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), __func__);
-        require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), __func__);
-        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, __func__).system == system, __func__);
-    }
-    state.paths.at(path) = PathState{replacement, gain};
+    state.paths.at(path) = validatedPath(state, path, data, gain, __func__);
     return 0;
 }
 
@@ -679,8 +783,13 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
 }
 
 int APS5_VABI sceAudioPropagationSourceQueryInfo(AudioPropagationHandle source, SourceInfo* info) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+    if (!info) return ErrorNullPointer;
+    const SourceInfo local = state.sourceInfos.at(source);
+    return copyGuestOut(info, local) ? 0 : ErrorNullPointer;
 }
 
 int APS5_VABI sceAudioPropagationSystemLock(AudioPropagationHandle system) {

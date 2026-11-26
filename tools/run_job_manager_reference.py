@@ -62,6 +62,14 @@ def stage_libraries(directory, build, toolchain, dependencies):
         pending.extend(read_host_imports(source))
 
 
+def runtime_environment(libraries):
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join(value for value in (str(libraries), environment.get("PATH")) if value)
+    if sys.platform != "win32":
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(value for value in (str(libraries), environment.get("LD_LIBRARY_PATH")) if value)
+    return environment
+
+
 def run(args, directory):
     libraries = directory / "libs"
     libraries.mkdir()
@@ -104,14 +112,12 @@ def run(args, directory):
     if args.host:
         dependencies.add("libSceJobManager.prx")
     stage_libraries(libraries, args.build, args.toolchain, dependencies)
-    environment = os.environ.copy()
-    environment["PATH"] = str(libraries) + os.pathsep + environment.get("PATH", "")
-    if sys.platform != "win32":
-        environment["LD_LIBRARY_PATH"] = str(libraries) + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+    environment = runtime_environment(libraries)
     environment.pop("ANYPS5_JOB_MANAGER_HOST", None)
     if args.host:
         environment["ANYPS5_JOB_MANAGER_HOST"] = "1"
     results = []
+    attempts = {}
     for case in args.cases:
         environment["ANYPS5_JOB_MANAGER_CASE"] = case
         try:
@@ -123,8 +129,11 @@ def run(args, directory):
         except subprocess.TimeoutExpired as error:
             log = (error.stdout or b"") + (error.stderr or b"")
             status, code = "timeout", None
-        (directory / f"{case}.log").write_bytes(log)
-        results.append({"case": case, "status": status, "returncode": code})
+        attempt = attempts.get(case, 0) + 1
+        attempts[case] = attempt
+        filename = f"{case}.log" if attempt == 1 else f"{case}-{attempt}.log"
+        (directory / filename).write_bytes(log)
+        results.append({"case": case, "status": status, "returncode": code, "log": filename})
         print(json.dumps(results[-1]), flush=True)
     summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash,
                "selection": getattr(args, "suite", None) or "custom",

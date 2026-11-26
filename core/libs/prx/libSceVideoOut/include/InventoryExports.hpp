@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -71,7 +72,7 @@ int APS5_VABI sceVideoOutRegisterStereoBuffers();
 int APS5_VABI sceVideoOutRemoveBuffer();
 int APS5_VABI sceVideoOutSetAlphaControl();
 int APS5_VABI sceVideoOutSetBlankAfterResume();
-int APS5_VABI sceVideoOutSetContentType();
+int APS5_VABI sceVideoOutSetContentType(std::uint32_t type, void* record);
 int APS5_VABI sceVideoOutSetDisplayEventPosition();
 int APS5_VABI sceVideoOutSetGamutMetadata_();
 int APS5_VABI sceVideoOutSetGlobalAlpha();

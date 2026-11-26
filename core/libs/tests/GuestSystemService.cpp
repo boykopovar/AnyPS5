@@ -13,10 +13,20 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
 constexpr int browserUnavailable = static_cast<int>(0x8002002Du);
+constexpr int appMessagingNullPointer = static_cast<int>(0x80C50004u);
+constexpr int appMessagingNoMessage = static_cast<int>(0x80C50005u);
+constexpr std::size_t appMessageSize = 8216;
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -29,6 +39,49 @@ bool Throws(TCall call) {
     }
     return false;
 }
+
+class PageBeforeHole {
+public:
+    PageBeforeHole() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long nativePageSize = sysconf(_SC_PAGESIZE);
+        Require(nativePageSize > 0);
+        pageSize = static_cast<std::size_t>(nativePageSize);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED);
+        memory = static_cast<char*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    PageBeforeHole(const PageBeforeHole&) = delete;
+    PageBeforeHole& operator=(const PageBeforeHole&) = delete;
+
+    ~PageBeforeHole() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    char* Tail(std::size_t length) const {
+        Require(length <= pageSize);
+        return memory + pageSize - length;
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t pageSize = 0;
+};
 
 bool LaunchAppThrows(const char* titleId, const char* const* arguments, const void* param) {
     try {
@@ -47,12 +100,25 @@ template<typename TList>
 void TestBigAppList(TList list) {
     const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
     constexpr std::int32_t Sentinel = 0x5a5a5a5a;
-    for (const std::uint32_t capacity : {1u, 4u}) {
+    {
         std::int32_t appIds[4] = {Sentinel, Sentinel, Sentinel, Sentinel};
         std::uint32_t count = 0xdeadbeefu;
-        Require(list(appIds, capacity, &count) == SYSTEM_SERVICE_OK);
+        Require(list(appIds, 1, &count) == SYSTEM_SERVICE_OK);
         Require(count == 1 && appIds[0] == runningAppId);
         for (std::size_t index = 1; index < 4; ++index) Require(appIds[index] == Sentinel);
+    }
+    {
+        std::int32_t appIds[4] = {Sentinel, Sentinel, Sentinel, Sentinel};
+        std::uint32_t count = 0xdeadbeefu;
+        Require(list(appIds, 0, &count) == SYSTEM_SERVICE_OK && count == 0);
+        for (std::size_t index = 0; index < 4; ++index) Require(appIds[index] == Sentinel);
+    }
+    for (const std::uint32_t capacity : {4u, 8u, 16u}) {
+        std::int32_t appIds[16];
+        for (std::int32_t& value : appIds) value = Sentinel;
+        std::uint32_t count = 0xdeadbeefu;
+        Require(list(appIds, capacity, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT && count == 0xdeadbeefu);
+        for (const std::int32_t value : appIds) Require(value == Sentinel);
     }
     std::int32_t appIds[2] = {Sentinel, Sentinel};
     std::uint32_t count = 0xdeadbeefu;
@@ -84,6 +150,11 @@ void TestRunningAppUser() {
     TestRunningAppAnswer<std::int32_t>(sceLncUtilGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceSystemServiceGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceShellCoreUtilGetUserFocus, USER_SERVICE_INITIAL_USER_ID, Sentinel, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    errno = 71;
+    Require(sceLncUtilGetAppLaunchedUser(runningAppId, reinterpret_cast<std::int32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceSystemServiceGetAppLaunchedUser(runningAppId, reinterpret_cast<std::int32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 }
 
 void TestShellCoreUtilLeafCalls() {
@@ -112,13 +183,62 @@ void TestShellCoreUtilLeafCalls() {
     }
 }
 
+void TestLncUtilInitialize() {
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+}
+
+void TestAppMessagingTryReceiveMsg() {
+    Require(sceAppMessagingTryReceiveMsg(nullptr) == appMessagingNullPointer);
+    alignas(8) unsigned char message[appMessageSize];
+    std::memset(message, 0x5a, sizeof(message));
+    Require(sceAppMessagingTryReceiveMsg(reinterpret_cast<AppMessagingMessage*>(message)) == appMessagingNoMessage);
+    Require(sceAppMessagingTryReceiveMsg(reinterpret_cast<AppMessagingMessage*>(message)) == appMessagingNoMessage);
+    for (unsigned char byte : message) Require(byte == 0x5a);
+}
+
 void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    errno = 71;
+    Require(sceLncUtilIsAppSuspended(runningAppId, reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceSystemServiceIsAppSuspended(runningAppId, reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     errno = 71;
     Require(sceLncUtilIsSpeculativeLaunch(sceSystemServiceGetAppIdOfRunningBigApp(), reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(errno == 71);
+}
+
+template <typename Error>
+bool LncLaunchAppThrows(const char* titleId, const char* const* arguments, const LncLaunchParam* param) {
+    try {
+        static_cast<void>(sceLncUtilLaunchApp(titleId, arguments, param));
+    } catch (const Error&) {
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+void TestLncUtilLaunchApp() {
+    LncLaunchParam param{};
+    param.size = sizeof(param);
+    Require(sceLncUtilLaunchApp(nullptr, nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA0000000000000000", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("", nullptr, &param) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilLaunchApp("PPSA00000", nullptr, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(LncLaunchAppThrows<std::logic_error>(reinterpret_cast<const char*>(0x10), nullptr, &param));
+    Require(errno == 71);
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00000", nullptr, &param));
+    const char* arguments[] = {"--backup", nullptr};
+    Require(LncLaunchAppThrows<std::runtime_error>("PPSA00001", arguments, &param));
 }
 
 void TestRunningBigApp() {
@@ -218,6 +338,8 @@ void TestGpuLoadEmulationMode() {
 
 int main() {
     TestShellCoreUtilLeafCalls();
+    TestLncUtilInitialize();
+    TestAppMessagingTryReceiveMsg();
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReportAbnormalTermination(nullptr) == SYSTEM_SERVICE_OK);
@@ -235,6 +357,8 @@ int main() {
     Require(sceSystemServiceShowControllerSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceShowDisplaySafeAreaSettings() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceOpenChallengeActivity() == SYSTEM_SERVICE_OK);
+    SystemServiceTournamentOccurrenceParam tournament{sizeof(tournament), "occurrence", USER_SERVICE_INITIAL_USER_ID, 0, "context"};
+    Require(sceSystemServiceOpenTournamentOccurrence(&tournament) == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceLaunchWebBrowser("http:") == browserUnavailable);
     Require(sceSystemServiceLaunchWebBrowser("https:") == browserUnavailable);
     Require(sceSystemServiceLaunchWebBrowser("psno:") == browserUnavailable);
@@ -245,6 +369,7 @@ int main() {
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == browserUnavailable);
     browserUri += 'a';
     Require(sceSystemServiceLaunchWebBrowser(browserUri.c_str()) == static_cast<int>(0x80a10007));
+    TestLncUtilLaunchApp();
     Require(LaunchAppThrows("PPSA99109", nullptr, nullptr));
     Require(LaunchAppThrows(nullptr, nullptr, nullptr));
     const char* launchArguments[] = {"--backup", nullptr};
@@ -279,6 +404,9 @@ int main() {
     };
     std::memset(name, 'x', sizeof(name));
     Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, nullptr, SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, reinterpret_cast<char*>(0x10), SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     for (std::size_t size = 0; size < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH; ++size) {
         Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, size) == SYSTEM_SERVICE_ERROR_PARAMETER);
     }
@@ -291,6 +419,18 @@ int main() {
     Require(std::strcmp(name, "PS5") == 0);
     for (std::size_t index = 4; index < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; ++index) Require(name[index] == '\0');
     for (std::size_t index = SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; index < sizeof(name); ++index) Require(name[index] == 'x');
+    char large[608];
+    std::memset(large, 'x', sizeof(large));
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, large, 600) == SYSTEM_SERVICE_OK);
+    Require(std::strcmp(large, "PS5") == 0);
+    for (std::size_t index = 4; index < 600; ++index) Require(large[index] == '\0');
+    for (std::size_t index = 600; index < sizeof(large); ++index) Require(large[index] == 'x');
+    const PageBeforeHole page;
+    char* const tail = page.Tail(300);
+    std::memset(tail, 'x', 300);
+    errno = 71;
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, tail, 600) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
 
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;

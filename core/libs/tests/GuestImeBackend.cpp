@@ -34,7 +34,7 @@ void CheckParamInit() {
 
 void CheckForTestFunction() {
     for (int call = 0; call < 3; ++call) {
-        Require(sceImeBackendForTestFunction() == static_cast<int>(0x80bc00ffu));
+        Require(sceImeBackendForTestFunction() == static_cast<int>(0x80bc10ffu));
     }
 }
 

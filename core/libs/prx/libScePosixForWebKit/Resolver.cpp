@@ -50,7 +50,6 @@ bool CopyResolverString(const char* source, std::string& destination) {
 
 template<typename TValue>
 void WriteResolverValue(TValue* destination, TValue value) {
-    const SavedErrno savedErrno;
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) APS5_INVALID_ARG_EX;
 }
 
@@ -187,7 +186,7 @@ int GuestError(int error) {
     if (error == EAI_BADFLAGS) return 3;
     if (error == EAI_FAMILY) return 5;
     if (error == EAI_MEMORY) return 6;
-    if (error == EAI_NONAME) return 8;
+    if (error == EAI_NONAME || error == EAI_NODATA) return 8;
     if (error == EAI_SERVICE) return 9;
     if (error == EAI_SOCKTYPE) return 10;
 #ifdef _WIN32
@@ -198,6 +197,7 @@ int GuestError(int error) {
         return 11;
     }
     if (error == EAI_OVERFLOW) return 14;
+    if (error == EAI_ADDRFAMILY) return 8;
 #endif
     return 4;
 }
@@ -346,8 +346,14 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
     return error == -1 && errno != 0 ? errno : -1;
 }
 
-GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
-    if (!name) return nullptr;
+GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* guestName, const char* guestProtocol) {
+    if (!guestName) return nullptr;
+    std::string nameText;
+    std::string protocolText;
+    if (CopyGuestString_nid_no_patch(guestName, 64, nameText) != 0) return nullptr;
+    if (guestProtocol && CopyGuestString_nid_no_patch(guestProtocol, 64, protocolText) != 0) return nullptr;
+    const char* const name = nameText.c_str();
+    const char* const protocol = guestProtocol ? protocolText.c_str() : nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)
