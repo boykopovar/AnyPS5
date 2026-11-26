@@ -25,9 +25,6 @@ void APS5_VABI WKGeolocationManagerSetProvider(const void* managerRef, const NKW
 
 void APS5_VABI WKGeolocationManagerProviderDidChangePosition(const void* managerRef, const void* positionRef) {
     auto* manager = NKWebKit::Cast<NKWebKit::GeolocationManager>(managerRef, __func__);
-    if (!positionRef) {
-        return;
-    }
     auto* pos = NKWebKit::Cast<NKWebKit::GeolocationPosition>(positionRef, __func__);
     manager->lastPosition = NKWebKit::Retained<NKWebKit::Object>::Share(pos);
     manager->hasError = false;

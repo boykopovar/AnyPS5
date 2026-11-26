@@ -51,10 +51,12 @@ int main() {
     const void* posRef = NKWebKit::ToRef(pos);
 
     WKGeolocationManagerProviderDidChangePosition(mgrRef, posRef);
-    Require(mgr->lastPosition.Get() != nullptr);
+    Require(mgr->lastPosition.Get() == pos.Get());
     Require(!mgr->hasError);
 
-    WKGeolocationManagerProviderDidChangePosition(mgrRef, nullptr);
+    RequireInvalidArgument([&] { WKGeolocationManagerProviderDidChangePosition(mgrRef, nullptr); });
+    Require(mgr->lastPosition.Get() == pos.Get());
+    Require(!mgr->hasError);
 
     WKGeolocationManagerProviderDidFailToDeterminePosition(mgrRef);
     Require(mgr->hasError);
@@ -62,6 +64,11 @@ int main() {
     auto errStr = NKWebKit::String::FromUtf8("Position unavailable");
     const void* errRef = NKWebKit::ToRef(errStr);
     WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage(mgrRef, errRef);
+    Require(mgr->hasError);
+    Require(!mgr->lastErrorMessage.empty());
+
+    RequireInvalidArgument([&] { WKGeolocationManagerProviderDidChangePosition(mgrRef, nullptr); });
+    Require(mgr->lastPosition.Get() == pos.Get());
     Require(mgr->hasError);
     Require(!mgr->lastErrorMessage.empty());
 
