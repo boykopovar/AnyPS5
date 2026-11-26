@@ -15,6 +15,11 @@ void APS5_VABI FT_Add_Default_ModulesForward_nid_no_patch(FreeType::GuestLibrary
 }
 APS5_EXPORT("pSgOzwkzx4Y", FT_Add_Default_ModulesForward_nid_no_patch);
 
+int APS5_VABI FT_Attach_FileForward_nid_no_patch(FreeType::GuestFaceRec* face, const char* filePath) {
+    return FT_Attach_File_nid_postfix(face, filePath);
+}
+APS5_EXPORT("21vkVuOP2lk", FT_Attach_FileForward_nid_no_patch);
+
 int APS5_VABI FT_Bitmap_ConvertForward_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestBitmap* source, FreeType::GuestBitmap* target, std::int32_t alignment) {
     return FT_Bitmap_Convert_nid_postfix(library, source, target, alignment);
 }

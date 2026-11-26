@@ -345,7 +345,6 @@ int APS5_VABI WKPageValidateCommand();
 int APS5_VABI WKPreferencesGetQTKitEnabled();
 int APS5_VABI WKRegistrableDomainCreate();
 
-int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo();
 int APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
 int APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
 int APS5_VABI WKViewAccessibilityFocusedObject();
