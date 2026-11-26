@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 namespace NKWebKit {
 
@@ -12,11 +13,30 @@ namespace {
 
 bool g_remoteInspectionEnabledByDefault = true;
 
+void ReleaseStoredValues(JSRuntime* rt, CallbackObjectData* data) {
+    if (!JS_IsUndefined(data->propStore)) {
+        JS_FreeValueRT(rt, data->propStore);
+        data->propStore = JS_UNDEFINED;
+    }
+    for (auto& [k, slot] : data->privateProperties) {
+        if (!JS_IsUndefined(slot.strongVal)) {
+            JS_FreeValueRT(rt, slot.strongVal);
+            slot.strongVal = JS_UNDEFINED;
+        }
+    }
+    data->privateProperties.clear();
+}
+
 int InterruptHandler(JSRuntime* rt, void* opaque) {
     auto* group = static_cast<OpaqueJSContextGroup*>(opaque);
     if (!group || !group->hasTimeLimit || !group->deadlineArmed) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (now < group->deadline) return 0;
+    const double cpuNow = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value;
+    if (cpuNow < group->cpuDeadlineSeconds) {
+        group->deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(group->cpuDeadlineSeconds - cpuNow));
+        return 0;
+    }
     group->deadlineArmed = false;
     if (group->terminateCallback) {
         OpaqueJSContext* ctx = group->activeContext ? group->activeContext : group->DefaultContext();
@@ -72,7 +92,8 @@ struct ConstraintMarker : JSMarker {
 
 bool APS5_VABI MarkerIsMarked(JSMarker* baseMarker, JSObjectRef object) {
     auto* marker = static_cast<ConstraintMarker*>(baseMarker);
-    if (!marker || !object || !object->alive) return false;
+    if (!object) return true;
+    if (!marker || !object->alive) return false;
     if (object->protectCount > 0) return true;
     if (marker->group->activeCallbackPins.count(object) > 0) return true;
     for (auto* ctx : marker->group->contexts) {
@@ -87,19 +108,6 @@ void APS5_VABI MarkerMark(JSMarker* baseMarker, JSObjectRef object) {
     if (marker->markedSet->insert(object).second) {
         marker->changed = true;
     }
-}
-
-int ParseErrorLineFromStack(const std::string& stack, int fallbackLine) {
-    const auto colon2 = stack.rfind(':');
-    if (colon2 == std::string::npos || colon2 == 0) return fallbackLine;
-    const auto colon1 = stack.rfind(':', colon2 - 1);
-    if (colon1 == std::string::npos || colon1 + 1 >= colon2) return fallbackLine;
-    int line = 0;
-    for (std::size_t i = colon1 + 1; i < colon2; ++i) {
-        if (stack[i] < '0' || stack[i] > '9') return fallbackLine;
-        line = line * 10 + (stack[i] - '0');
-    }
-    return line > 0 ? line : fallbackLine;
 }
 
 JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, int startingLineNumber, const char* source, std::size_t length, JSStringRef* errorMessage, int* errorLine) {
@@ -126,16 +134,10 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
             JS_FreeValue(qctx, msgVal);
         }
         if (errorLine) {
-            int parsedLine = clampedLine;
-            JSValue stackVal = JS_GetPropertyStr(qctx, exc, "stack");
-            if (JS_IsString(stackVal)) {
-                const char* stackStr = JS_ToCString(qctx, stackVal);
-                if (stackStr) {
-                    parsedLine = ParseErrorLineFromStack(stackStr, clampedLine);
-                    JS_FreeCString(qctx, stackStr);
-                }
-            }
-            JS_FreeValue(qctx, stackVal);
+            std::int32_t parsedLine = clampedLine;
+            JSValue lineVal = JS_GetPropertyStr(qctx, exc, "line");
+            if (JS_IsNumber(lineVal)) JS_ToInt32(qctx, &parsedLine, lineVal);
+            JS_FreeValue(qctx, lineVal);
             *errorLine = parsedLine;
         }
         JS_FreeValue(qctx, exc);
@@ -155,13 +157,37 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
 
 std::string JsStringToUtf8(const GuestJSString* str) {
     if (!str || str->nullString) return {};
-    const std::size_t maxLen = JSStringGetMaximumUTF8CStringSize_nid_postfix(str);
-    if (maxLen == 0) return {};
-    std::string buffer(maxLen, '\0');
-    const std::size_t written = JSStringGetUTF8CString_nid_postfix(str, buffer.data(), buffer.size());
-    if (written == 0) return {};
-    buffer.resize(written - 1);
-    return buffer;
+    const std::size_t count = str->characters.size() - 1;
+    std::string utf8;
+    utf8.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        std::uint32_t codepoint = str->characters[index];
+        if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+            if (index + 1 == count) break;
+            const std::uint32_t low = str->characters[index + 1];
+            if (low < 0xDC00 || low > 0xDFFF) break;
+            codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+            ++index;
+        } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+            break;
+        }
+        if (codepoint < 0x80) {
+            utf8.push_back(static_cast<char>(codepoint));
+        } else if (codepoint < 0x800) {
+            utf8.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else if (codepoint < 0x10000) {
+            utf8.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else {
+            utf8.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        }
+    }
+    return utf8;
 }
 
 GuestJSString* Utf8ToJsString(const std::string& utf8) {
@@ -253,6 +279,7 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
     utilityCtx = JS_NewContext(rt);
     JSValue globalObj = JS_GetGlobalObject(utilityCtx);
+    InstallErrorInfo(utilityCtx, globalObj);
     weakRefCtor = JS_GetPropertyStr(utilityCtx, globalObj, "WeakRef");
     JSValue weakRefProto = JS_GetPropertyStr(utilityCtx, weakRefCtor, "prototype");
     weakRefDerefFunc = JS_GetPropertyStr(utilityCtx, weakRefProto, "deref");
@@ -300,18 +327,7 @@ OpaqueJSContextGroup::~OpaqueJSContextGroup() {
         handle->alive = false;
     }
     for (auto& [ptr, data] : callbackDataByPtr) {
-        if (!data) continue;
-        if (!JS_IsUndefined(data->propStore)) {
-            JS_FreeValueRT(rt, data->propStore);
-            data->propStore = JS_UNDEFINED;
-        }
-        for (auto& [k, slot] : data->privateProperties) {
-            if (!JS_IsUndefined(slot.strongVal)) {
-                JS_FreeValueRT(rt, slot.strongVal);
-                slot.strongVal = JS_UNDEFINED;
-            }
-        }
-        data->privateProperties.clear();
+        if (data) ReleaseStoredValues(rt, data);
     }
     if (toStringTagAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toStringTagAtom);
     if (toPrimitiveAtom != JS_ATOM_NULL) JS_FreeAtomRT(rt, toPrimitiveAtom);
@@ -443,6 +459,15 @@ void OpaqueJSContextGroup::NotifyObjectFinalized(void* ptr, OpaqueJSValue* handl
     }
     if (ptr) {
         objectHandles.erase(ptr);
+        const auto left = callbackDataByPtr.find(ptr);
+        if (left != callbackDataByPtr.end()) {
+            CallbackObjectData* data = left->second;
+            callbackDataByPtr.erase(left);
+            if (data) {
+                ReleaseStoredValues(rt, data);
+                delete data;
+            }
+        }
     }
 }
 
@@ -551,12 +576,9 @@ void OpaqueJSContextGroup::DrainMicrotasks() {
 
 void OpaqueJSContextGroup::RefreshDeadline() {
     constexpr double maxTimeLimitSeconds = 1.0e9;
-    if (!(timeLimitSeconds > 0.0)) {
-        deadline = std::chrono::steady_clock::now();
-    } else {
-        const double seconds = std::min(timeLimitSeconds, maxTimeLimitSeconds);
-        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
-    }
+    const double seconds = timeLimitSeconds > 0.0 ? std::min(timeLimitSeconds, maxTimeLimitSeconds) : 0.0;
+    cpuDeadlineSeconds = _ZN3WTF7CPUTime16forCurrentThreadEv().m_value + seconds;
+    deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
 }
 
 void OpaqueJSContextGroup::EnterVm() {
@@ -571,8 +593,7 @@ void OpaqueJSContextGroup::UpdateStackLimit() {
     constexpr std::size_t maxPerThreadStackUsage = 5 * 1024 * 1024;
     constexpr std::size_t softReservedZoneSize = 128 * 1024;
     JS_UpdateStackTop(rt);
-    const char marker = 0;
-    const auto start = reinterpret_cast<std::uintptr_t>(&marker);
+    const auto start = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     std::uintptr_t bound = 0;
     try {
         bound = reinterpret_cast<std::uintptr_t>(_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv().m_bound);
@@ -604,6 +625,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     : group(grp), remoteInspectionEnabled(g_remoteInspectionEnabledByDefault) {
     group->refCount.fetch_add(1, std::memory_order_relaxed);
     qctx = JS_NewContext(group->rt);
+    InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
@@ -611,6 +633,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     }
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    InstallErrorInfo(qctx, rawGlobal);
     dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
     errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
     regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
@@ -620,6 +643,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
+    DefineConsoleObject(this, rawGlobal);
     JS_SetClassProto(qctx, group->callbackObjectClassId, JS_DupValue(qctx, objProto));
     JS_SetClassProto(qctx, group->callbackCallableClassId, objProto);
     globalObject = group->ToHandle(this, rawGlobal);
@@ -796,10 +820,7 @@ void APS5_VABI JSContextGroupClearExecutionTimeLimit(JSContextGroupRef group) {
 void APS5_VABI JSContextGroupAddHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
     if (!group || !finalizer) return;
     auto* mutGroup = const_cast<OpaqueJSContextGroup*>(group);
-    const std::pair<JSHeapFinalizer, void*> entry{finalizer, userData};
-    if (std::find(mutGroup->heapFinalizers.begin(), mutGroup->heapFinalizers.end(), entry) == mutGroup->heapFinalizers.end()) {
-        mutGroup->heapFinalizers.push_back(entry);
-    }
+    mutGroup->heapFinalizers.emplace_back(finalizer, userData);
 }
 
 void APS5_VABI JSContextGroupRemoveHeapFinalizer(JSContextGroupRef group, JSHeapFinalizer finalizer, void* userData) {
@@ -1153,8 +1174,8 @@ JSObjectRef APS5_VABI JSWeakGetObject(JSWeakRef weak) {
 }
 
 void APS5_VABI JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSObjectRef object) {
-    if (!ctx || !map) return;
-    if (!object || !object->alive) {
+    if (!ctx || !map || !object) return;
+    if (!object->alive) {
         map->entries.erase(key);
         return;
     }

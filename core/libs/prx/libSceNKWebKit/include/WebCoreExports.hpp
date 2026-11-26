@@ -86,8 +86,8 @@ void APS5_VABI _ZN7WebCore5ColorC1EOS0_(WebCore::Color* self, WebCore::Color&& o
 void APS5_VABI _ZN7WebCore5ColorC1ERKS0_(WebCore::Color* self, const WebCore::Color& other);
 void APS5_VABI _ZN7WebCore5ColorC2EOS0_(WebCore::Color* self, WebCore::Color&& other);
 void APS5_VABI _ZN7WebCore5ColorC2ERKS0_(WebCore::Color* self, const WebCore::Color& other);
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other);
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other);
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other);
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other);
 void APS5_VABI _ZN7WebCore7IntRect5scaleEf(WebCore::IntRect* self, float s);
 void APS5_VABI _ZN7WebCore7IntRect5uniteERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);
 void APS5_VABI _ZN7WebCore7IntRect9intersectERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);

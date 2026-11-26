@@ -262,6 +262,7 @@
 #include <utility>
 #include <vector>
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "mbedtls/bignum.h"
@@ -327,6 +328,25 @@ constexpr int PointConversionCompressed = 2;
 constexpr int PointConversionUncompressed = 4;
 constexpr int PointConversionHybrid = 6;
 
+constexpr int ErrorLibraryEc = 16;
+constexpr int ErrorLibraryEcdsa = 42;
+constexpr int ErrorLibraryEcdh = 43;
+constexpr int ReasonEcLibrary = 16;
+constexpr int ReasonMallocFailure = 65;
+constexpr int ReasonPassedNullParameter = 67;
+constexpr int EcBufferTooSmall = 100;
+constexpr int EcInvalidForm = 104;
+constexpr int EcPointAtInfinity = 106;
+constexpr int EcPointIsNotOnCurve = 107;
+constexpr int EcInvalidPrivateKey = 123;
+constexpr int EcUnknownGroup = 129;
+constexpr int EcdsaBadSignature = 100;
+constexpr int EcdsaMissingParameters = 103;
+constexpr int EcdhNoPrivateValue = 100;
+constexpr int EcdhPointArithmeticFailure = 101;
+constexpr int EcdhKdfFailed = 102;
+constexpr int EcdhKeyTruncation = 104;
+
 void Check(int result, const char* function) {
     if (result != 0) throw std::runtime_error(std::string(function) + ": mbedtls error " + std::to_string(result));
 }
@@ -373,6 +393,7 @@ std::unique_ptr<EcGroup> NewGroup(int nid) {
     for (const auto& [first, last] : CurvesMissingFromMbedtls) {
         if (nid >= first && nid <= last) NotImplemented_nid_no_patch("EC_GROUP_new_by_curve_name: a LibreSSL curve that mbedtls does not provide");
     }
+    if (nid > 0) LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcUnknownGroup, __FILE__, __LINE__);
     return nullptr;
 }
 
@@ -529,11 +550,17 @@ void APS5_VABI EC_POINT_free_nid_postfix(EcPoint* point) {
 std::size_t APS5_VABI EC_POINT_point2oct_nid_postfix(const EcGroup* group, const EcPoint* point, int form, unsigned char* buffer, std::size_t length, void*) {
     if (group == nullptr || point == nullptr) APS5_INVALID_ARG_EX;
     RequireSameCurve(*group, point->curve, "EC_POINT_point2oct: a point of another curve");
-    if (form != PointConversionCompressed && form != PointConversionUncompressed && form != PointConversionHybrid) return 0;
+    if (form != PointConversionCompressed && form != PointConversionUncompressed && form != PointConversionHybrid) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcInvalidForm, __FILE__, __LINE__);
+        return 0;
+    }
     const mbedtls_ecp_point& value = point->point;
     if (AtInfinity(value)) {
         if (buffer != nullptr) {
-            if (length < 1) return 0;
+            if (length < 1) {
+                LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcBufferTooSmall, __FILE__, __LINE__);
+                return 0;
+            }
             buffer[0] = 0;
         }
         return 1;
@@ -541,7 +568,10 @@ std::size_t APS5_VABI EC_POINT_point2oct_nid_postfix(const EcGroup* group, const
     const std::size_t fieldSize = FieldSize(*group);
     const std::size_t size = form == PointConversionCompressed ? 1 + fieldSize : 1 + 2 * fieldSize;
     if (buffer == nullptr) return size;
-    if (length < size) return 0;
+    if (length < size) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcBufferTooSmall, __FILE__, __LINE__);
+        return 0;
+    }
     const std::vector<unsigned char> uncompressed = EncodeUncompressed(*group, value);
     buffer[0] = static_cast<unsigned char>(form != PointConversionUncompressed && (uncompressed.back() & 1) ? form + 1 : form);
     std::memcpy(buffer + 1, uncompressed.data() + 1, size - 1);
@@ -658,6 +688,7 @@ const EcPoint* APS5_VABI EC_KEY_get0_public_key_nid_postfix(const EcKey* key) {
 int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
     if (point == nullptr || !key->group) {
+        if (point != nullptr) LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);
         delete key->publicKey;
         key->publicKey = nullptr;
         return 0;
@@ -680,7 +711,10 @@ EcPoint* EcPointDuplicate_nid_no_patch(const EcPoint* point, const EcGroup* grou
 }
 
 int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
-    if (key == nullptr || !key->group) return 0;
+    if (key == nullptr || !key->group) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);
+        return 0;
+    }
     EcGroup& group = *key->group;
     if (!key->privateKey) key->privateKey = new EcPrivateKey(group.curve);
     if (!key->publicKey) key->publicKey = new EcPoint(group.curve);
@@ -689,14 +723,27 @@ int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
 }
 
 int APS5_VABI EC_KEY_check_key_nid_postfix(const EcKey* key) {
-    if (key == nullptr || !key->group || !key->publicKey) return 0;
+    if (key == nullptr || !key->group || !key->publicKey) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);
+        return 0;
+    }
     EcGroup& group = *key->group;
     const mbedtls_ecp_point& publicKey = key->publicKey->point;
-    if (AtInfinity(publicKey) || mbedtls_ecp_check_pubkey(&group.group, &publicKey) != 0) return 0;
+    if (AtInfinity(publicKey)) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcPointAtInfinity, __FILE__, __LINE__);
+        return 0;
+    }
+    if (mbedtls_ecp_check_pubkey(&group.group, &publicKey) != 0) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcPointIsNotOnCurve, __FILE__, __LINE__);
+        return 0;
+    }
     if (key->privateKey) {
         Point product;
         Check(mbedtls_ecp_mul(&group.group, &product.value, &key->privateKey->value, &group.group.G, HostRandom, nullptr), __func__);
-        if (mbedtls_ecp_point_cmp(&product.value, &publicKey) != 0) return 0;
+        if (mbedtls_ecp_point_cmp(&product.value, &publicKey) != 0) {
+            LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcInvalidPrivateKey, __FILE__, __LINE__);
+            return 0;
+        }
     }
     return 1;
 }
@@ -711,6 +758,7 @@ int APS5_VABI ECDSA_size_nid_postfix(const EcKey* key) {
 int APS5_VABI ECDSA_sign_nid_postfix(int, const unsigned char* digest, int digestLength, unsigned char* signature, unsigned int* signatureLength, EcKey* key) {
     if (key == nullptr || signatureLength == nullptr) APS5_INVALID_ARG_EX;
     if (!key->group || !key->privateKey) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdsa, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);
         *signatureLength = 0;
         return 0;
     }
@@ -731,12 +779,18 @@ int APS5_VABI ECDSA_verify_nid_postfix(int, const unsigned char* digest, int dig
     DerBytes encodedS;
     if (!DecodeSignature(signature, signatureLength, encodedR, encodedS)) return -1;
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    if (!key->group || !key->publicKey) return -1;
+    if (!key->group || !key->publicKey) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdsa, 0xfff, EcdsaMissingParameters, __FILE__, __LINE__);
+        return -1;
+    }
     EcGroup& group = *key->group;
     const mbedtls_mpi& order = group.group.N;
     Mpi r;
     Mpi s;
-    if (!ReadInRange(encodedR, order, r.value) || !ReadInRange(encodedS, order, s.value)) return 0;
+    if (!ReadInRange(encodedR, order, r.value) || !ReadInRange(encodedS, order, s.value)) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdsa, 0xfff, EcdsaBadSignature, __FILE__, __LINE__);
+        return 0;
+    }
     if (digestLength < 0 || (digest == nullptr && digestLength > 0)) APS5_INVALID_ARG_EX;
     RequireUsablePublicKey(group, *key->publicKey, "ECDSA_verify: a public key at infinity or off the curve");
     Mpi inverse;
@@ -751,7 +805,11 @@ int APS5_VABI ECDSA_verify_nid_postfix(int, const unsigned char* digest, int dig
     Check(mbedtls_mpi_mod_mpi(&u2.value, &u2.value, &order), __func__);
     Point sum;
     Check(mbedtls_ecp_muladd(&group.group, &sum.value, &u1.value, &group.group.G, &u2.value, &key->publicKey->point), __func__);
-    if (AtInfinity(sum.value)) return -1;
+    if (AtInfinity(sum.value)) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcPointAtInfinity, __FILE__, __LINE__);
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdsa, 0xfff, ReasonEcLibrary, __FILE__, __LINE__);
+        return -1;
+    }
     const std::vector<unsigned char> encoded = EncodeUncompressed(group, sum.value);
     Check(mbedtls_mpi_read_binary(&u1.value, encoded.data() + 1, FieldSize(group)), __func__);
     Check(mbedtls_mpi_mod_mpi(&u1.value, &u1.value, &order), __func__);
@@ -760,18 +818,43 @@ int APS5_VABI ECDSA_verify_nid_postfix(int, const unsigned char* digest, int dig
 
 int APS5_VABI ECDH_compute_key_nid_postfix(void* out, std::size_t outLength, const EcPoint* publicKey, EcKey* key, void* (APS5_VABI* kdf)(const void*, std::size_t, void*, std::size_t*)) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    if (outLength > INT_MAX || !key->privateKey || !key->group || publicKey == nullptr || AtInfinity(publicKey->point)) return -1;
+    if (outLength > INT_MAX) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, ReasonMallocFailure, __FILE__, __LINE__);
+        return -1;
+    }
+    if (!key->privateKey) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, EcdhNoPrivateValue, __FILE__, __LINE__);
+        return -1;
+    }
+    if (!key->group) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, ReasonPassedNullParameter, __FILE__, __LINE__);
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, ReasonMallocFailure, __FILE__, __LINE__);
+        return -1;
+    }
     EcGroup& group = *key->group;
+    if (publicKey == nullptr || AtInfinity(publicKey->point)) {
+        if (publicKey == nullptr || publicKey->curve.nid == group.curve.nid) {
+            LibreSslPutError_nid_no_patch(ErrorLibraryEc, 0xfff, EcPointAtInfinity, __FILE__, __LINE__);
+            LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, EcdhPointArithmeticFailure, __FILE__, __LINE__);
+        }
+        return -1;
+    }
     RequireSameCurve(group, publicKey->curve, "ECDH_compute_key: a public key of another curve");
     RequireUsablePublicKey(group, *publicKey, "ECDH_compute_key: a public key off the curve");
     Mpi shared;
     Check(mbedtls_ecdh_compute_shared(&group.group, &shared.value, &publicKey->point, &key->privateKey->value, HostRandom, nullptr), __func__);
     const std::size_t size = FieldSize(group);
-    if (kdf == nullptr && outLength < size) return -1;
+    if (kdf == nullptr && outLength < size) {
+        LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, EcdhKeyTruncation, __FILE__, __LINE__);
+        return -1;
+    }
     std::vector<unsigned char> secret(size);
     Check(mbedtls_mpi_write_binary(&shared.value, secret.data(), size), __func__);
     if (kdf != nullptr) {
-        if (kdf(secret.data(), size, out, &outLength) == nullptr) return -1;
+        if (kdf(secret.data(), size, out, &outLength) == nullptr) {
+            LibreSslPutError_nid_no_patch(ErrorLibraryEcdh, 0xfff, EcdhKdfFailed, __FILE__, __LINE__);
+            return -1;
+        }
         return static_cast<int>(outLength);
     }
     if (out == nullptr) APS5_INVALID_ARG_EX;

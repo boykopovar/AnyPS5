@@ -15,7 +15,11 @@ uint32_t APS5_VABI sceAgcDriverInitResourceRegistration(void) {
 
 uint32_t APS5_VABI sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(uint64_t* size_in_bytes) {
  if (!size_in_bytes) return AGC_EINVAL;
- *size_in_bytes = 0x4000ULL;
+ const uint64_t size = 0x4000ULL;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(size_in_bytes, &size, sizeof(size));
+ errno = savedErrno;
+ if (!copied) return AGC_EINVAL;
  return 0;
 }
 

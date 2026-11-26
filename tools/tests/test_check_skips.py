@@ -36,6 +36,8 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, the host has no image that ends inside a 16 KiB page with free memory above it",
+    "skipped, the host has no image segment that starts inside a 16 KiB page holding no other loaded segment below it",
     "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
     "skipped, host imports unavailable: carried shadows not tested",
     "skipped, host import of the test block refused: carried shadows not tested",
@@ -556,6 +558,14 @@ class DeviceSkipPolicyTests(unittest.TestCase):
 
 
 class SkipCliOutputTests(unittest.TestCase):
+    def test_cli_names_the_malformed_junit_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "malformed-junit.xml"
+            path.write_text("<testsuite>", encoding="utf-8")
+            result = subprocess.run([sys.executable, check_skips.__file__, str(path)], capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(path.name.encode(), result.stderr)
+
     def test_only_unexpected_skip_is_reported(self):
         xml = (
             '<testsuites><testsuite>'
@@ -800,7 +810,10 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class HighRefreshLimitationTests(unittest.TestCase):
+    def test_high_refresh_limitation_matches_only_the_refresh_message(self):
+        self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
+        self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
 
 
 class DeviceLimitationsTests(unittest.TestCase):
