@@ -395,8 +395,9 @@ void UnsupportedPathsThrow() {
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status); });
-        Require(status == incoming);
+        auto* handle = ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status);
+        Require(handle != nullptr && status <= 0);
+        ucal_close_nid_postfix(handle);
     }
 }
 
