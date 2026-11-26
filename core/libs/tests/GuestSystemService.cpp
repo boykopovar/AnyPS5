@@ -20,7 +20,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <spawn.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -197,12 +199,49 @@ unsigned long CurrentProcessId() {
 #endif
 }
 
-int RunTitleContext(const char* program, const std::filesystem::path& directory) {
-    const std::string command = "\"" + std::string(program) + "\" " + titleContextMode + " \"" + directory.string() + "\"";
 #ifdef _WIN32
-    return std::system(("\"" + command + "\"").c_str());
+std::wstring QuoteWindowsArgument(const std::wstring& argument) {
+    std::wstring quoted = L"\"";
+    std::size_t backslashes = 0;
+    for (const wchar_t character : argument) {
+        if (character == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (character == L'"') quoted.append(backslashes * 2 + 1, L'\\');
+        else quoted.append(backslashes, L'\\');
+        backslashes = 0;
+        quoted += character;
+    }
+    quoted.append(backslashes * 2, L'\\');
+    quoted += L'"';
+    return quoted;
+}
+#endif
+
+int RunTitleContext(const char* program, const std::filesystem::path& directory) {
+#ifdef _WIN32
+    (void)program;
+    wchar_t executable[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, executable, MAX_PATH) == 0) return -1;
+    std::wstring command = QuoteWindowsArgument(executable) + L' ' + QuoteWindowsArgument(L"--title-context") + L' ' + QuoteWindowsArgument(directory.wstring());
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (CreateProcessW(executable, command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child) == 0) return -1;
+    DWORD code = static_cast<DWORD>(-1);
+    if (WaitForSingleObject(child.hProcess, INFINITE) == WAIT_OBJECT_0) GetExitCodeProcess(child.hProcess, &code);
+    else TerminateProcess(child.hProcess, code);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return static_cast<int>(code);
 #else
-    return std::system(command.c_str());
+    char* arguments[] = {const_cast<char*>(program), const_cast<char*>(titleContextMode), const_cast<char*>(directory.c_str()), nullptr};
+    pid_t child = 0;
+    if (posix_spawn(&child, program, nullptr, nullptr, arguments, environ) != 0) return -1;
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return -1;
+    return WEXITSTATUS(status);
 #endif
 }
 
@@ -241,7 +280,7 @@ void TestLncUtilInitialize(const char* program) {
     count = 0xdeadbeefu;
     Require(sceSystemServiceGetAppIdListOfBigApp(appIds, 1, &count) == SYSTEM_SERVICE_OK);
     Require(count == 1 && appIds[0] == sceSystemServiceGetAppIdOfRunningBigApp());
-    const auto root = std::filesystem::temp_directory_path() / ("guest_system_service_title_" + std::to_string(CurrentProcessId()));
+    const auto root = std::filesystem::temp_directory_path() / ("guest system service title " + std::to_string(CurrentProcessId()));
     std::filesystem::remove_all(root);
     Require(std::filesystem::create_directories(root / "app0" / "sce_sys"));
     {
