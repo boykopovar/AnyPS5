@@ -2,6 +2,7 @@ import argparse
 import heapq
 import html
 import math
+import re
 import sys
 import zlib
 from itertools import chain
@@ -20,6 +21,7 @@ displayed window. Gaps may contain unrecorded work."""
 
 LABEL_WIDTH = 120
 ROW_HEIGHT = 18
+INVALID_XML_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 def window_slices(trace, start_us, end_us, threads=None):
@@ -66,6 +68,10 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000, presents=()):
             "width": width_px + LABEL_WIDTH, "height": max(next_y, ROW_HEIGHT)}
 
 
+def escape_text(value):
+    return html.escape(INVALID_XML_TEXT.sub("\ufffd", value))
+
+
 def svg(laid):
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{laid["width"]}" height="{laid["height"]}">']
     if laid["presents"]:
@@ -75,19 +81,19 @@ def svg(laid):
         title = html.escape(f"{name} at {ts / 1000.0:.3f} ms")
         parts.append(f'<line x1="{x:.2f}" x2="{x:.2f}" y1="2" y2="{ROW_HEIGHT - 2}" stroke="#a34425" stroke-width="2"><title>{title}</title></line>')
     for name, y in laid["threads"]:
-        parts.append(f'<text x="2" y="{y + 13}" font-size="11">{html.escape(name)}</text>')
+        parts.append(f'<text x="2" y="{y + 13}" font-size="11">{escape_text(name)}</text>')
     for bar in laid["bars"]:
-        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms), tid {bar["tid"]}')
+        title = escape_text(f'{bar["name"]} ({bar["ms"]:.3f} ms), tid {bar["tid"]}')
         parts.append(f'<rect x="{bar["x"]:.2f}" y="{bar["y"] + 2}" width="{bar["w"]:.2f}" height="{ROW_HEIGHT - 4}" fill="#4a7fc1"><title>{title}</title></rect>')
     parts.append("</svg>")
     return "".join(parts)
 
 
 def page(svg_text, title, notes):
-    note_items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
-    return ("<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>" + html.escape(title) + "</title>"
+    note_items = "".join(f"<li>{escape_text(note)}</li>" for note in notes)
+    return ("<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>" + escape_text(title) + "</title>"
             "<style>body{font-family:sans-serif;margin:16px}svg{display:block;background:#f6f6f6}</style></head><body>"
-            "<h1>" + html.escape(title) + "</h1><ul>" + note_items + "</ul>" + svg_text + "</body></html>\n")
+            "<h1>" + escape_text(title) + "</h1><ul>" + note_items + "</ul>" + svg_text + "</body></html>\n")
 
 
 def nonnegative_number(value):

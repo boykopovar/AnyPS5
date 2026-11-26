@@ -8,6 +8,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 
 - Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
 - `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
+  Add `--strict` to reject a branch that is behind the base even when the test merge is clean.
+  A conflict or a strict-mode rejection exits with status 1. Use `--json` to inspect the counts in scripts.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
   - Linux: `relinker --registry src/eboot.elf app.elf`
   - Windows: `relinker --windows --registry src/eboot.elf app.exe`. Without `--windows` the output is an ELF file whatever its name, and Windows refuses to start it (exit code 216, "not compatible with the version of Windows").
@@ -83,6 +85,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 - **Crash on Linux:** take the `ip` from `dmesg` and its offset in the image. Repeat the run under `gdb` (launched by gdb, not attached) for registers, the faulting instructions and all thread stacks.
 - **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` (Windows) prints the crash report with every thread n seconds after start-up and then aborts the title, so set it to a time after the title has stopped. `APS5_TRACE_EXIT=1` reports the process exit point.
 - **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with nested slice bars on each thread's track and a track for presents. Use `--from-ms` and `--to-ms` to narrow the time window, `--thread` to select threads and `--max-slices` to cap slice bars. Present markers remain visible when filtering threads. `python tools/trace_diff.py A.json.gz B.json.gz` compares two captures per frame: the busy and wait time of each thread, and the largest slices, with B minus A as the delta. Traces slow the title and can move the crash, so mention the trace when reporting.
+  Use `--a-frames START:COUNT` and `--b-frames START:COUNT` to select the same scene in each capture.
+  The zero-based start indexes complete frames in that capture, so `0:1` needs at least two present markers.
 
 ## Measuring performance
 
@@ -106,6 +110,8 @@ cmd /c '.\app.exe > run.log 2>&1'
 ## Saves
 
 Save data is kept under the runtime's `_sd/` folder, and save-data memory under `_sd_mem/`. Copy them into a new runtime to continue from the same point.
+
+Make the copy after all processes of the source run have exited. Keep the source save files unchanged and use a separate writable copy for each runtime. Confirm in-game that the copied save loads and reaches the intended scene before starting a comparison.
 
 ## Reporting a result
 
@@ -149,6 +155,11 @@ The launcher verifies output console handles and never tees the native output to
 Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
 
 Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+
+When reporting a capture, distinguish the [summary's measurements](BUILD.md#performance-trace):
+
+- Check `trace_dropped_threads` when `trace_dropped` is true. `events_lost` makes retained slice and wait inventories incomplete; `totals_full` makes that thread's phase totals incomplete. Event loss alone does not invalidate the separately accumulated phase totals. Report both states rather than treating a readable trace as complete.
+- Phase totals include nested scopes and aggregate threads that can run at the same time. Do not add them to derive exclusive frame cost. `worker_busy_pct` includes waits inside its measured scopes, so it does not establish OS thread CPU utilization. Preserve these limits when naming a suspected bottleneck.
 
 If a performance summary file holds several captures, pass `--baseline-trace` and `--candidate-trace` to
 `tools/performance_compare.py` where needed. Use the exact `trace` value from each selected JSONL row.

@@ -22,6 +22,8 @@
 #include <winioctl.h>
 #else
 #include <dlfcn.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -121,6 +123,13 @@ int main(int argc, char** argv) {
     const auto call = [&](int* out, void* ru) { return test == "wait3" ? wait3(out, 0, ru) : wait4(-1, out, 0, ru); };
     Require(call(nullptr, nullptr) == -1 && *error() == 10);
     Require(call(reinterpret_cast<int*>(1), reinterpret_cast<void*>(1)) == -1 && *error() == 10);
+    const auto getrusage = LoadFunction<int (APS5_VABI*)(int, GuestResourceUsage*)>(kernel, "getrusage", patched);
+    const auto childUsage = [&] {
+        GuestResourceUsage resources{};
+        Require(getrusage(-1, &resources) == 0);
+        return resources;
+    };
+    const auto micros = [](const KernelTimeval& time) { return time.tv_sec * 1000000 + time.tv_usec; };
 #ifdef _WIN32
     std::wstring executable(32768, L'\0');
     const auto length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
@@ -145,13 +154,6 @@ int main(int argc, char** argv) {
     const auto waitChild = [&](int child, int* out, int options, void* resources) {
         return test == "wait3" ? wait3(out, options, resources) : wait4(child, out, options, resources);
     };
-    const auto getrusage = LoadFunction<int (APS5_VABI*)(int, GuestResourceUsage*)>(kernel, "getrusage", patched);
-    const auto childUsage = [&] {
-        GuestResourceUsage resources{};
-        Require(getrusage(-1, &resources) == 0);
-        return resources;
-    };
-    const auto micros = [](const KernelTimeval& time) { return time.tv_sec * 1000000 + time.tv_usec; };
     const auto readUsage = [&] {
         GuestResourceUsage resources{};
         static_assert(sizeof(resources) == sizeof(usage));
@@ -207,6 +209,7 @@ int main(int argc, char** argv) {
     Require(badStatus == -1 && *error() == 14);
     Require(waitChild(third, &status, 1, nullptr) == -1 && *error() == 10);
 #else
+    const auto initialUsage = childUsage();
     int barrier[2]{};
     Require(::pipe(barrier) == 0);
     const int child = ::fork();
@@ -215,6 +218,14 @@ int main(int argc, char** argv) {
         ::close(barrier[1]);
         char byte;
         if (::read(barrier[0], &byte, 1) != 1) ::_exit(99);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        volatile std::uint64_t sink = 0;
+        struct rusage self{};
+        do {
+            for (std::uint64_t index = 0; index < 100000; ++index) sink = sink + index;
+            if (::getrusage(RUSAGE_SELF, &self) != 0) ::_exit(4);
+            if (std::chrono::steady_clock::now() >= deadline) ::_exit(3);
+        } while ((self.ru_utime.tv_sec + self.ru_stime.tv_sec) * 1000000 + self.ru_utime.tv_usec + self.ru_stime.tv_usec < 60000);
         ::_exit(42);
     }
     Require(::close(barrier[0]) == 0);
@@ -224,7 +235,13 @@ int main(int argc, char** argv) {
     Require(waitChild(&status, 1, usage.data()) == 0);
     Require(status == 0x12345678);
     for (auto byte : usage) Require(byte == 0xa5);
+    const auto pendingUsage = childUsage();
+    Require(std::memcmp(&initialUsage, &pendingUsage, sizeof(initialUsage)) == 0);
     Require(::write(barrier[1], "x", 1) == 1 && ::close(barrier[1]) == 0);
+    siginfo_t exited{};
+    Require(::waitid(P_PID, static_cast<id_t>(child), &exited, WEXITED | WNOWAIT) == 0);
+    const auto exitedUsage = childUsage();
+    Require(std::memcmp(&initialUsage, &exitedUsage, sizeof(initialUsage)) == 0);
     Require(waitChild(&status, 0, usage.data()) == child && status == (42 << 8));
     GuestResourceUsage resources{};
     static_assert(sizeof(resources) == usage.size());
@@ -233,6 +250,14 @@ int main(int argc, char** argv) {
     Require(resources.ru_utime.tv_usec >= 0 && resources.ru_utime.tv_usec < 1000000);
     Require(resources.ru_stime.tv_usec >= 0 && resources.ru_stime.tv_usec < 1000000);
     Require(resources.ru_maxrss >= 0 && resources.ru_minflt >= 0 && resources.ru_nvcsw >= 0);
+    Require(micros(resources.ru_utime) + micros(resources.ru_stime) >= 50000);
+    const auto reapedUsage = childUsage();
+    const auto userDelta = micros(reapedUsage.ru_utime) - micros(initialUsage.ru_utime) - micros(resources.ru_utime);
+    const auto systemDelta = micros(reapedUsage.ru_stime) - micros(initialUsage.ru_stime) - micros(resources.ru_stime);
+    Require(userDelta >= -1 && userDelta <= 1 && systemDelta >= -1 && systemDelta <= 1);
+    Require(reapedUsage.ru_maxrss >= resources.ru_maxrss && reapedUsage.ru_maxrss >= initialUsage.ru_maxrss);
+    const auto repeatedUsage = childUsage();
+    Require(std::memcmp(&reapedUsage, &repeatedUsage, sizeof(reapedUsage)) == 0);
     const int second = ::fork();
     Require(second >= 0);
     if (second == 0) ::_exit(7);

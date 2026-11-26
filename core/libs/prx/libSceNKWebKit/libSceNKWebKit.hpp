@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/AsyncFileStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossThreadTaskHandlerExports.hpp"
 #include "prx/libSceNKWebKit/include/DeviceMotionDataExports.hpp"
@@ -86,6 +87,7 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfThreadFlagsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfMediaTimeRangeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfThreadingExports.hpp"
@@ -138,6 +140,7 @@
 #include "prx/libSceNKWebKit/include/AdClickAttributionExports.hpp"
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
 #include "prx/libSceNKWebKit/include/JSPromiseStateExports.hpp"
+#include "prx/libSceNKWebKit/include/ElementNavigationExports.hpp"
 #include "prx/libSceNKWebKit/include/BasicFilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
