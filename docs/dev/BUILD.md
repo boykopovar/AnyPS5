@@ -241,6 +241,10 @@ python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliA
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
+For a header change, add `--headers` and use a Ninja build that has already compiled its consumers.
+The tool uses recorded dependencies to select translation units. Rebuild first if the dependency records are stale.
+Add `--dry-run` to inspect the planned commands as JSON without running the compiler.
+
 `tools/compile_database_inventory.py` reads a saved compilation database and prints JSON that groups its records by source directory and file, with the number of variants of each file. Each database entry counts as one variant, including identical commands.
 The JSON keeps each entry's `arguments` or `command` and its `output` field when present. It does not invoke a compiler or a build tool.
 
