@@ -253,4 +253,50 @@ int APS5_VABI _Toupper_nid_postfix(int c, const void*) {
     return static_cast<unsigned>(c) <= 0x7f ? _Getptoupper_nid_postfix()[c] : c;
 }
 
+void APS5_VABI _ZNKSt3__123__match_any_but_newlineIcE6__execERNS_7__stateIcEE_nid_postfix(const void* matcher, void* state) {
+    struct MatchStatePrefix {
+        std::int32_t action;
+        std::uint32_t padding;
+        const char* first;
+        const char* current;
+        const char* end;
+        std::byte submatchesAndLoops[48];
+        const void* node;
+    };
+    struct MatcherPrefix {
+        const void* vtable;
+        const void* successor;
+    };
+    static_assert(offsetof(MatchStatePrefix, current) == 0x10 && offsetof(MatchStatePrefix, end) == 0x18);
+    static_assert(offsetof(MatchStatePrefix, node) == 0x50 && sizeof(MatchStatePrefix) == 0x58);
+    static_assert(offsetof(MatcherPrefix, successor) == 8);
+    constexpr std::int32_t reject = -993;
+    constexpr std::int32_t consume = -995;
+
+    MatchStatePrefix match{};
+    if (!GuestCopyIn_nid_no_patch(&match, state, sizeof(match))) {
+        throw std::invalid_argument("libc++ regex dot: unreadable match state");
+    }
+    match.action = reject;
+    match.node = nullptr;
+    if (match.current != match.end) {
+        char character = '\0';
+        if (!GuestCopyIn_nid_no_patch(&character, match.current, sizeof(character))) {
+            throw std::invalid_argument("libc++ regex dot: unreadable input");
+        }
+        if (character != '\r' && character != '\n') {
+            MatcherPrefix node{};
+            if (!GuestCopyIn_nid_no_patch(&node, matcher, sizeof(node))) {
+                throw std::invalid_argument("libc++ regex dot: unreadable matcher");
+            }
+            match.action = consume;
+            ++match.current;
+            match.node = node.successor;
+        }
+    }
+    if (!GuestCopyOut_nid_no_patch(state, &match, sizeof(match))) {
+        throw std::invalid_argument("libc++ regex dot: unwritable match state");
+    }
+}
+
 }
