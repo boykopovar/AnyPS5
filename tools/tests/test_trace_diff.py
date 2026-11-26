@@ -121,6 +121,22 @@ class DiffTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "needs at least one complete frame in each capture"):
             trace_diff.compare(a, b, a_frames=(0, 1))
 
+    def test_whole_capture_diff_rejects_unframed_timings(self):
+        items = events(8000)
+        markers = [item for item in items if item["name"] == "present"]
+        work = [item for item in items if item["name"] != "present"]
+        framed = write_trace(self.tmp.name, "whole.json.gz", items)
+        for presents in (0, 1):
+            unframed = write_trace(self.tmp.name, "unframed.json.gz", work + markers[:presents])
+            for a, b, options in ((unframed, framed, []), (framed, unframed, ["--json"])):
+                with self.subTest(presents=presents, a=a):
+                    result = subprocess.run([sys.executable, trace_diff.__file__, a, b, *options],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(str(unframed), result.stderr)
+                    self.assertIn("complete frame", result.stderr)
+
     def test_identical_traces_have_zero_deltas(self):
         result = self.diff(events(10000), events(10000))
         self.assertEqual(set(result), {"a", "b", "frames", "threads", "slices"})
