@@ -991,8 +991,15 @@ namespace {
 int RunCallback(Session& session, std::unique_lock<std::mutex>& sessionLock, SslVerifyCallback callback, void* argument) {
     session.verifying = true;
     sessionLock.unlock();
-    const int decision = callback(session.contextHandle, session.failedOptions, session.peerHandles.data(),
-        static_cast<int>(session.peerHandles.size()), argument);
+    int decision;
+    try {
+        decision = callback(session.contextHandle, session.failedOptions, session.peerHandles.data(),
+            static_cast<int>(session.peerHandles.size()), argument);
+    } catch (const std::bad_alloc&) {
+        sessionLock.lock();
+        session.verifying = false;
+        throw;
+    }
     sessionLock.lock();
     session.verifying = false;
     return decision < 0 ? ErrorCallbackCheck : 0;
