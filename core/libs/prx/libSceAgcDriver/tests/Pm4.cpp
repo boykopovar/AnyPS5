@@ -175,6 +175,11 @@ void testRegisters() {
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "direct registers not sequential");
     execute(state, makePacket(0x69, {0xffffffffu, 52, 53}));
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "a direct register packet with the 0xffffffff sentinel wrote a register");
+    execute(state, makePacket(0x68, {0x102, 50, 51}));
+    check(state.config.at(0x102) == 50 && state.config.at(0x103) == 51, "config registers not sequential");
+    execute(state, makePacket(0x68, {0xffffffffu, 52, 53}));
+    check(state.config.at(0x102) == 50 && state.config.at(0x103) == 51, "a config register packet with the 0xffffffff sentinel wrote a register");
+    expectFailure([&] { execute(state, makePacket(0x68, {0x102})); }, "register packet has no values");
     execute(state, makePacket(0x7a, {0x10, 60}));
     check(state.userConfig.at(0x10) == 60, "uconfig index zero failed");
     execute(state, makePacket(0x7a, {0x20000243, 0x441}));

@@ -292,6 +292,7 @@ struct QueueState {
     Registers shader;
     Registers context = InitialContextRegisters();
     Registers userConfig{{0x24a, 0}, {0x24b, 0}};
+    Registers config;
     std::optional<Registers> savedContext;
     SpareRegisters spareContext;
     std::vector<std::uint32_t> constantRam;

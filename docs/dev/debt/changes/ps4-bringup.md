@@ -10,6 +10,12 @@
 
 - [Validate queries](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - the nine validation entry points answer as the Neo provider does (validation not enabled; version and on-submit checks 0), which the console's regular module must also export: Heretic + Hexen (CUSA51664) imports all nine from `libSceGnmDriver` while AnyPS5 only provided them in `libSceGnmDriverForNeoMode`. Not measured on a console. Complements #27342 (shared compute waits and GPU queries). Closes when: measured on a console.
 
+# libSceAgcDriver
+
+## add Unknown function info
+
+- [SET_CONFIG_REG](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver) - config register writes validate like the other register packets and are recorded in a config bank without interpretation; reads of config registers still throw as outside the modeled banks. Heretic + Hexen (CUSA51664) writes 0 to config register 0x8102 twice per submission and never reads it back; what that register selects is unmeasured, as is whether config writes may appear on compute queues (they are refused there). Closes when: the written registers' effects are measured.
+
 # libSceNgs2.native
 
 ## change [NGS2 rack block limit]

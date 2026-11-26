@@ -145,6 +145,7 @@ bool drawLocation(std::uint32_t value) {
 }
 
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
+    if (opcode == 0x68) return queue.config;
     if (opcode == 0x69 || opcode == 0x9f) return queue.context;
     if (opcode == 0x76 || opcode == 0x63) return queue.shader;
     return queue.userConfig;
@@ -288,7 +289,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
     switch (opcode) {
         case 0x11: case 0x12: case 0x13: case 0x15: case 0x16: case 0x20: case 0x22: case 0x26: case 0x27:
         case 0x2a: case 0x2d: case 0x2f: case 0x35: case 0x37: case 0x40: case 0x42: case 0x45: case 0x46: case 0x50:
-        case 0x58: case 0x5d: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
+        case 0x58: case 0x5d: case 0x63: case 0x64: case 0x68: case 0x69: case 0x76: case 0x79: case 0x7a:
         case 0x51: case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
@@ -307,7 +308,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x43: case 0x47: case 0x48:
             return "guest cache actions, GPU events and interrupt delivery are not implemented";
         case 0x8e: return "GPU LOD statistics are not implemented; synthetic results are forbidden";
-        case 0x41: case 0x68: case 0x78:
+        case 0x41: case 0x78:
             return "opcode is named but has no handler in the reference dispatch table";
         default: return "opcode is not known in the reference";
     }
@@ -541,7 +542,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             size(5);
             require((packet[1] & 3u) == 0 && packet[4] <= 0x3fffu && (packet[3] == 0x80000000u || ((packet[3] & ~0xffffu) == 0 && packet[4] <= 0x10000u - packet[3])), "unsupported indirect-register address or control fields");
             break;
-        case 0x69: case 0x76: case 0x79: case 0x7a: {
+        case 0x68: case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) break;
             if (opcode != 0x76) graphics();
             require(packet.size() >= 3, "register packet has no values");
@@ -1300,7 +1301,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             writeRegister(queue, 0x69, offset, value);
             return;
         }
-        case 0x69: case 0x76: case 0x79: case 0x7a: {
+        case 0x68: case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) return;
             const auto offset = registerOffset(packet[1]);
             if (offset.has_value()) for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, *offset + static_cast<std::uint32_t>(i - 2), packet[i]);
