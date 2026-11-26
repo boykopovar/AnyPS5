@@ -506,6 +506,61 @@ static void CheckHeldSequencedEndClose(bool replace) {
         if (TryHeldSequencedEndClose(replace)) return;
     Require(false);
 }
+
+static void CheckEndAfterBlockedSend() {
+    constexpr std::uint32_t RecordSize = 1000;
+    constexpr int Again = 35;
+    constexpr int BadDescriptor = 9;
+    constexpr int SocketLevel = 0xffff;
+    constexpr int Rights = 1;
+    static char record[RecordSize];
+    static char received[RecordSize + 1];
+    std::memset(record, 'f', sizeof(record));
+    int pair[2] = {-1, -1};
+    int spare[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, SequencedPacket | NonBlocking, 0, pair) == 0);
+    Require(socketpair_nid_postfix(Unix, Stream, 0, spare) == 0);
+    std::uint32_t filled = 0;
+    while (send_nid_postfix(pair[0], record, RecordSize, NoSignal) == RecordSize) ++filled;
+    Require(filled > 0 && *__error_nid_postfix() == Again);
+    alignas(8) unsigned char control[24]{};
+    const std::uint32_t controlLength = 20;
+    std::memcpy(control, &controlLength, sizeof(controlLength));
+    std::memcpy(control + 4, &SocketLevel, sizeof(SocketLevel));
+    std::memcpy(control + 8, &Rights, sizeof(Rights));
+    std::memcpy(control + 16, &spare[0], sizeof(spare[0]));
+    KernelIovec vector{record, RecordSize};
+    GuestMsghdr message{nullptr, 0, &vector, 1, control, sizeof(control), 0};
+    Require(FailsWith(sendmsg_nid_postfix(pair[0], &message, NoSignal), Again));
+    Require(close_nid_postfix(spare[0]) == 0 && close_nid_postfix(spare[1]) == 0);
+    Require(fcntl_nid_postfix(pair[0], 4, 0) == 0 && fcntl_nid_postfix(pair[1], 4, 0) == 0);
+    std::memset(record, 'z', sizeof(record));
+    std::atomic<bool> done{false};
+    std::int64_t blockedResult = -2;
+    int blockedError = 0;
+    std::thread sender([&] {
+        blockedResult = send_nid_postfix(pair[0], record, RecordSize, NoSignal);
+        blockedError = *__error_nid_postfix();
+        done = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!done);
+    Require(close_nid_postfix(pair[0]) == 0);
+    GuestPollDescriptor waited{pair[1], In, 0};
+    Require(poll_nid_postfix(&waited, 1, 0) == 1 && (waited.revents & In) != 0 && (waited.revents & Hup) == 0);
+    for (std::uint32_t index = 0; index < filled; ++index) Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == RecordSize && received[0] == 'f');
+    const auto last = recv_nid_postfix(pair[1], received, sizeof(received), 0);
+    sender.join();
+    if (blockedResult == RecordSize) {
+        Require(last == RecordSize && received[0] == 'z' && received[RecordSize - 1] == 'z');
+        Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
+    } else {
+        Require(blockedResult == -1 && blockedError == BadDescriptor && last == 0);
+    }
+    waited.revents = 0;
+    Require(poll_nid_postfix(&waited, 1, 0) == 1 && (waited.revents & Hup) != 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+}
 #endif
 
 static void CheckSequencedPacketFlow() {
@@ -572,6 +627,7 @@ static void CheckSequencedPacketFlow() {
 #if defined(_WIN32) || defined(__APPLE__)
     CheckHeldSequencedEndClose(false);
     CheckHeldSequencedEndClose(true);
+    CheckEndAfterBlockedSend();
 #endif
 }
 

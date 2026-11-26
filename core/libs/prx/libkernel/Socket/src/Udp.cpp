@@ -145,6 +145,8 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool receiveShut = false;
     bool sendShut = false;
     std::atomic<bool> endClosed = false;
+    std::atomic<int> sequencedSends = 0;
+    std::atomic<bool> sendsEnded = false;
     bool localAddressCleared = false;
     bool connectStarted = false;
 #ifdef _WIN32
@@ -1054,10 +1056,15 @@ bool SequencedPeerGone(const Socket& socket) {
     const auto peer = socket.peer.lock();
     return !peer || peer->endClosed.load();
 }
+bool SequencedPeerDetached(const Socket& socket) {
+    if (!SequencedPair(socket)) return false;
+    const auto peer = socket.peer.lock();
+    return !peer || peer->sendsEnded.load();
+}
 bool SequencedPeerSendEnded(const Socket& socket) {
     if (!SequencedPair(socket)) return false;
     const auto peer = socket.peer.lock();
-    if (!peer || peer->endClosed.load()) return true;
+    if (!peer || peer->sendsEnded.load()) return true;
     std::lock_guard lock(peer->modeMutex);
     return peer->sendShut;
 }
@@ -1067,13 +1074,26 @@ void WakeSequencedReaders(const std::shared_ptr<Socket>& socket) {
         WakeReadWatchers(alias);
     }
 }
+void EndSequencedSends(Socket& socket) {
+    if (socket.sendsEnded.exchange(true)) return;
+    if (const auto peer = socket.peer.lock()) WakeSequencedReaders(peer);
+}
+struct SequencedSend {
+    Socket* socket;
+    explicit SequencedSend(Socket& sending) : socket(SequencedPair(sending) ? &sending : nullptr) {
+        if (socket) socket->sequencedSends.fetch_add(1);
+    }
+    ~SequencedSend() {
+        if (socket && socket->sequencedSends.fetch_sub(1) == 1 && socket->endClosed.load()) EndSequencedSends(*socket);
+    }
+    SequencedSend(const SequencedSend&) = delete;
+    SequencedSend& operator=(const SequencedSend&) = delete;
+};
 void ReleaseSequencedEnd(std::shared_ptr<Socket> released) {
     if (!released || !SequencedPair(*released)) return;
     if (!DescriptorsOf(released).empty()) return;
     released->endClosed.store(true);
-    const auto peer = released->peer.lock();
-    released.reset();
-    if (peer) WakeSequencedReaders(peer);
+    if (released->sequencedSends.load() == 0) EndSequencedSends(*released);
 }
 int SequencedRoom(Socket& socket, std::uint64_t length, int flags) {
     if (!SequencedPair(socket)) return 0;
@@ -1872,7 +1892,7 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
         if (events & (POLLERR | POLLNVAL)) revents = static_cast<short>(revents | KernelSocketPoll::Error);
         if (events & POLLHUP) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
 #if defined(_WIN32) || defined(__APPLE__)
-        if (SequencedPeerGone(*held[static_cast<std::size_t>(index)])) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
+        if (SequencedPeerDetached(*held[static_cast<std::size_t>(index)])) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
 #endif
         entries[index].revents = revents;
         if (revents != 0) ++ready;
@@ -2420,6 +2440,9 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+#if defined(_WIN32) || defined(__APPLE__)
+    const SequencedSend sending(*socket);
+#endif
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (SendBeforeConnect(*socket)) return Fail(57);
@@ -2704,6 +2727,9 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+#if defined(_WIN32) || defined(__APPLE__)
+    const SequencedSend sending(*socket);
+#endif
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!address && SendBeforeConnect(*socket)) return Fail(57);
@@ -2901,6 +2927,9 @@ int PassedDescriptors(const GuestMsghdr& message, std::vector<int>& descriptors,
 static bool ReadGuest(void* destination, const void* source, std::size_t bytes);
 std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector<char>& data, int flags) {
     constexpr std::size_t MostControlBytes = 2048;
+#if defined(_WIN32) || defined(__APPLE__)
+    const SequencedSend sending(socket);
+#endif
     if (message.controlLength < 12 || message.controlLength > MostControlBytes) return Fail(22);
     std::vector<unsigned char> controlCopy(message.controlLength);
     if (!ReadGuest(controlCopy.data(), message.control, controlCopy.size())) return Fail(14);
@@ -2925,6 +2954,9 @@ std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector
     CloseHeld(held);
     return Fail(error);
 #else
+#ifdef __APPLE__
+    if (const int refused = SequencedRoom(socket, data.size(), flags)) return Fail(refused);
+#endif
     if (const int waited = WaitForTransfer(socket, true, flags)) return Fail(waited);
     iovec vector{data.data(), data.size()};
     msghdr host{};
@@ -3565,9 +3597,8 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 sendShut = socket->sendShut;
             }
 #if defined(_WIN32) || defined(__APPLE__)
-            const bool peerGone = SequencedPeerGone(*socket);
-            receiveShut = receiveShut || peerGone || ReceiveEnded(*socket);
-            sendShut = sendShut || peerGone;
+            receiveShut = receiveShut || SequencedPeerDetached(*socket) || ReceiveEnded(*socket);
+            sendShut = sendShut || SequencedPeerGone(*socket);
 #endif
             refresh(index, receiveShut, sendShut);
         }
