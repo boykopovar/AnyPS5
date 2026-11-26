@@ -30,6 +30,12 @@ class Build:
             cache[name.partition(":")[0]] = value
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
         self.source = os.path.normpath(cache["CMAKE_HOME_DIRECTORY"])
+        try:
+            same_directory = os.path.samefile(path, self.path)
+        except FileNotFoundError:
+            same_directory = False
+        if not same_directory:
+            raise ValueError(f"CMake cache belongs to {self.path}; configure this directory first")
         self.program = cache.get("CMAKE_MAKE_PROGRAM") or "ninja"
         self.encoding = "utf-8"
         if sys.platform == "win32":
@@ -143,7 +149,33 @@ class Build:
 
     def target(self, test):
         command = test.get("command") or []
-        return self.output(command[0]) if command else None
+        if not command:
+            return None
+        if command[1:3] != ["-E", "env"] or Path(command[0]).stem.casefold() != "cmake":
+            return self.output(command[0])
+        arguments = iter(command[3:])
+        for part in arguments:
+            if part == "--":
+                executable = next(arguments, "")
+                break
+            if part == "--modify":
+                next(arguments, None)
+            elif part.startswith("--unset="):
+                continue
+            elif part.startswith("-"):
+                return None
+            elif "=" not in part:
+                executable = part
+                break
+        else:
+            return None
+        if not os.path.isabs(executable):
+            if not os.path.dirname(executable) or os.path.splitdrive(executable)[0]:
+                return None
+            directory = next((prop["value"] for prop in test.get("properties", ())
+                              if prop["name"] == "WORKING_DIRECTORY"), self.path)
+            executable = os.path.join(directory, executable)
+        return self.output(executable)
 
 
 @functools.lru_cache(maxsize=None)
@@ -173,7 +205,7 @@ def changed_paths(path):
     if b"\0" in data:
         return [name for name in data.decode("utf-8").split("\0") if name]
     text = data.decode("utf-8-sig")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return [line for line in re.split(r"\r\n?|\n", text) if line]
 
 
 def dependency_path(data, base):
@@ -209,9 +241,18 @@ def chunks(names):
         yield batch
 
 
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate test graph JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def load_graph(path):
     try:
-        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=_unique_json_object)
     except RecursionError as error:
         raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
@@ -419,10 +460,16 @@ def main(argv=None):
         return 0
     try:
         build = Build(args.build)
-    except (OSError, KeyError) as error:
+    except (OSError, KeyError, ValueError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "targets":
-        _, listed = build.tests("-R", args.regex)
+        try:
+            _, listed = build.tests("-R", args.regex)
+        except json.JSONDecodeError as error:
+            marker = "RegularExpression::compile():"
+            _, found, tail = error.doc.partition(marker)
+            diagnostic = marker + tail.partition("\n")[0] if found else str(error)
+            parser.error(f"ctest -R {args.regex}: {diagnostic}")
         if not listed:
             parser.error(f"no test matches {args.regex}")
         wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}

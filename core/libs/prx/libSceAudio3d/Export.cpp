@@ -610,14 +610,21 @@ int APS5_VABI sceAudio3dBedWrite2(uint32_t port_id, uint32_t num_channels, uint3
         if (!route_supported) return AUDIO3D_ERROR_INVALID_PARAMETER;
         if (buffer == nullptr || num_samples == 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
         const std::size_t sample_size = format == AUDIO3D_FORMAT_S16 ? 2u : 4u;
-        if (reinterpret_cast<std::uintptr_t>(buffer) % sample_size != 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        const auto bufferAddress = reinterpret_cast<std::uintptr_t>(buffer);
+        if (bufferAddress % sample_size != 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
         reported_format = format ^ 1;
         const std::uint32_t samples = std::min(num_samples, g_port.granularity);
         const std::size_t bytes = static_cast<std::size_t>(samples) * num_channels * sample_size;
         if (g_port.beds.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
+        if (bytes > UINTPTR_MAX - bufferAddress) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        constexpr std::size_t copyChunk = 0x10000;
         Audio3dBed bed;
-        bed.pcm.resize(bytes);
-        const bool copied = GuestCopyIn_nid_no_patch(bed.pcm.data(), buffer, bytes);
+        bool copied = true;
+        for (std::size_t offset = 0; copied && offset < bytes; offset += copyChunk) {
+            const std::size_t length = std::min(copyChunk, bytes - offset);
+            bed.pcm.resize(offset + length);
+            copied = GuestCopyIn_nid_no_patch(bed.pcm.data() + offset, reinterpret_cast<const void*>(bufferAddress + offset), length);
+        }
         if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         bed.channels = num_channels;
         bed.format = format;
@@ -702,18 +709,24 @@ int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr) {
 
 int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num) {
     std::uint32_t i = 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(param);
     const int result = [&] {
         if (param == nullptr || num == 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        if (num > (UINTPTR_MAX - address) / sizeof(AudioOutOutputParam)) return AUDIO3D_ERROR_INVALID_PARAMETER;
         for (; i < num; ++i) {
             AudioOutOutputParam entry{};
-            const bool copied = GuestCopyIn_nid_no_patch(&entry, param + i, sizeof(entry));
+            const auto* source = reinterpret_cast<const void*>(address + static_cast<std::uintptr_t>(i) * sizeof(AudioOutOutputParam));
+            const bool copied = GuestCopyIn_nid_no_patch(&entry, source, sizeof(entry));
             if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
             const int output = sceAudio3dAudioOutOutput(entry.handle, entry.ptr);
             if (output < 0) return output;
         }
         return 0;
     }();
-    Report(AUDIO3D_PORT_INVALID, AUDIO3D_OBJECT_INVALID, result, __func__, "PU", param != nullptr ? param + i : nullptr, num);
+    const AudioOutOutputParam* reportedParam = param != nullptr
+        ? reinterpret_cast<const AudioOutOutputParam*>(address + static_cast<std::uintptr_t>(i) * sizeof(AudioOutOutputParam))
+        : nullptr;
+    Report(AUDIO3D_PORT_INVALID, AUDIO3D_OBJECT_INVALID, result, __func__, "PU", reportedParam, num);
     return result;
 }
 

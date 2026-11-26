@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
+import { translate } from "../i18n.mjs";
 
 class Element {
   children = [];
@@ -82,6 +83,86 @@ async function inspect(worker, count) {
   await worker.onmessage({ data: { type: "inspection-complete" } });
   await setImmediate();
 }
+
+test("the visible inspection progress follows language changes", async t => {
+  const { get, workers } = await setup(t, "locale-progress-visible");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  await workers[0].onmessage({ data: { type: "progress", phase: translate("en", "inspectingFiles"), phaseKey: "inspectingFiles", completed: 1, total: 2, appName: "app.zip" } });
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+  assert.equal(get("percent").textContent, "50%");
+});
+
+test("later worker progress uses the active language", async t => {
+  const { get, workers } = await setup(t, "locale-progress-future");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  await workers[0].onmessage({ data: { type: "progress", phase: translate("en", "inspectingFiles"), phaseKey: "inspectingFiles", completed: 1, total: 2, appName: "app.zip" } });
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+});
+
+test("progress labels translate for batches and native stages while log messages remain unchanged", async t => {
+  const { get, workers } = await setup(t, "locale-progress-batch");
+  get("file").files = [{ name: "first.zip" }, { name: "second.zip" }];
+  get("file").onchange();
+  const worker = workers[0];
+  await worker.onmessage({ data: { type: "progress", stage: 0, appCount: 2, appIndex: 1, appName: "second.zip" } });
+  await worker.onmessage({ data: { type: "progress", message: "native log", appName: "second.zip" } });
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "appProgress", { index: 2, count: 2, phase: translate("de", "stage0") }));
+  assert.equal(get("log").textContent, "second.zip: native log");
+});
+
+test("changing language translates the initial inspection phase", async t => {
+  const { get } = await setup(t, "locale-progress-start");
+  get("file").files = [{ name: "app.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+});
+
+test("changing language translates the initial batch label", async t => {
+  const { get } = await setup(t, "locale-progress-start-batch");
+  get("file").files = [{ name: "a.zip" }, { name: "b.zip" }];
+  get("file").onchange();
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "inspectingFiles"));
+  assert.equal(get("current-file").textContent, translate("de", "inspectingBatch", { count: 2 }));
+});
+
+test("changing language translates folder cleanup without disturbing it", async t => {
+  const pending = deferred();
+  let removed = 0;
+  const directory = {};
+  const parent = {
+    async getDirectoryHandle(name, options) {
+      if (!options?.create) throw Object.assign(new Error("missing"), { name: "NotFoundError" });
+      return directory;
+    },
+    async removeEntry() { removed++; await pending.promise; }
+  };
+  const { get, workers } = await setup(t, "locale-cleanup", { showDirectoryPicker: async () => parent });
+  const currentWorker = await selected(get, workers, "app.zip");
+  get("save").value = "disk";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  const cancelling = get("cancel").onclick();
+  await setImmediate();
+  assert.equal(removed, 1);
+  get("locale").onclick();
+  assert.equal(get("phase").textContent, translate("de", "removingOutputFolder"));
+  await currentWorker.onmessage({ data: { type: "progress", phase: translate("en", "phaseCompressingZip"), phaseKey: "phaseCompressingZip", completed: 1, total: 2, input: "stale" } });
+  assert.equal(get("phase").textContent, translate("de", "removingOutputFolder"));
+  assert.notEqual(get("current-file").textContent, "stale");
+  assert.equal(get("status").hidden, false);
+  assert.equal(removed, 1);
+  pending.resolve();
+  await cancelling;
+  assert.equal(removed, 1);
+  assert.equal(get("status").hidden, true);
+});
 
 for (const stage of ["constructor", "postMessage"]) {
   test(`A worker ${stage} failure restores selection and permits retry`, async t => {
@@ -705,9 +786,11 @@ for (const kind of ["batch", "single", "folder"]) {
     assert.equal(worker.messages.at(-1).type, "convert");
     await worker.onmessage({ data: {
       type: "complete", mode: worker.messages.at(-1).mode, blob: kind === "folder" ? null : new Blob([new Uint8Array(5)]),
-      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length
+      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length,
+      revision: "0123456789abcdef0123456789abcdef01234567"
     } });
     assert.equal(get("done").hidden, false);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     const href = get("download").href;
     const download = get("download").download;
     const note = get("result-note");
@@ -724,6 +807,7 @@ for (const kind of ["batch", "single", "folder"]) {
     get("locale").onclick();
     assert.equal(document.documentElement.lang, "de");
     assert.match(get("result-info").textContent, /Systembibliotheken/);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     if (kind === "folder") {
       assert.match(get("result-info").textContent, /Gespeichert in first-linux\//);
       assert.match(get("result-info").textContent, /chmod \+x "main\.elf"/);

@@ -1,7 +1,10 @@
 import contextlib
 import io
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -91,6 +94,45 @@ class ProgressTests(unittest.TestCase):
         with patch.object(pr_overlap, "git", side_effect=git), patch.object(pr_overlap, "REPO", "owner/project", create=True), \
                 self.assertRaises(pr_overlap.subprocess.CalledProcessError):
             self.capture(pr_overlap.fetch, "main", prs)
+
+    def test_fetch_with_existing_check_fetches_only_missing_commits(self):
+        prs = {n: {"ref": f"refs/pr/{n}", "sha": f"{n:040x}"} for n in range(1, 151)}
+        present = {f"{n:040x}" for n in range(1, 151) if n % 3}
+        calls = []
+        with patch.object(pr_overlap, "missing_commits", side_effect=lambda commits: [c for c in commits if c not in present]), \
+                patch.object(pr_overlap, "git", side_effect=lambda *args: calls.append(args) or ""), \
+                patch.object(pr_overlap, "REPO", "owner/project", create=True):
+            _, lines = self.capture(pr_overlap.fetch_heads, "f" * 40, prs, True)
+        fetched = [commit for call in calls for commit in call[5:]]
+        self.assertEqual(fetched, ["f" * 40] + [f"{n:040x}" for n in range(1, 151) if n % 3 == 0])
+        self.assertEqual(lines, ["pr_overlap: fetched 51/51 missing commits"])
+        self.assertTrue(all(pr["ref"] == pr["sha"] for pr in prs.values()))
+
+    def test_fetch_with_existing_check_skips_fetch_when_nothing_is_missing(self):
+        prs = {1: {"ref": "refs/pr/1", "sha": "1" * 40}}
+        calls = []
+        with patch.object(pr_overlap, "missing_commits", return_value=[]), \
+                patch.object(pr_overlap, "git", side_effect=lambda *args: calls.append(args) or ""), \
+                patch.object(pr_overlap, "REPO", "owner/project", create=True):
+            _, lines = self.capture(pr_overlap.fetch_heads, "f" * 40, prs, True)
+        self.assertEqual(calls, [])
+        self.assertEqual(lines, [])
+
+    def test_missing_commits_reports_only_commits_absent_from_the_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            subprocess.run(["git", "init", "-q", directory], check=True, env=environment)
+            subprocess.run(["git", "-C", directory, "commit", "-q", "--allow-empty", "-m", "x"], check=True, env=environment)
+            head = subprocess.run(["git", "-C", directory, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            tree = subprocess.run(["git", "-C", directory, "rev-parse", "HEAD^{tree}"], check=True, capture_output=True, text=True).stdout.strip()
+            absent = "0123456789abcdef" * 2 + "01234567"
+            with patch.object(pr_overlap, "_repository_root", return_value=Path(directory)):
+                self.assertEqual(pr_overlap.missing_commits([head, absent, tree]), [absent, tree])
+
+    def test_missing_commits_fetches_everything_when_git_fails(self):
+        with patch.object(pr_overlap.subprocess, "run", side_effect=OSError("no git")), \
+                patch.object(pr_overlap, "_repository_root", return_value=Path(".")):
+            self.assertEqual(pr_overlap.missing_commits(["a" * 40, "b" * 40]), ["a" * 40, "b" * 40])
 
 
     def fake_scan(self, pr):

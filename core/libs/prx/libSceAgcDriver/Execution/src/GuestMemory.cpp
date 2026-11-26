@@ -537,7 +537,13 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
 #endif
 }
 
+bool MemoryProfiled() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    return profile;
+}
+
 void CountReadCaller(const void* returnAddress) {
+    if (!MemoryProfiled()) return;
     thread_local std::uint32_t sampled = 0;
     // Sampled at the same rate as the callers, in step with them (CountCaller advances the counter).
     if ((sampled + 1) % 256 == 0) readSiteSamples[static_cast<std::size_t>(CurrentReadSite())].fetch_add(256, std::memory_order_relaxed);
@@ -545,13 +551,9 @@ void CountReadCaller(const void* returnAddress) {
 }
 
 void CountWriteCaller(const void* returnAddress) {
+    if (!MemoryProfiled()) return;
     thread_local std::uint32_t sampled = 0;
     CountCaller(Profile().writeCallers, sampled, 16, returnAddress);
-}
-
-bool MemoryProfiled() {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    return profile;
 }
 
 class TimedAccess {
@@ -3969,17 +3971,23 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 namespace {
 
 thread_local void (*compareMappedHook)(std::uint64_t, std::size_t) = nullptr;
+std::atomic<bool> compareMappedHookInstalled{false};
+
+bool compareMappedHookArmed() {
+    return compareMappedHookInstalled.load(std::memory_order_relaxed) && compareMappedHook != nullptr;
+}
 
 }
 
 void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    if (hook != nullptr) compareMappedHookInstalled.store(true, std::memory_order_relaxed);
     compareMappedHook = hook;
 }
 
 #ifdef __linux__
 std::optional<Compare> compareWithoutQuery(std::uintptr_t address, std::span<const std::byte> bytes) {
     static const bool enabled = std::getenv("APS5_NO_COPY_COMPARE") == nullptr;
-    if (!enabled || HostMapping::QueryFd() >= 0 || compareMappedHook != nullptr) return std::nullopt;
+    if (!enabled || HostMapping::QueryFd() >= 0 || compareMappedHookArmed()) return std::nullopt;
     auto& pages = Pages();
     pages.initialize();
     for (const PageSpan* span : {&pages.arena, &pages.image}) {
@@ -4011,7 +4019,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
         else {
-            if (compareMappedHook != nullptr) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
+            if (compareMappedHookArmed()) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
             if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
         }
         return outcome == Compare::Equal;
