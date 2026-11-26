@@ -20,6 +20,7 @@ std::uint64_t nowUs = 1000000;
 int probes = 0;
 int opened = 0;
 int closed = 0;
+bool paused = false;
 int queuedLive = 0;
 int queuedDead = 0;
 
@@ -52,7 +53,10 @@ extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int c
     *obtained = *desired;
     return device;
 }
-extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID id, int) { Require(id == device, "wrong device paused"); }
+extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID id, int pauseOn) {
+    Require(id == device, "wrong device paused");
+    paused = pauseOn != 0;
+}
 extern "C" Uint32 SDLCALL SDL_GetQueuedAudioSize(SDL_AudioDeviceID id) { Require(id == device, "wrong queue queried"); return 0; }
 extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void*, Uint32) {
     if (!unplugged) Require(id == device, "wrong queue written");
@@ -146,7 +150,7 @@ int main(int argc, char** argv) {
             unplugged = true;
             output();
             Require(queuedLive == 2 && closed == 2, "a later disconnect did not reopen immediately");
-            Require(sceAudioOutClose(port) == 0 && closed == 3, "recovered output did not close");
+            Require(sceAudioOutClose(port) == 0 && closed == 2 && paused, "recovered output was not parked paused with its port");
             std::puts("default output recovery tests passed");
             return 0;
         }
@@ -158,7 +162,7 @@ int main(int argc, char** argv) {
             Require(sceAudioOutOutput(port, samples.data()) == 256, "output after the host removed the default output failed");
             Require(opened == 2 && closed == 1, "the removed default output was not replaced");
             Require(queuedLive == 1 && queuedDead == 0, "output was queued to the removed default output");
-            Require(sceAudioOutClose(port) == 0 && closed == 2, "the replacement output was not closed with its port");
+            Require(sceAudioOutClose(port) == 0 && closed == 1 && paused, "the replacement output was not parked paused with its port");
             std::puts("default output open tests passed");
             return 0;
         }
@@ -166,7 +170,7 @@ int main(int argc, char** argv) {
         Require(handle >= 1, "the main port did not open");
         Require(opened == (expectOpen ? 1 : 0), expectOpen ? "the default output was not opened" : "the default output was opened with no WASAPI endpoint");
         Require(sceAudioOutClose(handle) == 0, "the main port did not close");
-        Require(closed == opened, "the default output was not closed with its port");
+        Require(closed == 0 && paused == expectOpen, "the default output was not parked paused with its port");
         Require(probes == (driver == std::string_view("wasapi") && outputDevices == 0 ? 1 : 0), "the default endpoint was probed outside an empty WASAPI list");
         probes = 0;
         Require(SdlAudioReportsNoOutputEndpoint(driver, outputDevices) == !expectOpen, "the no-endpoint predicate disagrees with the mode");
