@@ -107,7 +107,12 @@ std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* st
     Require(copiedStream && guestStream.getPosition != nullptr, __func__, "missing stream position callback");
     const auto address = reinterpret_cast<std::uintptr_t>(io);
     Require(address >= 8192, __func__, "bit state address underflows the packet buffer");
-    guestStream.getPosition(stream, &io->referenceOffset);
+    const int ioWritableErrno = errno;
+    const bool writableIo = GuestWritable_nid_no_patch(io, sizeof(*io));
+    errno = ioWritableErrno;
+    Require(writableIo, __func__, "unwritable bit state");
+    auto* referenceOffset = reinterpret_cast<std::size_t*>(address + offsetof(Jxr::BitIo, referenceOffset));
+    guestStream.getPosition(stream, referenceOffset);
     guestIo.start = reinterpret_cast<std::uint8_t*>(address - 8192);
     guestIo.current = guestIo.start;
     guestIo.accumulator = 0;

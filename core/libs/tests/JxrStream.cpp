@@ -630,5 +630,15 @@ int main() {
     MemoryWrite();
     MemoryPosition();
     MemoryBitIo();
+    {
+        bool threw = false;
+        errno = 91;
+        try {
+            CreateWS_Memory_nid_postfix(reinterpret_cast<Jxr::Stream**>(0x10), nullptr, 0);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw && errno == 91, "CreateWS_Memory accepted unmapped stream output");
+    }
     return 0;
 }

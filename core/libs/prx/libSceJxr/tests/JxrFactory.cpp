@@ -216,6 +216,11 @@ void FileStreams() {
 
     Require(std::remove(FilePath) == 0, "file stream file is missing");
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
+    const int blocksAfterRelease = liveBlocks;
+    RequireInvalidArgument([&] { PKFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "unmapped PKFree pointer accepted");
+    RequireInvalidArgument([&] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); }, "unmapped factory pointer accepted");
+    RequireInvalidArgument([&] { PKCodecFactory_CreateFormatConverter_nid_postfix(reinterpret_cast<void**>(0x10)); }, "unmapped converter pointer accepted");
+    Require(liveBlocks == blocksAfterRelease, "failed pointer probes leaked blocks");
 }
 
 }
