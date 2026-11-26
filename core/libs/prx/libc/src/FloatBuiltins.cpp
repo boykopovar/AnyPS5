@@ -622,36 +622,6 @@ double APS5_VABI cabs_nid_postfix(__complex__ double z) { return hypot_nid_postf
 float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return hypotf_nid_postfix(__real__ z, __imag__ z); }
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return hypotl_nid_postfix(__real__ z, __imag__ z); }
 
-__complex__ double APS5_VABI cacos_nid_postfix(__complex__ double z) {
-    const auto result = std::acos(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI cacosh_nid_postfix(__complex__ double z) {
-    const auto result = std::acosh(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI casin_nid_postfix(__complex__ double z) {
-    const auto result = std::asin(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI casinh_nid_postfix(__complex__ double z) {
-    const auto result = std::asinh(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI catan_nid_postfix(__complex__ double z) {
-    const auto result = std::atan(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI catanh_nid_postfix(__complex__ double z) {
-    const auto result = std::atanh(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
 __complex__ double APS5_VABI ccos_nid_postfix(__complex__ double z) {
     const auto result = std::cos(std::complex<double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
@@ -684,16 +654,6 @@ __complex__ double APS5_VABI csinh_nid_postfix(__complex__ double z) {
 
 __complex__ double APS5_VABI csqrt_nid_postfix(__complex__ double z) {
     const auto result = std::sqrt(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI ctan_nid_postfix(__complex__ double z) {
-    const auto result = std::tan(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI ctanh_nid_postfix(__complex__ double z) {
-    const auto result = std::tanh(std::complex<double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
 }
 
