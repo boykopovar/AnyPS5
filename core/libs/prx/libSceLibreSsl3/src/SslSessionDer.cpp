@@ -50,20 +50,6 @@ void PutError(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
 }
 
-bool CopyIn(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
-bool CopyOut(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
 void AppendLength(std::vector<unsigned char>& output, std::size_t length) {
     if (length < 0x80) {
         output.push_back(static_cast<unsigned char>(length));
@@ -342,7 +328,7 @@ extern "C" {
 int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned char** output) {
     if (!session) return 0;
     LibreSsl3SslSession fields{};
-    if (!CopyIn(&fields, session, sizeof(fields))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyIn_nid_no_patch(&fields, session, sizeof(fields))) NotImplemented_nid_no_patch(__func__);
     if (fields.cipherValue == 0) return 0;
 
     std::vector<unsigned char> encoded;
@@ -353,11 +339,11 @@ int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned
     if (!output) return length;
 
     unsigned char* target = nullptr;
-    if (!CopyIn(&target, output, sizeof(target))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyIn_nid_no_patch(&target, output, sizeof(target))) NotImplemented_nid_no_patch(__func__);
 
     unsigned char* next = target;
     if (target) {
-        if (!CopyOut(target, encoded.data(), encoded.size())) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyOut_nid_no_patch(target, encoded.data(), encoded.size())) NotImplemented_nid_no_patch(__func__);
         next = target + encoded.size();
     } else {
         auto* allocated = static_cast<unsigned char*>(calloc_nid_postfix(1, encoded.size()));
@@ -365,7 +351,7 @@ int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned
         std::memcpy(allocated, encoded.data(), encoded.size());
         next = allocated;
     }
-    if (!CopyOut(output, &next, sizeof(next))) {
+    if (!GuestCopyOut_nid_no_patch(output, &next, sizeof(next))) {
         if (!target) free_nid_postfix(next);
         NotImplemented_nid_no_patch(__func__);
     }
@@ -379,20 +365,20 @@ LibreSsl3SslSession* APS5_VABI d2i_SSL_SESSION_nid_postfix(
         return nullptr;
     }
     const unsigned char* start = nullptr;
-    if (!CopyIn(&start, input, sizeof(start)) || !start) {
+    if (!GuestCopyIn_nid_no_patch(&start, input, sizeof(start)) || !start) {
         PutError(BadObjectHeader);
         return nullptr;
     }
 
     LibreSsl3SslSession* existing = nullptr;
-    if (output && !CopyIn(&existing, output, sizeof(existing))) {
+    if (output && !GuestCopyIn_nid_no_patch(&existing, output, sizeof(existing))) {
         PutError(BadObjectHeader);
         return nullptr;
     }
 
     LibreSsl3SslSession session{};
     if (existing) {
-        if (!CopyIn(&session, existing, sizeof(session))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyIn_nid_no_patch(&session, existing, sizeof(session))) NotImplemented_nid_no_patch(__func__);
     } else {
         session.references = 1;
     }
@@ -403,7 +389,7 @@ LibreSsl3SslSession* APS5_VABI d2i_SSL_SESSION_nid_postfix(
 
     LibreSsl3SslSession* decoded = existing;
     if (decoded) {
-        if (!CopyOut(decoded, &session, sizeof(session))) NotImplemented_nid_no_patch(__func__);
+        if (!GuestCopyOut_nid_no_patch(decoded, &session, sizeof(session))) NotImplemented_nid_no_patch(__func__);
     } else {
         decoded = static_cast<LibreSsl3SslSession*>(calloc_nid_postfix(1, sizeof(LibreSsl3SslSession)));
         if (!decoded) {
@@ -414,11 +400,11 @@ LibreSsl3SslSession* APS5_VABI d2i_SSL_SESSION_nid_postfix(
     }
 
     const auto* end = start + (static_cast<std::size_t>(length) - rest.size());
-    if (!CopyOut(input, &end, sizeof(end))) {
+    if (!GuestCopyOut_nid_no_patch(input, &end, sizeof(end))) {
         if (!existing) free_nid_postfix(decoded);
         NotImplemented_nid_no_patch(__func__);
     }
-    if (output && !CopyOut(output, &decoded, sizeof(decoded))) {
+    if (output && !GuestCopyOut_nid_no_patch(output, &decoded, sizeof(decoded))) {
         if (!existing) free_nid_postfix(decoded);
         NotImplemented_nid_no_patch(__func__);
     }

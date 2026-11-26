@@ -258,6 +258,7 @@ int HexValue(char c) {
 }
 
 bool ApplyWord(Bignum* a, std::uint64_t w, bool subtract) {
+    if (!w) return true;
     Int word;
     if (w) word.mag = {w};
     word.neg = subtract && w;
@@ -298,6 +299,10 @@ Bignum* APS5_VABI BN_bin2bn_nid_postfix(const unsigned char* s, int len, Bignum*
     if (len > 0 && !s) throw std::invalid_argument(std::string(__func__) + ": null input");
     Bignum* target = ret ? ret : NewBignum();
     if (!target) return nullptr;
+    if (len == 0) {
+        target->top = 0;
+        return target;
+    }
     const bool stored = FillBignum(target, ret == nullptr, [&] {
         Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
         for (int i = 0; i < len; i++) {

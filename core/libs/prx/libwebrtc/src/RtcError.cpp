@@ -42,15 +42,37 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+}
 
 extern "C" {
 
 const char* APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(const WebRtcRtcError* error) {
     if (!error)
         throw std::invalid_argument("RTCError::message requires an error");
-    return WebRtcGuestStringData(error->message);
+    WebRtcRtcError host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcRtcError>(error).CopyIn(host))
+            throw std::invalid_argument("RTCError::message requires an error");
+    }
+    if (host.message.capacity > WebRtcGuestStringInlineCapacity)
+        return host.message.pointer;
+    return reinterpret_cast<const char*>(
+        reinterpret_cast<std::uintptr_t>(error) + offsetof(WebRtcRtcError, message) + offsetof(WebRtcGuestString, buffer));
 }
 
 }

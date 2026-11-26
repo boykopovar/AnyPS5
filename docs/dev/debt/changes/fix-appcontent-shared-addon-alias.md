@@ -1,0 +1,5 @@
+# libSceAppContent
+
+## change [Additional content]
+
+- [Additional content](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - console add-on mounting behavior and error codes remain unverified on hardware; configured add-ons in `anyps5-entitlements.ini` are assumed installed (status 4). `sceAppContentAddcontMount` provisions all configured host paths before blocking their aliases and assigns mount points (`/addcont0` or configured targets), returning `BUSY` on repeated mounts or when another configured add-on already owns the same resolver alias (ASCII case-insensitive after trimming leading and trailing slashes; the normalized identity is cached per entry). `sceAppContentAddcontUnmount` removes the alias and releases the mount point, returning `NOT_FOUND` when not mounted. Unconfigured add-ons answer `NOT_FOUND`. `sceAppContentGetAddcontInfo` and `sceAppContentGetAddcontInfoList` report configured add-ons. The alias collision rule is host-model behavior; its exact console result is unverified.
