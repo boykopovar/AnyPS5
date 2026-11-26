@@ -700,8 +700,8 @@ struct AsyncPhases {
     int request;
     std::mutex mutex;
     std::condition_variable changed;
-    std::array<bool, 11> blocked{};
-    std::array<unsigned, 11> seen{};
+    std::array<bool, 12> blocked{};
+    std::array<unsigned, 12> seen{};
     bool finished = false;
     bool rejectCompletionAllocations = false;
     bool rejectAbortAllocations = false;
@@ -2456,10 +2456,10 @@ void AsyncReceiveDeadlineIgnoresOverall(int ssl) {
     Require(sceHttp2SetTimeOut(client.request, 500000) == 0, "shortened overall timeout option");
     Require(sceHttp2SetRecvTimeOut(client.request, 1000000) == 0, "receive timeout option");
     AsyncQueue queue(client.request);
+    const auto started = std::chrono::steady_clock::now();
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "receive deadline submission");
     server.WaitStage(2);
     Http2AsyncResult result{};
-    const auto started = std::chrono::steady_clock::now();
     Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "receive deadline completion");
     const auto elapsed = std::chrono::steady_clock::now() - started;
     Require(elapsed >= std::chrono::milliseconds(800), "receive deadline kept the receive timeout");
@@ -2546,6 +2546,7 @@ void AsyncDeletePublished(int ssl, bool parent) {
     const int request = client.request;
     const int tmpl = client.tmpl;
     AsyncQueue queue(request);
+    AsyncPhases phases(request);
     PublishGate gate;
     GuestSceHttp2Test::SetAsyncPublishHookForTests_nid_no_patch([](void* data) {
         auto& gate = *static_cast<PublishGate*>(data);
@@ -2559,16 +2560,13 @@ void AsyncDeletePublished(int ssl, bool parent) {
         Require(std::chrono::steady_clock::now() < deadline, "async publication entered");
         std::this_thread::yield();
     }
-    std::atomic<bool> started{false};
     std::atomic<bool> deleted{false};
     int deleteResult = -1;
     std::thread deleter([&] {
-        started.store(true, std::memory_order_release);
         deleteResult = parent ? sceHttp2DeleteTemplate(tmpl) : sceHttp2DeleteRequest(request);
         deleted.store(true, std::memory_order_release);
     });
-    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    phases.Wait(AsyncPhase::RetirementPending);
     Require(!deleted.load(std::memory_order_acquire), "deletion waits for event delivery");
     gate.release.store(true, std::memory_order_release);
     deleter.join();

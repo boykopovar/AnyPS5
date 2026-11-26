@@ -123,9 +123,18 @@ static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state,
     state->changed.notify_all();
 }
 
-static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
+static std::unique_lock<std::mutex> LockAsync(const std::shared_ptr<Http2AsyncState>& state, int request) {
+    std::unique_lock lock(state->mutex, std::defer_lock);
+    if (!lock.try_lock()) {
+        ObserveAsync(request, GuestSceHttp2Test::AsyncPhase::RetirementPending);
+        lock.lock();
+    }
+    return lock;
+}
+
+static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state, int request) {
     {
-        std::lock_guard lock(state->mutex);
+        auto lock = LockAsync(state, request);
         state->retired = true;
         state->pending.clear();
         state->active.clear();
@@ -133,8 +142,8 @@ static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
     state->changed.notify_all();
 }
 
-static void DropAsync(const std::shared_ptr<Http2AsyncState>& state) {
-    std::lock_guard lock(state->mutex);
+static void DropAsync(const std::shared_ptr<Http2AsyncState>& state, int request) {
+    auto lock = LockAsync(state, request);
     state->deleted = true;
 }
 
@@ -188,7 +197,7 @@ static void ReleaseOwnedHandles(int owner, bool terminated) {
         const int id = child->first;
         ReleaseOwnedHandles(id, terminated);
         auto& handle = g_handles.at(id);
-        RetireAsync(handle.async);
+        RetireAsync(handle.async, id);
         if (handle.transport) handle.transport->Stop(terminated);
         g_handles.erase(id);
     }
@@ -314,7 +323,7 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
         if (!handle) return ERROR_INVALID_ID;
         async = handle->async;
         transport = handle->transport;
-        DropAsync(async);
+        DropAsync(async, req_id);
         g_handles.erase(req_id);
         ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::HandleRemoved);
     }
