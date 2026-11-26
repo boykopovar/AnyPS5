@@ -2,7 +2,6 @@ import contextlib
 import os
 import io
 import re
-import shutil
 import struct
 import sys
 import tempfile
