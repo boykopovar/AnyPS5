@@ -269,7 +269,7 @@ def main(argv=None):
         call_units = [entry["index"] for entry in description["calls"] if entry["kind"] not in {"frame-start", "end"}]
         removed_calls = set()
         removed_chunks = set()
-        for run in range(args.confirm_runs):
+        for _run in range(args.confirm_runs):
             workdir = Path(tempfile.mkdtemp(prefix="aps5-frame-baseline-", dir=args.temp_dir))
             try:
                 matched, detail = minimizer.replay_once(minimizer.capture, workdir)
@@ -284,7 +284,7 @@ def main(argv=None):
         _, removed_calls, removed_chunks, chunks_complete = minimizer.minimize(chunk_units, removed_calls, removed_chunks, False)
         minimizer.materialize(removed_calls, removed_chunks, minimizer.output)
         auto_removed_chunks = {entry["index"] for entry in description["chunks"] if entry["kind"] == "delta" and entry["group"] in removed_groups}
-        for run in range(args.confirm_runs):
+        for _run in range(args.confirm_runs):
             workdir = Path(tempfile.mkdtemp(prefix="aps5-frame-final-", dir=args.temp_dir))
             try:
                 matched, detail = minimizer.replay_once(minimizer.output, workdir)
