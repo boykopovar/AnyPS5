@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1359,6 +1360,32 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     FT_Set_Transform_nid_postfix(nullptr, &rejected, &rejectedDelta);
     FT_Set_Transform_nid_postfix(nullptr, nullptr, nullptr);
 
+    const auto* badMatrix = reinterpret_cast<const GuestMatrix*>(std::uintptr_t{0x10});
+    const auto* badDelta = reinterpret_cast<const GuestVector*>(std::uintptr_t{0x10});
+    FT_Matrix expectedMatrix{static_cast<FT_Fixed>(matrices[1].xx), static_cast<FT_Fixed>(matrices[1].xy),
+                             static_cast<FT_Fixed>(matrices[1].yx), static_cast<FT_Fixed>(matrices[1].yy)};
+    FT_Vector expectedDelta{static_cast<FT_Pos>(deltas[1].x), static_cast<FT_Pos>(deltas[1].y)};
+    errno = 71;
+    FT_Set_Transform_nid_postfix(face, &matrices[1], &deltas[1]);
+    Require(errno == 71);
+    FT_Set_Transform(host, &expectedMatrix, &expectedDelta);
+    loadUnchanged();
+    errno = 71;
+    FT_Set_Transform_nid_postfix(face, badMatrix, &deltas[0]);
+    Require(errno == 71);
+    loadUnchanged();
+    errno = 71;
+    FT_Set_Transform_nid_postfix(face, &matrices[0], badDelta);
+    Require(errno == 71);
+    loadUnchanged();
+    errno = 71;
+    FT_Set_Transform_nid_postfix(face, badMatrix, badDelta);
+    Require(errno == 71);
+    loadUnchanged();
+    errno = 71;
+    FT_Set_Transform_nid_postfix(nullptr, badMatrix, badDelta);
+    Require(errno == 71);
+
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(native) == 0);
     std::printf("FT_Set_Transform: %zu native glyph and bitmap comparisons\n", comparisons);
 }
@@ -1454,6 +1481,34 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
     driverlessSize.face = &driverless;
     Require(FT_Done_Size_nid_postfix(&invalidSize) == FT_Done_Size(&driverlessSize));
     Require(FT_Activate_Size_nid_postfix(&invalidSize) == FT_Activate_Size(&driverlessSize));
+    auto* badSize = reinterpret_cast<GuestSizeRec*>(std::uintptr_t{0x10});
+    auto** badAsize = reinterpret_cast<GuestSizeRec**>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(FT_Activate_Size_nid_postfix(badSize) == FT_Err_Invalid_Size_Handle && errno == 71);
+    errno = 71;
+    Require(FT_Activate_Size_nid_postfix(nullptr) == FT_Err_Invalid_Size_Handle && errno == 71);
+    errno = 71;
+    Require(FT_New_Size_nid_postfix(nullptr, badAsize) == FT_Err_Invalid_Face_Handle && errno == 71);
+    errno = 71;
+    Require(FT_New_Size_nid_postfix(&invalidOwner.rec, badAsize) == FT_Err_Invalid_Driver_Handle && errno == 71);
+    {
+        GuestLibrary* probeLibrary = nullptr;
+        GuestFaceRec* probeFace = nullptr;
+        Require(FT_Init_FreeType_nid_postfix(&probeLibrary) == 0);
+        Require(FT_New_Memory_Face_nid_postfix(probeLibrary, font.data(), font.size(), 0, &probeFace) == 0);
+        GuestSizeRec* initialSize = probeFace->size;
+        errno = 71;
+        Require(FT_New_Size_nid_postfix(probeFace, badAsize) == FT_Err_Invalid_Argument && errno == 71);
+        Require(probeFace->size == initialSize);
+        GuestSizeRec* created = nullptr;
+        errno = 71;
+        Require(FT_New_Size_nid_postfix(probeFace, &created) == 0 && created != nullptr && errno == 71);
+        errno = 71;
+        Require(FT_Activate_Size_nid_postfix(created) == 0 && probeFace->size == created && errno == 71);
+        errno = 71;
+        Require(FT_Activate_Size_nid_postfix(badSize) == FT_Err_Invalid_Size_Handle && probeFace->size == created && errno == 71);
+        Require(FT_Done_FreeType_nid_postfix(probeLibrary) == 0);
+    }
     static_assert(sizeof(GuestSizeMetrics) == 56 && sizeof(GuestSizeRec) == 88);
 
     int scenarios = 0;
