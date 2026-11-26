@@ -9,8 +9,10 @@
 #include <fstream>
 #include <ios>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #ifdef _WIN32
@@ -29,6 +31,16 @@ constexpr char ContractLevel[] = "v1-pad";
 
 constexpr auto DropReportInterval = std::chrono::seconds(10);
 constexpr std::size_t DefaultQueueCapacity = 4096;
+
+struct PinnedGenerations {
+    std::mutex mutex;
+    std::unordered_map<const Writer*, std::uint64_t> generations;
+};
+
+PinnedGenerations& pinnedGenerations() {
+    static auto* state = new PinnedGenerations{};
+    return *state;
+}
 
 std::int64_t steadyNanos() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -135,6 +147,9 @@ Writer::Writer(const std::string& directory, std::size_t capacity, const std::st
 Writer::~Writer() {
     thread.request_stop();
     if (thread.joinable()) thread.join();
+    auto& state = pinnedGenerations();
+    std::lock_guard lock(state.mutex);
+    state.generations.erase(this);
 }
 
 bool Writer::emit(std::string line, bool mustKeep) {
@@ -202,9 +217,11 @@ void Writer::EmitPresent(std::uint64_t frame, double fps) {
 
 void Writer::EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs) {
     if (!flipTiming) return;
-    auto selected = flipGeneration.load(std::memory_order_relaxed);
-    if (selected == 0 && flipGeneration.compare_exchange_strong(selected, generation, std::memory_order_relaxed)) {
-        selected = generation;
+    std::uint64_t selected = 0;
+    {
+        auto& state = pinnedGenerations();
+        std::lock_guard lock(state.mutex);
+        selected = state.generations.emplace(this, generation).first->second;
     }
     if (selected != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
     char text[128];

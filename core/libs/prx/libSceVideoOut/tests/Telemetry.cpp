@@ -213,6 +213,22 @@ void completedFlipCapturePinsGeneration() {
     }
 }
 
+void completedFlipCapturePinsGenerationZero() {
+    for (const bool captureStarted : {false, true}) {
+        const auto lines = captureFlipLines({2, 2}, [captureStarted](VideoOutTelemetry::Writer& writer) {
+            writer.EmitCompletedFlip(0, 1, 100);
+            if (captureStarted) writer.EmitCompletedFlip(0, 2, 110);
+            writer.EmitCompletedFlip(1, 2, 200);
+            writer.EmitCompletedFlip(1, 3, 210);
+        });
+        check(lines.size() == (captureStarted ? 2u : 1u), "generation zero must stay pinned across subsequent generations");
+        if (captureStarted) {
+            check(field(lines[1], "generation") == 0 && field(lines[1], "n") == 2 && field(lines[1], "process_us") == 110,
+                "only the generation zero flip must be recorded");
+        }
+    }
+}
+
 void completedFlipCaptureCountsLoss() {
     const auto directory = freshDirectory("flip-loss");
     {
@@ -281,6 +297,7 @@ int main(int argc, char** argv) {
         flipTimingWindowRequiresValidRange();
         completedFlipCaptureRecordsWindow();
         completedFlipCapturePinsGeneration();
+        completedFlipCapturePinsGenerationZero();
         completedFlipCaptureCountsLoss();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
