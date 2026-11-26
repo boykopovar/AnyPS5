@@ -138,6 +138,11 @@ void CheckGuestPointerSafety() {
     setWithUnmappedArray->fonts = reinterpret_cast<FcPattern**>(std::uintptr_t{0x10});
     EXPECT_REJECTED(FcFontSetDestroy(setWithUnmappedArray));
     assert(destroyed == duplicatesBefore);
+    EXPECT_REJECTED(FcFontSetAdd(setWithUnmappedArray, pattern));
+    assert(destroyed == duplicatesBefore);
+    assert(setWithUnmappedArray->nfont == 1);
+    assert(setWithUnmappedArray->sfont == 8);
+    assert(setWithUnmappedArray->fonts == reinterpret_cast<FcPattern**>(std::uintptr_t{0x10}));
 
     std::size_t pageSize = 0;
 #ifdef _WIN32

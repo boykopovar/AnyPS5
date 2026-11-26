@@ -56,7 +56,11 @@ int APS5_VABI FcFontSetAdd(FcFontSet* set, FcPattern* pattern) {
         const auto next = static_cast<std::size_t>(record.sfont + increment);
         grown = std::malloc(next);
         if (!grown) return 0;
-        std::memcpy(grown, record.fonts, static_cast<std::size_t>(record.nfont) * sizeof(FcPattern*));
+        const auto existing = static_cast<std::size_t>(record.nfont) * sizeof(FcPattern*);
+        if (existing && !ReadGuestBytes(grown, record.fonts, existing)) {
+            std::free(grown);
+            NotImplemented_nid_no_patch(__func__);
+        }
         updated.fonts = static_cast<FcPattern**>(grown);
         updated.sfont = static_cast<int>(next);
     }
