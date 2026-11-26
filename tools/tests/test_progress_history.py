@@ -667,7 +667,16 @@ class ProgressHistoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as raised:
                     progress_history.daily_commits("no-such-ref")
         self.assertIn("no-such-ref", str(raised.exception))
-        self.assertIn("unknown revision", str(raised.exception))
+        self.assertIn("git log", str(raised.exception))
+
+    def test_existing_path_is_not_a_history_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "initial", "int APS5_VABI A() { return 0; }\n")
+            with patch.object(progress, "ROOT", root):
+                with self.assertRaisesRegex(ValueError, "core/libs/prx"):
+                    progress_history.daily_commits("core/libs/prx")
 
     def test_days_are_utc_whatever_the_committer_offset(self):
         with tempfile.TemporaryDirectory() as directory:

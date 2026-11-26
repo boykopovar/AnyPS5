@@ -50,7 +50,7 @@ def git(*args):
 
 
 def daily_commits(ref):
-    log = git("log", "--first-parent", "--format=%H %ct", ref)
+    log = git("log", "--first-parent", "--format=%H %ct", "--end-of-options", ref, "--")
     seen = {}
     for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
