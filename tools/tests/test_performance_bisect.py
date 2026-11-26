@@ -381,21 +381,20 @@ class EndpointValidationTests(unittest.TestCase):
 class BisectSearchTests(unittest.TestCase):
     def test_binary_search_returns_the_first_bad_and_previous_good_commit(self):
         commits = [f"commit-{index}" for index in range(1, 8)]
-        baseline = {"median_fps": 60.0, "identity": IDENTITY}
         values = {commit: 60.0 for commit in commits}
+        values["good"] = 60.0
         values.update({commit: 54.0 for commit in commits[4:]})
+        requests = []
 
-        def measure(repo, worktree, results, recipe, commit):
-            return {"median_fps": values[commit], "identity": IDENTITY, "samples": []}
+        def measure(commit):
+            requests.append(commit)
+            return {"median_fps": values[commit]}
 
-        with patch.object(performance_bisect, "measure_commit", side_effect=measure) as measured:
-            first_bad, previous_good, samples = performance_bisect.find_first_bad_commit(
-                "repo", Path("worktree"), Path("results"), {"regression_pct": 5},
-                "good", baseline, "bad", {"median_fps": 54.0, "identity": IDENTITY}, commits)
+        first_bad, previous_good = performance_bisect.find_first_bad_commit("good", 60.0, commits, 5, measure)
         self.assertEqual(first_bad, commits[4])
         self.assertEqual(previous_good, commits[3])
-        self.assertLessEqual(measured.call_count, 4)
-        self.assertIn(previous_good, samples)
+        self.assertLessEqual(len(requests), 4)
+        self.assertIn(previous_good, requests)
 
 
 class BisectReportTests(unittest.TestCase):
@@ -1040,6 +1039,144 @@ class RecipeFieldTests(unittest.TestCase):
     def test_unique_recipe_fields_refuses_a_duplicate_name(self):
         with self.assertRaisesRegex(ValueError, 'has a duplicate field'):
             performance_bisect.unique_recipe_fields([('a', 1), ('a', 2)])
+
+
+class CheckpointTests(GitHistoryCase):
+    def setUp(self):
+        super().setUp()
+        self.root = Path(self.directory.name)
+        self.checkpoint = self.root / "bisect-checkpoint.json"
+        self.output = self.root / "bisect-report.json"
+        titles = self.root / "titles.json"
+        titles.write_text("{}", encoding="utf-8")
+        self.recipe = {"title_id": "PPSA00000", "repetitions": 3, "regression_pct": 5.0,
+                       "max_spread_pct": 3.0, "titles": str(titles)}
+        self.samples = []
+        self.identity = IDENTITY
+        self.good_fps = 60.0
+        self.interrupted = self.commits[4]
+        self.interrupt = True
+        build = patch.object(performance_bisect, "run_build_commands", return_value=self.root / "build")
+        run = patch.object(performance_bisect, "run_sample", side_effect=self.sample)
+        self.addCleanup(build.stop)
+        self.addCleanup(run.stop)
+        build.start()
+        run.start()
+
+    def sample(self, worktree, build, result, recipe, commit):
+        self.samples.append(commit)
+        if self.interrupt and commit == self.interrupted and result.name == "sample-2":
+            raise KeyboardInterrupt
+        rate = 54.0 if commit in self.commits[4:] else self.good_fps
+        return {"commit": commit, "fps": rate, "identity": self.identity, "outcome": "rendering"}
+
+    def run_bisect(self, *, recipe=None, bad=None, resume=False):
+        return performance_bisect.bisect(self.repo, self.good, bad or self.commits[-1], recipe or self.recipe,
+                                         self.output, checkpoint=self.checkpoint, resume=resume)
+
+    def test_resume_preserves_completed_measurements_and_final_bracket(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_bisect()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(self.samples.count(self.interrupted), 2)
+        saved = json.loads(self.checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual(set(saved["measurements"]), {self.good, self.commits[-1], self.commits[2]})
+        self.assertNotIn(self.interrupted, saved["measurements"])
+
+        self.samples.clear()
+        self.interrupt = False
+        resumed = self.run_bisect(resume=True)
+        self.assertEqual(self.samples.count(self.good), 1)
+        self.assertEqual(self.samples.count(self.interrupted), 3)
+        self.assertEqual(self.samples.count(self.commits[-1]), 0)
+        self.assertEqual(self.samples.count(self.commits[2]), 0)
+        fresh = performance_bisect.bisect(self.repo, self.good, self.commits[-1], self.recipe, None)
+        self.assertEqual(resumed, fresh)
+        self.assertEqual(json.loads(self.output.read_text(encoding="utf-8")), fresh)
+        self.assertEqual(resumed["first_bad"]["commit"], self.interrupted)
+        self.assertEqual(resumed["previous_good"]["commit"], self.commits[3])
+
+    def test_resume_rejects_changed_inputs_and_host_identity(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_bisect()
+        saved = self.checkpoint.read_bytes()
+        self.samples.clear()
+        for change, reason in (({"bad": self.commits[-2]}, "endpoints or first-parent history"),
+                               ({"recipe": dict(self.recipe, repetitions=5)}, "recipe or runner")):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, reason):
+                self.run_bisect(resume=True, **change)
+        self.assertFalse(self.samples)
+
+        titles = Path(self.recipe["titles"])
+        titles.write_text('{"titles": []}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "recipe or runner"):
+            self.run_bisect(resume=True)
+        titles.write_text("{}", encoding="utf-8")
+        self.assertFalse(self.samples)
+
+        self.identity = dict(IDENTITY, driver="New driver")
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            self.run_bisect(resume=True)
+        self.assertEqual(self.samples, [self.good])
+        self.assertEqual(self.checkpoint.read_bytes(), saved)
+        self.assertFalse(self.output.exists())
+
+        self.samples.clear()
+        self.identity = IDENTITY
+        self.good_fps = 50.0
+        with self.assertRaisesRegex(ValueError, "cannot resume checkpoint: measurement spread"):
+            self.run_bisect(resume=True)
+        self.assertEqual(self.samples, [self.good])
+        self.assertEqual(self.checkpoint.read_bytes(), saved)
+        self.assertFalse(self.output.exists())
+
+    def test_resume_refuses_incomplete_or_unknown_checkpoint_measurements(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_bisect()
+        saved = json.loads(self.checkpoint.read_text(encoding="utf-8"))
+        self.samples.clear()
+        measurements = saved["measurements"]
+        cases = (
+            dict(measurements, **{self.interrupted: measurements[self.good][:1]}),
+            dict(measurements, **{GOOD: measurements[self.good]}),
+        )
+        for rows in cases:
+            self.checkpoint.write_text(json.dumps(dict(saved, measurements=rows)), encoding="utf-8")
+            with self.subTest(rows=rows.keys()), self.assertRaisesRegex(ValueError, "checkpoint.*measurement"):
+                self.run_bisect(resume=True)
+        self.assertFalse(self.samples)
+
+    def test_checkpoint_requires_explicit_resume_to_reuse_a_file(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_bisect()
+        saved = self.checkpoint.read_bytes()
+        self.samples.clear()
+        with self.assertRaisesRegex(ValueError, "checkpoint already exists"):
+            self.run_bisect()
+        self.assertEqual(self.checkpoint.read_bytes(), saved)
+        self.assertFalse(self.samples)
+
+
+class CheckpointFileTests(unittest.TestCase):
+    def test_failed_checkpoint_replacement_preserves_last_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "checkpoint.json"
+            old = b'{"version": 1, "measurements": {}}'
+            path.write_bytes(old)
+            with patch("os.replace", side_effect=OSError(errno.ENOSPC, "no space")), self.assertRaises(OSError):
+                performance_bisect.save_checkpoint(path, {"version": 1}, {"new": {"samples": []}})
+            self.assertEqual(path.read_bytes(), old)
+            self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_checkpoint_lock_refuses_second_writer_and_releases_on_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "checkpoint.json"
+            with performance_bisect.checkpoint_lock(path):
+                with self.assertRaisesRegex(ValueError, "cannot acquire checkpoint lock"):
+                    with performance_bisect.checkpoint_lock(path):
+                        self.fail("second writer entered")
+            with performance_bisect.checkpoint_lock(path):
+                self.assertTrue(path.with_name(path.name + ".lock").exists())
 
 
 if __name__ == "__main__":
