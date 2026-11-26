@@ -205,7 +205,7 @@ def command_arguments(command):
     free = ctypes.WinDLL("kernel32", use_last_error=True).LocalFree
     free.argtypes = (wintypes.HLOCAL,)
     free.restype = wintypes.HLOCAL
-    arguments = split(command, ctypes.byref(count))
+    arguments = split(command.strip(" \t\r\n"), ctypes.byref(count))
     if not arguments:
         raise ctypes.WinError(ctypes.get_last_error())
     try:

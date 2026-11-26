@@ -1597,6 +1597,9 @@ class CheckCompileCommandArgumentsTests(unittest.TestCase):
     def test_command_arguments_splits_quoted_words(self):
         self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
 
+    def test_command_arguments_ignores_surrounding_whitespace(self):
+        self.assertEqual(check_compile.command_arguments(" \tcc -c a.cpp\r\n"), ["cc", "-c", "a.cpp"])
+
 
 class CheckCompileEntriesTests(unittest.TestCase):
     def test_entries_rejects_a_build_that_is_not_a_directory(self):
