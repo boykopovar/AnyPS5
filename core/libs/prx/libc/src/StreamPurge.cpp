@@ -67,12 +67,20 @@ extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
 #else
     if (::fpurge(native) != 0) return -1;
 #endif
+    std::size_t restored = 0;
     if (resume >= 0) {
         SeekDescriptor(native, resume);
-        for (const char byte : kept) stream->PushBack(static_cast<unsigned char>(byte));
+        for (const char byte : kept) {
+            if (stream->PushBack(static_cast<unsigned char>(byte)) == EOF) break;
+            ++restored;
+        }
     }
+    const bool complete = restored == kept.size();
+    const int restoreError = errno;
+    kept.resize(restored);
     stream->GuestState().position = stream->GuestState().buffer;
     stream->SyncUnlockedStatus();
     for (const char byte : kept) stream->NotePushedBackByte(byte, stream->PushbackLive());
-    return 0;
+    if (!complete) errno = restoreError;
+    return complete ? 0 : -1;
 }
