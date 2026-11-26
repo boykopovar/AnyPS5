@@ -70,12 +70,14 @@ class Minimizer:
                     raise RuntimeError(f"capture inspection chunks[{position}] has an invalid group")
 
     def inspect(self):
+        from performance_compare import unique_json_object
+
         result = subprocess.run([*self.command(self.filter), "inspect", str(self.capture)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "capture inspection failed")
         try:
-            description = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
+            description = json.loads(result.stdout, object_pairs_hook=unique_json_object)
+        except ValueError as error:
             raise RuntimeError(f"capture filter returned invalid inspection JSON: {error}") from error
         if not isinstance(description, dict):
             raise RuntimeError("capture inspection must be a JSON object")
@@ -304,4 +306,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     raise SystemExit(main())

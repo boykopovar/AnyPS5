@@ -1,6 +1,6 @@
 # Run report
 
-`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](../run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](../run-report-fixtures/) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
+`anyps5-report.json` is a structured summary of one run. [`run-report.schema.json`](https://github.com/boykopovar/AnyPS5/blob/main/docs/run-report.schema.json) is the single source of truth for its shape; the sample reports in [`run-report-fixtures/`](https://github.com/boykopovar/AnyPS5/tree/main/docs/run-report-fixtures) all validate against it. This is version 1. Adding a field keeps version 1; renaming or removing a field, or changing what one means, is version 2.
 
 Print a readable summary of a report with:
 
@@ -10,6 +10,8 @@ python3 tools/run_report_summary.py path/to/anyps5-report.json
 
 The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
 
+The command exits with 0 when it prints a summary, even if the run recorded in the report failed. It exits with 2 when it cannot read or interpret the report. Use the summary's `Result` line or the JSON report's `run.exit` field to check how the game ended.
+
 Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
 
 ```powershell
@@ -18,13 +20,33 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
+## Triage multiple reports
+
+Pass the report files to `--triage` to print a JSON overview without starting a game:
+
+```sh
+python3 tools/run_report_summary.py --triage run-a/anyps5-report.json run-b/anyps5-report.json
+```
+
+The version 1 `anyps5-run-triage` output includes the input count, unique runs, duplicate reports, and groups by title ID, game content version, build commit, release and modification state. An unknown value stays `null`. These groups describe the supplied reports. They do not establish that the runs used identical hardware or settings.
+
+Each group counts recorded exit types, stages and stop reasons. Its missing-function list counts the runs that observed each function and the total recorded calls. Missing-function coverage separates complete lists, partial lists and runs that did not collect the data. A recovered or incomplete run, or a run that omitted missing functions, has partial coverage when collection was on. Only a complete empty list is counted in `complete_without_observations`. An absent report contributes no evidence.
+
+Copies with the same run ID and matching triage data count once. If two reports disagree about the triage data for a run, the command exits with 2 and identifies the conflicting input by its position. A report it cannot read or interpret also causes exit 2 without a partial summary. The overview omits run IDs, file paths, system details and free-form stop messages.
+
 ## Switching it off
 
 The report is written by default. Turn it off with the launch flag `--aps5-report=off` or the environment variable `APS5_REPORT=0`. The flag wins over the environment variable, and the environment variable wins over the default (on). There is no ini setting. The flag needs a game converted with a new enough relinker; the environment variable also works with older conversions. The runtime reads the flag from the command line and does not remove it, so the game can see `--aps5-report=...` in its arguments. When the game relaunches itself, the choice is passed on through `APS5_REPORT`.
 
 ## Where it goes
 
-`anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
+`anyps5-report.json` is written next to the game's executable. If the report can't be written there, look under `reports/<run id>/` in the AnyPS5 data directory for your operating system.
+
+- Windows uses `%LOCALAPPDATA%\AnyPS5`.
+- Linux uses `$XDG_DATA_HOME/AnyPS5` when `XDG_DATA_HOME` is an absolute path, otherwise `$HOME/.local/share/AnyPS5`.
+- macOS uses `~/Library/Application Support/AnyPS5`.
+
+On a clean exit, the success message shows only the report filename. The fallback folder name is the report's `run.id`, a random string of 32 lowercase hex characters.
 
 The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
@@ -53,7 +75,7 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
-| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. The percentile is nearest-rank, the same math the optional performance trace uses. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. For `n` sorted intervals, percentile `p` is the value at zero-based position `floor(p * n)`, or the last value when that position is past the end. This is the same math the optional performance trace uses. It is not nearest-rank: with 10 intervals, `p50` is the 6th value and `p90` the 10th, where nearest-rank gives the 5th and the 9th. `tools/presentmon_compare.py` reports nearest-rank, so its `p99` can be one rank lower than this one for the same frames. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
 
 ## Run recipe
