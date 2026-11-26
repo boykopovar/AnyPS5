@@ -613,6 +613,7 @@ class FontconfigLicenseInstallTests(unittest.TestCase):
         compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
         if not cmake or not ninja or not compiler:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         root = Path(__file__).resolve().parents[2]
         library = root / "core/libs/prx/libfontconfig"
         with tempfile.TemporaryDirectory() as temporary:
