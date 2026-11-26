@@ -2,6 +2,7 @@
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libSceJxr/src/WmpBridge.h"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -107,7 +108,11 @@ void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* func
     if (size == 0) return;
     RequireGuestAddressRange(pointer, size, function);
     const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(pointer, size);
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
     errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
@@ -126,7 +131,11 @@ template <typename TValue>
 void RequireWritableGuestSlot(TValue* pointer, const char* function) {
     static_cast<void>(ReadGuestOutputSlot(pointer, function));
     const int savedErrno = errno;
-    const bool ok = GuestWritable_nid_no_patch(pointer, sizeof(TValue));
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, sizeof(TValue));
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, sizeof(TValue));
+    }
     errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
