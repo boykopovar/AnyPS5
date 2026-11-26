@@ -7,7 +7,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
@@ -183,12 +186,72 @@ void TestShellCoreUtilLeafCalls() {
     }
 }
 
-void TestLncUtilInitialize() {
-    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
-    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
-    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+constexpr const char* titleContextMode = "--title-context";
+constexpr const char* titleContextTitleId = "PPSA97358";
+
+unsigned long CurrentProcessId() {
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
 }
 
+int RunTitleContext(const char* program, const std::filesystem::path& directory) {
+    const std::string command = "\"" + std::string(program) + "\" " + titleContextMode + " \"" + directory.string() + "\"";
+#ifdef _WIN32
+    return std::system(("\"" + command + "\"").c_str());
+#else
+    return std::system(command.c_str());
+#endif
+}
+
+int TitleContextChecks(const char* directory) {
+    std::filesystem::current_path(directory);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilGetAppId(titleContextTitleId) == SYSTEM_SERVICE_RUNNING_APP_ID);
+    bool launched = false;
+    Require(sceLncUtilIsAppLaunched(titleContextTitleId, &launched) == SYSTEM_SERVICE_OK && launched);
+    return 0;
+}
+
+void TestLncUtilInitialize(const char* program) {
+    constexpr std::int32_t Sentinel = 0x5a5a5a5a;
+    bool launched = true;
+    std::int32_t appIds[2] = {Sentinel, Sentinel};
+    std::uint32_t count = 0xdeadbeefu;
+    Require(sceLncUtilGetAppId("PPSA00001") == LNC_UTIL_ERROR_NOT_INITIALIZED);
+    Require(sceLncUtilGetAppId(nullptr) == SYSTEM_SERVICE_INVALID_TITLE_APP_ID);
+    Require(sceLncUtilGetAppId("PPSA0000") == SYSTEM_SERVICE_INVALID_TITLE_APP_ID);
+    Require(sceLncUtilIsAppLaunched("PPSA00001", &launched) == LNC_UTIL_ERROR_NOT_INITIALIZED && launched);
+    Require(sceLncUtilIsAppLaunched(nullptr, &launched) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilIsAppLaunched("PPSA00001", nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceLncUtilGetAppIdListOfBigApp(appIds, 1, &count) == LNC_UTIL_ERROR_NOT_INITIALIZED);
+    Require(sceSystemServiceGetAppIdListOfBigApp(appIds, 1, &count) == LNC_UTIL_ERROR_NOT_INITIALIZED);
+    Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
+    Require(sceLncUtilGetAppIdListOfBigApp(nullptr, 1, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(sceSystemServiceGetAppIdListOfBigApp(appIds, 4, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilInitialize() == SYSTEM_SERVICE_OK);
+    Require(sceLncUtilGetAppIdListOfBigApp(appIds, 1, &count) == SYSTEM_SERVICE_OK);
+    Require(count == 1 && appIds[0] == sceSystemServiceGetAppIdOfRunningBigApp());
+    appIds[0] = Sentinel;
+    count = 0xdeadbeefu;
+    Require(sceSystemServiceGetAppIdListOfBigApp(appIds, 1, &count) == SYSTEM_SERVICE_OK);
+    Require(count == 1 && appIds[0] == sceSystemServiceGetAppIdOfRunningBigApp());
+    const auto root = std::filesystem::temp_directory_path() / ("guest_system_service_title_" + std::to_string(CurrentProcessId()));
+    std::filesystem::remove_all(root);
+    Require(std::filesystem::create_directories(root / "app0" / "sce_sys"));
+    {
+        std::ofstream param(root / "app0" / "sce_sys" / "param.json", std::ios::binary);
+        param << "{\n  \"contentId\": \"IV0000-PPSA97358_00-XPSEMU0000000000\",\n  \"localizedParameters\": {\"defaultLanguage\": \"en-US\", \"en-US\": {\"titleName\": \"XPSemu\"}},\n  \"titleId\": \"" << titleContextTitleId << "\"\n}\n";
+        Require(static_cast<bool>(param));
+    }
+    Require(RunTitleContext(program, root) == 0);
+    std::filesystem::remove_all(root);
+}
 void TestAppMessagingTryReceiveMsg() {
     Require(sceAppMessagingTryReceiveMsg(nullptr) == appMessagingNullPointer);
     alignas(8) unsigned char message[appMessageSize];
@@ -336,9 +399,10 @@ void TestGpuLoadEmulationMode() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == titleContextMode) return TitleContextChecks(argv[2]);
     TestShellCoreUtilLeafCalls();
-    TestLncUtilInitialize();
+    TestLncUtilInitialize(argv[0]);
     TestAppMessagingTryReceiveMsg();
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
