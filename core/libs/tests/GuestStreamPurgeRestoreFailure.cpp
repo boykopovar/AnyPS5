@@ -63,6 +63,8 @@ int main(int argc, char** argv) {
     char bytes[3]{};
     const char* expected = failureCall == 0 ? "YXd" : failureCall == 1 ? "def" : "Xde";
     Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &stream) == sizeof(bytes) && std::memcmp(bytes, expected, sizeof(bytes)) == 0, "failed restoration never resurrects rejected bytes");
+    Require(fpurge_nid_postfix(&stream) == 0, "purge after consuming retained input");
+    Require(fgetc_nid_postfix(&stream) == (failureCall == 0 ? 'e' : failureCall == 1 ? EOF : 'f'), "consumed pushback does not return");
     Require(stream.Close() == 0, "close temporary stream");
     std::puts("stream purge restore tests passed");
 }

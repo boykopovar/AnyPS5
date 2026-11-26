@@ -174,6 +174,21 @@ void CheckRepeatedPurgeWithMultipleBytes() {
     Require(fpurge_nid_postfix(&file.stream) == 0 && fgetc_nid_postfix(&file.stream) == 'e', "consumed multi-byte pushback does not return");
 }
 
+void CheckPurgeAfterReadingRestoredInput() {
+    BufferedStream file;
+    Require(std::setvbuf(file.native, nullptr, _IOFBF, 4096) == 0, "use native buffering for a restored read");
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare restored-read input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind restored-read input");
+    for (const char expected : {'a', 'b', 'c'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read before single-byte pushback");
+    Require(ungetc_nid_postfix('X', &file.stream) == 'X', "push back before the restored read");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fpurge_nid_postfix(&file.stream) == 0, "purge single-byte pushback twice");
+    char bytes[3]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &file.stream) == sizeof(bytes) && std::memcmp(bytes, "Xde", sizeof(bytes)) == 0, "read restored input and subsequent file bytes");
+    Require(std::ftell(file.native) == 5, "restored read leaves the logical position after e");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after the restored read");
+    Require(fgetc_nid_postfix(&file.stream) == 'f', "purge after a restored read never repeats e");
+}
+
 void CheckInvalid() {
     BufferedStream file;
     Require(file.stream.Close() == 0, "close stream");
@@ -195,6 +210,7 @@ int main() {
     CheckLineBuffered();
     CheckRepeatedPurge();
     CheckRepeatedPurgeWithMultipleBytes();
+    CheckPurgeAfterReadingRestoredInput();
     CheckPipe();
     CheckInvalid();
     std::puts("stream purge tests passed");
