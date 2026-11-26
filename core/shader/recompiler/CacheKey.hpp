@@ -74,6 +74,10 @@ public:
         target.featureDigestSealed = true;
     }
 
+    static std::array<std::uint64_t, 2> FeatureDigest(const SpirvTarget& target) {
+        return target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+    }
+
     // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
     static std::uint64_t HashCode(std::span<const std::uint32_t> code) {
         std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ (static_cast<std::uint64_t>(code.size()) * 0x100000001b3ull);
@@ -237,6 +241,7 @@ private:
         append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.ditheredAlphaSamples);
+        append(key, static_cast<std::uint8_t>(value.singleSampleDither));
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.iteratesSamples);
@@ -346,7 +351,7 @@ private:
     }
 
     static void appendFeatureDigest(std::vector<std::uint64_t>& key, const SpirvTarget& target) {
-        const auto digest = target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        const auto digest = FeatureDigest(target);
         key.push_back(digest[0]);
         key.push_back(digest[1]);
     }
@@ -395,6 +400,7 @@ private:
         append(key, value.float16NarrowNans);
         append(key, value.float16HostNans);
         append(key, value.meshInlineFunctions);
+        append(key, value.spannedShuffleThroughMemory);
     }
 };
 

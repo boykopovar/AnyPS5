@@ -116,6 +116,22 @@ test("Arabic applies right-to-left direction and persists across reloads", t => 
   assert.equal(fakeDocument.documentElement.dir, "rtl");
 });
 
+test("Brazilian Portuguese applies pt-BR left-to-right and persists across reloads", t => {
+  const store = new Map();
+  const fakeDocument = stubDocument([new FakeElement({ i18n: "heroTitle" })]);
+  stubGlobal("document", fakeDocument, t);
+  stubGlobal("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, value); } }, t);
+
+  set("pt-BR");
+  assert.equal(store.get("anyps5.converter.locale"), "pt-BR");
+  assert.equal(current(), "pt-BR");
+  assert.equal(fakeDocument.documentElement.lang, "pt-BR");
+  assert.equal(fakeDocument.documentElement.dir, "ltr");
+  assert.equal(fakeDocument.querySelectorAll("[data-i18n]")[0].textContent, messages["pt-BR"].heroTitle);
+  assert.notEqual(messages["pt-BR"].heroTitle, messages.en.heroTitle);
+  assert.equal(translate("pt-BR", "unsafeZipPath", { name: "evil.txt" }), "Caminho inseguro no ZIP: evil.txt");
+});
+
 test("a saved locale choice is applied at start", t => {
   const store = new Map([["anyps5.converter.locale", "de"]]);
   stubGlobal("localStorage", { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, value); } }, t);

@@ -292,6 +292,10 @@ void Driver::WaitIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
 }
 
+void Driver::WaitDeviceIdle() {
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
 bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);
@@ -367,16 +371,15 @@ void Driver::ReleaseSettled() {
 std::vector<AwaitedWait> Driver::AwaitedWaits() {
     std::vector<AwaitedWait> result;
     for (const auto& slot : awaitedSlots) {
-        const auto address = slot.address.load(std::memory_order_acquire);
-        if (address == 0) continue;
+        const auto fields = readAwaited(slot, 0);
+        if (!fields) continue;
         AwaitedWait wait;
-        wait.address = address;
-        wait.reference = slot.reference.load(std::memory_order_relaxed);
-        wait.mask = slot.mask.load(std::memory_order_relaxed);
-        const auto shape = slot.shape.load(std::memory_order_relaxed);
-        wait.function = static_cast<std::uint32_t>(shape);
-        wait.bytes = static_cast<std::uint32_t>(shape >> 32u);
-        if (slot.address.load(std::memory_order_acquire) == address) result.push_back(wait);
+        wait.address = fields->address;
+        wait.reference = fields->reference;
+        wait.mask = fields->mask;
+        wait.function = static_cast<std::uint32_t>(fields->shape);
+        wait.bytes = static_cast<std::uint32_t>(fields->shape >> 32u);
+        if (awaitedUnchanged(slot, *fields)) result.push_back(wait);
     }
     return result;
 }

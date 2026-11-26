@@ -88,6 +88,17 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
 std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, const GuestTextureResource& resource);
+const ShaderRecompiler::ImageOverwriteDispatch*& OverwriteDispatch();
+class OverwriteDispatchScope {
+public:
+    explicit OverwriteDispatchScope(const ShaderRecompiler::ImageOverwriteDispatch* dispatch) : previous(OverwriteDispatch()) { OverwriteDispatch() = dispatch; }
+    ~OverwriteDispatchScope() { OverwriteDispatch() = previous; }
+    OverwriteDispatchScope(const OverwriteDispatchScope&) = delete;
+    OverwriteDispatchScope& operator=(const OverwriteDispatchScope&) = delete;
+
+private:
+    const ShaderRecompiler::ImageOverwriteDispatch* previous;
+};
 std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, const GuestTextureResource& resource, std::uint32_t firstLayer, std::uint32_t layerCount);
 // Whether `image` is still the storage cache's image of its surface (what CachedStorageSurface
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
@@ -185,6 +196,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
     std::uint64_t arrayViewsShared = 0;
+    std::uint64_t entryMemoHits = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -241,14 +253,6 @@ public:
         DescriptorCache::SetAllocation fragmentAllocation;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
-        struct InPlace {
-            std::size_t allocation;
-            VkBuffer buffer;
-            VkDeviceSize offset;
-            std::size_t bytes;
-        };
-        std::vector<InPlace> inPlace;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -259,7 +263,6 @@ public:
         VkBuffer inPlace = VK_NULL_HANDLE;
         VkDeviceSize inPlaceOffset = 0;
         std::uint32_t adjustment = 0;
-        bool dispatchInPlace = false;
     };
     struct DrawUse {
         DrawUse() = default;
@@ -291,7 +294,7 @@ public:
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
     // once the work completed.
-    void MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings = nullptr);
+    void MarkGpuWrites(Recorder& recorder);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
@@ -304,6 +307,7 @@ public:
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool StorePages() const;
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
@@ -328,6 +332,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     void InPlaceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.InPlaceReads(out); }
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
+    void StorageImages(std::vector<std::pair<VkImage, bool>>& out) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const { guestMemory.DeviceReads(out); }
     bool ReadsImage(const StorageTexture* image) const;
@@ -564,7 +569,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
-    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
+    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry, bool counted = true) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);

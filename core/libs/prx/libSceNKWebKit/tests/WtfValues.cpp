@@ -248,6 +248,14 @@ void TestPersistence() {
     Decoder dec{enc.buffer, enc.size, enc.buffer + payloadSize, payloadHash};
     Require(_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(&dec, 20));
     Require(!_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(&dec, 21));
+    {
+        using WideSize = bool (APS5_VABI*)(const Decoder*, std::uint64_t);
+        const auto withWideSize = reinterpret_cast<WideSize>(&_ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm);
+        Require(withWideSize(&dec, 20));
+        Require(!withWideSize(&dec, 0x100000000ull));
+        Require(!withWideSize(&dec, 0x100000014ull));
+        Require(!withWideSize(&dec, 0xFFFFFFFF00000001ull));
+    }
     Require(_ZN3WTF11Persistence7Decoder14verifyChecksumEv(&dec));
     Require(dec.bufferPosition == enc.buffer + enc.size);
 

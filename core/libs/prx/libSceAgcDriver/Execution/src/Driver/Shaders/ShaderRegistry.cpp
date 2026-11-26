@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
@@ -961,6 +962,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 }
 
 struct UserDataCallSites {
+    std::shared_ptr<const std::vector<std::uint32_t>> code;
     ShaderRecompiler::RdnaProgram program;
     std::vector<ShaderRecompiler::UserDataCall> calls;
     std::vector<ShaderRecompiler::TableCall> tableCalls;
@@ -972,7 +974,7 @@ constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
+    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment && request.shader.stage != Stage::Mesh) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
     const auto tail = ShaderRecompiler::FindUserDataTail(program, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()));
     if (!tail) return {};
@@ -1138,6 +1140,24 @@ void ReportTableCallSplit(std::uint64_t address, const ShaderRecompiler::RdnaPro
     std::fprintf(stderr, "[gpu] compute shader 0x%llx: its table call at program counter 0x%x cannot run its callees as their own pipelines: %s\n", static_cast<unsigned long long>(address), call.programCounter, refusal.c_str());
 }
 
+#ifdef __APPLE__
+std::optional<std::vector<std::uint32_t>> RetargetDriverBlockPointers(std::span<const std::uint32_t> code, const ShaderRecompiler::RdnaProgram& program, const std::vector<ShaderRecompiler::TableCall>& calls) {
+    std::vector<std::uint32_t> words(code.begin(), code.end());
+    bool retargeted = false;
+    for (const auto& call : calls) {
+        if (!call.constantPointer) continue;
+        const auto address = DriverDetail::RetargetPs5DriverMemory(*call.constantPointer);
+        if (address == *call.constantPointer) continue;
+        const auto rewritten = ShaderRecompiler::RetargetTableCallPointer(words, program, call, address);
+        if (!rewritten) continue;
+        words = std::move(*rewritten);
+        retargeted = true;
+    }
+    if (!retargeted) return std::nullopt;
+    return words;
+}
+#endif
+
 std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
     if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
@@ -1183,6 +1203,15 @@ std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(con
         found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
         found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
         found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+#ifdef __APPLE__
+        const auto patched = RetargetDriverBlockPointers(code, found->program, found->tableCalls);
+        if (patched) {
+            found->code = std::make_shared<const std::vector<std::uint32_t>>(std::move(*patched));
+            found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(*found->code);
+            found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+            found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        }
+#endif
         sites = std::move(found);
     }
     const auto& program = sites->program;
@@ -1584,21 +1613,25 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
     require(memories.size() == which.size(), "split table call parts and their memories differ in count");
     std::vector<SplitTableCallPart> compiled(memories.size());
     std::vector<std::optional<ShaderRecompiler::PreparedShaderInvocation>> invocations(memories.size());
-    std::vector<bool> retry(memories.size(), false);
-    for (std::size_t part = 0; part < memories.size(); ++part) {
+    std::vector<char> retry(memories.size(), 0);
+    std::vector<std::exception_ptr> failures(memories.size());
+    std::vector<char> sampled(memories.size(), 0);
+    const bool pipelined = DrawPipeline::Active();
+    RunParallel(memories.size(), [&](std::size_t part) {
+        DrawPipeline::Active() = pipelined;
         try {
             invocations[part] = SplitTableCallPartInvocation(parts, which[part], request);
             compiled[part].capture = memories[part]->Capture(*invocations[part]);
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-            retry[part] = true;
+            retry[part] = 1;
+            return;
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
-            retry[part] = true;
+            retry[part] = 1;
+            return;
+        } catch (...) {
+            failures[part] = std::current_exception();
+            return;
         }
-    }
-    std::vector<std::exception_ptr> failures(memories.size());
-    std::vector<char> sampled(memories.size(), 0);
-    RunParallel(memories.size(), [&](std::size_t part) {
-        if (retry[part]) return;
         try {
             compiled[part].result = invocations[part]->Materialize(*compiled[part].capture);
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
@@ -1611,7 +1644,7 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
     });
     for (std::size_t part = 0; part < memories.size(); ++part) {
         if (failures[part] != nullptr) std::rethrow_exception(failures[part]);
-        if (retry[part] || sampled[part] != 0) compiled[part] = CompileSplitTableCallPart(*memories[part], parts, which[part], request);
+        if (retry[part] != 0 || sampled[part] != 0) compiled[part] = CompileSplitTableCallPart(*memories[part], parts, which[part], request);
     }
     return compiled;
 }
@@ -2851,6 +2884,18 @@ std::array<std::uint64_t, 4> Driver::PrebuiltLibraries() {
     const auto localDevice = device.Load();
     if (localDevice == nullptr) return {};
     return Graphics::PipelineLibraryCountersOf(localDevice->Device()).built;
+}
+
+std::uint64_t Driver::SettledPipelineLibraryWork() {
+    AwaitRegistrationPreparation();
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild()) pool->AwaitSubmitted();
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return 0;
+    Graphics::WaitForOptimizedPipelines(localDevice->Device());
+    const auto counters = Graphics::PipelineLibraryCountersOf(localDevice->Device());
+    std::uint64_t work = counters.linked + counters.optimized;
+    for (const auto parts : counters.built) work += parts;
+    return work;
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {

@@ -15,9 +15,11 @@
 #include <cstdlib>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <cstdio>
 #include <memory>
+#include <utility>
 #include "prx/libScePad/include/InputScript.hpp"
 
 namespace {
@@ -409,8 +411,27 @@ std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
 }
 
 void ApplyRecording(PadData& data, std::uint64_t now) {
-    static Pad::RecordingPlayer player(EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY"));
-    static Pad::RecordingWriter writer(EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD"));
+    static std::optional<std::pair<Pad::RecordingPlayer, std::filesystem::path>> replay;
+    if (!replay) {
+        auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");
+        if (!path.empty()) path = std::filesystem::absolute(path);
+        replay.emplace(Pad::RecordingPlayer(path), std::move(path));
+    }
+    auto& [player, replayPath] = *replay;
+    static std::optional<Pad::RecordingWriter> writer;
+    if (!writer) {
+        auto path = EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD");
+        if (!replayPath.empty() && !path.empty()) {
+            std::error_code error;
+            if (std::filesystem::exists(path, error) && std::filesystem::exists(replayPath, error) && std::filesystem::equivalent(path, replayPath, error)) {
+                throw std::runtime_error("APS5_PAD_RECORD and APS5_PAD_REPLAY refer to the same file: '" + path.string() + "'");
+            }
+            if (error) {
+                throw std::runtime_error("APS5_PAD_RECORD: cannot compare '" + path.string() + "' with APS5_PAD_REPLAY: " + error.message());
+            }
+        }
+        writer.emplace(path);
+    }
     if (const auto replayed = player.At(now)) {
         data.buttons = replayed->buttons;
         data.left_stick_x = replayed->sticks[0];
@@ -420,7 +441,7 @@ void ApplyRecording(PadData& data, std::uint64_t now) {
         data.analog_buttons_l2 = replayed->triggers[0];
         data.analog_buttons_r2 = replayed->triggers[1];
     }
-    if (writer.Active()) writer.Record(now, {data.buttons, {data.left_stick_x, data.left_stick_y, data.right_stick_x, data.right_stick_y}, {data.analog_buttons_l2, data.analog_buttons_r2}});
+    if (writer->Active()) writer->Record(now, {data.buttons, {data.left_stick_x, data.left_stick_y, data.right_stick_x, data.right_stick_y}, {data.analog_buttons_l2, data.analog_buttons_r2}});
 }
 
 std::uint64_t LatchExpiry(const PadSlot& slot) {
