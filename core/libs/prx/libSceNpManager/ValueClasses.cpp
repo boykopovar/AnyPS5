@@ -129,15 +129,20 @@ void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
-    if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    if (self == nullptr || text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     std::string copy;
     const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
     if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
     if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
-    std::memset(self->data, 0, sizeof(self->data));
-    self->term = 0;
-    std::memcpy(self->data, copy.data(), copy.size());
-    return 0;
+    NpOnlineIdObject object{};
+    std::memcpy(object.data, copy.data(), copy.size());
+    const int savedErrno = errno;
+    const bool wrote = GuestCopyOut_nid_no_patch(
+        reinterpret_cast<std::uint8_t*>(self) + offsetof(NpOnlineIdObject, data),
+        object.data,
+        OnlineIdFieldBytes - offsetof(NpOnlineIdObject, data));
+    errno = savedErrno;
+    return wrote ? 0 : NP_ERROR_INVALID_ARGUMENT;
 }
 
 bool APS5_VABI _ZNK3sce2np10NpOnlineId7IsEmptyEv(const NpOnlineIdObject* self) {
@@ -268,7 +273,8 @@ void APS5_VABI _ZN3sce2np4UserC2ERKS1_(UserObject* self, const UserObject* other
 }
 
 void APS5_VABI _ZN3sce2np4User5ClearEv(UserObject* self) {
-    self->userId = USER_SERVICE_USER_ID_INVALID;
+    const std::int32_t invalid = USER_SERVICE_USER_ID_INVALID;
+    StoreBytes(reinterpret_cast<std::uint8_t*>(self) + offsetof(UserObject, userId), &invalid, sizeof(invalid), __func__);
 }
 
 bool APS5_VABI _ZNK3sce2np4User7IsEmptyEv(const UserObject* self) {
@@ -370,7 +376,8 @@ void APS5_VABI _ZN3sce2np12NpTitleToken5ClearEv(NpTitleTokenObject* self) {
 }
 
 const char* APS5_VABI _ZNK3sce2np12NpTitleToken6GetStrEv(const NpTitleTokenObject* self) {
-    return self->data;
+    LoadObject(self, __func__);
+    return reinterpret_cast<const char*>(reinterpret_cast<std::uintptr_t>(self) + offsetof(NpTitleTokenObject, data));
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1Ev(NpAccessTokenObject* self) {

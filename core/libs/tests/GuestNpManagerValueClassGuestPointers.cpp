@@ -197,6 +197,10 @@ int main() {
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np12NpTitleTokenC1Ev(badTitle); return 0; }, "_ZN3sce2np12NpTitleTokenC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np12NpTitleTokenC1ERKS1_(titleCopy, badTitle); return 0; }, "_ZN3sce2np12NpTitleTokenC1ERKS1_"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np12NpTitleToken5ClearEv(badTitle); return 0; }, "_ZN3sce2np12NpTitleToken5ClearEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK3sce2np12NpTitleToken6GetStrEv(badTitle); }, "_ZNK3sce2np12NpTitleToken6GetStrEv"));
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(nullptr, "abc") == static_cast<int>(0x80550003));
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(badOnline, "abc") == static_cast<int>(0x80550003));
+    Require(FaultsAsNotImplemented([&] { _ZN3sce2np4User5ClearEv(badUser); return 0; }, "_ZN3sce2np4User5ClearEv"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np13NpAccessTokenC1Ev(badAccess); return 0; }, "_ZN3sce2np13NpAccessTokenC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np13NpAccessTokenC1ERKS1_(accessCopy, badAccess); return 0; }, "_ZN3sce2np13NpAccessTokenC1ERKS1_"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken(accessCopy, badPlainToken); return 0; }, "_ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken"));
@@ -213,6 +217,8 @@ int main() {
     auto* readOnlyAccess = reinterpret_cast<NpAccessTokenObject*>(page + 128);
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np10NpOnlineIdC1Ev(readOnlyOnline); return 0; }, "_ZN3sce2np10NpOnlineIdC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np10NpOnlineId5ClearEv(readOnlyOnline); return 0; }, "_ZN3sce2np10NpOnlineId5ClearEv"));
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(readOnlyOnline, "abc") == static_cast<int>(0x80550003));
+    Require(FaultsAsNotImplemented([&] { _ZN3sce2np4User5ClearEv(readOnlyUser); return 0; }, "_ZN3sce2np4User5ClearEv"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np4UserC1ERKS1_(readOnlyUser, &someone); return 0; }, "_ZN3sce2np4UserC1ERKS1_"));
     Require(FaultsAsNotImplemented([&] { _ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken(readOnlyAccess, &plainToken); return 0; }, "_ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken"));
     for (std::size_t index = 0; index < 4096; ++index) Require(page[index] == 0x5a);
