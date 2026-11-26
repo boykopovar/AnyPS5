@@ -92,6 +92,15 @@ int main() {
     Require(__real__ onCircle == 0.0f && !std::signbit(__real__ onCircle));
     Require(std::fesetround(rounding) == 0);
     Require(Near(csqrtf_nid_postfix(Make(-4.0f, 0.0f)), 0.0f, 2.0f));
+    const auto largeRoot = csqrtf_nid_postfix(Make(maximum, maximum));
+    Require(__real__ largeRoot == 0x1.19435cp+64f && __imag__ largeRoot == 0x1.d20312p+62f);
+    const auto negativeRoot = csqrtf_nid_postfix(Make(-maximum, -maximum));
+    Require(__real__ negativeRoot == 0x1.d20312p+62f && __imag__ negativeRoot == -0x1.19435cp+64f);
+    const auto nearCutRoot = csqrtf_nid_postfix(Make(-4.0f, -0x1p-100f));
+    Require(__real__ nearCutRoot == 0x1p-102f && __imag__ nearCutRoot == -2.0f);
+    const auto signedZeroRoot = csqrtf_nid_postfix(Make(-0.0f, -0.0f));
+    Require(__real__ signedZeroRoot == 0.0f && !std::signbit(__real__ signedZeroRoot));
+    Require(__imag__ signedZeroRoot == 0.0f && std::signbit(__imag__ signedZeroRoot));
     Require(Near(cexpf_nid_postfix(Make(0.0f, pi)), -1.0f, 0.0f));
     Require(Near(csinf_nid_postfix(i), 0.0f, std::sinh(1.0f)));
     Require(Near(clogf_nid_postfix(Make(-1.0f, 0.0f)), 0.0f, pi));

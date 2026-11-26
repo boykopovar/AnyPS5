@@ -795,6 +795,17 @@ __complex__ float APS5_VABI csinhf_nid_postfix(__complex__ float z) {
 }
 
 __complex__ float APS5_VABI csqrtf_nid_postfix(__complex__ float z) {
+    const double real = __real__ z;
+    const double imaginary = __imag__ z;
+    if (std::isfinite(real) && std::isfinite(imaginary)) {
+        if (real == 0.0 && imaginary == 0.0) return MakeComplex(0.0f, __imag__ z);
+        const double larger = std::sqrt((std::hypot(real, imaginary) + std::abs(real)) * 0.5);
+        if (real < 0.0) {
+            return MakeComplex(static_cast<float>(std::abs(imaginary) / (2.0 * larger)),
+                               static_cast<float>(std::copysign(larger, imaginary)));
+        }
+        return MakeComplex(static_cast<float>(larger), static_cast<float>(imaginary / (2.0 * larger)));
+    }
     const auto result = std::sqrt(std::complex<float>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
 }
