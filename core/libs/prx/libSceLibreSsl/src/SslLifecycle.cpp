@@ -337,6 +337,7 @@ bool InheritVerifyParam(LibreSslX509VerifyParam& destination, const LibreSslX509
 }
 
 void ClearSsl(LibreSslSsl& ssl) {
+    LibreSslReleaseConnection_nid_no_patch(&ssl);
     LibreSslSslInternal& internal = InternalOf(ssl, "SSL_clear");
     if (!ssl.method) {
         LibreSslPutSslError_nid_no_patch(&ssl, ReasonNoMethodSpecified);
@@ -381,6 +382,7 @@ void FreeCopiedLists(LibreSslSslInternal& internal) {
 }
 
 void DestroySsl(LibreSslSsl& ssl, bool methodReady, bool releaseExData) {
+    LibreSslReleaseConnection_nid_no_patch(&ssl);
     LibreSslSslInternal& internal = InternalOf(ssl, "SSL_free");
     LibreSslFreeVerifyParam_nid_no_patch(static_cast<LibreSslX509VerifyParam*>(ssl.param), "SSL_free");
     if (releaseExData) LibreSslFreeExData_nid_no_patch(ExClassSsl, &ssl, &internal.exData);
@@ -495,7 +497,12 @@ bool PopulateContext(LibreSslCtx& ctx, const LibreSslMethod& method) {
 
 extern "C" {
 
-LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
+void LibreSslClear_nid_no_patch(LibreSslSsl* ssl) {
+    ClearSsl(*ssl);
+}
+
+void* LibreSslNewContext_nid_no_patch(const void* source) {
+    const auto* method = static_cast<const LibreSslMethod*>(source);
     if (!method) {
         LibreSslPutSslErrorX_nid_no_patch(ReasonNullSslMethodPassed);
         return nullptr;
@@ -524,6 +531,10 @@ LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
         return nullptr;
     }
     return ctx;
+}
+
+LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method) {
+    return static_cast<LibreSslCtx*>(LibreSslNewContext_nid_no_patch(method));
 }
 
 void APS5_VABI SSL_CTX_free_nid_postfix(LibreSslCtx* ctx) {

@@ -24,6 +24,10 @@ bool IsPasteShortcut(const SDL_KeyboardEvent& key) {
 void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
+        case SDL_TEXTEDITING_EXT:
+            if (event.editExt.windowID != windowId || event.editExt.text == nullptr) return;
+            ImePublishPreedit_nid_postfix(event.editExt.text, std::strlen(event.editExt.text), event.editExt.start, event.editExt.length);
+            return;
         case SDL_TEXTEDITING:
             if (event.edit.windowID != windowId) return;
             static_assert(sizeof(input.text) >= sizeof(event.edit.text));
@@ -51,8 +55,11 @@ void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
                 case SDL_SCANCODE_DELETE: input.kind = ImeHostInputKind::Delete; break;
                 case SDL_SCANCODE_LEFT: input.kind = ImeHostInputKind::Left; break;
                 case SDL_SCANCODE_RIGHT: input.kind = ImeHostInputKind::Right; break;
-                case SDL_SCANCODE_HOME: input.kind = ImeHostInputKind::Home; break;
-                case SDL_SCANCODE_END: input.kind = ImeHostInputKind::End; break;
+                case SDL_SCANCODE_HOME:
+                case SDL_SCANCODE_END:
+                    input.kind = event.key.keysym.scancode == SDL_SCANCODE_HOME ? ImeHostInputKind::Home : ImeHostInputKind::End;
+                    input.moveToLineBoundary = (event.key.keysym.mod & KMOD_CTRL) == 0;
+                    break;
                 case SDL_SCANCODE_RETURN:
                 case SDL_SCANCODE_KP_ENTER:
                     if (event.key.repeat != 0) return;

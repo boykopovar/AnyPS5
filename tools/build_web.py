@@ -114,9 +114,18 @@ def library_assets(release):
     return assets
 
 
+def unique_release_fields(pairs):
+    fields = {}
+    for key, value in pairs:
+        if key in fields:
+            raise ValueError(f"Invalid release metadata: duplicate JSON field {key!r}")
+        fields[key] = value
+    return fields
+
+
 def load_release(response):
     try:
-        return json.load(response)
+        return json.load(response, object_pairs_hook=unique_release_fields)
     except RecursionError as error:
         raise ValueError(f"Invalid release metadata: {error}") from error
 

@@ -10,6 +10,8 @@
 
 extern "C" {
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE(const WebCore::Color* color);
+
 WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv();
 std::size_t APS5_VABI _ZN7WebCore6ISOBox14minimumBoxSizeEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore40defaultTextEncodingNameForSystemLanguageEv();
@@ -75,6 +77,8 @@ WebCore::ViewportAttributes APS5_VABI _ZN7WebCore25computeViewportAttributesENS_
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
 void APS5_VABI _ZN7WebCore40restrictMinimumScaleFactorToViewportSizeERNS_18ViewportAttributesENS_7IntSizeEf( WebCore::ViewportAttributes& result, WebCore::IntSize visibleViewport, float devicePixelRatio);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth);
+unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAttachedWindowHeightEjj(unsigned int preferredHeight, unsigned int totalWindowHeight);
 unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv();
 float APS5_VABI _ZN7WebCore44computeMinimumScaleFactorForContentContainedERKNS_18ViewportAttributesERKNS_7IntSizeES5_( const WebCore::ViewportAttributes& result, const WebCore::IntSize& visibleViewport, const WebCore::IntSize& contentsSize);
 void APS5_VABI _ZN7WebCore50restrictScaleFactorToInitialScaleIfNotUserScalableERNS_18ViewportAttributesE(WebCore::ViewportAttributes& result);
@@ -82,8 +86,8 @@ void APS5_VABI _ZN7WebCore5ColorC1EOS0_(WebCore::Color* self, WebCore::Color&& o
 void APS5_VABI _ZN7WebCore5ColorC1ERKS0_(WebCore::Color* self, const WebCore::Color& other);
 void APS5_VABI _ZN7WebCore5ColorC2EOS0_(WebCore::Color* self, WebCore::Color&& other);
 void APS5_VABI _ZN7WebCore5ColorC2ERKS0_(WebCore::Color* self, const WebCore::Color& other);
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other);
-WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other);
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other);
+WebCore::Color* APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other);
 void APS5_VABI _ZN7WebCore7IntRect5scaleEf(WebCore::IntRect* self, float s);
 void APS5_VABI _ZN7WebCore7IntRect5uniteERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);
 void APS5_VABI _ZN7WebCore7IntRect9intersectERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);
