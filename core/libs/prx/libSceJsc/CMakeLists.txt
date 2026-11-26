@@ -297,6 +297,22 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceJsc PRIVATE src/WtfAssertions.cpp)
+if(BUILD_TESTING)
+    add_test_executable(jsc_wtf_log_always_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfLogAlways.cpp)
+    target_include_directories(jsc_wtf_log_always_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jsc_wtf_log_always_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(jsc_wtf_log_always_tests)
+    add_test(NAME jsc_wtf_log_always COMMAND jsc_wtf_log_always_tests)
+    add_test(NAME jsc_wtf_log_always_stderr COMMAND jsc_wtf_log_always_tests stderr)
+    set_tests_properties(jsc_wtf_log_always_stderr PROPERTIES PASS_REGULAR_EXPRESSION
+        "first 41 text\r?\nsecond\r?\n\r?\nthird -7\r?\nx+!\r?\n100% done\r?\nend\r?\n")
+    if(WIN32)
+        set_tests_properties(jsc_wtf_log_always jsc_wtf_log_always_stderr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 target_sources(libSceJsc PRIVATE src/WtfLogger.cpp)
 if(BUILD_TESTING)
     add_test_executable(jsc_wtf_logger_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfLogger.cpp)
