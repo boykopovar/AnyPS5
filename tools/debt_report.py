@@ -296,14 +296,26 @@ def main(argv=None):
         rows = [row for row in report(ROOT, set(args.libraries) or None) if all(label in row["labels"] for label in args.label)]
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    if args.json:
-        print(json.dumps(rows, indent=2))
+    try:
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            sys.stdout.flush()
+            return 0
+        for row in rows:
+            reason = f" ({row['reason']})" if row["reason"] else ""
+            print(f"{row['file']}:{row['line']}: {', '.join(row['names'][:3]) or '-'}: {', '.join(row['labels'])}{reason}")
+        counts = Counter(label for row in rows for label in row["labels"])
+        print(f"{len(rows)} entries: " + ", ".join(f"{count} {label}" for label, count in counts.most_common()))
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        finally:
+            os.close(devnull)
         return 0
-    for row in rows:
-        reason = f" ({row['reason']})" if row["reason"] else ""
-        print(f"{row['file']}:{row['line']}: {', '.join(row['names'][:3]) or '-'}: {', '.join(row['labels'])}{reason}")
-    counts = Counter(label for row in rows for label in row["labels"])
-    print(f"{len(rows)} entries: " + ", ".join(f"{count} {label}" for label, count in counts.most_common()))
     return 0
 
 

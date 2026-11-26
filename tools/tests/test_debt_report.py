@@ -239,6 +239,23 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([row["line"] for row in json.loads(output)], [7])
 
+    def test_broken_pipe_exits_cleanly_without_traceback(self):
+        import subprocess
+        script = Path(debt_report.__file__).resolve()
+        process = subprocess.Popen(
+            [sys.executable, str(script), "libkernel"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdout.readline()
+        process.stdout.close()
+        stderr = process.stderr.read().decode("utf-8", errors="replace")
+        process.stderr.close()
+        self.assertEqual(process.wait(timeout=15), 0)
+        self.assertEqual(stderr, "")
+
 
 class DebtFilesTests(unittest.TestCase):
     def tree(self, root):
