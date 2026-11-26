@@ -519,6 +519,94 @@ void UnwindBounds() {
         LibcUnwind::Lookup unterminatedAugNoSectionEndQuery{0x1000, &unterminatedAugBuf[11], 0, 0, 0, unterminatedAugBuf.data() + 31, unterminatedAugBuf.data()};
         Require(!LibcUnwind::DecodeRange(badFrame, unterminatedAugNoSectionEndQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an unterminated CIE augmentation string reaching CIE record end");
     }
+
+    {
+        const std::array<LibcUnwind::Byte, 10> ulebMax = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01};
+        const LibcUnwind::Byte* cursor = ulebMax.data();
+        LibcUnwind::Word u = 0;
+        Require(LibcUnwind::TryUleb(cursor, ulebMax.data() + ulebMax.size(), u) && cursor == ulebMax.data() + ulebMax.size() && u == static_cast<LibcUnwind::Word>(UINT64_MAX), "TryUleb rejected UINT64_MAX");
+
+        for (const LibcUnwind::Byte tail : {LibcUnwind::Byte{0x02}, LibcUnwind::Byte{0x7f}, LibcUnwind::Byte{0x80}}) {
+            const std::array<LibcUnwind::Byte, 10> ulebOverflow = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, tail};
+            cursor = ulebOverflow.data();
+            Require(!LibcUnwind::TryUleb(cursor, ulebOverflow.data() + ulebOverflow.size(), u), "TryUleb accepted overflowing 10th byte");
+        }
+
+        const std::array<LibcUnwind::Byte, 10> slebMax = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00};
+        cursor = slebMax.data();
+        std::intptr_t s = 0;
+        Require(LibcUnwind::TrySleb(cursor, slebMax.data() + slebMax.size(), s) && cursor == slebMax.data() + slebMax.size() && s == static_cast<std::intptr_t>(INT64_MAX), "TrySleb rejected INT64_MAX");
+
+        const std::array<LibcUnwind::Byte, 10> slebMin = {0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f};
+        cursor = slebMin.data();
+        Require(LibcUnwind::TrySleb(cursor, slebMin.data() + slebMin.size(), s) && cursor == slebMin.data() + slebMin.size() && s == static_cast<std::intptr_t>(INT64_MIN), "TrySleb rejected INT64_MIN");
+
+        for (const LibcUnwind::Byte tail : {LibcUnwind::Byte{0x01}, LibcUnwind::Byte{0x40}, LibcUnwind::Byte{0x7e}, LibcUnwind::Byte{0x80}}) {
+            const std::array<LibcUnwind::Byte, 10> slebOverflowPos = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, tail};
+            cursor = slebOverflowPos.data();
+            Require(!LibcUnwind::TrySleb(cursor, slebOverflowPos.data() + slebOverflowPos.size(), s), "TrySleb accepted overflowing 10th byte");
+            const std::array<LibcUnwind::Byte, 10> slebOverflowNeg = {0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, tail};
+            cursor = slebOverflowNeg.data();
+            Require(!LibcUnwind::TrySleb(cursor, slebOverflowNeg.data() + slebOverflowNeg.size(), s), "TrySleb accepted overflowing negative 10th byte");
+        }
+
+        const std::array<LibcUnwind::Byte, 48> overflowCieCodeAlign = {
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02,
+            0x78,
+            0x10,
+            0x01,
+            0x03,
+            0x0c, 0x07, 0x08, 0x00, 0x00, 0x00,
+            0x0c, 0x00, 0x00, 0x00,
+            0x24, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00
+        };
+        LibcUnwind::Frame overflowFrame{};
+        LibcUnwind::Lookup overflowCieCodeQuery{0x1010, &overflowCieCodeAlign[32], 0, 0, 0, overflowCieCodeAlign.data() + overflowCieCodeAlign.size(), overflowCieCodeAlign.data(), overflowCieCodeAlign.data(), &overflowCieCodeAlign[32]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowCieCodeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing ULEB128 codeAlign in CIE");
+
+        const std::array<LibcUnwind::Byte, 48> overflowCieDataAlign = {
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0x01,
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7e,
+            0x10,
+            0x01,
+            0x03,
+            0x0c, 0x07, 0x08, 0x00, 0x00, 0x00,
+            0x0c, 0x00, 0x00, 0x00,
+            0x24, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00
+        };
+        overflowFrame = {};
+        LibcUnwind::Lookup overflowCieDataQuery{0x1010, &overflowCieDataAlign[32], 0, 0, 0, overflowCieDataAlign.data() + overflowCieDataAlign.size(), overflowCieDataAlign.data(), overflowCieDataAlign.data(), &overflowCieDataAlign[32]};
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowCieDataQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing SLEB128 dataAlign in CIE");
+
+        const std::array<LibcUnwind::Byte, 40> overflowFdeRange = {
+            0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0x01, 0x78, 0x10, 0x01,
+            0x01, 0x0c, 0x07, 0x08,
+            0x10, 0x00, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02,
+            0x40,
+            0x00
+        };
+        overflowFrame = {};
+        LibcUnwind::Lookup overflowFdeQuery{0x1010, &overflowFdeRange[20], 0, 0, 0, overflowFdeRange.data() + overflowFdeRange.size(), overflowFdeRange.data(), overflowFdeRange.data(), &overflowFdeRange[20]};
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowFdeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing ULEB128 start in FDE");
+    }
 }
 
 }

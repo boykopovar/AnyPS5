@@ -63,11 +63,15 @@ inline Word Uleb(const Byte*& p) {
 inline bool TryUleb(const Byte*& p, const Byte* end, Word& result) {
     result = 0;
     if (!p || !end) return false;
-    for (unsigned shift = 0; shift < sizeof(Word) * 8; shift += 7) {
+    constexpr unsigned bits = static_cast<unsigned>(sizeof(Word) * 8);
+    for (unsigned shift = 0; shift < bits; shift += 7u) {
         if (p >= end) return false;
-        Byte b = *p++;
-        result |= Word(b & 127) << shift;
-        if (!(b & 128)) return true;
+        const Byte b = *p++;
+        const unsigned remaining = bits - shift;
+        const unsigned payload = b & 127u;
+        if (remaining < 7u && ((b & 128u) || (payload >> remaining) != 0u)) return false;
+        result |= Word(payload) << shift;
+        if (!(b & 128u)) return true;
     }
     return false;
 }
@@ -91,14 +95,22 @@ inline bool TrySleb(const Byte*& p, const Byte* end, std::intptr_t& out) {
     unsigned shift = 0;
     Byte b = 0;
     if (!p || !end) return false;
-    constexpr unsigned bits = sizeof(Word) * 8;
+    constexpr unsigned bits = static_cast<unsigned>(sizeof(Word) * 8);
     do {
         if (shift >= bits || p >= end) return false;
         b = *p++;
-        result |= Word(b & 127) << shift;
+        const unsigned remaining = bits - shift;
+        const unsigned payload = b & 127u;
+        if (remaining < 7u) {
+            if (b & 128u) return false;
+            const unsigned signBit = (payload >> (remaining - 1u)) & 1u;
+            const unsigned expectedHigh = signBit ? ((1u << (7u - remaining)) - 1u) : 0u;
+            if ((payload >> remaining) != expectedHigh) return false;
+        }
+        result |= Word(payload) << shift;
         shift += 7;
-    } while (b & 128);
-    if (shift < bits && (b & 64)) result |= (~Word(0)) << shift;
+    } while (b & 128u);
+    if (shift < bits && (b & 64u)) result |= (~Word(0)) << shift;
     out = static_cast<std::intptr_t>(result);
     return true;
 }
