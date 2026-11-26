@@ -3,6 +3,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#ifdef _WIN32
+#include "SDL.h"
+#undef main
+#endif
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +28,16 @@ static double Measure(int handle) {
 
 int main(int argc, char** argv) {
     const bool requireDisplay = argc > 1 && std::strcmp(argv[1], "--require-high-frame-rate") == 0;
+#ifdef _WIN32
+    Require(SDL_Init(SDL_INIT_VIDEO) == 0, SDL_GetError());
+    SDL_DisplayMode desktop{};
+    Require(SDL_GetDesktopDisplayMode(0, &desktop) == 0, SDL_GetError());
+    if (desktop.refresh_rate < 120 && !requireDisplay) {
+        std::puts("skipped, current display does not provide 120 Hz");
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return 77;
+    }
+#endif
     VideoOutTestEnvironment environment;
     {
         std::ofstream param("app0/sce_sys/param.json", std::ios::binary);

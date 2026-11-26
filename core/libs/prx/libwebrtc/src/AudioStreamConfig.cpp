@@ -59,6 +59,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <stdexcept>
 #include <vector>
@@ -66,18 +67,15 @@
 namespace {
 
 constexpr std::size_t ReleaseSlot = 1;
+constexpr std::int32_t RtcpModeCompound = 1;
+constexpr std::int32_t DefaultRtcpReportIntervalMs = 5000;
+constexpr std::uint64_t DefaultJitterBufferMaxPackets = 200;
 
 using ReleaseFunction = std::int32_t(APS5_VABI*)(const void*);
-
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
 
 void RequireWritable(void* address, std::size_t bytes, const char* message) {
     if (!address)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestWritable_nid_no_patch(address, bytes))
         throw std::invalid_argument(message);
 }
@@ -85,9 +83,30 @@ void RequireWritable(void* address, std::size_t bytes, const char* message) {
 void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!source)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
+}
+
+void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
+    if (!destination)
+        throw std::invalid_argument(message);
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+void InitEmptyString(WebRtcGuestString& value) {
+    value.reserved = 0;
+    std::memset(value.buffer, 0, sizeof(value.buffer));
+    value.size = 0;
+    value.capacity = WebRtcGuestStringInlineCapacity;
+}
+
+void InitDefaultCryptoOptions(WebRtcCryptoOptions& options) {
+    options.srtp.enableGcmCryptoSuites = true;
+    options.srtp.enableAes128Sha1_32CryptoCipher = false;
+    options.srtp.enableAes128Sha1_80CryptoCipher = true;
+    options.srtp.enableEncryptedRtpHeaderExtensions = true;
+    options.sframe.requireFrameEncryption = false;
 }
 
 void ValidateString(const WebRtcGuestString& string, const char* message) {
@@ -235,6 +254,24 @@ void APS5_VABI _ZN6webrtc15AudioSendStream5StatsD1Ev_nid_postfix(WebRtcAudioSend
     ReleaseString(stats->codecName);
 }
 
+void APS5_VABI _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(
+    WebRtcAudioSendStreamConfig* config, void* sendTransport) {
+    constexpr const char* message = "AudioSendStream::Config constructor requires a valid object";
+    WebRtcAudioSendStreamConfig hostConfig{};
+    InitEmptyString(hostConfig.rtp.rid);
+    InitEmptyString(hostConfig.rtp.mid);
+    InitEmptyString(hostConfig.rtp.cName);
+    hostConfig.rtp.rtcpMode = RtcpModeCompound;
+    hostConfig.rtcpReportIntervalMs = DefaultRtcpReportIntervalMs;
+    hostConfig.sendTransport = sendTransport;
+    hostConfig.minBitrateBps = -1;
+    hostConfig.maxBitrateBps = -1;
+    hostConfig.bitratePriority = 1.0;
+    InitEmptyString(hostConfig.trackId);
+    InitDefaultCryptoOptions(hostConfig.cryptoOptions);
+    CopyOutChecked(config, &hostConfig, sizeof(hostConfig), message);
+}
+
 void APS5_VABI _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(WebRtcAudioSendStreamConfig* config) {
     constexpr const char* message = "AudioSendStream::Config destructor requires a valid object";
     RequireWritable(config, sizeof(*config), message);
@@ -273,6 +310,20 @@ void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(Web
     RequireWritable(stats, sizeof(*stats), message);
     ValidateString(stats->codecName, message);
     ReleaseString(stats->codecName);
+}
+
+void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(WebRtcAudioReceiveStreamConfig* config) {
+    constexpr const char* message = "AudioReceiveStreamInterface::Config constructor requires a valid object";
+    WebRtcAudioReceiveStreamConfig hostConfig{};
+    hostConfig.rtcpMode = RtcpModeCompound;
+    hostConfig.jitterBufferMaxPackets = DefaultJitterBufferMaxPackets;
+    InitEmptyString(hostConfig.syncGroup);
+    hostConfig.decoderMap.beginNode = reinterpret_cast<WebRtcAudioDecoderMapNode*>(
+        reinterpret_cast<std::uintptr_t>(config) +
+        offsetof(WebRtcAudioReceiveStreamConfig, decoderMap) +
+        offsetof(WebRtcAudioDecoderMap, root));
+    InitDefaultCryptoOptions(hostConfig.cryptoOptions);
+    CopyOutChecked(config, &hostConfig, sizeof(hostConfig), message);
 }
 
 void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(WebRtcAudioReceiveStreamConfig* config) {

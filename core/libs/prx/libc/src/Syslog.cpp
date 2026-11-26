@@ -5,6 +5,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <string>
 #ifdef _WIN32
@@ -45,8 +46,9 @@ void Emit(int priority, const std::string& message) {
 #endif
     }
     if (identity) std::fputs(": ", stderr);
-    std::fputs(message.c_str(), stderr);
-    if (message.empty() || message.back() != '\n') std::fputc('\n', stderr);
+    const std::size_t visibleLength = std::strlen(message.c_str());
+    std::fwrite(message.data(), 1, visibleLength, stderr);
+    if (visibleLength == 0 || message[visibleLength - 1] != '\n') std::fputc('\n', stderr);
     std::fflush(stderr);
 }
 

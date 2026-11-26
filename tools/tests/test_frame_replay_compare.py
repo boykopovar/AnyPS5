@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -203,6 +204,76 @@ class RecipeTests(ReplayFixture):
                 self.assertEqual(recipe["environment"].get("VK_LOADER_DEBUG"), flags)
 
 
+
+class PreflightTests(ReplayFixture):
+    def setUp(self):
+        super().setUp()
+        capture = self.root / "capture"
+        (capture / "capture.bin").rename(capture / "calls.bin")
+        (capture / "memory.bin").write_bytes(b"memory stream")
+        self.recipe_path = self.root / "recipe.json"
+        self.recipe_path.write_text(json.dumps(self.recipe), encoding="utf-8")
+
+    def preflight(self):
+        before = {path.relative_to(self.root): path.read_bytes() if path.is_file() else None
+                  for path in self.root.rglob("*")}
+        result = subprocess.run([sys.executable, str(Path(runner.__file__).resolve()), "validate", "recipe.json"],
+                                cwd=self.root, capture_output=True, encoding="utf-8", timeout=30)
+        after = {path.relative_to(self.root): path.read_bytes() if path.is_file() else None
+                 for path in self.root.rglob("*")}
+        self.assertEqual(after, before)
+        return result
+
+    def test_reports_both_runtimes_and_capture_without_launching(self):
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("capture", *runner.ARMS):
+            with self.subTest(input=name):
+                self.assertIn(f"{name}: 3 files, ", result.stdout)
+        self.assertIn("Native inspection", result.stdout)
+
+    def test_rejects_missing_capture_stream_or_candidate_tool(self):
+        for relative, message in (("capture/memory.bin", "capture: missing or empty memory.bin"),
+                                  ("candidate/inspect.exe", "tool is not a regular file")):
+            path = self.root / relative
+            contents = path.read_bytes()
+            path.unlink()
+            with self.subTest(input=relative):
+                result = self.preflight()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, "")
+            path.write_bytes(contents)
+
+    def test_rejects_incomplete_capture_metadata(self):
+        metadata = self.root / "capture" / "capture.json"
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        value["warnings"] = ["unverified host memory"]
+        metadata.write_text(json.dumps(value), encoding="utf-8")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("capture warning: unverified host memory", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive path matching")
+    def test_accepts_recipe_tool_paths_with_different_file_case(self):
+        if not (self.root / "candidate" / "REPLAY.EXE").is_file():
+            self.skipTest("temporary runtime directory is case-sensitive")
+        self.recipe["arms"]["candidate"]["replay"] = "REPLAY.EXE"
+        self.recipe_path.write_text(json.dumps(self.recipe), encoding="utf-8")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rejects_a_hardlinked_runtime_entry(self):
+        runtime = self.root / "candidate"
+        os.link(runtime / "library.prx", runtime / "copied-library.prx")
+        result = self.preflight()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("candidate:", result.stderr)
+        self.assertIn("hardlinked file", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+
 class RunnerTests(ReplayFixture):
     def setUp(self):
         super().setUp()
@@ -384,6 +455,17 @@ class RunnerTests(ReplayFixture):
             self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 2)
         self.assertEqual(len(json.loads(output.getvalue())["runs"]), 4)
 
+    def test_report_prints_a_path_outside_the_ansi_code_page_as_utf8(self):
+        self.recipe["warmups"] = 0
+        self.recipe["capture"] = "测-capture"
+        (self.root / "capture").rename(self.root / self.recipe["capture"])
+        self.run_comparison()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 0)
+            stdout.flush()
+        self.assertIn("测-capture", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_offline_recomputes_assessments_from_original_logs(self):
         self.recipe["warmups"] = 0
         self.run_comparison()
@@ -462,16 +544,38 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(missing["io_errors"])
         self.assertTrue((self.root / "missing" / "process.json").is_file())
 
+    def test_log_limit_stops_running_child_after_partial_block(self):
+        limit = 1024 * 1024
+        for fd, name in ((1, "stdout.txt"), (2, "stderr.txt")):
+            with self.subTest(stream=name):
+                directory = self.root / name
+                child = f"import os,time;os.write({fd},b'x'*{limit + 1});time.sleep(20)"
+                result = runner.execute_replay_trial([sys.executable, "-c", child], directory,
+                                                     dict(os.environ), 5, limit)
+                self.assertTrue(result["log_limit"])
+                self.assertFalse(result["timed_out"])
+                self.assertFalse(result["io_errors"])
+                self.assertFalse(result["cleanup_failed"])
+                self.assertEqual((directory / name).read_bytes(), b"x" * limit)
+
     def test_real_log_quota_and_owned_descendant_cleanup(self):
         result = runner.execute_replay_trial([sys.executable, "-c", "import os;os.write(1,b'x'*262144);os.write(2,b'y'*262144)"],
                                             self.root / "quota", dict(os.environ), 5, 1024)
         self.assertTrue(result["log_limit"])
         for name in ("stdout.txt", "stderr.txt"):
             self.assertLessEqual((self.root / "quota" / name).stat().st_size, 1024)
+        ready = self.root / "descendant-spawned"
+        release = self.root / "descendant-release"
         marker = self.root / "descendant-survived"
-        child = "import pathlib,time;time.sleep(0.8);pathlib.Path(" + repr(str(marker)) + ").write_text('survived')"
-        parent = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);print('spawned',flush=True);time.sleep(10)"
-        result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 0.25, 1024)
+        child = ("import pathlib,time\nend=time.monotonic()+30\n"
+                 "while time.monotonic()<end and not pathlib.Path(" + repr(str(release)) + ").exists():\n    time.sleep(0.01)\n"
+                 "pathlib.Path(" + repr(str(marker)) + ").write_text('survived')")
+        parent = ("import pathlib,subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);"
+                  "print('spawned',flush=True);pathlib.Path(" + repr(str(ready)) + ").touch();time.sleep(30)")
+        monotonic = time.monotonic
+        with mock.patch.object(runner.time, "monotonic", side_effect=lambda: monotonic() + (30 if ready.exists() else 0)):
+            result = runner.execute_replay_trial([sys.executable, "-c", parent], self.root / "descendants", dict(os.environ), 20, 1024)
+        release.touch()
         self.assertTrue(result["timed_out"])
         self.assertIn("spawned", (self.root / "descendants" / "stdout.txt").read_text())
         time.sleep(0.9)
@@ -484,6 +588,16 @@ class ProcessTests(unittest.TestCase):
                                                 self.root / "containment", dict(os.environ), 1, 1024)
         self.assertTrue(any("synthetic containment failure" in error for error in result["io_errors"]))
         self.assertTrue((self.root / "containment" / "process.json").is_file())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process containment")
+    def test_guard_failure_stops_before_launch_and_retains_process_receipt(self):
+        with mock.patch.object(runner.processes, "guard", side_effect=runner.processes.GateError("synthetic guard failure")):
+            with mock.patch.object(runner.subprocess, "Popen", side_effect=AssertionError("replay started before guard")) as launch:
+                result = runner.execute_replay_trial(["replay"], self.root / "guard-failure", dict(os.environ), 1, 1024)
+        launch.assert_not_called()
+        self.assertIsNone(result["returncode"])
+        self.assertIn("synthetic guard failure", result["io_errors"])
+        self.assertTrue((self.root / "guard-failure" / "process.json").is_file())
 
     def test_wait_interrupt_cleans_owned_child_and_retains_receipt(self):
         sleep = time.sleep

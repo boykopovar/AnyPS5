@@ -11,6 +11,7 @@
 namespace {
 
 using NKWebKit::WebCoreAbi::ContentType;
+using NKWebKit::WtfAbi::Release;
 using NKWebKit::WtfAbi::String;
 
 void Check(bool value, int line) {
@@ -54,6 +55,44 @@ std::string Container(const char* type) {
     ContentType contentType = Construct(type);
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&contentType);
     return Text(result);
+}
+
+void RequireUnits(const String& value, const char16_t* expected, unsigned length) {
+    Require(value.impl != nullptr);
+    Require(value.impl->length == length);
+    Require(!(value.impl->hashAndFlags & 4));
+    const auto* units = static_cast<const char16_t*>(value.impl->data);
+    for (unsigned i = 0; i < length; ++i) Require(units[i] == expected[i]);
+}
+
+void TestOwnedResultLifetime(bool releaseContainerFirst) {
+    const char16_t wide[] = u"audio/\u00e9x; q=\"\u03c0\u6062\"";
+    const char16_t container[] = u"audio/\u00e9x";
+    const char16_t parameter[] = u"\u03c0\u6062";
+    const char16_t name[] = u"q";
+    const unsigned wideLength = sizeof(wide) / sizeof(wide[0]) - 1;
+    const unsigned containerLength = sizeof(container) / sizeof(container[0]) - 1;
+    const unsigned parameterLength = sizeof(parameter) / sizeof(parameter[0]) - 1;
+
+    String containerResult;
+    String parameterResult;
+    {
+        String source = Make16(wide, wideLength);
+        ContentType contentType;
+        _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&contentType, &source);
+        String parameterName = Make16(name, 1);
+        containerResult = _ZNK7WebCore11ContentType13containerTypeEv(&contentType);
+        parameterResult = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&contentType, &parameterName);
+    }
+    RequireUnits(containerResult, container, containerLength);
+    RequireUnits(parameterResult, parameter, parameterLength);
+    String& first = releaseContainerFirst ? containerResult : parameterResult;
+    String& second = releaseContainerFirst ? parameterResult : containerResult;
+    const char16_t* secondExpected = releaseContainerFirst ? parameter : container;
+    const unsigned secondLength = releaseContainerFirst ? parameterLength : containerLength;
+    Release(std::exchange(first.impl, nullptr));
+    RequireUnits(second, secondExpected, secondLength);
+    Release(std::exchange(second.impl, nullptr));
 }
 
 template<typename Function>
@@ -192,6 +231,8 @@ void TestParameterEmptyName() {
 }
 
 int main() {
+    TestOwnedResultLifetime(true);
+    TestOwnedResultLifetime(false);
     TestCodecsParameter();
     TestConstructors();
     TestContainerType();

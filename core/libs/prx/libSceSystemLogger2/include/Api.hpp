@@ -4,7 +4,7 @@
 
 struct SceSystemLogger2Timestamp {
     std::uint64_t tick;
-    char clockSource[24];
+    char clockSource[40];
 };
 
 extern "C" {
