@@ -60,6 +60,21 @@ int APS5_VABI FT_Done_SizeForward_nid_no_patch(FreeType::GuestSizeRec* size) {
 }
 APS5_EXPORT("-2rnxRCeHMs", FT_Done_SizeForward_nid_no_patch);
 
+std::uint32_t* APS5_VABI FT_Face_GetCharsOfVariantForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t variantSelector) {
+    return FT_Face_GetCharsOfVariant_nid_postfix(face, variantSelector);
+}
+APS5_EXPORT("tl72PmqhXww", FT_Face_GetCharsOfVariantForward_nid_no_patch);
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantSelectorsForward_nid_no_patch(FreeType::GuestFaceRec* face) {
+    return FT_Face_GetVariantSelectors_nid_postfix(face);
+}
+APS5_EXPORT("9Lm2mfsSmws", FT_Face_GetVariantSelectorsForward_nid_no_patch);
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantsOfCharForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint64_t charcode) {
+    return FT_Face_GetVariantsOfChar_nid_postfix(face, charcode);
+}
+APS5_EXPORT("mGMeRKWGTL4", FT_Face_GetVariantsOfCharForward_nid_no_patch);
+
 int APS5_VABI FT_Get_CID_From_Glyph_IndexForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid) {
     return FT_Get_CID_From_Glyph_Index_nid_postfix(face, glyphIndex, cid);
 }
