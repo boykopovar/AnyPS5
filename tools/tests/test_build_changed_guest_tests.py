@@ -327,6 +327,16 @@ class Main(unittest.TestCase):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
 
+    def test_selects_guest_sources_in_git_nul_delimited_paths(self):
+        source = "core/libs/tests/Café.cpp"
+        build = self.fixture([self.target("guest_tests", source=source, fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(("docs/file.md\0" + source + "\0").encode("utf-8"))
+        with mock.patch.object(build_changed_guest_tests, "run") as run:
+            self.assertEqual(build_changed_guest_tests.main([str(build), str(changed)]), 0)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[1], ["guest_tests"])
+
     def test_a_changed_list_with_a_bom_keeps_the_first_path(self):
         build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
         listing = json.dumps({"tests": [

@@ -81,6 +81,7 @@ static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED = 0;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED = 1;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE = 0;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY = 8;
+static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR = 7;
 static constexpr std::uint32_t VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT = 0x10026c;
 
 static constexpr int VIDEO_OUT_EVENT_FLIP = 0;
