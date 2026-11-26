@@ -259,7 +259,7 @@ def main(argv=None):
         return 2
     try:
         pattern = re.compile(args.match_regex)
-    except re.error as error:
+    except (re.error, RecursionError, OverflowError) as error:
         print(f"invalid --match-regex: {error}", file=sys.stderr)
         return 2
     minimizer = Minimizer(args, pattern)

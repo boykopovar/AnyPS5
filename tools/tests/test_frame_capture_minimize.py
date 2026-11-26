@@ -186,6 +186,16 @@ if command == 'inspect':
             self.assertIn("invalid --match-regex", stderr.getvalue())
             self.assertFalse(output.exists())
 
+    def test_overly_nested_match_regex_fails_before_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            arguments, _, _, output = self.empty_cli(Path(directory))
+            arguments[arguments.index("failure")] = "(" * 4000 + "failure" + ")" * 4000
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(frame_capture_minimize.main(arguments), 2)
+            self.assertIn("invalid --match-regex", stderr.getvalue())
+            self.assertFalse(output.exists())
+
     def test_inspection_rejects_invalid_json(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
