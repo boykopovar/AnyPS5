@@ -616,7 +616,7 @@ def main(argv=None):
                 if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
                     parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
             rows = source_locations(nids)
-        except (OSError, UnicodeError) as error:
+        except (OSError, ValueError) as error:
             parser.error(str(error))
         if args.json:
             print(json.dumps({"locations": rows}, indent=1))
