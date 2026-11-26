@@ -150,7 +150,7 @@ bool HasNarrowCharacterScan(const char* format) {
 }
 #else
 bool ScansInProcess(const char* format) {
-    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXip");
+    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXipaAeEfFgG");
 }
 #endif
 
