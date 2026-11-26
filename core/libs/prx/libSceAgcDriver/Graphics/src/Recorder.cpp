@@ -5589,6 +5589,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             ~InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() - 1); }
         } inCompletion;
         for (auto& action : batch->completions) {
+            if (validationFailure != nullptr) break;
             try {
                 action();
             } catch (const BdaUnalignedAccess& error) {

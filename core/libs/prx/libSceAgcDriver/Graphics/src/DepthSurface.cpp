@@ -2998,6 +2998,11 @@ private:
             copy.imageExtent = {extent.width, extent.height, 1};
             return copy;
         };
+        if (recorder != nullptr) {
+            recorder->Keep(staging, staging->Size());
+            if (conversion != nullptr) recorder->Keep(conversion, conversion->Size());
+            if (owned != nullptr) recorder->Keep(owned);
+        }
         for (const auto layer : copiedLayers) {
             if (slices[layer].convert) {
                 VkBufferImageCopy copy{};
@@ -3016,16 +3021,13 @@ private:
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             for (std::size_t upload = 0; upload < uploads.size(); ++upload) {
                 const auto layer = uploadLayers[upload];
+                if (recorder != nullptr) recorder->Keep(uploads[upload], uploads[upload]->Bytes().size());
                 context.detiler->Dispatch(commands, resource.tileMode, texelBytes(), uploads[upload]->Handle(), 0, staging->Handle(), static_cast<std::uint64_t>(layer) * stagingLayerStride, geometry.mips.front(), false, layer, geometry.thick, {.pipeBankXor = resource.pipeBankXor});
                 regions.push_back(region(layer, aspect(), layer));
             }
             for (const auto layer : convertedLayers) {
                 context.detiler->DispatchDepthConvert(commands, conversion->Handle(), hostSlotBytes * layer, staging->Handle(), r16Base + r16SlotBytes * layer, extent.width, extent.height, extent.width * 4u, paddedDepthRowTexels(extent.width) * 2u, slices[layer].hostFormat, false, registerValidation);
                 regions.push_back(convertedRegion(layer));
-            }
-            if (recorder != nullptr) {
-                for (const auto& upload : uploads) recorder->Keep(upload, upload->Bytes().size());
-                if (conversion != nullptr) recorder->Keep(conversion, conversion->Size());
             }
         }
         VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -3048,11 +3050,7 @@ private:
         barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
         filled = true;
         if (batch) batch->SubmitAndWait();
-        else {
-            Recorder::CountBarriers(Recorder::CommandClass::Draw, 3);
-            recorder->Keep(staging, staging->Size());
-            if (owned != nullptr) recorder->Keep(owned);
-        }
+        else Recorder::CountBarriers(Recorder::CommandClass::Draw, 3);
     }
 
     std::uint32_t texelBytes() const {

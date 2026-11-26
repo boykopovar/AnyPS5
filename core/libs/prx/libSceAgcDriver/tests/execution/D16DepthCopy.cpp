@@ -340,18 +340,20 @@ void RequireTightPitchedBounds(AgcDriver::VulkanDevice& device, const AgcDriver:
 
 void RequireNestedValidationStopsLaterBatches(const AgcDriver::Graphics::Context& context) {
     bool completionA = false;
+    bool completionA2 = false;
     bool completionB = false;
     bool completionC = false;
     std::string failure;
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-        AgcDriver::Graphics::Recorder nested(context);
         std::uint64_t serialB = 0u;
+        AgcDriver::Graphics::Recorder nested(context);
         nested.OpenBatch();
         nested.OnComplete([&] {
             completionA = true;
             nested.FinishUpTo(serialB);
         });
+        nested.OnComplete([&] { completionA2 = true; });
         nested.Submit();
         nested.OpenBatch();
         serialB = nested.OpenSerial();
@@ -368,7 +370,7 @@ void RequireNestedValidationStopsLaterBatches(const AgcDriver::Graphics::Context
         }
     }
     Require(failure.find("simulated nested validation failure") != std::string::npos, "nested FinishUpTo validation failure was not reported by Sync: " + failure);
-    Require(completionA && !completionB && !completionC, "a nested FinishUpTo validation failure allowed a later batch to publish completions");
+    Require(completionA && !completionA2 && !completionB && !completionC, "a nested FinishUpTo validation failure allowed remaining or later completions to publish");
 }
 
 void RequireNonfiniteFault(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context) {

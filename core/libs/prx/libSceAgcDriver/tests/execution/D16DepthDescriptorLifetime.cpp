@@ -74,6 +74,7 @@ int main() {
             outputs.reserve(65);
             batches.reserve(65);
             for (std::uint32_t index = 0; index < 65u; ++index) {
+                if (index == 1u) context.detiler->BeginBatch();
                 inputs.push_back(std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
                 const auto codes = batchCodes(index);
                 std::memcpy(inputs.back()->Bytes().data(), codes.data(), sizeof(codes));
@@ -81,6 +82,7 @@ int main() {
                 batches.push_back(std::make_unique<CommandBatch>(context));
                 Record(*batches.back(), context, *inputs.back(), *outputs.back(), 2, 1, true, VK_FORMAT_D24_UNORM_S8_UINT);
             }
+            context.detiler->BeginBatch();
             recorder->OpenBatch();
             context.detiler->DispatchDepthConvert(recorder->Commands(), recorderInput.Handle(), 0, recorderOutput.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, [&](std::function<void()> validation) { recorder->OnValidated(std::move(validation)); });
             recorder->Submit();
