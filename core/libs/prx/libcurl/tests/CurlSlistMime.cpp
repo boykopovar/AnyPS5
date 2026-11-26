@@ -7,11 +7,23 @@
 #include <cstdio>
 #include <initializer_list>
 #include <source_location>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
     std::fprintf(stderr, "curl form test failed at line %u\n", location.line());
     std::abort();
+}
+
+static size_t APS5_VABI AppendForm(void* arg, const char* buffer, size_t length) {
+    static_cast<std::string*>(arg)->append(buffer, length);
+    return length;
+}
+
+static size_t APS5_VABI RefuseForm(void*, const char*, size_t length) {
+    return length - 1;
 }
 
 static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
@@ -48,6 +60,16 @@ static guest_curl_httppost* GuestFormNode(const char* name, const char* contents
     form->more = more;
     form->flags = flags;
     return form;
+}
+
+template <typename Call>
+static bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 int main() {
@@ -96,6 +118,29 @@ int main() {
         Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "named", CURLFORM_COPYNAME, "again",
             CURLFORM_ARRAY, static_cast<const guest_curl_forms*>(nullptr), CURLFORM_END) == CURL_FORMADD_OPTION_TWICE);
         Require(last == tail && tail->next == nullptr);
+        auto* const unmappedSlot = reinterpret_cast<guest_curl_httppost**>(std::uintptr_t{1});
+        Require(Throws([&] { curl_formadd_nid_postfix(&form, unmappedSlot, CURLFORM_COPYNAME, "x", CURLFORM_COPYCONTENTS, "y", CURLFORM_END); }));
+        const auto* const unmappedForms = reinterpret_cast<const guest_curl_forms*>(~std::uintptr_t{0xFFF});
+        Require(Throws([&] { curl_formadd_nid_postfix(&form, &last, CURLFORM_ARRAY, unmappedForms, CURLFORM_END); }));
+        Require(last == tail && tail->next == nullptr);
+        guest_curl_httppost* emptyLast = nullptr;
+        Require(Throws([&] { curl_formadd_nid_postfix(unmappedSlot, &emptyLast, CURLFORM_COPYNAME, "x", CURLFORM_COPYCONTENTS, "y", CURLFORM_END); }));
+        Require(emptyLast == nullptr);
+        std::string serialized;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_OK);
+        Require(serialized.find("Content-Disposition: form-data; name=\"first\"\r\n\r\none\r\n") != std::string::npos);
+        Require(serialized.find("name=\"array\"\r\n\r\nthree\r\n") != std::string::npos);
+        Require(serialized.find(std::string("name=\"bin\"\r\n\r\na\0b\r\n", 19)) != std::string::npos);
+        Require(serialized.find("name=\"second\"") < serialized.find("name=\"array\""));
+        Require(serialized.ends_with("--\r\n"));
+        Require(curl_formget_nid_postfix(form, nullptr, RefuseForm) == CURLE_READ_ERROR);
+        Require(curl_formget_nid_postfix(form, nullptr, nullptr) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = form;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = nullptr;
+        tail->more = tail;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->more = nullptr;
         FreeGuestForms(form);
     }
     {

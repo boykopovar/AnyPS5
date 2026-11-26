@@ -1,19 +1,22 @@
+#include "prx/libSceLibcInternal/include/GuestWords.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
 
 constexpr int RangeError = 34;
+constexpr int InvalidException = 0x01;
 constexpr int AccumulatorSize = 3;
 
 template <typename T>
@@ -302,7 +305,7 @@ T* Addh(T* p, int n, T x) {
     if (!std::isfinite(x)) {
         if (std::isnan(x) || std::isfinite(p[0])) return Special(p, n, x);
         if (std::isinf(p[0]) && std::signbit(p[0]) != std::signbit(x)) {
-            std::feraiseexcept(FE_INVALID);
+            _Feraise_nid_postfix(InvalidException);
             return Special(p, n, std::numeric_limits<T>::quiet_NaN());
         }
         return p;
@@ -340,7 +343,7 @@ T* Mulh(T* p, int n, T x) {
         return p;
     }
     if (!std::isfinite(leading)) {
-        if (std::isnan(leading)) std::feraiseexcept(FE_INVALID);
+        if (std::isnan(leading)) _Feraise_nid_postfix(InvalidException);
         return Special(p, n, leading);
     }
     Terms words;
@@ -415,7 +418,7 @@ T* Sqrtx(T* p, int n) {
     Gather(terms, p, n);
     const Exact value = Sum(terms);
     if (p[0] < T(0) || value.negative) {
-        std::feraiseexcept(FE_INVALID);
+        _Feraise_nid_postfix(InvalidException);
         return Special(p, n, std::numeric_limits<T>::quiet_NaN());
     }
     return Store(p, n, SquareRoot(value, Precision<T>(n)));
@@ -455,112 +458,207 @@ T Dtento(T* value, std::int64_t power, int* error) {
     return result;
 }
 
+using ExtendedPrecisionWords::GuestWords;
+using ExtendedPrecisionWords::ReadWord;
+
+std::size_t Words(int n) {
+    return n > 0 ? static_cast<std::size_t>(n) : 0;
+}
+
+template <typename T>
+T CheckedGetw(const T* p, int n, const char* function) {
+    if (n == 0) return T(0);
+    const T first = ReadWord(p, 0, function);
+    if (n == 1 || first == T(0)) return first;
+    const T second = ReadWord(p, 1, function);
+    if (second == T(0)) return first;
+    if (n == 2) return first + second;
+    const T third = ReadWord(p, 2, function);
+    if (third == T(0)) return first + second;
+    const T low = n >= 4 ? third + ReadWord(p, 3, function) : third;
+    const T high = first + second;
+    return high - first == second ? high + low : first + (second + low);
+}
+
+template <typename T, typename Operation>
+T* OnWords(T* p, int n, const char* function, Operation operation) {
+    if (n <= 0) return p;
+    GuestWords<T> words(function);
+    const std::size_t value = words.Add(p, Words(n), true);
+    words.Load();
+    operation(words.Host(value));
+    words.Store();
+    return p;
+}
+
+template <typename T>
+T* CheckedAccumulate(T* p, int n, const T* q, int m, bool negate, const char* function) {
+    if (n <= 0) return p;
+    GuestWords<T> words(function);
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t operand = words.Add(q, Words(m), false);
+    words.Load();
+    Accumulate(words.Host(value), n, words.Host(operand), m, negate);
+    words.Store();
+    return p;
+}
+
+template <typename T>
+T* CheckedMulx(T* p, int n, const T* q, int m, const char* function) {
+    if (n <= 0 || m == 0) return p;
+    GuestWords<T> words(function);
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t factor = words.Add(q, m < 0 ? 1 : Words(m), false);
+    words.Load();
+    Mulx(words.Host(value), n, words.Host(factor), m);
+    words.Store();
+    return p;
+}
+
+template <typename T>
+T* CheckedMovx(T* p, int n, const T* q, const char* function) {
+    if (n <= 0) return p;
+    GuestWords<T> words(function);
+    const std::size_t value = words.Add(p, Words(n), true);
+    const std::size_t source = words.Add(q, Words(n), false);
+    words.Load();
+    Movx(words.Host(value), n, words.Host(source));
+    words.Store();
+    return p;
+}
+
+template <typename T>
+T CheckedDtento(T* value, std::int64_t power, int* error, const char* function) {
+    int flags = 0;
+    if (error != nullptr && (!GuestCopyIn_nid_no_patch(&flags, error, sizeof(flags)) || !GuestWritable_nid_no_patch(error, sizeof(flags)))) {
+        throw std::invalid_argument(std::string(function) + ": inaccessible error flags");
+    }
+    const T first = ReadWord(value, 0, function);
+    const bool scales = power != 0 && first != T(0) && std::isfinite(first);
+    GuestWords<T> words(function);
+    const std::size_t accumulator = words.Add(value, AccumulatorSize, scales);
+    words.Load();
+    T* const host = words.Host(accumulator);
+    if (scales != (power != 0 && host[0] != T(0) && std::isfinite(host[0]))) throw std::invalid_argument(std::string(function) + ": words changed while being read");
+    int failed = 0;
+    const T result = Dtento(host, power, error != nullptr ? &failed : nullptr);
+    if (scales) words.Store();
+    if (failed != 0) {
+        if (!GuestCopyIn_nid_no_patch(&flags, error, sizeof(flags))) throw std::invalid_argument(std::string(function) + ": inaccessible error flags");
+        flags |= failed;
+        if (!GuestCopyOut_nid_no_patch(error, &flags, sizeof(flags))) throw std::invalid_argument(std::string(function) + ": inaccessible error flags");
+    }
+    return result;
+}
+
 } // namespace
 
 extern "C" {
 
 double APS5_VABI _Dtento_nid_postfix(double* value, std::int64_t power, int* error) {
-    return Dtento(value, power, error);
+    return CheckedDtento(value, power, error, "_Dtento");
 }
 
 float APS5_VABI _FDtento_nid_postfix(float* value, std::int64_t power, int* error) {
-    return Dtento(value, power, error);
+    return CheckedDtento(value, power, error, "_FDtento");
 }
 
 long double APS5_VABI _LDtento_nid_postfix(long double* value, std::int64_t power, int* error) {
-    return Dtento(value, power, error);
+    return CheckedDtento(value, power, error, "_LDtento");
 }
 
 float* APS5_VABI _FXp_addh_nid_postfix(float* p, int n, float x) {
-    return Addh(p, n, x);
+    if (x == 0) return p;
+    return OnWords(p, n, "_FXp_addh", [&](float* words) { Addh(words, n, x); });
 }
 
 float* APS5_VABI _FXp_addx_nid_postfix(float* p, int n, const float* q, int m) {
-    return Accumulate(p, n, q, m, false);
+    return CheckedAccumulate(p, n, q, m, false, "_FXp_addx");
 }
 
 float* APS5_VABI _FXp_invx_nid_postfix(float* p, int n, float*) {
-    return Invx(p, n);
+    return OnWords(p, n, "_FXp_invx", [&](float* words) { Invx(words, n); });
 }
 
 float* APS5_VABI _FXp_ldexpx_nid_postfix(float* p, int n, int scale) {
-    return Ldexpx(p, n, scale);
+    return OnWords(p, n, "_FXp_ldexpx", [&](float* words) { Ldexpx(words, n, scale); });
 }
 
 float* APS5_VABI _FXp_movx_nid_postfix(float* p, int n, const float* q) {
-    return Movx(p, n, q);
+    return CheckedMovx(p, n, q, "_FXp_movx");
 }
 
 float* APS5_VABI _FXp_mulh_nid_postfix(float* p, int n, float x) {
-    return Mulh(p, n, x);
+    return OnWords(p, n, "_FXp_mulh", [&](float* words) { Mulh(words, n, x); });
 }
 
 float* APS5_VABI _FXp_mulx_nid_postfix(float* p, int n, const float* q, int m, float*) {
-    return Mulx(p, n, q, m);
+    return CheckedMulx(p, n, q, m, "_FXp_mulx");
 }
 
 float* APS5_VABI _FXp_setn_nid_postfix(float* p, int n, std::int64_t x) {
-    return Setn(p, n, x);
+    return OnWords(p, n, "_FXp_setn", [&](float* words) { Setn(words, n, x); });
 }
 
 float* APS5_VABI _FXp_setw_nid_postfix(float* p, int n, float x) {
-    return Setw(p, n, x);
+    return OnWords(p, n, "_FXp_setw", [&](float* words) { Setw(words, n, x); });
 }
 
 float* APS5_VABI _FXp_sqrtx_nid_postfix(float* p, int n, float*) {
-    return Sqrtx(p, n);
+    return OnWords(p, n, "_FXp_sqrtx", [&](float* words) { Sqrtx(words, n); });
 }
 
 float* APS5_VABI _FXp_subx_nid_postfix(float* p, int n, const float* q, int m) {
-    return Accumulate(p, n, q, m, true);
+    return CheckedAccumulate(p, n, q, m, true, "_FXp_subx");
 }
 
 long double* APS5_VABI _LXp_addh_nid_postfix(long double* p, int n, long double x) {
-    return Addh(p, n, x);
+    if (x == 0) return p;
+    return OnWords(p, n, "_LXp_addh", [&](long double* words) { Addh(words, n, x); });
 }
 
 long double* APS5_VABI _LXp_addx_nid_postfix(long double* p, int n, const long double* q, int m) {
-    return Accumulate(p, n, q, m, false);
+    return CheckedAccumulate(p, n, q, m, false, "_LXp_addx");
 }
 
 long double APS5_VABI _LXp_getw_nid_postfix(const long double* p, int n) {
-    return Getw(p, n);
+    return CheckedGetw(p, n, "_LXp_getw");
 }
 
 long double* APS5_VABI _LXp_invx_nid_postfix(long double* p, int n, long double*) {
-    return Invx(p, n);
+    return OnWords(p, n, "_LXp_invx", [&](long double* words) { Invx(words, n); });
 }
 
 long double* APS5_VABI _LXp_ldexpx_nid_postfix(long double* p, int n, int scale) {
-    return Ldexpx(p, n, scale);
+    return OnWords(p, n, "_LXp_ldexpx", [&](long double* words) { Ldexpx(words, n, scale); });
 }
 
 long double* APS5_VABI _LXp_movx_nid_postfix(long double* p, int n, const long double* q) {
-    return Movx(p, n, q);
+    return CheckedMovx(p, n, q, "_LXp_movx");
 }
 
 long double* APS5_VABI _LXp_mulh_nid_postfix(long double* p, int n, long double x) {
-    return Mulh(p, n, x);
+    return OnWords(p, n, "_LXp_mulh", [&](long double* words) { Mulh(words, n, x); });
 }
 
 long double* APS5_VABI _LXp_mulx_nid_postfix(long double* p, int n, const long double* q, int m, long double*) {
-    return Mulx(p, n, q, m);
+    return CheckedMulx(p, n, q, m, "_LXp_mulx");
 }
 
 long double* APS5_VABI _LXp_setn_nid_postfix(long double* p, int n, std::int64_t x) {
-    return Setn(p, n, x);
+    return OnWords(p, n, "_LXp_setn", [&](long double* words) { Setn(words, n, x); });
 }
 
 long double* APS5_VABI _LXp_setw_nid_postfix(long double* p, int n, long double x) {
-    return Setw(p, n, x);
+    return OnWords(p, n, "_LXp_setw", [&](long double* words) { Setw(words, n, x); });
 }
 
 long double* APS5_VABI _LXp_sqrtx_nid_postfix(long double* p, int n, long double*) {
-    return Sqrtx(p, n);
+    return OnWords(p, n, "_LXp_sqrtx", [&](long double* words) { Sqrtx(words, n); });
 }
 
 long double* APS5_VABI _LXp_subx_nid_postfix(long double* p, int n, const long double* q, int m) {
-    return Accumulate(p, n, q, m, true);
+    return CheckedAccumulate(p, n, q, m, true, "_LXp_subx");
 }
 
 }

@@ -6,6 +6,7 @@
 
 #include <cerrno>
 #include <string>
+#include <system_error>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -61,7 +62,7 @@ bool IsArchivedFile(int fd) {
 }
 
 void RefuseArchivedFile(int fd, const char* operation) {
-    if (IsArchivedFile(fd)) NotImplemented_nid_no_patch((std::string(operation) + " on a file read from app0.zar, fd=" + std::to_string(fd)).c_str());
+    if (IsArchivedFile(fd) || AppArchiveMaterializedDescriptor_nid_no_patch(fd, nullptr)) NotImplemented_nid_no_patch((std::string(operation) + " on a file read from app0.zar, fd=" + std::to_string(fd)).c_str());
 }
 
 std::optional<std::int64_t> ReadArchivedFile(int fd, void* buf, std::size_t nbytes, const std::int64_t* offset) {
@@ -73,7 +74,12 @@ std::optional<std::int64_t> ReadArchivedIovecs(int fd, const void* iov, int iovc
     if (!IsArchivedFile(fd)) return std::nullopt;
     if (offset != nullptr && *offset < 0) return -EINVAL;
     std::uint64_t read = 0;
-    if (!AppArchiveDescriptorRead_nid_no_patch(fd, static_cast<const AppArchiveBuffer*>(iov), iovcnt, offset, &read)) return std::nullopt;
+    try {
+        if (!AppArchiveDescriptorRead_nid_no_patch(fd, static_cast<const AppArchiveBuffer*>(iov), iovcnt, offset, &read)) return std::nullopt;
+    } catch (const std::system_error& error) {
+        if (error.code() == std::errc::bad_address) return -EFAULT;
+        throw;
+    }
     return static_cast<std::int64_t>(read);
 }
 
@@ -100,7 +106,7 @@ bool FillArchivedStat(const std::filesystem::path& native, FileStat* sb) {
 
 bool FillArchivedStatFromDescriptor(int fd, FileStat* sb) {
     AppArchiveNode node{};
-    if (!AppArchiveDescriptor_nid_no_patch(fd, &node, nullptr)) return false;
+    if (!AppArchiveDescriptor_nid_no_patch(fd, &node, nullptr) && !AppArchiveMaterializedDescriptor_nid_no_patch(fd, &node)) return false;
     FillNode(node, sb);
     return true;
 }

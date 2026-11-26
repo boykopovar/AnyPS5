@@ -1,4 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
@@ -6,6 +9,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <cstring>
 
 namespace {
 
@@ -72,6 +76,19 @@ void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* se
     ConstructNamedCollate(self, localeName, references);
 }
 
+void APS5_VABI _ZNSt7collateIcEC2Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references) {
+    ConstructNamedCollate(self, "C", references);
+}
+
+void APS5_VABI _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references) {
+    _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(self, locinfo, references);
+}
+
+void APS5_VABI _ZNSt7collateIcED0Ev_nid_postfix(GuestLocale::CollateFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("collate<char>::~collate: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
 int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2) {
     return BaseCollate().compare(self, first1, last1, first2, last2);
 }
@@ -96,5 +113,16 @@ std::int64_t APS5_VABI sceLibcInternalCollateHash_nid_no_patch(const GuestLocale
     return FacetCollate(self, "collate::hash").hash(self, first, last);
 }
 APS5_EXPORT("6vYXzFD-mrk", sceLibcInternalCollateHash_nid_no_patch);
+
+int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collvec) {
+    (void)collvec;
+    return sceLibcInternalCollateDoCompare_nid_no_patch(nullptr, first1, last1, first2, last2);
+}
+
+int APS5_VABI _Strcollx_nid_postfix(const char* s1, const char* s2, LibcCollationState* state) {
+    (void)state;
+    if (s1 == nullptr || s2 == nullptr) throw std::invalid_argument("_Strcollx: null string");
+    return sceLibcInternalCollateDoCompare_nid_no_patch(nullptr, s1, s1 + std::strlen(s1), s2, s2 + std::strlen(s2));
+}
 
 }

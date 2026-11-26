@@ -325,7 +325,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         case TextureDimension::k1DArray:
             Require(height == 1, "guest 1D array texture descriptor has a nonzero height");
             Require(baseArray <= depth, "guest 1D array texture descriptor has a base array past its last array slice");
-            Require(tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use");
+            Require(gcn || tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use" + describe());
             break;
         case TextureDimension::kCube:
             Require(width == height, "guest cube texture descriptor is not square");
@@ -347,7 +347,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     result.lastLevel = lastLevel;
     result.tileMode = tileMode;
     result.dimension = dimension;
-    result.format = !fmask ? format : static_cast<std::uint32_t>(fmaskLayout->storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : fmaskLayout->storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : ShaderRecompiler::IrBufferFormat::Format32UInt);
+    result.format = !fmask ? format : static_cast<std::uint32_t>(fmaskLayout->storageBits == 8u ? ShaderRecompiler::IrBufferFormat::Format8UInt : fmaskLayout->storageBits == 16u ? ShaderRecompiler::IrBufferFormat::Format16UInt : fmaskLayout->storageBits == 32u ? ShaderRecompiler::IrBufferFormat::Format32UInt : ShaderRecompiler::IrBufferFormat::Format32_32UInt);
     result.dstSelX = static_cast<std::uint8_t>(dstSelX);
     result.dstSelY = static_cast<std::uint8_t>(dstSelY);
     result.dstSelZ = static_cast<std::uint8_t>(dstSelZ);
