@@ -109,13 +109,21 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         options = DefaultRackOption(rackId);
         return SCE_NGS2_OK;
     }
-    if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_SAMPLER && option->size == 168) {
-        options = {};
-        options.common.size = size;
+    if (option->size != size) {
         const auto* bytes = reinterpret_cast<const unsigned char*>(option);
-        std::memcpy(options.common.name, bytes + 8, 16);
-        std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
-        std::memcpy(&options.sampler.max_channel_works, bytes + 128, 9 * sizeof(std::uint32_t));
+        if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_SAMPLER && option->size == 168) {
+            options = {};
+            options.common.size = size;
+            std::memcpy(options.common.name, bytes + 8, 16);
+            std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
+            std::memcpy(&options.sampler.max_channel_works, bytes + 128, 9 * sizeof(std::uint32_t));
+        } else if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_MASTERING && option->size == 136) {
+            options = {};
+            options.common.size = size;
+            std::memcpy(options.common.name, bytes + 8, 16);
+            std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
+            std::memcpy(&options.mastering.max_channels, bytes + 128, 2 * sizeof(std::uint32_t));
+        } else throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
     } else {
         if (option->size != size) {
             if (CustomMasteringHasModules(rackId, option)) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
