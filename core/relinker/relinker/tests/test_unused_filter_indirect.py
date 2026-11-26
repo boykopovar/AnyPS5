@@ -196,6 +196,25 @@ def main():
                 if run(relinker, Path(directory), name,
                        exported_fixture(binding, True, True, section=0xfff1, section_type=section_type), 1):
                     failures.append(name)
+        landing_pad = at_offset([(0, b"\xe8" + rel(CODE + 5, FUNCTION) + b"\xc3"), (0x10, load_slot(CODE + 0x10)),
+                                 (0x40, b"\xc3"), (0x60, b"\xc3")])
+        for personality in (SLOT, 0):
+            for level in (0, 1, 2):
+                name = f"unread-call-sites-personality-{personality:x}-filter-{level}"
+                image = with_landing_pad(build(landing_pad), personality)
+                image[0x8a2] = 0x1b
+                if personality == 0 or level == 0:
+                    if run(relinker, Path(directory), name, image, level) != (level != 1 or personality != 0):
+                        failures.append(name)
+                    continue
+                source = Path(directory) / (name + ".elf")
+                output = Path(directory) / (name + ".out")
+                source.write_bytes(image)
+                result = subprocess.run([str(relinker), "--skip-sce-module", f"unused-filter={level}", str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                if (result.returncode != 2 or "Strict filter: unsupported LSDA call-site encoding" not in result.stderr
+                        or output.exists()):
+                    failures.append(name)
         assert not failures, failures
     print("Unused filter indirect tests passed")
 
