@@ -2181,7 +2181,6 @@ int APS5_VABI _ZN7WebCore16NetworkSendQueue7enqueueERKN3JSC11ArrayBufferEjj();
 int APS5_VABI _ZN7WebCore16NetworkSendQueue7enqueueERNS_4BlobE();
 int APS5_VABI _ZN7WebCore16NetworkSendQueueD1Ev();
 int APS5_VABI _ZN7WebCore16NetworkSendQueueD2Ev();
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem29ensureDatabaseDirectoryExistsERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore16ScriptController11createWorldERKN3WTF6StringENS0_9WorldTypeE();
 int APS5_VABI _ZN7WebCore16ScriptController11windowProxyEv();
 int APS5_VABI _ZN7WebCore16ScriptController13jsWindowProxyERNS_15DOMWrapperWorldE();
