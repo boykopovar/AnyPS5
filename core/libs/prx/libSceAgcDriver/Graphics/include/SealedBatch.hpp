@@ -108,6 +108,7 @@ public:
     void Failed(std::exception_ptr reason, VkCommandBuffer commands, std::uint32_t worker) noexcept;
     void Cancel() noexcept;
 
+    void AwaitReplayReleased() noexcept;
     VkCommandBuffer Await();
     void Returned(VkResult result) noexcept;
     void NotSubmitted() noexcept;

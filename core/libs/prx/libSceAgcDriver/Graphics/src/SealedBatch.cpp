@@ -149,8 +149,12 @@ void SealedBatch::releaseReplay(Outcome result, std::exception_ptr reason, VkCom
     maybeRetire();
 }
 
-VkCommandBuffer SealedBatch::Await() {
+void SealedBatch::AwaitReplayReleased() noexcept {
     for (auto state = replay.load(std::memory_order_acquire); state != Released; state = replay.load(std::memory_order_acquire)) replay.wait(state, std::memory_order_acquire);
+}
+
+VkCommandBuffer SealedBatch::Await() {
+    AwaitReplayReleased();
     if (outcome.load(std::memory_order_acquire) == Outcome::Encoded) return commands;
     if (const auto reason = Error(); reason != nullptr) std::rethrow_exception(reason);
     throw BatchCancelled();
@@ -183,7 +187,7 @@ void SealedBatch::Returned(VkResult result) noexcept {
 }
 
 void SealedBatch::NotSubmitted() noexcept {
-    if (!ReplayReleased()) refuse("a batch was skipped by its submitter before its replay released it");
+    AwaitReplayReleased();
     if (outcome.load(std::memory_order_acquire) == Outcome::Encoded) outcome.store(Outcome::Cancelled, std::memory_order_release);
     gpuReleased.store(true, std::memory_order_release);
     submitReturned.store(true, std::memory_order_release);

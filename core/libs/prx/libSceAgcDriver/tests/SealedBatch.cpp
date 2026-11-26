@@ -255,6 +255,33 @@ void CancelDoesNotImpersonateTheWorker() {
     retireUnsubmitted(*early);
 }
 
+void RefusedBatchWaitsForItsReplay() {
+    FailureLatch latch;
+    auto shared = std::make_shared<FakePool::Shared>();
+    shared->hold.store(true);
+    SingleExecutor executor([shared] { return std::make_unique<FakePool>(shared); });
+    CommandStream stream(Real());
+    append(stream, 31);
+    auto batch = std::make_shared<SealedBatch>(1, stream, Real(), latch);
+    executor.Execute(batch);
+    while (!shared->holding.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::atomic<bool> entered{false};
+    std::atomic<bool> skipped{false};
+    std::thread submitter([&] {
+        entered.store(true);
+        batch->NotSubmitted();
+        skipped.store(true);
+    });
+    while (!entered.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const bool returnedEarly = skipped.load();
+    shared->hold.store(false);
+    submitter.join();
+    Require(!returnedEarly, "a batch was skipped by its submitter before its replay released it");
+    Require(batch->ReplayReleased() && batch->Retirable() && batch->Result() == Outcome::Cancelled, "a refused batch was not cancelled and retirable once its replay released it");
+    executor.Retire(batch->Commands(), batch->Worker());
+}
+
 void FailureReachesSerialWaiters() {
     FailureLatch latch;
     std::atomic<bool> earlierDone{false};
@@ -739,6 +766,7 @@ int main(int argc, char** argv) {
         SealedAndFailedAppendsPoison();
         InlineReplayFailureReachesTheLatch();
         CancelDoesNotImpersonateTheWorker();
+        RefusedBatchWaitsForItsReplay();
         FailureReachesSerialWaiters();
         DeviceLossHoldsResourcesUntilTheDeviceIsIdle();
         FenceBeforeReturnStaysHeld();
