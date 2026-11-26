@@ -173,12 +173,29 @@ void GuardAxis() {
             static_cast<std::int32_t*>(GuestBuffer(4)));
     }),
         "getStringByKeyWithFallback throws on a null key (bundled ICU dereferences it)");
+    Require(Throws([&] {
+        UResourceBundle fill{};
+        ures_initStackObject(&fill);
+        ures_getStringByKeyWithFallback_nid_postfix(&fill, "InstalledLocales", static_cast<std::int32_t*>(GuestBuffer(4)), nullptr);
+    }),
+        "getStringByKeyWithFallback throws on a null error (bundled ICU reads *status unconditionally)");
 
     std::int32_t status = 0;
     std::uint8_t version[4] = { 9, 9, 9, 9 };
     ures_getVersionByKey_nid_postfix(nullptr, "InstalledLocales", version, &status);
     Require(status == IllegalArgument, "a null bundle passes through and ICU reports its documented error");
     Require(version[0] == 9 && version[1] == 9 && version[2] == 9 && version[3] == 9, "a rejected lookup leaves the buffer alone");
+    Require(Throws([&] {
+        std::uint8_t v[4] = { 0, 0, 0, 0 };
+        ures_getVersionByKey_nid_postfix(nullptr, "InstalledLocales", v, nullptr);
+    }),
+        "getVersionByKey throws on a null error (bundled ICU reads *status unconditionally)");
+    Require(Throws([&] {
+        std::uint8_t v[4] = { 0, 0, 0, 0 };
+        alignas(16) static std::uint8_t storage[1024];
+        ures_getVersionByKey_nid_postfix(reinterpret_cast<const UResourceBundle*>(storage), "InstalledLocales", v, nullptr);
+    }),
+        "getVersionByKey throws on a null error even when the bundle is set");
 }
 
 } // namespace
@@ -315,6 +332,36 @@ int main(int argc, char** argv) {
         UEnumeration* controlEnum = ures_getKeywordValues(Package, "InstalledLocales", &controlStatus);
         Require((oursEnum != nullptr) == (controlEnum != nullptr), "both sides agree on the enumeration");
         Require(oursStatus == static_cast<int>(controlStatus), "both sides report the same enumeration status");
+    }
+
+    {
+        std::int32_t oursStatus = 0;
+        UErrorCode controlStatus = U_ZERO_ERROR;
+        UResourceBundle* oursFound = ures_findResource_nid_postfix(GuestString("coll:en_US:InstalledLocales"), nullptr, &oursStatus);
+        UResourceBundle* controlFound = ures_findResource("coll:en_US:InstalledLocales", nullptr, &controlStatus);
+        Require((oursFound != nullptr) == (controlFound != nullptr), "findResource with a null fillIn agrees with bundled ICU on the result");
+        Require(oursStatus == static_cast<int>(controlStatus), "findResource with a null fillIn reports the same status as bundled ICU, ours " + std::to_string(oursStatus));
+    }
+
+    {
+        UResourceBundle oursBundle{};
+        ures_initStackObject(&oursBundle);
+        std::int32_t oursOpen = 0;
+        ures_openDirectFillIn_nid_postfix(&oursBundle, GuestString(Package), GuestString(Item), &oursOpen);
+        char oursPath[] = "InstalledLocales/de";
+        std::int32_t oursStatus = oursOpen;
+        UResourceBundle* oursFound = ures_findSubResource_nid_postfix(&oursBundle, oursPath, nullptr, &oursStatus);
+
+        UErrorCode controlOpen = U_ZERO_ERROR;
+        UResourceBundle controlBundle{};
+        ures_initStackObject(&controlBundle);
+        ures_openDirectFillIn(&controlBundle, const_cast<char*>(Package), const_cast<char*>(Item), &controlOpen);
+        char controlPath[] = "InstalledLocales/de";
+        UErrorCode controlStatus = controlOpen;
+        UResourceBundle* controlFound = ures_findSubResource(&controlBundle, controlPath, nullptr, &controlStatus);
+
+        Require((oursFound != nullptr) == (controlFound != nullptr), "findSubResource with a null fillIn agrees with bundled ICU on the result");
+        Require(oursStatus == static_cast<int>(controlStatus), "findSubResource with a null fillIn reports the same status as bundled ICU, ours " + std::to_string(oursStatus));
     }
 
     GuardAxis();

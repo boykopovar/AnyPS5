@@ -847,9 +847,10 @@ APS5_EXPORT("3Ty3zLmTy6E", sceIcuLegacyUnknown_3Ty3zLmTy6E_nid_no_patch);
 
 const char16_t* APS5_VABI ures_getStringByKeyWithFallback_nid_postfix(const UResourceBundle* bundle, const char* key, std::int32_t* length, std::int32_t* error) {
     if (!key) APS5_INVALID_ARG_EX;
+    if (!error) APS5_INVALID_ARG_EX;
     if (bundle) GuestReadableOrThrow(bundle, sizeof(*bundle));
     if (length) GuestWritableOrThrow(length, sizeof(*length));
-    if (error) GuestWritableOrThrow(error, sizeof(*error));
+    GuestWritableOrThrow(error, sizeof(*error));
     const std::string copy = GuestString(key);
     return reinterpret_cast<const char16_t*>(
         ures_getStringByKeyWithFallback(bundle, copy.c_str(), length, reinterpret_cast<UErrorCode*>(error)));
@@ -6570,8 +6571,7 @@ APS5_EXPORT("gIBOGIUVhFo", sceIcuLegacyUnknown_gIBOGIUVhFo_nid_no_patch);
 
 UResourceBundle* APS5_VABI ures_findResource_nid_postfix(const char* path, UResourceBundle* fillIn, std::int32_t* error) {
     if (!path) APS5_INVALID_ARG_EX;
-    if (!fillIn) APS5_INVALID_ARG_EX;
-    GuestWritableOrThrow(fillIn, sizeof(*fillIn));
+    if (fillIn) GuestWritableOrThrow(fillIn, sizeof(*fillIn));
     if (error) GuestWritableOrThrow(error, sizeof(*error));
     const std::string copy = GuestString(path);
     return ures_findResource(copy.c_str(), fillIn, reinterpret_cast<UErrorCode*>(error));
@@ -6952,10 +6952,9 @@ int APS5_VABI _ZN6icu_6814ResourceBundle7getNextER10UErrorCode_nid_postfix() {
 UResourceBundle* APS5_VABI ures_findSubResource_nid_postfix(const UResourceBundle* bundle, char* path, UResourceBundle* fillIn, std::int32_t* error) {
     if (!bundle) APS5_INVALID_ARG_EX;
     if (!path) APS5_INVALID_ARG_EX;
-    if (!fillIn) APS5_INVALID_ARG_EX;
     const std::string copy = GuestString(path);
     GuestWritableOrThrow(path, copy.size() + 1);
-    GuestWritableOrThrow(fillIn, sizeof(*fillIn));
+    if (fillIn) GuestWritableOrThrow(fillIn, sizeof(*fillIn));
     if (error) GuestWritableOrThrow(error, sizeof(*error));
     return ures_findSubResource(bundle, path, fillIn, reinterpret_cast<UErrorCode*>(error));
 }
@@ -8944,9 +8943,10 @@ APS5_EXPORT("vo6bvI+oYEw", sceIcuLegacyUnknown_vo6bvI_plus_oYEw_nid_no_patch);
 void APS5_VABI ures_getVersionByKey_nid_postfix(const UResourceBundle* bundle, const char* key, std::uint8_t* version, std::int32_t* error) {
     if (!key) APS5_INVALID_ARG_EX;
     if (!version) APS5_INVALID_ARG_EX;
+    if (!error) APS5_INVALID_ARG_EX;
     if (bundle) GuestReadableOrThrow(bundle, sizeof(*bundle));
     GuestWritableOrThrow(version, 4);
-    if (error) GuestWritableOrThrow(error, sizeof(*error));
+    GuestWritableOrThrow(error, sizeof(*error));
     const std::string copy = GuestString(key);
     ures_getVersionByKey(bundle, copy.c_str(), version, reinterpret_cast<UErrorCode*>(error));
 }
