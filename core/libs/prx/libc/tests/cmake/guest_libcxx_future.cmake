@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_future_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxFuture.cpp)
+    target_include_directories(guest_libcxx_future_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_future_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libcxx_future_tests)
+    add_test(NAME guest_libcxx_future COMMAND guest_libcxx_future_tests)
+    set_tests_properties(guest_libcxx_future PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_future PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()

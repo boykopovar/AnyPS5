@@ -131,6 +131,30 @@ struct LibcxxErrorCode { int value; int reserved; const CategoryObject* category
 
 struct LibcxxSystemErrorObject { ExceptionObject base; LibcxxErrorCode code; };
 
+struct LibcxxFutureErrorObject { ExceptionObject base; LibcxxErrorCode code; };
+
+struct LibcxxAssocSubState {
+    const void* vtable;
+    std::int64_t sharedOwners;
+    GuestLibcxxExceptionPointer exception;
+    PthreadMutex mutex;
+    PthreadCond condition;
+    std::uint32_t state;
+};
+
+struct LibcxxAssocSubStateVtable {
+    std::ptrdiff_t offset;
+    const TypeRecord* type;
+    void (APS5_VABI *destroy)(LibcxxAssocSubState*);
+    void (APS5_VABI *deleteObject)(LibcxxAssocSubState*);
+    void (APS5_VABI *onZeroShared)(LibcxxAssocSubState*);
+    void (APS5_VABI *execute)(LibcxxAssocSubState*);
+};
+
+struct LibcxxPromiseVoid { LibcxxAssocSubState* state; };
+
+struct LibcxxFutureVoid { LibcxxAssocSubState* state; };
+
 struct FutureErrorObject { const void* vtable; GuestLocale::String message; ErrorCode code; };
 
 }
@@ -1830,6 +1854,24 @@ void APS5_VABI _ZNSt3__112system_errorC1ENS_10error_codeERKNS_12basic_stringIcNS
 void APS5_VABI _ZNSt3__112system_errorD1Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
 void APS5_VABI _ZNSt3__112system_errorD2Ev_nid_postfix(LibcException::LibcxxSystemErrorObject* self) noexcept;
 [[noreturn]] void APS5_VABI _ZNSt3__120__throw_system_errorEiPKc_nid_postfix(int value, const char* what);
+extern const LibcException::TypeRecord _ZTINSt3__112future_errorE_nid_postfix;
+void APS5_VABI _ZNSt3__112future_errorC1ENS_10error_codeE_nid_postfix(LibcException::LibcxxFutureErrorObject* self, LibcException::LibcxxErrorCode code);
+void APS5_VABI _ZNSt3__112future_errorD1Ev_nid_postfix(LibcException::LibcxxFutureErrorObject* self) noexcept;
+const LibcException::CategoryObject* APS5_VABI _ZNSt3__115future_categoryEv_nid_postfix() noexcept;
+extern const LibcException::TypeRecord _ZTINSt3__117__assoc_sub_stateE_nid_postfix;
+extern const LibcException::LibcxxAssocSubStateVtable _ZTVNSt3__117__assoc_sub_stateE_nid_postfix;
+void APS5_VABI _ZNSt3__117__assoc_sub_state4waitEv_nid_postfix(LibcException::LibcxxAssocSubState* self);
+void APS5_VABI _ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE_nid_postfix(LibcException::LibcxxAssocSubState* self, void* lock);
+void APS5_VABI _ZNSt3__117__assoc_sub_state9set_valueEv_nid_postfix(LibcException::LibcxxAssocSubState* self);
+void APS5_VABI _ZNSt3__117__assoc_sub_state13set_exceptionESt13exception_ptr_nid_postfix(LibcException::LibcxxAssocSubState* self, const GuestLibcxxExceptionPointer* exception);
+void APS5_VABI _ZNSt3__117__assoc_sub_state16__on_zero_sharedEv_nid_postfix(LibcException::LibcxxAssocSubState* self) noexcept;
+void APS5_VABI _ZNSt3__16futureIvEC1EPNS_17__assoc_sub_stateE_nid_postfix(LibcException::LibcxxFutureVoid* self, LibcException::LibcxxAssocSubState* state);
+void APS5_VABI _ZNSt3__16futureIvED1Ev_nid_postfix(LibcException::LibcxxFutureVoid* self) noexcept;
+void APS5_VABI _ZNSt3__17promiseIvEC1Ev_nid_postfix(LibcException::LibcxxPromiseVoid* self);
+void APS5_VABI _ZNSt3__17promiseIvED1Ev_nid_postfix(LibcException::LibcxxPromiseVoid* self) noexcept;
+LibcException::LibcxxFutureVoid* APS5_VABI _ZNSt3__17promiseIvE10get_futureEv_nid_postfix(LibcException::LibcxxFutureVoid* result, LibcException::LibcxxPromiseVoid* self);
+void APS5_VABI _ZNSt3__17promiseIvE9set_valueEv_nid_postfix(LibcException::LibcxxPromiseVoid* self);
+void APS5_VABI _ZNSt3__17promiseIvE13set_exceptionESt13exception_ptr_nid_postfix(LibcException::LibcxxPromiseVoid* self, const GuestLibcxxExceptionPointer* exception);
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self);
