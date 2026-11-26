@@ -127,9 +127,23 @@ void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::Progra
 }
 
 void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std::uint64_t address, const std::uint64_t size, const std::uint32_t flags, const std::string& what) {
-    for (const auto& header : headers)
-        if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
-            return;
+    auto current = address;
+    auto remaining = size;
+    for (;;) {
+        const Domain::ProgramHeader* found = nullptr;
+        for (const auto& header : headers) {
+            if (header.Type != PT_LOAD || (header.Flags != 0 && (header.Flags & flags) != flags)
+                || current < header.MappedAddress || current - header.MappedAddress >= header.MemorySize) continue;
+            found = &header;
+            break;
+        }
+        if (!found) break;
+        const auto count = std::min(remaining, found->MemorySize - (current - found->MappedAddress));
+        if (count > std::numeric_limits<std::uint64_t>::max() - current) break;
+        current += count;
+        remaining -= count;
+        if (remaining == 0) return;
+    }
     const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
     throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : (flags & PF_W) != 0 ? "a writable" : "a") + " PT_LOAD segment");
 }

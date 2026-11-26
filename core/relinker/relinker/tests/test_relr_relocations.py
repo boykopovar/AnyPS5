@@ -64,6 +64,24 @@ def guest_image(words=(0x2320, 5), mixed=False):
     return aligned
 
 
+def split_load(image, header, boundary, tail_memory=None):
+    kind, flags, offset, mapped, physical, file_size, memory_size, alignment = struct.unpack_from("<IIQQQQQQ", image, header)
+    first_size = boundary - mapped
+    assert 0 <= first_size <= file_size
+    phoff, = struct.unpack_from("<Q", image, 32)
+    entry_size, count = struct.unpack_from("<HH", image, 54)
+    tail_file = file_size - first_size
+    if tail_memory is None:
+        tail_memory = memory_size - first_size
+    assert tail_file <= tail_memory
+    struct.pack_into("<QQ", image, header + 32, first_size, first_size)
+    struct.pack_into("<IIQQQQQQ", image, phoff + count * entry_size,
+                     kind, flags, offset + first_size, boundary, physical + first_size,
+                     tail_file, tail_memory, alignment)
+    struct.pack_into("<H", image, 56, count + 1)
+    return image
+
+
 def replace_tag(image, kind, value, guest):
     start = 0x2000 if guest else 0x400
     for offset in range(start, start + 0x200, 16):
@@ -164,6 +182,29 @@ def main():
                     targets.update((0x808, 0x850))
                 expected = {(target, 8, 0x210) for target in targets}
             convert(label, build(words, mixed), expected=expected)
+
+        table = build((0x2320, 0x2330) if guest else (anchor, anchor + 8))
+        if guest:
+            split_load(table, 120, 0x2388)
+            expected = {(0x2320, 8, 0x1020), (0x2330, 8, 0x1040)}
+        else:
+            replace_tag(table, 36, 0x6f8, False)
+            struct.pack_into("<QQ", table, 0x6f8, anchor, anchor + 8)
+            split_load(table, 64, 0x700)
+            expected = {(anchor, 8, 0x210), (anchor + 8, 8, 0x210)}
+        convert("split-table", table, expected=expected)
+
+        target = build()
+        split_load(target, 120 if guest else 64, 0x2324 if guest else 0x804)
+        expected = {(0x2320, 8, 0x1020), (0x2330, 8, 0x1040)} if guest else {(anchor, 8, 0x210)}
+        convert("split-target", target, expected=expected)
+
+        zero = build((0x2320, 0x2330, 0x23fc) if guest else (anchor, 0xffc))
+        struct.pack_into("<I", zero, 0x23fc if guest else 0xffc, 0x1020 if guest else 0x210)
+        split_load(zero, 120 if guest else 64, 0x2400 if guest else 0x1000, 0x100 if guest else 0x1000)
+        expected = {(0x2320, 8, 0x1020), (0x2330, 8, 0x1040), (0x23fc, 8, 0x1020)} if guest else {
+            (anchor, 8, 0x210), (0xffc, 8, 0x210)}
+        convert("split-zero-fill-addend", zero, expected=expected)
 
         if not guest:
             bss = main_image((0x800, 0x1008, 0xffc))

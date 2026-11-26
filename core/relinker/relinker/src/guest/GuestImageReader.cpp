@@ -106,10 +106,28 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull | 16ull)) != 0) fail("Unsupported guest dynamic flags");
     image.Symbolic = tags.contains(30) && (tags.at(30) & 2ull) != 0;
     const auto mapped = [&](std::uint64_t address, std::uint64_t size, std::uint32_t flags) {
-        for (const auto& header : image.Headers) {
-            if (header.Type == 1 && (header.Flags & flags) == flags && address >= header.MappedAddress && address - header.MappedAddress <= header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress)) return;
+        if (size == 0) {
+            for (const auto& header : image.Headers)
+                if (header.Type == 1 && (header.Flags & flags) == flags && address >= header.MappedAddress
+                    && address - header.MappedAddress <= header.MemorySize) return;
+            fail("Unmapped or inaccessible guest address " + std::to_string(address));
         }
-        fail("Unmapped or inaccessible guest address " + std::to_string(address));
+        auto current = address;
+        auto remaining = size;
+        for (;;) {
+            const Domain::ProgramHeader* found = nullptr;
+            for (const auto& header : image.Headers) {
+                if (header.Type != 1 || (header.Flags & flags) != flags || current < header.MappedAddress
+                    || current - header.MappedAddress >= header.MemorySize) continue;
+                found = &header;
+                break;
+            }
+            if (!found) fail("Unmapped or inaccessible guest address " + std::to_string(address));
+            const auto count = std::min(remaining, found->MemorySize - (current - found->MappedAddress));
+            current += count;
+            remaining -= count;
+            if (remaining == 0) return;
+        }
     };
     const auto relativeAddress = [&](std::uint64_t address) {
         if (address < loads.begin()->first || address > loads.rbegin()->second)
