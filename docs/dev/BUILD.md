@@ -383,6 +383,9 @@ Six tests with the driver's Vulkan device set a REWIND control word only after t
 
 `tools/frame_capture_minimize.py` shrinks a frame capture from `--capture` while a replay failure stays reproducible. It runs `--replay` on the capture first, `--confirm-runs` times (at least 2), to make sure the failure reproduces, then tries removing calls and chunks of the capture with the `--filter` program and keeps a removal only when the replay still matches `--match-regex` in its output and exits with `--expect-exit-code`. It stops after `--max-trials` replays (default 1000); `--replay-arg` passes an extra argument to the replay (`{trial_dir}` expands to a fresh folder per run). The result is written to `--output`, which must not exist yet.
 
+Repeat `--replay-arg` once for each argument. Use the equals form for flags, for example
+`--replay-arg=--frames --replay-arg='{trial_dir}/frames'`. The placeholder keeps replay output in the current trial's directory.
+
 ## Pipeline statistics
 
 Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newly created graphics or compute pipeline. This requires `VK_KHR_pipeline_executable_properties` and `pipelineExecutableInfo`; an unsupported device fails with an error. Statistic names and units are driver-specific. Capturing statistics can increase pipeline compilation cost. The setting is disabled by default.
