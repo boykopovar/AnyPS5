@@ -122,8 +122,10 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
   Use `--spreadsheet-safe` when importing the output into a spreadsheet. It changes formula-like worker and phase
   names by prefixing a tab. Keep the default output for consumers that need the original names.
 - `tools/ab_split_csv.py <log> [--program P] [--class C]` exports the existing in-run A/B comparison of a log as CSV.
-  Repeat `--program` with hexadecimal keys or `--class` with class names from `[gputime]`. A program absent from
-  a truncated top-program list can leave its metric unavailable. An empty metric cell represents unavailable data.
+  Repeat `--program` with hexadecimal keys or `--class` with class names from `[gputime]`. If a truncated
+  top-program list omits the selected program, the affected phase has no metric for it. Each arm's average
+  uses only phases with the metric. The row is omitted if either arm has no eligible phase. Use
+  `tools/ab_split.py --json` with the same selectors to inspect the per-phase metrics.
   On Windows PowerShell 5.1, capture the log through `cmd /d /c "<command> 2> run.log"`. PowerShell's own
   `2>` can write UTF-16 and wrap long report lines, which the A/B tools cannot use.
 
