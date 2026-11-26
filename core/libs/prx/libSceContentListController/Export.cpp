@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <regex>
 #include <string>
@@ -179,6 +180,15 @@ bool SafeWritable(void* dst, std::size_t bytes) {
     const bool ok = GuestWritable_nid_no_patch(dst, bytes);
     errno = savedErrno;
     return ok;
+}
+
+bool SafeWritableArray(void* dst, std::size_t count, std::size_t elemSize) {
+    if (dst == nullptr || elemSize == 0) return false;
+    if (count > (std::numeric_limits<std::size_t>::max)() / elemSize) return false;
+    const std::size_t bytes = count * elemSize;
+    const auto addr = reinterpret_cast<std::uintptr_t>(dst);
+    if (addr > (std::numeric_limits<std::uintptr_t>::max)() - bytes) return false;
+    return SafeWritable(dst, bytes);
 }
 
 bool CopyGuestCString(const char* src, char* dst, std::size_t maxBytes) {
@@ -1095,7 +1105,6 @@ int APS5_VABI sceCLCGetFileList(std::uint32_t, std::uint32_t, std::int32_t listM
 
     SceCLCListOutput localList{};
     if (!SafeCopyIn(&localList, outList, sizeof(localList))) return SceClcErrorInvalidArg;
-    if (localList.items == nullptr || !SafeWritable(localList.items, sizeof(SceCLCListEntry))) return SceClcErrorInvalidArg;
 
     std::int32_t total = 0;
     std::uint32_t baseOffset = 0;
@@ -1112,14 +1121,22 @@ int APS5_VABI sceCLCGetFileList(std::uint32_t, std::uint32_t, std::int32_t listM
 
     if (static_cast<std::int32_t>(startIndex) > total) return SceClcErrorInvalidArg;
 
+    const std::int32_t clampedTotal = (std::min)(total, static_cast<std::int32_t>(0xfa0));
+    const std::int32_t remaining = clampedTotal - static_cast<std::int32_t>(startIndex);
+    const std::int32_t plannedCount = (std::min)(maxCount, remaining > 0 ? remaining : 0);
+    const std::size_t requiredEntries = static_cast<std::size_t>(plannedCount > 0 ? plannedCount : 1);
+    if (!SafeWritable(outList, sizeof(SceCLCListOutput)) ||
+        !SafeWritableArray(localList.items, requiredEntries, sizeof(SceCLCListEntry))) {
+        return SceClcErrorInvalidArg;
+    }
+
     const bool dirMatchesTrack =
         state.fileDeviceId == state.trackDeviceId &&
         std::strcmp(state.fileDir, state.trackDir) == 0;
 
     std::int32_t count = 0;
-    for (std::int32_t i = 0; i < maxCount; ++i) {
+    for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
-        if (idx > 0xf9f || idx >= total) break;
         const std::uint32_t entryIdx = baseOffset + static_cast<std::uint32_t>(idx);
         SceCLCListEntry item{};
         item.deviceId = state.fileDeviceId;
@@ -1152,12 +1169,19 @@ int APS5_VABI sceCLCGetTrackList(std::uint32_t startIndex, std::int32_t maxCount
 
     SceCLCListOutput localList{};
     if (!SafeCopyIn(&localList, outList, sizeof(localList))) return SceClcErrorInvalidArg;
-    if (localList.items == nullptr || !SafeWritable(localList.items, sizeof(SceCLCListEntry))) return SceClcErrorInvalidArg;
+
+    const std::int32_t clampedTotal = (std::min)(state.trackFileCount, static_cast<std::int32_t>(0xfa0));
+    const std::int32_t remaining = clampedTotal - static_cast<std::int32_t>(startIndex);
+    const std::int32_t plannedCount = (std::min)(maxCount, remaining > 0 ? remaining : 0);
+    const std::size_t requiredEntries = static_cast<std::size_t>(plannedCount > 0 ? plannedCount : 1);
+    if (!SafeWritable(outList, sizeof(SceCLCListOutput)) ||
+        !SafeWritableArray(localList.items, requiredEntries, sizeof(SceCLCListEntry))) {
+        return SceClcErrorInvalidArg;
+    }
 
     std::int32_t count = 0;
-    for (std::int32_t i = 0; i < maxCount; ++i) {
+    for (std::int32_t i = 0; i < plannedCount; ++i) {
         const std::int32_t idx = static_cast<std::int32_t>(startIndex) + i;
-        if (idx > 0xf9f || idx >= state.trackFileCount) break;
         SceCLCListEntry item{};
         item.deviceId = state.trackDeviceId;
         std::snprintf(item.name, sizeof(item.name), "%s%s", state.trackDir, state.trackEntries + static_cast<std::size_t>(idx) * EntryNameSize);

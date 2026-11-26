@@ -1,3 +1,4 @@
+#include "GuardedBuffer.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
@@ -667,6 +668,29 @@ int main() {
 
     Require(sceCLCGetFileList(0, 0, 1, 0, 10, &listOut) == 0);
     Require(entryBuf[1].state == 1);
+
+    {
+        GuardedBuffer guarded;
+        auto* singleEntry = guarded.At<SceCLCListEntry>(1);
+        SceCLCListOutput guardedOut{};
+        guardedOut.totalCount = -7;
+        guardedOut.returnedCount = -8;
+        guardedOut.startIndex = -9;
+        guardedOut.items = singleEntry;
+        errno = 71;
+        Require(sceCLCGetFileList(0, 0, 0, 0, 2, &guardedOut) == kErrInvalidArg && errno == 71);
+        Require(guardedOut.totalCount == -7 && guardedOut.returnedCount == -8 && guardedOut.startIndex == -9);
+        const auto* entryBytes = reinterpret_cast<const std::uint8_t*>(singleEntry);
+        for (std::size_t i = 0; i < sizeof(SceCLCListEntry); ++i) {
+            Require(entryBytes[i] == 0xA5);
+        }
+        errno = 71;
+        Require(sceCLCGetTrackList(0, 2, &guardedOut) == kErrInvalidArg && errno == 71);
+        Require(guardedOut.totalCount == -7 && guardedOut.returnedCount == -8 && guardedOut.startIndex == -9);
+        for (std::size_t i = 0; i < sizeof(SceCLCListEntry); ++i) {
+            Require(entryBytes[i] == 0xA5);
+        }
+    }
 
     Require(sceCLCGetFileInfo(7, "/music/dummy.txt", &fileInfo) == kErrUnsupportedFormat);
     Require(sceCLCGetFileInfo(7, "badpath.mp3", &fileInfo) == kErrInvalidArg);
