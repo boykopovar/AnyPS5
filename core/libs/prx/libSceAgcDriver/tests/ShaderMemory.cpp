@@ -6996,6 +6996,40 @@ const std::vector<std::uint32_t> TableWaterfallCode{
     0xbefe0318u, 0xbf85ffe0u, 0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
 };
 
+void verifyLaneTableOffsetCarry() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture texture;
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, 2> records{};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    static std::array<std::uint32_t, 20> userData{};
+    records[0] = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D);
+    const auto table = TableV(records.data(), 32u, 2u);
+    const auto out = TableV(output.data(), 4u, static_cast<std::uint32_t>(output.size()));
+    constexpr std::array<std::uint32_t, 4> sampler{0x00000092u, 0x00fff000u, 0u, 0u};
+    userData.fill(0u);
+    std::copy(table.begin(), table.end(), userData.begin());
+    std::copy(out.begin(), out.end(), userData.begin() + 4);
+    std::copy(sampler.begin(), sampler.end(), userData.begin() + 16);
+    auto code = TableWaterfallCode;
+    code.insert(code.begin(), {0xbe8f03ffu, 0xffffffe0u});
+    std::replace(code.begin(), code.end(), 0x80000201u, 0x0f000201u);
+    std::replace(code.begin(), code.end(), 0x80000601u, 0x0f000601u);
+    auto request = TableRequest(code, {0u, 0u});
+    request.context.userData = userData;
+    request.context.waveSize = 32u;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "lane table offset carry: the T# was not planned as a lane table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.laneKey && column.addend == 0xffffffe0u && column.offset == 0u && column.dwordCount == 8u, "lane table offset carry: the column is wrong");
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    const auto carried = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OffsetCarry));
+    require(snapshot.keys == 2u && snapshot.codes.at(1) == carried && compiled.result->imageTableFaults != 0u, "lane table offset carry: the second record does not have OffsetCarry poison");
+    require(!TableTouched(compiled.regions, records.data(), sizeof(records)), "lane table offset carry: the wrapped second record aliased and read the first record");
+}
+
 void verifyLaneImageTable() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -13591,6 +13625,11 @@ int main(int argc, char** argv) {
             std::cout << "The wave64 pixel entry-lane proof handles loop-carried saved EXEC masks on a 32-lane host\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--lane-table-offset-carry") {
+            verifyLaneTableOffsetCarry();
+            std::cout << "A lane-table record past the 32-bit offset range is poisoned without aliasing a wrapped record\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--bindless") {
             verifyImageTableKeys();
             verifyImageTables();
@@ -13611,6 +13650,7 @@ int main(int argc, char** argv) {
             verifyPointerTableUnwrittenReuse();
             verifyPointerTableOffsetCarry();
             verifyLaneImageTable();
+            verifyLaneTableOffsetCarry();
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
             verifySelectedRecordDirectOperations();
