@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/AsyncFileStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/BidiContextExports.hpp"
 #include "prx/libSceNKWebKit/include/CrossThreadTaskHandlerExports.hpp"
 #include "prx/libSceNKWebKit/include/DeviceMotionDataExports.hpp"
