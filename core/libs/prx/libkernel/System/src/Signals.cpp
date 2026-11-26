@@ -315,7 +315,7 @@ void ResetToDefault(int guest) {
 }
 constexpr int SsDisable = 4;
 thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
-using GuestInfoHandler = void (APS5_VABI *)(int, GuestSiginfo*, UserUcontext*);
+using GuestInfoHandler = void (APS5_VABI *)(int, void*, UserUcontext*);
 
 GuestSignalSet ContextMask(const UserUcontext& context) {
     return GuestSignalSet{{context.sigmask[0], context.sigmask[1], context.sigmask[2], context.sigmask[3]}};

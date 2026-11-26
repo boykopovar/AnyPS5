@@ -37,26 +37,26 @@ InfoRecord infoSeen{};
 GuestSignalSet contextMaskAddition{};
 UserUcontext escape{};
 volatile int escapes = 0;
-void APS5_VABI InfoCallback(int value, void* info, void* context) {
+void APS5_VABI InfoCallback(int value, void* info, UserUcontext* context) {
     ++infoSeen.runs;
     infoSeen.signal = value;
     std::memcpy(infoSeen.info, info, sizeof(infoSeen.info));
     std::memcpy(&infoSeen.context, context, sizeof(infoSeen.context));
     sigprocmask_nid_postfix(1, nullptr, &infoSeen.mask);
-    for (int word = 0; word < 4; ++word) static_cast<UserUcontext*>(context)->sigmask[word] |= contextMaskAddition.bits[word];
+    for (int word = 0; word < 4; ++word) context->sigmask[word] |= contextMaskAddition.bits[word];
 }
-void APS5_VABI EscapeCallback(int value, void* info, void* context) {
+void APS5_VABI EscapeCallback(int value, void* info, UserUcontext* context) {
     InfoCallback(value, info, context);
-    static_cast<UserUcontext*>(context)->mcontext = escape.mcontext;
+    context->mcontext = escape.mcontext;
 }
-void APS5_VABI RejectedContextCallback(int value, void* info, void* context) {
+void APS5_VABI RejectedContextCallback(int value, void* info, UserUcontext* context) {
     EscapeCallback(value, info, context);
-    static_cast<UserUcontext*>(context)->mcontext.flags = 0x8;
+    context->mcontext.flags = 0x8;
 }
 int frameChange = 0;
-void APS5_VABI DeliveryFrameCallback(int value, void* info, void* context) {
+void APS5_VABI DeliveryFrameCallback(int value, void* info, UserUcontext* context) {
     InfoCallback(value, info, context);
-    auto& machine = static_cast<UserUcontext*>(context)->mcontext;
+    auto& machine = context->mcontext;
     if (frameChange == 0) machine.rax ^= 1;
     else if (frameChange == 1) machine.rbx ^= 1;
     else if (frameChange == 2) machine.rip = escape.mcontext.rip;
@@ -291,7 +291,7 @@ static void CheckSiginfoDelivery() {
     const GuestItimerspec once{{0, 0}, {0, 10000000}};
     Require(ktimer_settime_nid_postfix(timer, 0, &once, nullptr) == 0);
     GuestSignalSet pending{};
-    while (sigpending_nid_postfix(&pending) == 0 && (pending.bits[0] & user2.bits[0]) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    for (int attempt = 0; attempt < 2000 && sigpending_nid_postfix(&pending) == 0 && (pending.bits[0] & user2.bits[0]) == 0; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require((pending.bits[0] & user2.bits[0]) != 0 && infoSeen.runs == 0);
     Require(sigprocmask_nid_postfix(2, &user2, nullptr) == 0);
     Require(infoSeen.runs == 1 && infoSeen.signal == 31 && ContextHasMask(infoSeen.context, before));
