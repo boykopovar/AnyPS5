@@ -402,6 +402,8 @@ void TestLowLatencyCallsRejectBadArguments() {
     AudioOut2PortState state;
     Require(sceAudioOut2LoPortGetState(0, &state) == errorInvalidHandle);
     uint8_t extra = 0xAA;
+    Require(sceAudioOut2LoPortGetStateEx(0, nullptr, &extra) == errorInvalidArgument);
+    Require(extra == 0xAA);
     Require(sceAudioOut2LoPortGetStateEx(0, &state, &extra) == errorInvalidHandle);
     Require(extra == 0xAA);
 
