@@ -771,9 +771,11 @@ void unwatchedEpochTests(Context context) {
     std::puts("template over an unwatched surface in the same collect epoch passed");
 }
 
-ShaderRecompiler::RecompileResult ImageProgramAt(std::uint64_t address, bool sampled) {
+ShaderRecompiler::RecompileResult ImageProgramAt(std::uint64_t address, bool sampled, std::uint64_t keys = 0) {
     auto program = SampledProgram(address);
     auto& binding = program.bindings.front();
+    const auto words = Descriptor(address, Side, Format32UInt, keys);
+    binding.guestDescriptor.assign(words.begin(), words.end());
     if (!sampled) {
         binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
         binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
@@ -933,6 +935,24 @@ void remappedEpochTests(Context context) {
     std::printf("remapped allocation: a sampled template after an allocation outside its images was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", proved ? "proved current" : "refused");
     Require(exited && proved, "replacing an allocation outside the template's images kept it off the epoch exit");
     resources.reset();
+    ClearCachedTextures(context.device);
+    constexpr std::size_t keyBytes = 65536;
+    WatchedSurface keys(context, keyBytes);
+    std::memset(reinterpret_cast<void*>(keys.Address()), 0, keyBytes);
+    AgcDriver::GuestMemory::CollectWritesUncached(keys.Address(), keyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto keyedProgram = ImageProgramAt(surface.Address(), true, keys.Address());
+    const CompiledShader keyedShader{ShaderRecompiler::ShaderStage::Compute, &keyedProgram, 0};
+    auto keyed = std::make_shared<ShaderResources>(context, keyedShader);
+    Require(keyed->Reusable() && settle(*keyed, keyedShader), "the keyed template never took the epoch exit");
+    const auto keysBefore = exitInputs();
+    replaceRegistry(keys.Address(), keyBytes);
+    const auto keysMoved = movedInputs(keysBefore);
+    bool keysProved = false;
+    const bool keysExited = reused(*keyed, keyedShader, keysProved);
+    std::printf("remapped allocation: a sampled template after the allocation of its DCC keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", keysMoved.empty() ? "none" : keysMoved.c_str(), keysExited ? "took" : "did not take", keysProved ? "proved current" : "refused");
+    Require(!keysExited, "a sampled template took the epoch exit over DCC keys whose guest allocation was replaced");
+    keyed.reset();
     ClearCachedTextures(context.device);
     std::puts("templates over a remapped allocation in the same collect epoch passed");
 }
