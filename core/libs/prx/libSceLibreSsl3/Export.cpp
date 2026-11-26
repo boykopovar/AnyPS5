@@ -47,9 +47,4 @@ const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
     }
 }
 
-int APS5_VABI d2i_X509_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 }

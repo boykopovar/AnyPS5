@@ -349,6 +349,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
+#include "prx/libSceLibreSsl3/include/Pkcs7.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -1490,6 +1491,16 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(
     if (!ReadSingleDerObjectFromBio(bio, bytes)) return nullptr;
     const unsigned char* input = bytes.data();
     return d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(output, &input, static_cast<std::int64_t>(bytes.size()));
+}
+
+LibreSsl3Certificate* APS5_VABI d2i_X509_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3Certificate** output) {
+    std::vector<unsigned char> bytes;
+    if (!ReadSingleDerObjectFromBio(bio, bytes)) return nullptr;
+    std::span<const unsigned char> input(bytes);
+    LibreSsl3Certificate* certificate = DecodeCertificate_nid_no_patch(input);
+    if (!certificate) return nullptr;
+    ReplaceOutput(output, certificate, FreeCertificate_nid_no_patch);
+    return certificate;
 }
 
 LibreSsl3EvpPkey* APS5_VABI d2i_PrivateKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey** output) {
