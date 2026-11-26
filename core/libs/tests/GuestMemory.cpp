@@ -1655,6 +1655,69 @@ static void CheckFixedVirtualReservation() {
     Require(sceKernelVirtualQuery(hostOccupied, 0, &hostInfo, sizeof(hostInfo)) != 0);
 }
 
+static void CheckFixedReservationOverPartlyMappedRange() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t length = page * 4;
+    const auto requireReserved = [](unsigned char* base) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(base, 0, &info, sizeof(info)) == 0);
+        Require(!info.is_committed && !info.is_direct && !info.is_flexible && info.protection == 0);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(base) && info.end == reinterpret_cast<std::uintptr_t>(base) + length);
+    };
+    void* range = nullptr;
+    Require(sceKernelReserveVirtualRange(&range, length, 0, 0) == 0);
+    auto* base = static_cast<unsigned char*>(range);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), length) == 0);
+    std::size_t budget = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&budget) == 0);
+    void* flexible = base + page;
+    Require(sceKernelMapFlexibleMemory(&flexible, page * 2, 3, 0x10) == 0 && flexible == base + page);
+    static_cast<unsigned char*>(flexible)[0] = 0x6b;
+    static_cast<unsigned char*>(flexible)[page] = 0x6b;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    constexpr std::size_t coarse = 0x100000;
+    void* misaligned = (reinterpret_cast<std::uintptr_t>(base) & (coarse - 1)) == 0 ? base + page * 2 : base;
+    void* const requested = misaligned;
+    Require(sceKernelReserveVirtualRange(&misaligned, page * 2, 0x10, coarse) == SCE_KERNEL_ERROR_EINVAL);
+    Require(misaligned == requested && static_cast<unsigned char*>(flexible)[0] == 0x6b && static_cast<unsigned char*>(flexible)[page] == 0x6b);
+    void* fixed = base;
+    Require(sceKernelReserveVirtualRange(&fixed, length, 0x10, 0) == 0 && fixed == base);
+    requireReserved(base);
+    std::size_t available = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == budget);
+    void* again = base;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x10) == 0 && again == base);
+    Require(base[page] == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), length) == 0);
+    void* direct = base + page * 3;
+    Require(sceKernelMapDirectMemory(&direct, page, 3, 0x10, phys, 0) == 0 && direct == base + page * 3);
+    void* pooled = nullptr;
+    Require(sceKernelMemoryPoolReserve(base, length, 0, 0x10, &pooled) == 0 && pooled == base);
+    requireReserved(base);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), length) == 0);
+    auto* hostOccupied = reinterpret_cast<unsigned char*>(0x7ffffc000ull + GuestArena::GuestAddressOffset);
+    void* below = hostOccupied - page;
+    Require(sceKernelMapFlexibleMemory(&below, page, 3, 0x10) == 0 && below == hostOccupied - page);
+    static_cast<unsigned char*>(below)[0] = 0x2d;
+    void* blocked = below;
+    Require(sceKernelReserveVirtualRange(&blocked, page * 2, 0x10, 0) == SCE_KERNEL_ERROR_ENOMEM);
+    VirtualQueryInfo kept{};
+    Require(sceKernelVirtualQuery(below, 0, &kept, sizeof(kept)) == 0 && kept.is_flexible && kept.protection == 3);
+    Require(static_cast<unsigned char*>(below)[0] == 0x2d);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(below), page) == 0);
+    auto* hostEnd = reinterpret_cast<unsigned char*>(0x1000000000ull + GuestArena::GuestAddressOffset);
+    void* above = hostEnd;
+    Require(sceKernelMapFlexibleMemory(&above, page, 3, 0x10) == 0 && above == hostEnd);
+    hostEnd[0] = 0x4e;
+    void* straddling = hostEnd - page;
+    Require(sceKernelReserveVirtualRange(&straddling, page * 2, 0x10, 0) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(sceKernelVirtualQuery(above, 0, &kept, sizeof(kept)) == 0 && kept.is_flexible && kept.protection == 3);
+    Require(hostEnd[0] == 0x4e);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(above), page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
 static void CheckHintInsideReservation() {
     constexpr std::size_t page = 0x4000;
     void* reserved = nullptr;
@@ -4930,6 +4993,7 @@ int main(int argc, char** argv) {
     CheckHintedVirtualReservation();
     CheckReservationHintWithoutRoomAbove();
     CheckFixedVirtualReservation();
+    CheckFixedReservationOverPartlyMappedRange();
     CheckReservedRangeIsNotCommitted();
     CheckHintInsideReservation();
     CheckNoOverwriteRefusesLiveMapping();

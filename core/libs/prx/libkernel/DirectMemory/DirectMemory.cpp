@@ -1831,6 +1831,24 @@ int DoMunmap(void* addr, size_t len) {
     return 0;
 }
 
+static bool ArenaUsedOutsideRegistered(const GuestAllocations::Mutation& mutation, const void* addr, size_t len) {
+    if (!GuestArena::GuestArenaAvailable_nid_postfix()) return false;
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    auto cursor = start;
+    bool used = false;
+    const auto checkGapBefore = [&](std::uintptr_t end) {
+        std::uintptr_t usedStart = 0, usedEnd = 0;
+        if (cursor < end && GuestArena::GuestArenaNextUsed_nid_no_patch(cursor, &usedStart, &usedEnd) && usedStart < end) used = true;
+    };
+    mutation.ForRegistered(addr, len, [&](const void* piece, std::size_t bytes) {
+        const auto base = reinterpret_cast<std::uintptr_t>(piece);
+        checkGapBefore(base);
+        cursor = base + bytes;
+    });
+    checkGapBefore(start + len);
+    return used;
+}
+
 int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
@@ -1847,13 +1865,13 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
                 return 0;
             }
         }
-        mutation.RequireAvailable(*addr, len);
-        std::uintptr_t usedStart = 0, usedEnd = 0;
-        if (GuestArena::GuestArenaAvailable_nid_postfix() &&
-            GuestArena::GuestArenaNextUsed_nid_no_patch(reinterpret_cast<std::uintptr_t>(*addr), &usedStart, &usedEnd) &&
-            usedStart < reinterpret_cast<std::uintptr_t>(*addr) + len && reinterpret_cast<std::uintptr_t>(*addr) < usedEnd) {
-            return SCE_KERNEL_ERROR_ENOMEM;
+        if (ArenaUsedOutsideRegistered(mutation, *addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
+        try {
+            ValidateRange(*addr, len, ValidateAlignment(alignment));
+        } catch (const std::invalid_argument&) {
+            return SCE_KERNEL_ERROR_EINVAL;
         }
+        ReplaceFixedOverlap(mutation, *addr, len, flags);
     }
     constexpr int GuestMapNoCoalesce = 0x400000;
     void* mapped = nullptr;
