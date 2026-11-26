@@ -227,6 +227,35 @@ static void ProcessClocksAreOrdered() {
     }
 }
 
+static std::int64_t ResourceUsageMicros(bool countSystem) {
+    GuestResourceUsage usage{};
+    Require(getrusage_nid_postfix(0, &usage) == SCE_OK);
+    const auto toMicros = [](const KernelTimeval& time) { return time.tv_sec * 1000000LL + time.tv_usec; };
+    return toMicros(usage.ru_utime) + (countSystem ? toMicros(usage.ru_stime) : 0LL);
+}
+
+static void ProcessClocksCarryResourceUsageMicroseconds() {
+    const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    volatile std::uint64_t work = 0;
+    while (Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < 30 * NANOS_PER_MILLISECOND)
+        for (int i = 0; i < 100000; ++i) work = work + 1;
+    for (int i = 0; i < 1000; ++i) {
+        const std::int64_t userBefore = ResourceUsageMicros(false);
+        const std::int64_t user = Nanos(GUEST_CLOCK_VIRTUAL);
+        const std::int64_t userAfter = ResourceUsageMicros(false);
+        Require(userBefore * 1000 <= user && user < (userAfter + 1) * 1000);
+        const std::int64_t bothBefore = ResourceUsageMicros(true);
+        const std::int64_t both = Nanos(GUEST_CLOCK_PROF);
+        KernelTimespec sceTime{-1, -1};
+        Require(sceKernelClockGettime(GUEST_CLOCK_PROF, &sceTime) == SCE_OK);
+        const std::int64_t sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+        const std::int64_t clock21 = Nanos(21);
+        const std::int64_t bothAfter = ResourceUsageMicros(true);
+        Require(bothBefore * 1000 <= both && both <= sce && sce < (bothAfter + 2) * 1000);
+        Require(bothBefore * 1000 <= clock21 && clock21 < (bothAfter + 2) * 1000);
+    }
+}
+
 static void ProcessElapsedClockAdvancesWhileSleeping() {
     const auto beforeStart = Nanos(GUEST_CLOCK_MONOTONIC);
     const auto elapsedStart = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
@@ -494,6 +523,7 @@ int main() {
     RequireNeverDecreases(GUEST_CLOCK_PROF);
     Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
+    ProcessClocksCarryResourceUsageMicroseconds();
     ProcessElapsedClockAdvancesWhileSleeping();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();

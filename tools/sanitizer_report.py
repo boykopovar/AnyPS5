@@ -19,8 +19,9 @@ REPORT_LINES = (
 REPORT_LENGTH = 200
 
 
-def results(path):
-    root = ET.parse(path).getroot()
+def results(path, *, root=None):
+    if root is None:
+        root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
     found = {}
@@ -58,11 +59,16 @@ def first_report(output):
     return ""
 
 
-def reports(path):
+def reports(path, *, root=None):
+    if root is None:
+        root = ET.parse(path).getroot()
     found = {}
-    for case in ET.parse(path).getroot().iter("testcase"):
-        output = "\n".join(case.findtext(channel) or "" for channel in ("system-out", "system-err"))
-        if report := first_report(output):
+    for case in root.iter("testcase"):
+        output = [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
+        for element in case:
+            if element.tag in ("failure", "error"):
+                output.extend((element.text or "", element.get("message", "")))
+        if report := first_report("\n".join(output)):
             found[case.get("name")] = report
     return found
 
@@ -157,7 +163,8 @@ def main(argv=None):
                                            (source.exists() and args.summary.exists() and source.samefile(args.summary))):
                     raise ValueError(f"summary output must differ from input: {source}")
         known = load_known(args.known, args.sanitizer) if args.known else {}
-        found, details = results(args.junit), reports(args.junit)
+        root = ET.parse(args.junit).getroot()
+        found, details = results(args.junit, root=root), reports(args.junit, root=root)
         text, failing = summarize(args.title, found, known, details)
         output = text
         if args.json:

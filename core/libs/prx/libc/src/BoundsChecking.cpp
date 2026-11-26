@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "prx/libc/include/FileStream.hpp"
@@ -273,21 +274,31 @@ char* APS5_VABI gets_s_nid_postfix(char* buffer, std::size_t size) {
         violation("gets_s: bad argument", guestEinval);
         return nullptr;
     }
-    char* cursor = buffer;
+    const char terminator = '\0';
+    const auto unwritable = [&](int pending) {
+        violation("gets_s: bad argument", guestEinval);
+        while (pending != guestEof && pending != '\n') pending = getchar_nid_postfix();
+        return nullptr;
+    };
+    std::string line;
     int value = getchar_nid_postfix();
     for (std::size_t left = size - 1; left != 0 && value != guestEof && value != '\n'; --left) {
-        *cursor++ = static_cast<char>(value);
+        line.push_back(static_cast<char>(value));
         value = getchar_nid_postfix();
     }
-    if (value == '\n' || (value == guestEof && cursor != buffer)) {
-        *cursor = '\0';
+    if (value == '\n' || (value == guestEof && !line.empty())) {
+        if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), line.size() + 1)) return unwritable(guestEof);
         return buffer;
     }
     if (value != guestEof) {
+        std::string kept = line.empty() ? std::string(1, terminator) : line;
+        kept[0] = terminator;
+        if (!GuestCopyOut_nid_no_patch(buffer, kept.data(), kept.size())) return unwritable(value);
         violation("gets_s: short buffer", guestErange);
         while (value != guestEof && value != '\n') value = getchar_nid_postfix();
+        return nullptr;
     }
-    buffer[0] = '\0';
+    if (!GuestCopyOut_nid_no_patch(buffer, &terminator, sizeof(terminator))) return unwritable(guestEof);
     return nullptr;
 }
 

@@ -25,9 +25,9 @@ PULL_FIELDS = """
 fragment Readiness on PullRequest {
   number title isDraft mergeable headRefOid createdAt
   author { login }
-  labels(first: 50) { nodes { name } }
-  reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-  latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
+  labels(first: 50) { pageInfo { hasNextPage } nodes { name } }
+  reviewRequests(first: 50) { pageInfo { hasNextPage } nodes { requestedReviewer { ... on User { login } } } }
+  latestOpinionatedReviews(first: 50) { pageInfo { hasNextPage } nodes { state author { login } } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
     pageInfo { hasNextPage }
     nodes {
@@ -122,10 +122,14 @@ def pull(node):
     rollup = commit.get("statusCheckRollup")
     contexts = (rollup or {}).get("contexts") or {}
     author = (node.get("author") or {}).get("login") or "ghost"
+    labels = listed(node.get("labels"))
     reviews = [(item.get("author") or {}).get("login") or "ghost" for item in listed(node.get("latestOpinionatedReviews"))
                if item.get("state") == "CHANGES_REQUESTED"]
     requested = {(item.get("requestedReviewer") or {}).get("login") for item in listed(node.get("reviewRequests"))}
     requested = {login.casefold() for login in requested if isinstance(login, str)}
+    incomplete = [label for field, label in (("labels", "labels"), ("reviewRequests", "review requests"),
+                                              ("latestOpinionatedReviews", "reviews"))
+                  if (node[field].get("pageInfo") or {}).get("hasNextPage")]
     return {
         "number": node["number"],
         "title": node.get("title") or "",
@@ -133,10 +137,11 @@ def pull(node):
         "draft": node["isDraft"],
         "mergeable": node.get("mergeable"),
         "created": node.get("createdAt") or "",
-        "labels": {item["name"] for item in listed(node.get("labels"))},
+        "labels": {item["name"] for item in labels},
         "changes": sorted({login for login in reviews if login.casefold() not in requested}),
         "checks": [check_of(item) for item in listed(contexts)] if contexts else [],
         "checks_incomplete": bool((contexts.get("pageInfo") or {}).get("hasNextPage")),
+        "incomplete_metadata": incomplete,
     }
 
 
@@ -160,6 +165,8 @@ def blockers(pr):
     conventions = [check for check in checks if check["name"] == CONVENTIONS_CHECK]
     if pr["checks_incomplete"]:
         reasons.append("too many checks to read")
+    if pr["incomplete_metadata"]:
+        reasons.append("incomplete " + ", ".join(pr["incomplete_metadata"]))
     if not conventions:
         reasons.append("conventions has not run")
     elif all(check["done"] and check["conclusion"] not in FAILED | {"success"} for check in conventions):

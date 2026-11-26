@@ -613,6 +613,7 @@ class FontconfigLicenseInstallTests(unittest.TestCase):
         compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
         if not cmake or not ninja or not compiler:
             self.skipTest("CMake, Ninja and a C++ compiler are required")
+        ninja, compiler = Path(ninja).as_posix(), Path(compiler).as_posix()
         root = Path(__file__).resolve().parents[2]
         library = root / "core/libs/prx/libfontconfig"
         with tempfile.TemporaryDirectory() as temporary:
@@ -643,6 +644,10 @@ class FontconfigLicenseInstallTests(unittest.TestCase):
 
 class ReleasePackageTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("SOURCE_DATE_EPOCH", None)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -996,7 +1001,7 @@ class ReleasePackageTests(unittest.TestCase):
                     (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
                     self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
-    def test_webrtc_library_archives_include_vad_notices(self):
+    def test_webrtc_library_archives_include_vad_and_scaler_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
@@ -1004,8 +1009,14 @@ class ReleasePackageTests(unittest.TestCase):
         source.mkdir(parents=True)
         (source / "LICENSE").write_bytes(b"VAD license\n")
         (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        source = self.source / "3rdparty/libyuv"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"Scaler license\n")
+        (source / "PATENTS").write_bytes(b"Scaler patent grant\n")
         package_release.package("linux", self.build, self.output, "v1")
-        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+        notices = {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n",
+                   "libyuv.txt": b"Scaler license\n", "libyuv-patents.txt": b"Scaler patent grant\n"}
+        for archive_name, content in notices.items():
             with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
@@ -1611,6 +1622,81 @@ class ReleasePackageTests(unittest.TestCase):
                 cache.write_text("// comment\n" + line + "\n", encoding="utf-8")
                 self.assertIs(package_release.cmake_option(self.build, "FLAG"), expected)
 
+    def test_reproducible_native_archives_keep_executable_bits_and_generated_notices(self):
+        epoch = 1700000001
+        (self.source / "core/libs/prx/libSceFreeType").mkdir()
+        patched_font = self.library.parent / "libSceFreeType.prx"
+        unpatched_font = self.unpatched.parent / "libSceFreeType.prx"
+        patched_font.write_bytes(b"patched font backend")
+        unpatched_font.write_bytes(b"unpatched font backend")
+        if os.name != "nt":
+            self.library.chmod(0o741)
+            self.unpatched.chmod(0o750)
+        archives = []
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": str(epoch)}):
+            for timestamp in (1610000000, 1720000000):
+                output = self.output / str(timestamp)
+                for path in (self.library, self.unpatched, patched_font, unpatched_font, self.allocator_license):
+                    os.utime(path, (timestamp, timestamp))
+                package_release.package("linux", self.build, output, "v1")
+                archives.append({asset.name: asset.read_bytes() for asset in output.iterdir()})
+        self.assertEqual(archives[0], archives[1])
+        self.assertEqual(archives[0]["relinker-v1"], b"relinker bytes")
+        notice = "libs/licenses/freetype-attribution.txt"
+        expected_notice = b"This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n"
+        for stem, library in (("prx-linux-v1", self.library), ("prx-linux-unpatched-v1", self.unpatched)):
+            mode = 0o644 | (library.stat().st_mode & 0o111)
+            with zipfile.ZipFile(io.BytesIO(archives[0][stem + ".zip"])) as archive:
+                self.assertEqual(archive.getinfo("libs/libc.prx").external_attr >> 16, stat.S_IFREG | mode)
+                self.assertEqual(archive.getinfo(notice).date_time, time.gmtime(epoch - 1)[:6])
+                self.assertEqual(archive.read("libs/libc.prx"), library.read_bytes())
+                self.assertEqual(archive.read(notice), expected_notice)
+                members = archive.namelist()
+            compressed = archives[0][stem + ".tar.gz"]
+            self.assertEqual(struct.unpack_from("<I", compressed, 4)[0], epoch)
+            self.assertFalse(compressed[3] & 8)
+            with tarfile.open(fileobj=io.BytesIO(compressed), mode="r:gz") as archive:
+                self.assertEqual(archive.getnames(), members)
+                self.assertEqual(archive.getmember("libs/libc.prx").mode, mode)
+                self.assertEqual(archive.extractfile(notice).read(), expected_notice)
+                for entry in archive:
+                    self.assertEqual((entry.mtime, entry.uid, entry.gid, entry.uname, entry.gname),
+                                     (epoch, 0, 0, "", ""))
+
+    def test_reproducible_web_zip_includes_dated_release_metadata(self):
+        epoch = 1700000001
+        revision = "a" * 40
+        archives = []
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": str(epoch)}):
+            for timestamp in (1610000000, 1720000000):
+                output = self.output / str(timestamp)
+                for name in package_release.WEB_FILES:
+                    path = self.build / "web" / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(name.encode())
+                    os.utime(path, (timestamp, timestamp))
+                package_release.package_web(self.build, output, "v1", revision)
+                archives.append((output / "web-v1.zip").read_bytes())
+        self.assertEqual(archives[0], archives[1])
+        with zipfile.ZipFile(io.BytesIO(archives[0])) as archive:
+            self.assertEqual(archive.namelist(), [*package_release.WEB_FILES, "web-release.json"])
+            self.assertEqual(json.loads(archive.read("web-release.json")), {"tag": "v1", "revision": revision})
+            for entry in archive.infolist():
+                self.assertEqual(entry.date_time, time.gmtime(epoch - 1)[:6])
+                if entry.filename != "web-release.json":
+                    self.assertEqual(archive.read(entry), entry.filename.encode())
+
+    def test_invalid_reproducible_epoch_leaves_existing_assets_alone(self):
+        self.output.mkdir()
+        existing = self.output / "unrelated.txt"
+        existing.write_bytes(b"existing")
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "4294967296"}):
+            with self.assertRaisesRegex(ValueError, "SOURCE_DATE_EPOCH"):
+                package_release.package("linux", self.build, self.output, "v1")
+            with self.assertRaisesRegex(ValueError, "SOURCE_DATE_EPOCH"):
+                package_release.package_web(self.build, self.output, "v1", "a" * 40)
+        self.assertEqual(list(self.output.iterdir()), [existing])
+        self.assertEqual(existing.read_bytes(), b"existing")
 
 
 class DocumentationAssetsTests(unittest.TestCase):

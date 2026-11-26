@@ -1819,7 +1819,7 @@ int utf32ToProfiled(bool (*matches)(const void*), const uint32_t* utf32, const v
     return scalarToProfiled(matches, loadUnit<uint32_t, BigEndian>(&unit), profile, target, targetMax, targetSize);
 }
 
-template<typename Source, typename Decode>
+template<bool ReportRejectedCharacter = false, typename Source, typename Decode>
 int bufferToProfiled(bool (*matches)(const void*), const Source* source, uint32_t sourceMax, uint32_t* sourceLen, const void* profile, uint8_t* target, uint32_t targetMax, uint32_t* targetSize, Decode decode) {
     if (!matches(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
@@ -1827,8 +1827,16 @@ int bufferToProfiled(bool (*matches)(const void*), const Source* source, uint32_
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeGuestSource(source, sourceMax, length, code, decode); result != 0) return result;
-    if (const int result = encodeProfiled(profile, code, target, targetMax, targetSize); result != 0) return result;
+    const int decoded = decodeGuestSource(source, sourceMax, length, code, decode);
+    const int result = decoded == 0 ? encodeProfiled(profile, code, target, targetMax, targetSize) : decoded;
+    if (result != 0) {
+        if constexpr (ReportRejectedCharacter) {
+            if (result == CES_ERROR_ILLEGAL_CODE || result == CES_ERROR_UNASSIGNED_CODE) {
+                return rejected<uint8_t>(result, length, sourceLen, nullptr, targetSize);
+            }
+        }
+        return result;
+    }
     if (sourceLen && !CesGuest::Store(sourceLen, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
@@ -2536,6 +2544,21 @@ int APS5_VABI sceCesSJisToUcs2(const void* profile, const uint8_t* sjisBuffer, u
 }
 
 int APS5_VABI sceCesSJisToUtf8(const void* profile, const uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
+    if (!profile || (!sjisBuffer && isSjis(profile))) {
+        if (sjisSize && !CesGuest::Store(sjisSize, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        if (utf8Length && !CesGuest::Store(utf8Length, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return !profile ? CES_ERROR_INVALID_PROFILE : CES_ERROR_INVALID_SRC_BUFFER;
+    }
+    if (!utf8Buffer) {
+        uint8_t encoded[4];
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (decodeProfiled(isSjis, profile, sjisBuffer, sjisMax, encoded, length, code) == 0) {
+            if (sjisSize && !CesGuest::Store(sjisSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
+            if (utf8Length) CesGuest::Store(utf8Length, encodeUtf8(code, encoded));
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     return profiledToUtf8(isSjis, profile, sjisBuffer, sjisMax, sjisSize, utf8Buffer, utf8Max, utf8Length);
 }
 
@@ -2592,7 +2615,7 @@ int APS5_VABI sceCesUcs2ToSJis(uint16_t ucs2, const void* profile, uint8_t* sjis
 }
 
 int APS5_VABI sceCesUtf8ToSJis(const uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length, const void* profile, uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize) {
-    return bufferToProfiled(isSjis, utf8Buffer, utf8Max, utf8Length, profile, sjisBuffer, sjisMax, sjisSize, decodeScalarUtf8);
+    return bufferToProfiled<true>(isSjis, utf8Buffer, utf8Max, utf8Length, profile, sjisBuffer, sjisMax, sjisSize, decodeScalarUtf8);
 }
 
 int APS5_VABI sceCesUtf16ToSJis(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Length, const void* profile, uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize) {
@@ -2655,7 +2678,10 @@ int APS5_VABI sceCesSJisCodeToJisX0208(uint16_t sjisCode, uint8_t* ku, uint8_t* 
     if (!ku || !ten) return CES_ERROR_INVALID_DST_BUFFER;
     int row = 0;
     int cell = 0;
-    if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell) || row > 94) return CES_ERROR_INVALID_ENCODE;
+    if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell) || row > 94) {
+        if (!CesGuest::Store(ku, uint8_t{0}) || !CesGuest::Store(ten, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return sjisCode == 0x0020 ? CES_ERROR_UNSUPPORTED_CODE : CES_ERROR_INVALID_ENCODE;
+    }
     if (!CesGuest::Store(ku, static_cast<uint8_t>(row))) return CES_ERROR_INVALID_DST_BUFFER;
     if (!CesGuest::Store(ten, static_cast<uint8_t>(cell))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
@@ -2663,7 +2689,13 @@ int APS5_VABI sceCesSJisCodeToJisX0208(uint16_t sjisCode, uint8_t* ku, uint8_t* 
 
 int APS5_VABI sceCesJisX0208ToSJisCode(uint8_t ku, uint8_t ten, uint16_t* sjisCode) {
     if (!sjisCode) return CES_ERROR_INVALID_DST_BUFFER;
-    if (ku < 1 || ku > 94 || ten < 1 || ten > 94) return CES_ERROR_INVALID_ENCODE;
+    if (ku < 1 || ku > 94 || ten < 1 || ten > 94) {
+        const bool measuredZero = (ku == 0 && ten == 1) || (ku == 1 && (ten == 0 || ten == 95)) || (ku == 93 && ten == 95);
+        const bool measuredCode = ku == 95 && ten == 1;
+        if (!measuredZero && !measuredCode) return CES_ERROR_INVALID_ENCODE;
+        if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(measuredCode ? 0xF040 : 0))) return CES_ERROR_INVALID_DST_BUFFER;
+        return CES_ERROR_ILLEGAL_CODE;
+    }
     uint8_t lead = 0;
     uint8_t trail = 0;
     jisToSjis(ku, ten, lead, trail);

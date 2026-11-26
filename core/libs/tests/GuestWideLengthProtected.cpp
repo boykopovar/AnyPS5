@@ -17,13 +17,6 @@ static void Require(bool condition) {
     }
 }
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
-
 int main() {
     GuardedBuffer input;
     constexpr std::array<char16_t, 5> values = {0x100, 0xff00, 0xd800, 0xdc00, 0xffff};
