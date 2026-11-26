@@ -438,7 +438,8 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     Require(unrelatedStale, "depth plane epoch exit: proving the buffer build stored a plane outside the buffer");
     Require(unrelatedExit, "depth plane epoch exit: an unchanged buffer build did not take the epoch exit while only a plane outside the buffer was stale");
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
-    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    const bool stale = AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes);
+    Require(stale, "depth plane epoch exit: the draw over the buffer did not leave the buffer's plane stale");
     const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
     const bool proved = resources->Revalidate(shader);
     const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
@@ -451,6 +452,8 @@ bool EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
     DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, 0.5f, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), 0, std::nullopt, false);
     const bool kept = AgcDriver::Graphics::DepthSurfacesSerial() == surfacesBefore;
+    Require(kept, "depth plane epoch exit: the second draw over the buffer replaced its depth surface");
+    Require(AgcDriver::Graphics::DepthPlanesStaleOver(address, SliceBytes), "depth plane epoch exit: the second draw over the buffer did not leave the buffer's plane stale");
     const auto redrawBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
     const bool reproved = resources->Revalidate(shader);
     const bool reexited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != redrawBefore;
