@@ -10969,6 +10969,46 @@ void verifyUnnormalizedSamplers() {
     require(proven(pixelOffsetNormalized, false) && implicitMasks.size() == 1u && (implicitMasks[0] & (spv::ImageOperandsConstOffsetMask | spv::ImageOperandsOffsetMask)) != 0u, "unnormalized texel offsets: a normalized pixel image_sample_o is not an implicit-LOD sample with its offset");
 }
 
+void verifyAnisotropicUnnormalizedSampler() {
+    using namespace ShaderRecompiler;
+    ImageResource plane{};
+    plane.resourceClass = ImageResourceClass::Sampled;
+    plane.numericClass = IrTextureNumericClass::Float;
+    plane.dimension = RdnaImageDimension::Dim2D;
+    plane.read = true;
+    ImageResource volume = plane;
+    volume.dimension = RdnaImageDimension::Dim3D;
+    SamplerResource sampler{};
+    sampler.uses = SamplerUseExplicitLod | SamplerUseImplicitLod;
+    const DescriptorValue planeDescriptor{{0x00002000u, 0x03800000u, 0x0000c000u, 0x90000facu, 0u, 0u, 0u, 0u}, 8u};
+    const DescriptorValue volumeDescriptor{{0x00001000u, 0x03800000u, 0x0000c000u, 0xa0000facu, 3u, 0u, 0u, 0u}, 8u};
+    const DescriptorValue anisotropic{{0x00008892u, 0x00fff000u, 0x05f00000u, 0u}, 4u};
+    const DescriptorValue bilinear{{0x00008092u, 0x00fff000u, 0x05500000u, 0u}, 4u};
+    const auto populate = [&](const ImageResource& image, const DescriptorValue& imageDescriptor, const SamplerResource& use, const DescriptorValue& samplerDescriptor) {
+        ShaderInfo info;
+        info.images = {image};
+        info.samplers = {use};
+        info.sampledPairs.push_back({0u, 0u, 0u});
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        ResourceSnapshot snapshot;
+        snapshot.images = {imageDescriptor};
+        snapshot.samplers = {samplerDescriptor};
+        BindingAllocationResult allocation;
+        allocation.layout.descriptors.push_back({DescriptorBindingForImage(image), {0u}});
+        allocation.layout.descriptors.push_back({DescriptorBindingKind::Samplers, {0u}});
+        DescriptorBindingBuilder{}.Populate(allocation, info, IrShaderStage::Compute, 0u, snapshot, {});
+        return allocation;
+    };
+    const auto scaled = populate(plane, planeDescriptor, sampler, anisotropic);
+    require(scaled.bindings.back().samplerScaledUnnormalized == std::vector<bool>{true} && scaled.bindings.back().samplerUnnormalized == std::vector<bool>{false}, "unnormalized anisotropic samplers: a 2D image was not sampled through a scaled normalized sampler");
+    bool scaledSpecialized = false;
+    for (const auto& constant : scaled.specialization) scaledSpecialized |= constant.id == PipelineSpecialization::ScaleUnnormalizedBase && constant.value == 1u;
+    require(scaledSpecialized, "unnormalized anisotropic samplers: the shader does not scale the coordinates");
+    const auto direct = populate(plane, planeDescriptor, sampler, bilinear);
+    require(direct.bindings.back().samplerScaledUnnormalized == std::vector<bool>{false} && direct.bindings.back().samplerUnnormalized == std::vector<bool>{true}, "unnormalized samplers: a bilinear S# was scaled instead of sampled unnormalized");
+    expectFailure([&] { static_cast<void>(populate(volume, volumeDescriptor, sampler, anisotropic)); }, "samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized anisotropic samplers: a 3D T# was accepted");
+}
+
 void verifyNullVolumeUnnormalizedSampler() {
     using namespace ShaderRecompiler;
     ImageResource volume{};
@@ -13851,6 +13891,7 @@ int main(int argc, char** argv) {
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();
+    verifyAnisotropicUnnormalizedSampler();
         verifyDsSwizzleFftMode();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();

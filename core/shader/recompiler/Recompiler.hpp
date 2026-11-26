@@ -732,6 +732,7 @@ struct DescriptorBinding {
     ElementFlags samplerUnnormalized;
     ElementFlags samplerIntegerBorder;
     ElementFlags samplerCoordinatesIgnored;
+    ElementFlags samplerScaledUnnormalized;
     ElementFlags imageUnnormalized;
     ElementFlags imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;

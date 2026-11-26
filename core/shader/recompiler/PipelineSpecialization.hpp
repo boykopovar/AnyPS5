@@ -63,6 +63,7 @@ inline constexpr std::uint32_t GatherImageMinLodBase = 57920u;
 inline constexpr std::uint32_t FmaskFormatBase = 58048u;
 inline constexpr std::uint32_t VolumeGatherBase = 58176u;
 inline constexpr std::uint32_t GatherImageShapeBase = 58432u;
+inline constexpr std::uint32_t ScaleUnnormalizedBase = 58560u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;

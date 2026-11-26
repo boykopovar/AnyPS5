@@ -3350,7 +3350,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
             hash.bytes(binding.guestDescriptor.data(), binding.guestDescriptor.size() * sizeof(std::uint32_t));
             hash.bytes(binding.imageSamplers.data(), binding.imageSamplers.size() * sizeof(binding.imageSamplers[0]));
             hash.bytes(binding.imageShapes.data(), binding.imageShapes.size() * sizeof(binding.imageShapes[0]));
-            for (const auto* set : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) hash.bits(*set);
+            for (const auto* set : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.samplerScaledUnnormalized, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) hash.bits(*set);
             const auto first = hash.a();
             const auto second = hash.b();
             for (const auto word : {0xc0de7ab1u, static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u)}) visit(word);
@@ -3380,6 +3380,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         packBits(binding.samplerUnnormalized);
         packBits(binding.samplerIntegerBorder);
         packBits(binding.samplerCoordinatesIgnored);
+        packBits(binding.samplerScaledUnnormalized);
         packBits(binding.imageUnnormalized);
         packBits(binding.imageUnnormalizedBaseLevel);
         // Read-only elements are bound without a write set: an object built for one written set
@@ -3409,13 +3410,13 @@ void ShaderResources::AppendContentKey(const CompiledShader& shader, bool dataWo
         words += count;
     };
     for (const auto& binding : shader.program->bindings) {
-        addWords(20);
+        addWords(21);
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable && binding.guestDescriptor.size() > CompactTableKeyWords) continue;
         addWords(binding.imageSamplers.size() * 2u);
         addWords(binding.imageShapes.size());
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap && binding.guestDescriptor.size() > CompactTableKeyWords) addWords(5);
         else if ((dataWords && !movableBuffers) || !DataRole(binding.role)) addWords(binding.guestDescriptor.size());
-        for (const auto* bits : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) addWords(bits->size() / 32u + (bits->size() % 32u != 0 ? 1u : 0u));
+        for (const auto* bits : {&binding.imageWritten, &binding.samplerDepthCompare, &binding.imageDepthCompare, &binding.imageAtomic, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored, &binding.samplerScaledUnnormalized, &binding.imageUnnormalized, &binding.imageUnnormalizedBaseLevel, &binding.bufferWritten}) addWords(bits->size() / 32u + (bits->size() % 32u != 0 ? 1u : 0u));
     }
     key.reserve(words);
     VisitContentKey(shader, dataWords, movableBuffers, [&](std::uint32_t word) { key.push_back(word); });
@@ -5920,6 +5921,15 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
             if (element < binding.samplerCoordinatesIgnored.size() && binding.samplerCoordinatesIgnored[element]) {
                 std::copy(guestWords.begin(), guestWords.end(), normalizedWords.begin());
                 normalizedWords[0] &= ~(1u << 15u);
+                guestWords = normalizedWords;
+            }
+            if (element < binding.samplerScaledUnnormalized.size() && binding.samplerScaledUnnormalized[element]) {
+                std::copy(guestWords.begin(), guestWords.end(), normalizedWords.begin());
+                normalizedWords[0] &= ~(1u << 15u);
+                const auto edgeOrBorder = [](std::uint32_t clamp) { return clamp >= 6u ? 6u : 2u; };
+                normalizedWords[0] = (normalizedWords[0] & ~0x3fu) | edgeOrBorder(normalizedWords[0] & 7u) | (edgeOrBorder((normalizedWords[0] >> 3u) & 7u) << 3u);
+                normalizedWords[1] &= ~0xffffffu;
+                normalizedWords[2] = (normalizedWords[2] & ~(3u << 22u)) | (((normalizedWords[2] >> 20u) & 3u) << 22u);
                 guestWords = normalizedWords;
             }
             const auto words = guestWords;

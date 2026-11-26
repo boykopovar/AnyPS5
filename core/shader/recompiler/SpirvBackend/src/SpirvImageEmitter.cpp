@@ -584,6 +584,37 @@ bool MirrorsSampleIfUnnormalized(SpirvValueEmitContext& ctx, const ImageEmitAcce
     return !setup.dref && !access.image.cube && (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim2D) && MirrorsIfUnnormalized(ctx.state.program.Info().samplers.at(access.mem.sampler));
 }
 
+bool ScalesSampleIfUnnormalized(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    const auto dimension = access.image.dimension;
+    return !setup.dref && !access.image.cube && (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim2D) && ScalesIfUnnormalized(ctx.state.program.Info().samplers.at(access.mem.sampler));
+}
+
+std::uint32_t ScaledUnnormalizedCoord(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, std::uint32_t coord) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto components = setup.dimensionInfo.spatialComponents;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, access.image.dimension), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    std::array<std::uint32_t, 2> values{};
+    for (std::uint32_t index = 0; index < components; ++index) {
+        auto x = coord;
+        auto extent = size;
+        if (components != 1u) {
+            x = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, f32, x, coord, index);
+            extent = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, index);
+        }
+        values[index] = Binary(state, spv::OpFDiv, f32, x, Unary(state, spv::OpConvertUToF, f32, extent));
+    }
+    if (components == 1u) return values[0];
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, values[0], values[1]);
+    return result;
+}
+
 std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const SampleSetup& setup, std::uint32_t coord, std::uint32_t axes) {
     auto& state = ctx.state;
     const auto f32 = TypeF32(state);
@@ -2208,7 +2239,8 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         return sample;
     };
     const bool mirrors = MirrorsSampleIfUnnormalized(ctx, access, setup);
-    const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+    const bool scales = ScalesSampleIfUnnormalized(ctx, access, setup);
+    const auto emitMirroredSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
         if (!mirrors) return emitDirectSample(coord, mask, arguments, sampleOpcode);
         const auto axes = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u);
         const auto mirrored = Binary(state, spv::OpINotEqual, TypeBool(state), axes, ConstantU32(state, 0u));
@@ -2216,6 +2248,18 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             return emitDirectSample(MirroredUnnormalizedCoord(ctx, setup, coord, axes), mask, arguments, sampleOpcode);
         }, [&] {
             return emitDirectSample(coord, mask, arguments, sampleOpcode);
+        });
+    };
+    const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+        if (!scales) return emitMirroredSample(coord, mask, arguments, sampleOpcode);
+        const auto scaled = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ScaleUnnormalizedBase + mem.sampler, 0u);
+        const auto selected = Binary(state, spv::OpINotEqual, TypeBool(state), scaled, ConstantU32(state, 0u));
+        return EmitValueIfElse(state, selected, resultType, [&] {
+            auto folded = coord;
+            if (mirrors) folded = MirroredUnnormalizedCoord(ctx, setup, coord, state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u));
+            return emitDirectSample(ScaledUnnormalizedCoord(ctx, access, setup, folded), mask, arguments, sampleOpcode);
+        }, [&] {
+            return emitMirroredSample(coord, mask, arguments, sampleOpcode);
         });
     };
     const auto emitBiasedSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {

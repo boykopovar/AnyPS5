@@ -2035,7 +2035,7 @@ std::uint64_t vectorBytes(const ElementFlags& values) {
 }
 
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
-    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead) + vectorBytes(binding.imageOverwrites);
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.samplerScaledUnnormalized) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead) + vectorBytes(binding.imageOverwrites);
 }
 
 std::uint64_t resultBytes(const RecompileResult& result) {

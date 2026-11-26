@@ -175,6 +175,10 @@ inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
     return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
 }
 
+inline bool ScalesIfUnnormalized(const SamplerResource& sampler) {
+    return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u;
+}
+
 inline bool AppliesLodBiasInShader(const SamplerResource& sampler) {
     return sampler.table == NoTable && (sampler.uses & (SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient)) != 0u;
 }
