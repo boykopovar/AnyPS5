@@ -417,9 +417,11 @@ FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontSt
 }
 
 const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontString fontString, FontTextCharacter* startCharacter, FontTextCharacter* lastCharacter, std::uint32_t* characterCount) {
-    const auto none = [characterCount]() -> const FontTextCharacter* {
+    const int savedErrno = errno;
+    const auto none = [characterCount, savedErrno]() -> const FontTextCharacter* {
         const std::uint32_t zero = 0;
         GuestCopyOut_nid_no_patch(characterCount, &zero, sizeof(zero));
+        errno = savedErrno;
         return nullptr;
     };
     auto* data = GetStringData(fontString);
@@ -432,116 +434,162 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
     }
     const FontTextCharacter* begin = characters;
     const FontTextCharacter* end = characters + data->renderCount;
+    const auto inRangeAligned = [begin, end](const FontTextCharacter* ptr) {
+        if (ptr < begin || ptr >= end) return false;
+        const auto offset = reinterpret_cast<std::uintptr_t>(ptr) - reinterpret_cast<std::uintptr_t>(begin);
+        return (offset % sizeof(FontTextCharacter)) == 0;
+    };
+    const auto readCharacter = [&](const FontTextCharacter* ptr, FontTextCharacter& out) {
+        const bool ok = ptr && inRangeAligned(ptr) && Font::CopyInGuest(out, ptr);
+        errno = savedErrno;
+        return ok;
+    };
     if (!startCharacter) startCharacter = characters;
-    if (startCharacter < begin || startCharacter >= end || (lastCharacter && (lastCharacter < begin || lastCharacter >= end))) {
+    FontTextCharacter startCopy{};
+    if (!readCharacter(startCharacter, startCopy)) {
+        return none();
+    }
+    FontTextCharacter lastCopy{};
+    if (lastCharacter && !readCharacter(lastCharacter, lastCopy)) {
         return none();
     }
     FontTextCharacter* probe = startCharacter;
-    if (startCharacter->clusterKind > 1) {
+    FontTextCharacter probeCopy = startCopy;
+    if (startCopy.clusterKind > 1) {
+        std::uint32_t steps = 0;
         do {
             startCharacter = probe;
-            probe = startCharacter->prev;
+            startCopy = probeCopy;
+            probe = startCopy.prev;
             if (!probe) break;
-        } while (probe->synthetic < 0);
+            if (++steps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
+        } while (probeCopy.synthetic < 0);
     }
-    auto startFlags = static_cast<std::uint32_t>(startCharacter->flags);
+    auto startFlags = static_cast<std::uint32_t>(startCopy.flags);
     const std::uint32_t paragraphLevel = (data->writingForm >> 8) & 1u;
-    if ((startFlags & 0xFF00u) == 0x100u && startCharacter->prev) {
-        if (startCharacter->prev->clusterKind == 1) startCharacter = startCharacter->prev;
-        startFlags = static_cast<std::uint32_t>(startCharacter->flags);
+    if ((startFlags & 0xFF00u) == 0x100u && startCopy.prev) {
+        FontTextCharacter prevCopy{};
+        if (!readCharacter(startCopy.prev, prevCopy)) return none();
+        if (prevCopy.clusterKind == 1) {
+            startCharacter = startCopy.prev;
+            startCopy = prevCopy;
+        }
+        startFlags = static_cast<std::uint32_t>(startCopy.flags);
     }
     std::uint32_t startLevel = startFlags >> 24;
     std::uint32_t lastLevel = startLevel;
     std::uint32_t minLevel = startLevel;
-    std::uint32_t count = startCharacter->clusterIndex == 0 ? 1u : 0u;
+    std::uint32_t count = startCopy.clusterIndex == 0 ? 1u : 0u;
     probe = startCharacter;
+    probeCopy = startCopy;
+    std::uint32_t forwardSteps = 0;
     while (probe != lastCharacter) {
-        probe = probe->next;
+        probe = probeCopy.next;
         if (!probe) {
             if (lastCharacter) {
                 return none();
             }
             break;
         }
-        if (probe->clusterIndex == 0) {
-            lastLevel = LevelOf(probe);
+        if (++forwardSteps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
+        if (probeCopy.clusterIndex == 0) {
+            lastLevel = LevelOf(&probeCopy);
             if (lastLevel < minLevel && ((lastLevel ^ paragraphLevel) & 1u) == 0) minLevel = lastLevel;
             ++count;
         }
     }
     if (startLevel != lastLevel || startLevel != minLevel) {
-        probe = startCharacter->prev;
+        probe = startCopy.prev;
+        std::uint32_t backSteps = 0;
         while (probe) {
-            if (probe->clusterIndex == 0) {
-                if (LevelOf(probe) <= minLevel) break;
+            if (++backSteps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
+            if (probeCopy.clusterIndex == 0) {
+                if (LevelOf(&probeCopy) <= minLevel) break;
                 ++count;
             }
             startCharacter = probe;
-            probe = probe->prev;
+            startCopy = probeCopy;
+            probe = probeCopy.prev;
         }
         if (lastCharacter) {
-            probe = lastCharacter->next;
+            if (!readCharacter(lastCharacter, lastCopy)) return none();
+            probe = lastCopy.next;
+            std::uint32_t tailSteps = 0;
             while (probe) {
-                if (probe->clusterIndex == 0) {
-                    if (LevelOf(probe) <= minLevel) break;
+                if (++tailSteps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
+                if (probeCopy.clusterIndex == 0) {
+                    if (LevelOf(&probeCopy) <= minLevel) break;
                     ++count;
                     lastCharacter = probe;
+                    lastCopy = probeCopy;
                 }
-                probe = probe->next;
+                probe = probeCopy.next;
             }
         }
     }
     if (lastCharacter) {
-        probe = lastCharacter->next;
+        if (!readCharacter(lastCharacter, lastCopy)) return none();
+        probe = lastCopy.next;
         std::uint32_t clusterTrim = 0;
+        std::uint32_t trimSteps = 0;
         while (probe) {
+            if (++trimSteps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
             std::uint32_t nextTrim = clusterTrim;
-            if (probe->clusterIndex == 0) {
-                if (probe->synthetic == 0) break;
+            if (probeCopy.clusterIndex == 0) {
+                if (probeCopy.synthetic == 0) break;
                 nextTrim = 0;
                 FontTextCharacter* nextLast = probe;
-                if (probe->synthetic < 1) {
-                    if (probe->clusterKind == 1) break;
+                if (probeCopy.synthetic < 1) {
+                    if (probeCopy.clusterKind == 1) break;
                     nextTrim = clusterTrim + 1;
                     nextLast = lastCharacter;
                 }
                 lastCharacter = nextLast;
                 ++count;
             }
-            probe = probe->next;
+            probe = probeCopy.next;
             count -= nextTrim;
             clusterTrim = nextTrim;
         }
     }
-    startLevel = LevelOf(startCharacter);
+    startLevel = LevelOf(&startCopy);
     if (startLevel != paragraphLevel) {
         probe = startCharacter;
-        if (!lastCharacter || LevelOf(lastCharacter) != startLevel) {
+        probeCopy = startCopy;
+        if (!lastCharacter || !readCharacter(lastCharacter, lastCopy) || LevelOf(&lastCopy) != startLevel) {
+            std::uint32_t runSteps = 0;
             do {
-                probe = probe->next;
+                probe = probeCopy.next;
                 if (!probe) {
                     if (lastCharacter) startCharacter = nullptr;
                     break;
                 }
+                if (++runSteps > data->renderCount || !readCharacter(probe, probeCopy)) return none();
                 FontTextCharacter* best = startCharacter;
+                FontTextCharacter bestCopy = startCopy;
                 std::uint32_t bestLevel = startLevel;
-                if (probe->clusterIndex == 0) {
-                    const std::uint32_t probeLevel = LevelOf(probe);
+                if (probeCopy.clusterIndex == 0) {
+                    const std::uint32_t probeLevel = LevelOf(&probeCopy);
                     if (probeLevel <= paragraphLevel) break;
                     if ((startLevel & 1u) == paragraphLevel && probeLevel < startLevel && (probeLevel & 1u) != paragraphLevel) {
                         best = probe;
+                        bestCopy = probeCopy;
                         bestLevel = probeLevel;
                     }
                 }
                 startLevel = bestLevel;
                 startCharacter = best;
+                startCopy = bestCopy;
             } while (probe != lastCharacter);
-        } else if ((LevelOf(startCharacter) & 1u) != paragraphLevel) {
+        } else if ((LevelOf(&startCopy) & 1u) != paragraphLevel) {
             startCharacter = lastCharacter;
+            startCopy = lastCopy;
         }
     }
     if (!startCharacter) count = 0;
-    if (!GuestCopyOut_nid_no_patch(characterCount, &count, sizeof(count))) return nullptr;
+    const bool wroteCount = GuestCopyOut_nid_no_patch(characterCount, &count, sizeof(count));
+    errno = savedErrno;
+    if (!wroteCount) return nullptr;
     return startCharacter;
 }
 
@@ -562,24 +610,35 @@ int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* te
 }
 
 int APS5_VABI sceFontCharacterGetTextFontCode(const FontTextCharacter* textCharacter, FontHandle* pFontHandle, std::uint32_t* textCode) {
-    if (!textCharacter) {
+    const int savedErrno = errno;
+    FontTextCharacter local{};
+    if (!textCharacter || !Font::CopyInGuest(local, textCharacter)) {
         if (pFontHandle) Font::CopyOutGuest(pFontHandle, FontHandle{});
         if (textCode) Font::CopyOutGuest(textCode, std::uint32_t{0});
+        errno = savedErrno;
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    if (!pFontHandle || !textCode) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!Font::CopyOutGuest(pFontHandle, textCharacter->font) || !Font::CopyOutGuest(textCode, textCharacter->characterCode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    return SCE_FONT_OK;
+    if (!pFontHandle || !textCode) {
+        errno = savedErrno;
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    const bool ok = Font::CopyOutGuest(pFontHandle, local.font) && Font::CopyOutGuest(textCode, local.characterCode);
+    errno = savedErrno;
+    return ok ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
 int APS5_VABI sceFontCharacterGetTextOrder(const FontTextCharacter* textCharacter, void** pTextOrder) {
     if (!pTextOrder) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!textCharacter) {
+    const int savedErrno = errno;
+    FontTextCharacter local{};
+    if (!textCharacter || !Font::CopyInGuest(local, textCharacter)) {
         Font::CopyOutGuest(pTextOrder, static_cast<void*>(nullptr));
+        errno = savedErrno;
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    if (!Font::CopyOutGuest(pTextOrder, textCharacter->textOrder)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    return SCE_FONT_OK;
+    const bool ok = Font::CopyOutGuest(pTextOrder, local.textOrder);
+    errno = savedErrno;
+    return ok ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
 std::uint32_t APS5_VABI sceFontCharacterLooksFormatCharacters(const FontTextCharacter* textCharacter) {

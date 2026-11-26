@@ -1322,6 +1322,14 @@ int main() {
     errno = 71;
     Require(sceFontCharacterGetSyllableStringState(&character, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(errno == 71);
+    FontHandle outHandle = reinterpret_cast<FontHandle>(0x1234);
+    std::uint32_t outCode = 0x5678;
+    void* outOrder = reinterpret_cast<void*>(0x9abc);
+    errno = 71;
+    Require(sceFontCharacterGetTextFontCode(reinterpret_cast<const FontTextCharacter*>(0x10), &outHandle, &outCode) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(outHandle == nullptr && outCode == 0 && errno == 71);
+    Require(sceFontCharacterGetTextOrder(reinterpret_cast<const FontTextCharacter*>(0x10), &outOrder) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(outOrder == nullptr && errno == 71);
 
     const auto* glyphs0 = sceFontSelectGlyphsFt(0);
     Require(glyphs0 != nullptr);

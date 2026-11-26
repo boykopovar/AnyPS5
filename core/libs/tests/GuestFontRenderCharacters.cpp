@@ -114,6 +114,22 @@ int main() {
         count = 77;
         Require(sceFontStringRefersRenderCharacters(string, &characters[0], outside, &count) == nullptr && count == 0);
     }
+    auto* const misaligned = reinterpret_cast<FontTextCharacter*>(reinterpret_cast<std::uintptr_t>(characters) + 1);
+    count = 77;
+    errno = 88;
+    Require(sceFontStringRefersRenderCharacters(string, misaligned, nullptr, &count) == nullptr && count == 0 && errno == 88);
+    count = 77;
+    Require(sceFontStringRefersRenderCharacters(string, &characters[0], misaligned, &count) == nullptr && count == 0 && errno == 88);
+
+    Codes bidi{{'a', 0x05D0u, '1', 0x05D1u}, font};
+    FontString bidiString = Create(&memory, bidi);
+    std::uint32_t bidiTotal = 0;
+    FontTextCharacter* bidiChars = sceFontStringRefersTextCharacters(bidiString, &bidiTotal);
+    Require(bidiChars != nullptr && bidiTotal == 4);
+    count = 77;
+    Require(sceFontStringRefersRenderCharacters(bidiString, &bidiChars[2], &bidiChars[3], &count) == &bidiChars[3] && count == 2);
+    Require(sceFontDestroyString(&bidiString) == SCE_FONT_OK);
+
     Require(sceFontDestroyString(&string) == SCE_FONT_OK);
     Require(sceFontDestroyString(&emptyString) == SCE_FONT_OK);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
