@@ -106,11 +106,13 @@ def markdown(result):
     lines += ["", "| thread | A busy ms/frame | B busy ms/frame | delta busy | A wait ms/frame | B wait ms/frame | delta wait |",
               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in result["threads"]:
-        lines.append(f"| {row['thread']} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
+        name = trace_digest.table_cell(row["thread"])
+        lines.append(f"| {name} | {row['a_busy_ms_per_frame']:.3f} | {row['b_busy_ms_per_frame']:.3f} | {row['busy_delta_ms_per_frame']:+.3f} | "
                      f"{row['a_wait_ms_per_frame']:.3f} | {row['b_wait_ms_per_frame']:.3f} | {row['wait_delta_ms_per_frame']:+.3f} |")
     lines += ["", "| slice | A ms/frame | B ms/frame | delta |", "| --- | ---: | ---: | ---: |"]
     for row in result["slices"]:
-        lines.append(f"| {row['name']} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
+        name = trace_digest.table_cell(row["name"])
+        lines.append(f"| {name} | {row['a_ms_per_frame']:.3f} | {row['b_ms_per_frame']:.3f} | {row['delta_ms_per_frame']:+.3f} |")
     return "\n".join(lines) + "\n"
 
 
