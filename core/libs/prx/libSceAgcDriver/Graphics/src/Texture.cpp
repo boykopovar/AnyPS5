@@ -1401,7 +1401,7 @@ bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResour
     // Same memory, same layout, same texel size: the GPU copy reinterprets the texels exactly as a
     // guest read through the sampled descriptor would.
     if (IsRepackedTextureFormat(descriptor.format)) return false;
-    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && descriptor.linearPitch == from.linearPitch && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
+    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && descriptor.linearPitch == from.linearPitch && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format) && source.AllowsSampledFormat(descriptor.format);
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components) : context(context), storageSource(source) {
@@ -1697,20 +1697,24 @@ VkImageCreateFlags StorageImageFlags(const GuestTextureResource& descriptor) {
     return (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT : 0u) | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
 }
 
-VkImageUsageFlags StorageImageUsage(const Context& context, VkFormat format) {
+VkImageUsageFlags StorageImageUsage(const Context& context, VkFormat format, TextureDimension dimension) {
     VkFormatProperties properties{};
     context.formatProperties(context.physical, format, &properties);
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if ((dimension == TextureDimension::k2D || dimension == TextureDimension::k3D || dimension == TextureDimension::k2DArray) && (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     return usage;
 }
 
-bool StorageImageFits(const Context& context, VkFormat format, const GuestTextureResource& descriptor) {
+bool StorageImageFitsWithUsage(const Context& context, VkFormat format, const GuestTextureResource& descriptor, VkImageUsageFlags usage) {
     if (context.imageFormatProperties == nullptr) return false;
     const auto geometry = DescribeSurface(descriptor);
     VkImageFormatProperties properties{};
-    const auto result = context.imageFormatProperties(context.physical, format, ImageTypeFor(descriptor.dimension), VK_IMAGE_TILING_OPTIMAL, StorageImageUsage(context, format), StorageImageFlags(descriptor), &properties);
+    const auto result = context.imageFormatProperties(context.physical, format, ImageTypeFor(descriptor.dimension), VK_IMAGE_TILING_OPTIMAL, usage, StorageImageFlags(descriptor), &properties);
     return result == VK_SUCCESS && properties.maxExtent.width >= descriptor.width && properties.maxExtent.height >= descriptor.height && properties.maxExtent.depth >= geometry.imageDepth && properties.maxMipLevels >= descriptor.mipCount && properties.maxArrayLayers >= geometry.imageLayers;
+}
+
+bool StorageImageFits(const Context& context, VkFormat format, const GuestTextureResource& descriptor) {
+    return StorageImageFitsWithUsage(context, format, descriptor, StorageImageUsage(context, format, descriptor.dimension));
 }
 
 }
@@ -1835,7 +1839,7 @@ std::shared_ptr<StorageTexture> StorageTexture::CreateRaw16Depth(const Context& 
     const auto backing = typedStorage ? typed : VK_FORMAT_R16_UINT;
     Require(StorageFormatOrUndefined(context, VK_FORMAT_R16_UINT) == VK_FORMAT_R16_UINT, "raw depth storage needs R16_UINT storage support");
     Require(StorageImageFits(context, backing, descriptor), "raw depth storage backing is not usable for this image");
-    Require(StorageImageFits(context, VK_FORMAT_R16_UINT, descriptor), "raw depth storage has no usable R16_UINT view");
+    Require(backing == VK_FORMAT_R16_UINT || StorageImageFitsWithUsage(context, VK_FORMAT_R16_UINT, descriptor, VK_IMAGE_USAGE_STORAGE_BIT), "raw depth storage has no usable R16_UINT view");
     return CreateWithStorageFormat(context, detiler, descriptor, mipLevel, backing, typedStorage ? typed : VK_FORMAT_UNDEFINED, VK_FORMAT_R16_UINT);
 }
 
@@ -1948,8 +1952,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         addStorageViewFormat(rawUINTViewFormat);
         VkImageFormatListCreateInfo formatList{VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
         if (rawUINTViewFormat != VK_FORMAT_UNDEFINED && storageViewFormatCount > 1 && context.imageFormatList) {
-            formatList.viewFormatCount = storageViewFormatCount;
-            formatList.pViewFormats = storageViewFormats.data();
+            allowedViewFormats = storageViewFormats;
+            allowedViewFormatCount = storageViewFormatCount;
+            formatList.viewFormatCount = allowedViewFormatCount;
+            formatList.pViewFormats = allowedViewFormats.data();
             imageInfo.pNext = &formatList;
         }
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
@@ -1960,6 +1966,26 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
     } catch (...) {
         release();
         throw;
+    }
+}
+
+bool StorageTexture::AllowsViewFormat(VkFormat format) const {
+    if (allowedViewFormatCount == 0) return true;
+    for (std::uint32_t index = 0; index < allowedViewFormatCount; ++index) {
+        if (allowedViewFormats[index] == format) return true;
+    }
+    return false;
+}
+
+bool StorageTexture::AllowsSampledFormat(std::uint32_t guestFormat) const {
+    if (allowedViewFormatCount == 0) return true;
+    try {
+        const auto vkFormat = SampledTextureFormat(context, guestFormat);
+        if (!AllowsViewFormat(vkFormat)) return false;
+        const auto srgb = SrgbTwinFormat(context, vkFormat);
+        return srgb == VK_FORMAT_UNDEFINED || AllowsViewFormat(srgb);
+    } catch (const std::exception&) {
+        return false;
     }
 }
 

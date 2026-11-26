@@ -373,7 +373,7 @@ void TextureDetiler::DispatchDepthConvert(VkCommandBuffer commands, VkBuffer sou
     const std::uint32_t destinationWordsPerRow = destinationRowPitchBytes / 4u;
     const std::uint32_t mode = (toDepth ? 0u : 2u) + (depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ? 1u : 0u);
     if (depthConvertPipeline == VK_NULL_HANDLE) {
-        depthConvertModule = CreateShaderModule(context, DEPTH_CONVERT_SPV, sizeof(DEPTH_CONVERT_SPV), "vkCreateShaderModule depth convert");
+        if (depthConvertModule == VK_NULL_HANDLE) depthConvertModule = CreateShaderModule(context, DEPTH_CONVERT_SPV, sizeof(DEPTH_CONVERT_SPV), "vkCreateShaderModule depth convert");
         VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         stage.module = depthConvertModule;
@@ -392,8 +392,8 @@ void TextureDetiler::DispatchDepthConvert(VkCommandBuffer commands, VkBuffer sou
     const auto sourceBase = (sourceOffset - sourceDescriptorOffset) / 4u;
     const auto destinationBase = (destinationOffset - destinationDescriptorOffset) / 4u;
     Require(sourceBase <= UINT32_MAX && destinationBase <= UINT32_MAX, "a depth conversion buffer offset exceeds the addressable range");
-    const auto sourceRange = sourceBase * 4u + static_cast<std::uint64_t>(rows) * sourceRowPitchBytes;
-    const auto destinationRange = destinationBase * 4u + static_cast<std::uint64_t>(rows) * destinationRowPitchBytes;
+    const auto sourceRange = sourceBase * 4u + static_cast<std::uint64_t>(rows - 1u) * sourceRowPitchBytes + static_cast<std::uint64_t>(sourceWordsInRow) * 4u;
+    const auto destinationRange = destinationBase * 4u + static_cast<std::uint64_t>(rows - 1u) * destinationRowPitchBytes + static_cast<std::uint64_t>(destinationWordsInRow) * 4u;
     Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "a depth conversion exceeds the device's storage buffer range");
     const std::uint32_t groupsX = (pairCount + 7u) / 8u;
     const std::uint32_t groupsY = (rows + 7u) / 8u;
@@ -412,6 +412,12 @@ void TextureDetiler::DispatchDepthConvert(VkCommandBuffer commands, VkBuffer sou
         writes[index].pBufferInfo = index == 0 ? &sourceInfo : index == 1 ? &destinationInfo : &faultInfo;
     }
     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    registerValidation([fault] {
+        fault->Invalidate();
+        std::uint32_t failed = 0;
+        std::memcpy(&failed, fault->Bytes().data(), sizeof(failed));
+        if (failed != 0) throw std::runtime_error("AGC graphics: a nonfinite D32 depth value cannot be converted to D16");
+    });
     context.BindComputePipeline(commands, depthConvertPipeline);
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, depthConvertPipelineLayout, 0, 1, &set, 0, nullptr);
     const std::array<std::uint32_t, 8> push{static_cast<std::uint32_t>(sourceBase), static_cast<std::uint32_t>(destinationBase), pairCount, rows, sourceWordsPerRow, destinationWordsPerRow, width, mode};
@@ -419,14 +425,6 @@ void TextureDetiler::DispatchDepthConvert(VkCommandBuffer commands, VkBuffer sou
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-    if (registerValidation) {
-        registerValidation([fault] {
-            fault->Invalidate();
-            std::uint32_t failed = 0;
-            std::memcpy(&failed, fault->Bytes().data(), sizeof(failed));
-            if (failed != 0) throw std::runtime_error("AGC graphics: a nonfinite D32 depth value cannot be converted to D16");
-        });
-    }
 }
 
 std::uint32_t TextureDetiler::CmaskErrors() {

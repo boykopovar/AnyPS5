@@ -5536,7 +5536,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             Check(result, fenceless ? "vkWaitSemaphoresKHR recorder" : "vkWaitForFences recorder");
         }
     }
-    if (!publishActions) {
+    if (!publishActions || validationFailure != nullptr) {
         batch->validations.clear();
         batch->completions.clear();
         batch->kept.clear();

@@ -598,6 +598,8 @@ public:
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
     VkFormat ImageFormat() const { return imageFormat; }
+    bool AllowsViewFormat(VkFormat format) const;
+    bool AllowsSampledFormat(std::uint32_t guestFormat) const;
     // Content version: advances when the image is re-uploaded or a shader wrote it. Together with
     // Generation (the write generation guest memory was last known to match the content at) it
     // validates textures copied from this image.
@@ -998,6 +1000,8 @@ private:
     VkFormat imageFormat = VK_FORMAT_UNDEFINED;
     VkFormat guestTypedStorageViewFormat = VK_FORMAT_UNDEFINED;
     VkFormat rawUINTViewFormat = VK_FORMAT_UNDEFINED;
+    std::array<VkFormat, 3> allowedViewFormats{};
+    std::uint32_t allowedViewFormatCount = 0;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;

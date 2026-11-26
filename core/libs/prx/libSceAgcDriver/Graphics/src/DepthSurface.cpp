@@ -2857,22 +2857,20 @@ public:
         const auto allocatedStagingBytes = stagingBaseBytes + (hasFallback ? static_cast<std::size_t>(paddedSliceBytes * requested) : 0u);
         std::vector<std::shared_ptr<Buffer>> uploads;
         std::vector<std::uint32_t> uploadLayers;
+        std::vector<GuestLayer> uploadGuest;
         std::vector<std::uint32_t> copiedLayers;
         for (std::uint32_t layer = 0; layer < requested; ++layer) {
             auto& held = guestLayers[layer];
-            auto& surface = surfaceLayers[layer];
+            const auto& surface = surfaceLayers[layer];
             if (slices[layer].image != VK_NULL_HANDLE) {
-                held = {};
                 if (slices[layer].written != 0 && surface.image == slices[layer].image && surface.written == slices[layer].written && surface.hostFormat == slices[layer].hostFormat && surface.convert == slices[layer].convert) continue;
-                surface = slices[layer];
                 copiedLayers.push_back(layer);
                 continue;
             }
-            surface = {};
             GuestLayer current{resource.baseAddress + geometry.GuestLayerOffset(layer), geometry.layerBytes, resource.tileMode, resource.pipeBankXor, geometry.thick, GuestMemory::CollectWrites(resource.baseAddress + geometry.GuestLayerOffset(layer), static_cast<std::size_t>(geometry.layerBytes))};
             current.uncommitted = current.generation == 0 && GuestMemory::CommittedRanges(current.address, static_cast<std::size_t>(current.bytes)).empty();
             const bool unchanged = current.uncommitted ? held.uncommitted : held.generation != 0 && GuestMemory::UnchangedSince(current.address, static_cast<std::size_t>(current.bytes), held.generation);
-            if (held.address == current.address && held.bytes == current.bytes && held.tileMode == current.tileMode && held.pipeBankXor == current.pipeBankXor && held.thick == current.thick && !Recorder::SnapshotWriteOverlaps(current.address, static_cast<std::size_t>(current.bytes)) && unchanged) {
+            if (surface.image == VK_NULL_HANDLE && held.address == current.address && held.bytes == current.bytes && held.tileMode == current.tileMode && held.pipeBankXor == current.pipeBankXor && held.thick == current.thick && !Recorder::SnapshotWriteOverlaps(current.address, static_cast<std::size_t>(current.bytes)) && unchanged) {
                 held.generation = current.generation;
                 continue;
             }
@@ -2880,14 +2878,35 @@ public:
             GuestMemory::ReadCommitted(current.address, upload->Bytes().first(static_cast<std::size_t>(geometry.layerBytes)));
             uploads.push_back(std::move(upload));
             uploadLayers.push_back(layer);
-            held = current;
+            uploadGuest.push_back(current);
         }
         if (!copiedLayers.empty() || !uploads.empty()) {
             if (staging != nullptr && allocatedStagingBytes > staging->Size()) {
                 if (auto* current = RecorderFor(context)) current->Keep(staging, staging->Size());
             }
             if (staging == nullptr || allocatedStagingBytes > staging->Size()) staging = std::make_shared<DeviceBuffer>(context, allocatedStagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            record(slices, resource, geometry, copiedLayers, uploads, uploadLayers, staging, stagingLayerStride);
+            try {
+                record(slices, resource, geometry, copiedLayers, uploads, uploadLayers, staging, stagingLayerStride);
+            } catch (...) {
+                for (const auto layer : copiedLayers) {
+                    surfaceLayers[layer] = {};
+                    guestLayers[layer] = {};
+                }
+                for (const auto layer : uploadLayers) {
+                    surfaceLayers[layer] = {};
+                    guestLayers[layer] = {};
+                }
+                throw;
+            }
+            for (const auto layer : copiedLayers) {
+                guestLayers[layer] = {};
+                surfaceLayers[layer] = slices[layer];
+            }
+            for (std::size_t index = 0; index < uploadLayers.size(); ++index) {
+                const auto layer = uploadLayers[index];
+                surfaceLayers[layer] = {};
+                guestLayers[layer] = uploadGuest[index];
+            }
         }
         const auto viewLayers = viewType == VK_IMAGE_VIEW_TYPE_2D ? 1u : requested - baseLayer;
         const std::array<std::uint32_t, 7> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a), static_cast<std::uint32_t>(viewType), baseLayer, viewLayers};
@@ -3351,11 +3370,14 @@ void takePlanes(DepthSurface& surface, bool created, VkImageAspectFlags clearAsp
 
 DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
     if (const auto found = depthOwners().find({device, address}); found != depthOwners().end()) {
-        const auto& target = found->second.surface->target;
-        if (found->second.surface->active->load(std::memory_order_acquire) && target.extent.width == base.extent.width && target.extent.height == base.extent.height && target.format == base.format) return found->second.surface;
+        auto* owner = found->second.surface;
+        if (owner->active->load(std::memory_order_acquire) && !owner->retired) {
+            const auto& target = owner->target;
+            return target.samples == 1u && target.extent.width == base.extent.width && target.extent.height == base.extent.height && target.format == base.format ? owner : nullptr;
+        }
     }
     const auto& list = surfaces();
-    const auto slice = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->context.device == device && !surface->retired && surface->target.address == address && surface->target.extent.width == base.extent.width && surface->target.extent.height == base.extent.height && surface->target.format == base.format; });
+    const auto slice = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->context.device == device && !surface->retired && surface->target.address == address && surface->target.samples == 1u && surface->target.extent.width == base.extent.width && surface->target.extent.height == base.extent.height && surface->target.format == base.format; });
     return slice == list.rend() ? nullptr : slice->get();
 }
 
