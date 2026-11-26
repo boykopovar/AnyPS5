@@ -449,11 +449,58 @@ extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::N
 extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctInit_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault);
+extern "C" void APS5_VABI NumpunctTidy_nid_no_patch(GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctConstruct_nid_no_patch(GuestLocale::NumpunctFacet* self, std::size_t references);
+extern "C" void APS5_VABI NumpunctConstructFromLocinfo_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault);
+extern "C" void APS5_VABI NumpunctConstructNamed_nid_no_patch(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault);
+extern "C" void APS5_VABI NumpunctDestroy_nid_no_patch(GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctDelete_nid_no_patch(GuestLocale::NumpunctFacet* self);
 extern "C" char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
 extern "C" const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
 extern "C" char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
 extern "C" const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
 extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self);
 extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
+extern "C" const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch();
+extern "C" GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next);
+extern "C" GuestLocale::Implementation* LibcAcquireGlobalLocale_nid_no_patch();
+extern "C" void LibcReleaseLocale_nid_no_patch(GuestLocale::Implementation* locale);
+
+namespace GuestLocale {
+
+class GlobalLocaleHold {
+public:
+    GlobalLocaleHold() = default;
+
+    GlobalLocaleHold(const GlobalLocaleHold&) = delete;
+    GlobalLocaleHold& operator=(const GlobalLocaleHold&) = delete;
+
+    GlobalLocaleHold(GlobalLocaleHold&& other) noexcept : locale(other.locale) {
+        other.locale = nullptr;
+    }
+
+    GlobalLocaleHold& operator=(GlobalLocaleHold&& other) noexcept {
+        if (this != &other) {
+            LibcReleaseLocale_nid_no_patch(locale);
+            locale = other.locale;
+            other.locale = nullptr;
+        }
+        return *this;
+    }
+
+    ~GlobalLocaleHold() {
+        LibcReleaseLocale_nid_no_patch(locale);
+    }
+
+    const Facet* Find(std::uint64_t index) {
+        if (locale == nullptr) locale = LibcAcquireGlobalLocale_nid_no_patch();
+        return locale != nullptr && locale->facets != nullptr && index < locale->facetCount ? locale->facets[index] : nullptr;
+    }
+
+    Implementation* locale = nullptr;
+};
+
+}
 
 #endif

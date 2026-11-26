@@ -220,12 +220,6 @@ int APS5_VABI sceLibcInternalPending4_119_nid_no_patch() {
 }
 APS5_EXPORT("XD9FmX1mavU", sceLibcInternalPending4_119_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
-
 [[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
     const GuestLocale::String* path2, LibcException::ErrorCode code) {
     FilesystemErrorTwoPaths_nid_no_patch(message, path1, path2, code);
@@ -360,6 +354,12 @@ std::vector<ThreadDestructor>& ThreadDestructors() {
     return HostThreadLocal<std::vector<ThreadDestructor>, ThreadDestructorsTag>();
 }
 
+struct ThreadExitCallbacksTag {};
+
+std::vector<GuestExitCallback>& ThreadExitCallbacks() {
+    return HostThreadLocal<std::vector<GuestExitCallback>, ThreadExitCallbacksTag>();
+}
+
 bool IsInLoadedImage(const void* address) {
     if (address == nullptr)
         return false;
@@ -384,10 +384,18 @@ void CallThreadDestructor(const ThreadDestructor& destructor) {
 
 void APS5_VABI RunThreadDestructors_nid_no_patch() {
     auto& destructors = ThreadDestructors();
-    while (!destructors.empty()) {
-        const ThreadDestructor destructor = destructors.back();
-        destructors.pop_back();
-        CallThreadDestructor(destructor);
+    auto& callbacks = ThreadExitCallbacks();
+    while (!destructors.empty() || !callbacks.empty()) {
+        while (!destructors.empty()) {
+            const ThreadDestructor destructor = destructors.back();
+            destructors.pop_back();
+            CallThreadDestructor(destructor);
+        }
+        if (!callbacks.empty()) {
+            const auto callback = callbacks.back();
+            callbacks.pop_back();
+            callback();
+        }
     }
 }
 
@@ -601,13 +609,17 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atqexit_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _Atqexit_nid_postfix(void (APS5_VABI *func)()) {
+    if (func == nullptr)
+        return 0;
+    return at_quick_exit_nid_postfix(func);
 }
 
-int APS5_VABI _Atthreadexit_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _Atthreadexit_nid_postfix(void (APS5_VABI *func)()) {
+    if (func == nullptr)
+        return 0;
+    RegisterThreadExitHook();
+    ThreadExitCallbacks().push_back(func);
     return 0;
 }
 
@@ -664,11 +676,6 @@ int APS5_VABI _FQuad_nid_postfix() {
 }
 
 int APS5_VABI _FQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FTgamma_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1022,11 +1029,6 @@ int APS5_VABI _Getfloat_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getgloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Getint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1101,11 +1103,6 @@ int APS5_VABI _LQuadph_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LTgamma_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Ldtob_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1151,11 +1148,6 @@ int APS5_VABI _Makestab_nid_postfix() {
 }
 
 int APS5_VABI _Makewct_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Mbtowc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

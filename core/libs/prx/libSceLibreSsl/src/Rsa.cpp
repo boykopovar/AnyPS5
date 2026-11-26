@@ -64,6 +64,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -196,8 +197,10 @@ struct Cursor {
     NotImplemented_nid_no_patch((std::string(function) + ": BER " + what).c_str());
 }
 
-bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
-    if (available <= 0) return false;
+enum class Header { Read, Bad, TooLong };
+
+Header ReadObjectHeader(const unsigned char* start, std::int64_t available, Element& element) {
+    if (available <= 0) return Header::Bad;
     const unsigned char* data = start;
     std::int64_t remaining = available;
     const bool constructed = *data & 0x20;
@@ -205,47 +208,51 @@ bool ReadHeader(const unsigned char* start, std::int64_t available, Element& ele
     int tag = *data & 0x1F;
     if (tag == 0x1F) {
         ++data;
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
         long value = 0;
         while (*data & 0x80) {
             value = value << 7 | (*data++ & 0x7F);
-            if (--remaining == 0) return false;
-            if (value > (INT_MAX >> 7)) return false;
+            if (--remaining == 0) return Header::Bad;
+            if (value > (INT_MAX >> 7)) return Header::Bad;
         }
         value = value << 7 | (*data++ & 0x7F);
         tag = static_cast<int>(value);
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
     } else {
         ++data;
-        if (--remaining == 0) return false;
+        if (--remaining == 0) return Header::Bad;
     }
     int lengthBytes = static_cast<int>(remaining);
-    if (lengthBytes-- < 1) return false;
+    if (lengthBytes-- < 1) return Header::Bad;
     bool indefinite = false;
-    unsigned long length = 0;
+    std::uint64_t length = 0;
     if (*data == 0x80) {
         indefinite = true;
         ++data;
     } else {
         unsigned count = *data & 0x7F;
         if (*data++ & 0x80) {
-            if (lengthBytes < static_cast<int>(count)) return false;
+            if (lengthBytes < static_cast<int>(count)) return Header::Bad;
             while (count && !*data) {
                 ++data;
                 --count;
             }
-            if (count > sizeof(long)) return false;
+            if (count > sizeof(std::uint64_t)) return Header::Bad;
             while (count-- > 0) length = length << 8 | *data++;
         } else {
             length = count;
         }
     }
-    if (length > static_cast<unsigned long>(LONG_MAX)) return false;
-    if (indefinite && !constructed) return false;
+    if (length > static_cast<std::uint64_t>(INT64_MAX)) return Header::Bad;
+    if (indefinite && !constructed) return Header::Bad;
     const long header = data - start;
-    if (static_cast<long>(length) > available - header) return false;
+    if (length > static_cast<std::uint64_t>(available - header)) return Header::TooLong;
     element = {tag, tagClass, constructed, indefinite, data, static_cast<long>(length), data + length};
-    return true;
+    return Header::Read;
+}
+
+bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
+    return ReadObjectHeader(start, available, element) == Header::Read;
 }
 
 bool ReadTop(const unsigned char* data, std::int64_t length, int tag, Element& element) {
@@ -274,26 +281,48 @@ bool ValidObject(const Element& element) {
     return true;
 }
 
-bool ValidAny(const Element& element, const char* function) {
+constexpr int Asn1Library = 13;
+constexpr int NestedAsn1Error = 58;
+constexpr int BadObjectHeader = 102;
+constexpr int BooleanIsWrongLength = 106;
+constexpr int FieldMissing = 121;
+constexpr int HeaderTooLong = 123;
+constexpr int NullIsWrongLength = 144;
+constexpr int SequenceLengthMismatch = 148;
+constexpr int SequenceNotConstructed = 149;
+constexpr int StringTooShort = 152;
+constexpr int TooLong = 155;
+constexpr int TypeNotConstructed = 156;
+constexpr int UnexpectedEoc = 159;
+constexpr int WrongTag = 168;
+constexpr int BmpStringIsWrongLength = 214;
+constexpr int UniversalStringIsWrongLength = 215;
+constexpr int InvalidObjectEncoding = 216;
+
+int AnyReason(const Element& element, const char* function) {
     if (element.tagClass != 0) {
         if (element.indefinite) UnsupportedEncoding(function, "indefinite-length parameter");
-        return true;
+        return 0;
     }
     if (element.tag == 16 || element.tag == 17) {
-        if (!element.constructed) return false;
+        if (!element.constructed) return TypeNotConstructed;
         if (element.indefinite) UnsupportedEncoding(function, "indefinite-length parameter");
-        return true;
+        return 0;
     }
     if (element.constructed) UnsupportedEncoding(function, "constructed parameter");
     switch (element.tag) {
-    case 1: return element.length == 1;
-    case 3: return element.length >= 1;
-    case 5: return element.length == 0;
-    case 6: return ValidObject(element);
-    case 28: return element.length % 4 == 0;
-    case 30: return element.length % 2 == 0;
-    default: return true;
+    case 1: return element.length == 1 ? 0 : BooleanIsWrongLength;
+    case 3: return element.length >= 1 ? 0 : StringTooShort;
+    case 5: return element.length == 0 ? 0 : NullIsWrongLength;
+    case 6: return ValidObject(element) ? 0 : InvalidObjectEncoding;
+    case 28: return element.length % 4 == 0 ? 0 : UniversalStringIsWrongLength;
+    case 30: return element.length % 2 == 0 ? 0 : BmpStringIsWrongLength;
+    default: return 0;
     }
+}
+
+bool ValidAny(const Element& element, const char* function) {
+    return !AnyReason(element, function);
 }
 
 struct Algorithm {
@@ -332,6 +361,81 @@ bool ReadAlgorithm(Cursor& cursor, Algorithm& algorithm, const char* function) {
         algorithm.nullParameter = parameter.tagClass == 0 && parameter.tag == 5;
     }
     return !fields.length;
+}
+
+bool Asn1Fail(std::initializer_list<int> reasons) {
+    for (const int reason : reasons) LibreSslPutError_nid_no_patch(Asn1Library, 0xfff, reason, __FILE__, __LINE__);
+    return false;
+}
+
+bool CheckHeader(Cursor& cursor, int tag, Element& element) {
+    switch (ReadObjectHeader(cursor.data, cursor.length, element)) {
+    case Header::Bad: return Asn1Fail({HeaderTooLong, BadObjectHeader});
+    case Header::TooLong: return Asn1Fail({TooLong, BadObjectHeader});
+    case Header::Read: break;
+    }
+    if (tag >= 0 && (element.tag != tag || element.tagClass != 0)) return Asn1Fail({WrongTag});
+    return true;
+}
+
+bool AtEndOfContents(const Cursor& cursor) {
+    return cursor.length >= 2 && !cursor.data[0] && !cursor.data[1];
+}
+
+bool NextField(const Cursor& fields) {
+    if (!fields.length) return Asn1Fail({FieldMissing});
+    if (AtEndOfContents(fields)) return Asn1Fail({UnexpectedEoc});
+    return true;
+}
+
+bool DecodeSequenceHeader(Cursor& cursor, Element& sequence, const char* function) {
+    if (!CheckHeader(cursor, 16, sequence)) return Asn1Fail({NestedAsn1Error});
+    if (!sequence.constructed) return Asn1Fail({SequenceNotConstructed});
+    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
+    Advance(cursor, sequence);
+    return true;
+}
+
+bool DecodePrimitive(Cursor& cursor, int tag, Element& element, const char* function) {
+    if (!CheckHeader(cursor, tag, element)) return Asn1Fail({NestedAsn1Error});
+    if (element.constructed) UnsupportedEncoding(function, "constructed string");
+    Advance(cursor, element);
+    return true;
+}
+
+bool DecodeAlgorithm(Cursor& cursor, Algorithm& algorithm, const char* function) {
+    Element sequence;
+    if (!DecodeSequenceHeader(cursor, sequence, function)) return false;
+    Cursor fields {sequence.content, sequence.length};
+    Element object;
+    if (!NextField(fields)) return false;
+    if (!DecodePrimitive(fields, 6, object, function)) return Asn1Fail({NestedAsn1Error});
+    if (!ValidObject(object)) return Asn1Fail({InvalidObjectEncoding, NestedAsn1Error});
+    algorithm = {object.content, object.length, false, false};
+    if (!fields.length) return true;
+    if (AtEndOfContents(fields)) return Asn1Fail({UnexpectedEoc});
+    Element parameter;
+    if (!CheckHeader(fields, -1, parameter)) return Asn1Fail({NestedAsn1Error, NestedAsn1Error});
+    if (const int reason = AnyReason(parameter, function)) return Asn1Fail({reason, NestedAsn1Error});
+    Advance(fields, parameter);
+    algorithm.parameter = true;
+    algorithm.nullParameter = parameter.tagClass == 0 && parameter.tag == 5;
+    if (fields.length) return Asn1Fail({SequenceLengthMismatch});
+    return true;
+}
+
+bool DecodeDigestInfo(const unsigned char* data, long length, Algorithm& algorithm, Element& hash, const unsigned char*& end, const char* function) {
+    Cursor cursor {data, length};
+    Element sequence;
+    if (!DecodeSequenceHeader(cursor, sequence, function)) return false;
+    end = cursor.data;
+    Cursor fields {sequence.content, sequence.length};
+    if (!NextField(fields)) return false;
+    if (!DecodeAlgorithm(fields, algorithm, function)) return Asn1Fail({NestedAsn1Error});
+    if (!NextField(fields)) return false;
+    if (!DecodePrimitive(fields, 4, hash, function)) return Asn1Fail({NestedAsn1Error});
+    if (fields.length) return Asn1Fail({SequenceLengthMismatch});
+    return true;
 }
 
 void RejectAddedObject(const Algorithm& algorithm, const char* function) {
@@ -786,14 +890,11 @@ void AppendDerHeader(std::vector<unsigned char>& output, unsigned char tag, std:
 }
 
 int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* data, long length, const char* function) {
-    Element sequence;
-    if (!ReadTop(data, length, 16, sequence) || !sequence.constructed) return 0;
-    if (sequence.indefinite) UnsupportedEncoding(function, "indefinite-length SEQUENCE");
-    Cursor fields {sequence.content, sequence.length};
     Algorithm algorithm;
     Element hash;
-    if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
-    if (sequence.end != data + length) {
+    const unsigned char* end = nullptr;
+    if (!DecodeDigestInfo(data, length, algorithm, hash, end, function)) return 0;
+    if (end != data + length) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
     }
@@ -1299,15 +1400,23 @@ int ByteCount(const LibreSslBignum* number, const char* function) {
 
 extern "C" {
 
-int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
+int LibreSslRsaFlags_nid_no_patch(const LibreSslRsa* rsa) {
     if (!rsa) return 0;
-    if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+    if (!rsa->meth) throw std::invalid_argument("RSA_flags_nid_postfix: null method");
     return rsa->meth->flags;
 }
 
+int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa) {
+    return LibreSslRsaFlags_nid_no_patch(rsa);
+}
+
+int LibreSslRsaSize_nid_no_patch(const LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_size_nid_postfix: null key");
+    return ByteCount(static_cast<const LibreSslBignum*>(rsa->n), "RSA_size_nid_postfix");
+}
+
 int APS5_VABI RSA_size_nid_postfix(const LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
-    return ByteCount(static_cast<const LibreSslBignum*>(rsa->n), __func__);
+    return LibreSslRsaSize_nid_no_patch(rsa);
 }
 
 LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void) {
@@ -1348,38 +1457,54 @@ void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa) {
     LibreSslRsaFree_nid_no_patch(rsa);
 }
 
-int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int LibreSslRsaPublicEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_public_encrypt_nid_postfix: null key or method");
     const auto encrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicEncrypt);
-    if (!encrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_pub_enc");
+    if (!encrypt) throw std::invalid_argument("RSA_public_encrypt_nid_postfix: method without rsa_pub_enc");
     return encrypt(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPublicEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaPublicDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_public_decrypt_nid_postfix: null key or method");
+    const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicDecrypt);
+    if (!decrypt) throw std::invalid_argument("RSA_public_decrypt_nid_postfix: method without rsa_pub_dec");
+    return decrypt(length, from, to, rsa, padding);
 }
 
 int APS5_VABI RSA_public_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
-    const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPublicDecrypt);
-    if (!decrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_pub_dec");
-    return decrypt(length, from, to, rsa, padding);
+    return LibreSslRsaPublicDecrypt_nid_no_patch(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_private_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int LibreSslRsaPrivateEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: null key or method");
     const auto encrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateEncrypt);
-    if (!encrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_priv_enc");
+    if (!encrypt) throw std::invalid_argument("RSA_private_encrypt_nid_postfix: method without rsa_priv_enc");
     return encrypt(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
-    if (!rsa || !rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null key or method");
+int APS5_VABI RSA_private_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPrivateEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaPrivateDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    if (!rsa || !rsa->meth) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: null key or method");
     const auto decrypt = Operation<RsaCrypt>(*rsa->meth, OperationPrivateDecrypt);
-    if (!decrypt) throw std::invalid_argument(std::string(__func__) + ": method without rsa_priv_dec");
+    if (!decrypt) throw std::invalid_argument("RSA_private_decrypt_nid_postfix: method without rsa_priv_dec");
     return decrypt(length, from, to, rsa, padding);
 }
 
-int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
+int APS5_VABI RSA_private_decrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
+    return LibreSslRsaPrivateDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int LibreSslRsaSign_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_sign_nid_postfix: null key");
     if (rsa->flags & RsaFlagSignVerify) {
-        if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+        if (!rsa->meth) throw std::invalid_argument("RSA_sign_nid_postfix: null method");
         if (rsa->meth->sign) return reinterpret_cast<RsaSign>(rsa->meth->sign)(type, digest, digestLength, signature, signatureLength, rsa);
     }
     const DigestObject* object = nullptr;
@@ -1397,12 +1522,12 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
             LibreSslPutError_nid_no_patch(4, 0xfff, type < 0 ? 117 : 116);
             return 0;
         }
-        object = &DigestObjectFor(type, __func__);
-        if (digestLength > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a digest length over INT_MAX").c_str());
+        object = &DigestObjectFor(type, "RSA_sign_nid_postfix");
+        if (digestLength > INT_MAX) NotImplemented_nid_no_patch("RSA_sign_nid_postfix: a digest length over INT_MAX");
         algorithmLength = 2 + static_cast<std::uint64_t>(object->length) + 2;
         contentLength = 1 + DerLengthBytes(algorithmLength) + algorithmLength + 1 + DerLengthBytes(digestLength) + digestLength;
         length = 1 + DerLengthBytes(contentLength) + contentLength;
-        if (length > INT_MAX) NotImplemented_nid_no_patch((std::string(__func__) + ": a DigestInfo over INT_MAX bytes").c_str());
+        if (length > INT_MAX) NotImplemented_nid_no_patch("RSA_sign_nid_postfix: a DigestInfo over INT_MAX bytes");
     }
     if (static_cast<std::int64_t>(length) > std::int64_t(RSA_size_nid_postfix(rsa)) - 11) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 112);
@@ -1419,21 +1544,25 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
         encoded.push_back(0x05);
         encoded.push_back(0x00);
         AppendDerHeader(encoded, 0x04, digestLength);
-        RequireBuffer(digest, digestLength, __func__, "digest");
+        RequireBuffer(digest, digestLength, "RSA_sign_nid_postfix", "digest");
         if (digestLength) encoded.insert(encoded.end(), digest, digest + digestLength);
         data = encoded.data();
     }
     const int result = RSA_private_encrypt_nid_postfix(static_cast<int>(length), data, signature, rsa, PaddingPkcs1);
     if (result <= 0) return 0;
-    if (!signatureLength) throw std::invalid_argument(std::string(__func__) + ": null signature length");
+    if (!signatureLength) throw std::invalid_argument("RSA_sign_nid_postfix: null signature length");
     *signatureLength = static_cast<unsigned int>(result);
     return 1;
 }
 
-int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
-    if (!rsa) throw std::invalid_argument(std::string(__func__) + ": null key");
+int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, unsigned char* signature, unsigned int* signatureLength, LibreSslRsa* rsa) {
+    return LibreSslRsaSign_nid_no_patch(type, digest, digestLength, signature, signatureLength, rsa);
+}
+
+int LibreSslRsaVerify_nid_no_patch(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
+    if (!rsa) throw std::invalid_argument("RSA_verify_nid_postfix: null key");
     if (rsa->flags & RsaFlagSignVerify) {
-        if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+        if (!rsa->meth) throw std::invalid_argument("RSA_verify_nid_postfix: null method");
         if (rsa->meth->verify) return reinterpret_cast<RsaVerify>(rsa->meth->verify)(type, digest, digestLength, signature, signatureLength, rsa);
     }
     if (signatureLength != static_cast<unsigned int>(RSA_size_nid_postfix(rsa))) {
@@ -1447,15 +1576,19 @@ int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsi
     std::vector<unsigned char> block(signatureLength);
     const int length = RSA_public_decrypt_nid_postfix(static_cast<int>(signatureLength), signature, block.data(), rsa, PaddingPkcs1);
     if (length <= 0) return 0;
-    if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, __func__);
+    if (type != DigestMd5Sha1) return VerifyDigestInfo(type, digest, digestLength, block.data(), length, "RSA_verify_nid_postfix");
     if (length != static_cast<int>(Md5Sha1Bytes)) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
     }
-    RequireBuffer(digest, Md5Sha1Bytes, __func__, "digest");
+    RequireBuffer(digest, Md5Sha1Bytes, "RSA_verify_nid_postfix", "digest");
     if (!std::memcmp(block.data(), digest, Md5Sha1Bytes)) return 1;
     LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
     return 0;
+}
+
+int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsigned int digestLength, const unsigned char* signature, unsigned int signatureLength, LibreSslRsa* rsa) {
+    return LibreSslRsaVerify_nid_no_patch(type, digest, digestLength, signature, signatureLength, rsa);
 }
 
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, std::int64_t length) {
@@ -1631,20 +1764,28 @@ int AddPss(EvpMdContext& context, const LibreSslRsa* rsa, unsigned char* em, con
 
 extern "C" {
 
-int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
+int LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
     EvpMdContext context;
     EVP_MD_CTX_init_nid_postfix(&context);
-    const int result = AddPss(context, rsa, em, mHash, hash, saltLength, __func__);
+    const int result = AddPss(context, rsa, em, mHash, hash, saltLength, "RSA_padding_add_PKCS1_PSS_nid_postfix");
+    EVP_MD_CTX_cleanup_nid_postfix(&context);
+    return result;
+}
+
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, unsigned char* em, const unsigned char* mHash, const EvpMd* hash, int saltLength) {
+    return LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(rsa, em, mHash, hash, saltLength);
+}
+
+int LibreSslRsaVerifyPkcs1Pss_nid_no_patch(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength) {
+    EvpMdContext context;
+    EVP_MD_CTX_init_nid_postfix(&context);
+    const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, "RSA_verify_PKCS1_PSS_nid_postfix");
     EVP_MD_CTX_cleanup_nid_postfix(&context);
     return result;
 }
 
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(LibreSslRsa* rsa, const unsigned char* mHash, const EvpMd* hash, const unsigned char* em, int saltLength) {
-    EvpMdContext context;
-    EVP_MD_CTX_init_nid_postfix(&context);
-    const int result = VerifyPss(context, rsa, mHash, hash, em, saltLength, __func__);
-    EVP_MD_CTX_cleanup_nid_postfix(&context);
-    return result;
+    return LibreSslRsaVerifyPkcs1Pss_nid_no_patch(rsa, mHash, hash, em, saltLength);
 }
 
 }

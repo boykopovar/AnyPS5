@@ -21,6 +21,7 @@ let downloadUrl;
 let completedResult;
 let logs = [];
 let release;
+let progressState = null;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
 const folderLocks = window.navigator?.locks;
 const canStream = typeof window.showDirectoryPicker === "function" && typeof folderLocks?.request === "function" && window.isSecureContext;
@@ -127,7 +128,16 @@ function update() {
       : release ? translate(locale, "readyLibraries", { tag: release.tag, mode: multi ? translate(locale, "readyModeBatch") : $("save").value === "disk" ? translate(locale, "readyModeDisk") : translate(locale, "readyModeZip") })
       : translate(locale, "readyLoading"))
     : translate(locale, "readyChooseInput");
+  renderProgress();
   renderError();
+}
+
+function renderProgress() {
+  if (!progressState) return;
+  const { phaseKey, phase, stage, appCount, appIndex, fileKey, fileValues } = progressState;
+  const text = phaseKey ? translate(locale, phaseKey) : phase ?? translate(locale, `stage${stage}`);
+  $("phase").textContent = appCount > 1 ? translate(locale, "appProgress", { index: appIndex + 1, count: appCount, phase: text }) : text;
+  if (fileKey) $("current-file").textContent = translate(locale, fileKey, fileValues);
 }
 
 function lock(value) {
@@ -167,6 +177,7 @@ function renderError() {
 async function fail(value, { keepInspection = false } = {}) {
   if (failing) return;
   failing = true;
+  progressState = null;
   errorState = {
     message: value,
     appended: [],
@@ -200,11 +211,13 @@ async function fail(value, { keepInspection = false } = {}) {
   outputDirectory = null;
   if (transaction) {
     $("status").hidden = false;
-    $("phase").textContent = translate(locale, "removingOutputFolder");
+    progressState = { phaseKey: "removingOutputFolder" };
+    renderProgress();
   }
   const activeSink = sink;
   sink = null;
   errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
+  progressState = null;
   $("error").hidden = false;
   $("status").hidden = true;
   const restoreFocus = document.activeElement === $("cancel");
@@ -231,8 +244,8 @@ async function onMessage({ data }, currentWorker) {
         $("log").textContent = logs.join("\n");
         return;
       }
-      const phase = data.phase ?? translate(locale, `stage${data.stage}`);
-      $("phase").textContent = data.appCount > 1 ? translate(locale, "appProgress", { index: data.appIndex + 1, count: data.appCount, phase }) : phase;
+      progressState = data;
+      renderProgress();
       $("current-file").textContent = [data.appName, data.input].filter(Boolean).join(" · ");
       if (Number.isFinite(data.total) && data.total > 0) {
         const percent = Math.min(100, Math.floor(data.completed / data.total * 100));
@@ -245,6 +258,7 @@ async function onMessage({ data }, currentWorker) {
     } else if (data.type === "inspected") {
       summaries[data.index] = data.summary;
     } else if (data.type === "inspection-complete") {
+      progressState = null;
       inspectionComplete = true;
       working = false;
       $("selection").hidden = false;
@@ -310,9 +324,9 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      const { apps, mode, size, release: tag, outputName } = data;
+      const { apps, mode, size, release: tag, revision, outputName } = data;
       completedResult = {
-        apps, mode, size, tag, outputName,
+        apps, mode, size, tag, revision, outputName,
         folderName: mode === "disk" ? outputTransaction.name : null,
         target: document.querySelector('input[name="target"]:checked').value
       };
@@ -342,9 +356,9 @@ async function onMessage({ data }, currentWorker) {
 
 function renderResult() {
   if (!completedResult || $("done").hidden) return;
-  const { apps, mode, size, tag, outputName, folderName, target } = completedResult;
+  const { apps, mode, size, tag, revision, outputName, folderName, target } = completedResult;
   const unit = mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
-  const values = { apps, size: bytes(size), unit, release: tag, outputName };
+  const values = { apps, size: bytes(size), unit, release: revision ? tag + " (" + revision + ")" : tag, outputName };
   let info = translate(locale, apps > 1 ? "resultInfoBatch" : "resultInfoSingle", values);
   if (mode === "zip") {
     info += translate(locale, "resultZipSavedToDisk");
@@ -369,6 +383,7 @@ async function selectInputs(inputs) {
   summaries = [];
   inspectionComplete = false;
   working = true;
+  progressState = inputs.length > 1 ? { phaseKey: "inspectingFiles", fileKey: "inspectingBatch", fileValues: { count: inputs.length } } : { phaseKey: "inspectingFiles" };
   logs = [];
   $("log").textContent = "";
   for (const id of ["error", "done", "download", "warnings", "selection"]) $(id).hidden = true;
@@ -518,7 +533,8 @@ updateLocaleButton();
 update();
 lock(false);
 function loadReleaseInfo() {
-  if (release || releaseRequest) return;
+  if (releaseRequest) return;
+  release = undefined;
   const version = ++releaseVersion;
   releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
     if (version !== releaseVersion) return;

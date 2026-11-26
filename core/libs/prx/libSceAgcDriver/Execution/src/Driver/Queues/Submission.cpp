@@ -495,23 +495,60 @@ bool Driver::awaitsTitle(std::uint64_t awaited) const {
     return runningWorkers.load(std::memory_order_acquire) == 0 && orderHolders.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
+std::optional<Driver::AwaitedFields> Driver::readAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
+    const auto generation = slot.generation.load(std::memory_order_acquire);
+    const auto address = slot.address.load(std::memory_order_acquire);
+    if (address == 0 || (awaited != 0 && address != awaited)) return std::nullopt;
+    const auto shape = slot.shape.load(std::memory_order_acquire);
+    const auto reference = slot.reference.load(std::memory_order_acquire);
+    const auto mask = slot.mask.load(std::memory_order_acquire);
+    return AwaitedFields{address, reference, mask, shape, generation};
+}
+
+bool Driver::awaitedUnchanged(const AwaitedSlot& slot, const AwaitedFields& fields) {
+    return slot.generation.load(std::memory_order_acquire) == fields.generation && slot.address.load(std::memory_order_acquire) == fields.address;
+}
+
+bool Driver::awaitedSatisfied(const AwaitedFields& fields) {
+    const auto bytes = static_cast<std::uint32_t>(fields.shape >> 32u);
+    if (bytes == 0) return (Pm4::LoadLabel(fields.address, 4) & Pm4::RewindValid) != 0;
+    return Pm4::WaitCompares(static_cast<std::uint32_t>(fields.shape), fields.reference, fields.mask, Pm4::LoadLabel(fields.address, bytes == 8 ? 8 : 4));
+}
+
+std::optional<Driver::AwaitedFields> Driver::blockedOn(const AwaitedSlot& slot, std::uint64_t awaited) {
+    const auto fields = readAwaited(slot, awaited);
+    if (!fields) return std::nullopt;
+    const bool satisfied = awaitedSatisfied(*fields);
+    if (!awaitedUnchanged(slot, *fields) || satisfied) return std::nullopt;
+    return fields;
+}
+
 bool Driver::stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
-    const auto shape = slot.shape.load(std::memory_order_relaxed);
-    if (shape == 0) return (Pm4::LoadLabel(awaited, 4) & Pm4::RewindValid) == 0;
-    const std::uint64_t value = Pm4::LoadLabel(awaited, shape >> 32u == 8 ? 8 : 4);
-    return !Pm4::WaitCompares(static_cast<std::uint32_t>(shape), slot.reference.load(std::memory_order_relaxed), slot.mask.load(std::memory_order_relaxed), value);
+    return blockedOn(slot, awaited).has_value();
+}
+
+bool Driver::slotsHeldStill(std::span<const HeldSlot> held) const {
+    if (runningWorkers.load(std::memory_order_seq_cst) != 0) return false;
+    return std::all_of(held.begin(), held.end(), [](const HeldSlot& slot) { return awaitedUnchanged(*slot.first, slot.second); });
 }
 
 bool Driver::parkedOnTitle() const {
     if (!queue0Uncommitted.empty() || DrawPipeline::Queue0().Busy() || DrawFinisher::Busy() || Graphics::Recorder::QueuedLabelsPending()) return false;
-    bool parked = false;
+    std::array<HeldSlot, std::tuple_size_v<decltype(awaitedSlots)>> held{};
+    std::size_t count = 0;
     for (const auto& [queue, worker] : workers) {
         const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
         const auto awaited = slot.address.load(std::memory_order_acquire);
-        if (awaited == 0 ? !worker.pending.empty() : !awaitsTitle(awaited) || !stillAwaited(slot, awaited)) return false;
-        parked = parked || awaited != 0;
+        if (awaited == 0) {
+            if (!worker.pending.empty()) return false;
+            continue;
+        }
+        if (!awaitsTitle(awaited)) return false;
+        const auto fields = blockedOn(slot, awaited);
+        if (!fields) return false;
+        held[count++] = {&slot, *fields};
     }
-    return parked;
+    return count != 0 && slotsHeldStill(std::span<const HeldSlot>(held.data(), count));
 }
 
 void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
@@ -720,6 +757,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
     if (ring) PrepareSubmissionRing(stalled.queue);
     std::atomic_ref<std::uint32_t> control(*const_cast<std::uint32_t*>(stalled.rewindTail - 1));
     if ((control.load(std::memory_order_acquire) & Pm4::RewindValid) == 0) {
+        noteRewindWaitFields(stalled.queue);
         noteWaitBlocked(stalled.queue, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1), true);
         struct BlockedWait {
             Driver& driver;
@@ -1003,26 +1041,26 @@ bool Driver::RewindTailsUnread() {
         const auto [queue, words] = tail;
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(words - 1)).load(std::memory_order_acquire) & Pm4::RewindValid) == 0) return false;
         const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
-        const auto awaited = slot.address.load(std::memory_order_acquire);
-        if (awaited == 0 || awaited == reinterpret_cast<std::uint64_t>(words - 1) || !awaitsTitle(awaited)) return true;
-        const auto shape = slot.shape.load(std::memory_order_relaxed);
-        const auto reference = slot.reference.load(std::memory_order_relaxed);
-        const auto mask = slot.mask.load(std::memory_order_relaxed);
-        if (slot.address.load(std::memory_order_acquire) != awaited) return true;
-        const auto bytes = static_cast<std::uint32_t>(shape >> 32u);
-        if (bytes == 0) return (std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(awaited)).load(std::memory_order_acquire) & Pm4::RewindValid) != 0;
-        std::uint64_t value = 0;
-        std::memcpy(&value, reinterpret_cast<const void*>(awaited), bytes == 8 ? 8 : 4);
-        return Pm4::WaitCompares(static_cast<std::uint32_t>(shape), reference, mask, value);
+        const auto fields = readAwaited(slot, 0);
+        if (!fields || fields->address == reinterpret_cast<std::uint64_t>(words - 1) || !awaitsTitle(fields->address)) return true;
+        const bool satisfied = awaitedSatisfied(*fields);
+        return !awaitedUnchanged(slot, *fields) || satisfied;
     });
 }
 
 void Driver::noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet) {
     const auto fields = Pm4::DecodeWait(packet);
     auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
-    slot.reference.store(fields.reference, std::memory_order_relaxed);
-    slot.mask.store(fields.mask, std::memory_order_relaxed);
-    slot.shape.store(static_cast<std::uint64_t>(fields.function) | static_cast<std::uint64_t>(fields.bytes) << 32u, std::memory_order_relaxed);
+    slot.reference.store(fields.reference, std::memory_order_release);
+    slot.mask.store(fields.mask, std::memory_order_release);
+    slot.shape.store(static_cast<std::uint64_t>(fields.function) | static_cast<std::uint64_t>(fields.bytes) << 32u, std::memory_order_release);
+}
+
+void Driver::noteRewindWaitFields(std::uint32_t queue) {
+    auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+    slot.reference.store(0, std::memory_order_release);
+    slot.mask.store(0, std::memory_order_release);
+    slot.shape.store(0, std::memory_order_release);
 }
 
 void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked) {
@@ -1030,12 +1068,15 @@ void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool bl
     if (!blocked) {
         runningWorkers.fetch_add(1, std::memory_order_seq_cst);
         while (captureHold.load(std::memory_order_seq_cst)) PollSleep();
-        slot.shape.store(0, std::memory_order_relaxed);
+        slot.generation.fetch_add(1, std::memory_order_release);
     }
     slot.address.store(blocked ? awaited : 0, std::memory_order_release);
     if (blocked) {
         if (runningWorkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            idleEpoch.fetch_add(1, std::memory_order_release);
+            {
+                std::lock_guard lock(mutex);
+                idleEpoch.fetch_add(1, std::memory_order_release);
+            }
             changed.notify_all();
         }
     }
