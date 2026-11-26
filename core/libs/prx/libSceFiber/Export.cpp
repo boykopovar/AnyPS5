@@ -433,6 +433,13 @@ static void FinishSwitchFiber(void* fakeStackSave) {
     __sanitizer_finish_switch_fiber(fakeStackSave, nullptr, nullptr);
 }
 
+static void UnpoisonStack(const Fiber* fiber) {
+    const auto bounds = FiberBounds(fiber);
+    const auto bottom = reinterpret_cast<std::uintptr_t>(bounds.limit);
+    const auto top = reinterpret_cast<std::uintptr_t>(bounds.base);
+    __asan_unpoison_memory_region(bounds.limit, top - bottom);
+}
+
 [[gnu::noinline]] static void ReleaseContextlessStack() {
     const auto top = reinterpret_cast<std::uintptr_t>(ThreadState().threadStack);
     volatile std::uint8_t marker = 0;
@@ -446,6 +453,8 @@ static void FinishSwitchFiber(void* fakeStackSave) {
 static void StartSwitchFiber(void**, const StackBounds&) {}
 
 static void FinishSwitchFiber(void*) {}
+
+static void UnpoisonStack(const Fiber*) {}
 
 static void ReleaseContextlessStack() {}
 
@@ -476,6 +485,7 @@ extern "C" [[noreturn]] [[gnu::no_sanitize_address]] void Aps5FiberEntry_nid_no_
 #endif
 
 static void PrepareInitialStack(Fiber* fiber) {
+    UnpoisonStack(fiber);
     const auto top = reinterpret_cast<std::uintptr_t>(StackTop(fiber)) & ~static_cast<std::uintptr_t>(15);
     auto* frame = reinterpret_cast<InitialFrame*>(top - 256);
     std::memset(frame, 0, sizeof(*frame));
@@ -527,6 +537,7 @@ static void AttachStack(Fiber* fiber, void* addr_context, uint64_t size_context)
 
 static void DetachStack(Fiber* fiber) {
     if (!fiber->context) return;
+    UnpoisonStack(fiber);
     UnpinStack(fiber->context, fiber->contextSize);
     ReleaseHostStack(fiber);
 }
