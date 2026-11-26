@@ -141,7 +141,16 @@ int EnterFrame(GuestStreamRec* stream, std::uint64_t count, const char* function
         if (count > record.size) return InvalidStreamOperation;
         record.base = QAlloc(memory, static_cast<std::int64_t>(count), error, function);
         if (error) return error;
-        const std::uint64_t readBytes = record.read(stream, record.pos, record.base, count);
+        std::uint64_t readBytes;
+        try {
+            readBytes = record.read(stream, record.pos, record.base, count);
+        } catch (...) {
+            Free(memory, record.base, function);
+            record.base = nullptr;
+            record.cursor = nullptr;
+            record.limit = nullptr;
+            throw;
+        }
         if (readBytes < count) {
             Free(memory, record.base, function);
             record.base = nullptr;
@@ -519,7 +528,12 @@ void APS5_VABI FT_Stream_Free_nid_postfix(GuestStreamRec* stream, std::int32_t e
     if (!stream) return;
     auto* memory = Load(stream, __func__).memory;
     if (!external && (!memory || !Load(memory, __func__).free)) Unsupported(__func__, "null memory release");
-    FT_Stream_Close_nid_postfix(stream);
+    try {
+        FT_Stream_Close_nid_postfix(stream);
+    } catch (...) {
+        if (!external) Free(memory, stream, __func__);
+        throw;
+    }
     if (!external) Free(memory, stream, __func__);
 }
 
