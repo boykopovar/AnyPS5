@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -119,7 +120,7 @@ void VerifySpirv() {
     target.vulkanVersion = 0x00403000u;
     target.spirvVersion = 0x00010600u;
     target.subgroupSize = 32;
-    target.bdaAbiVersion = 1;
+    target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     target.supportedCapabilities = capabilities;
     target.supportedExtensions = extensions;
     target.maxWorkgroupSize = {1024, 1024, 64};

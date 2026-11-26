@@ -4692,7 +4692,7 @@ std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64
     key.reserve(writes.size() * 2u + 1u + own.size() * 4u);
     for (const auto& [begin, end] : writes) key.insert(key.end(), {begin, end});
     key.push_back(std::numeric_limits<std::uint64_t>::max());
-    for (const auto& range : own) key.insert(key.end(), {range.begin, range.end, range.deviceAddress, (static_cast<std::uint64_t>(range.reserved) << 32u) | range.permissions});
+    for (const auto& range : own) key.insert(key.end(), {range.begin, range.end, range.deviceAddress, (static_cast<std::uint64_t>(range.written) << 32u) | range.permissions});
     return key;
 }
 

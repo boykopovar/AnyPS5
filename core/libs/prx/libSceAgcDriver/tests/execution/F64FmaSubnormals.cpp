@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
@@ -126,7 +127,7 @@ std::vector<std::uint32_t> Recompile(bool float64DenormPreserve) {
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 32;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024, 1024, 64};

@@ -64,7 +64,7 @@ int main(int argc, char** argv) try {
     lds.target.vulkanVersion = 0x00403000u;
     lds.target.spirvVersion = 0x00010600u;
     lds.target.subgroupSize = 32u;
-    lds.target.bdaAbiVersion = 1u;
+    lds.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     lds.target.supportedCapabilities = ldsCapabilities;
     lds.target.supportedExtensions = ldsExtensions;
     lds.target.maxWorkgroupSize = {1024u, 1024u, 64u};

@@ -90,7 +90,7 @@ bool ScanFaultReport(const std::function<void(ScanWords&)>& main, const std::fun
     module.Op(spv::OpTypeFunction, {FaultHelperFunction, FaultVoid, FaultBlockPointer});
     module.Op(spv::OpConstant, {FaultUint, FaultZero, 0u});
     module.Op(spv::OpConstant, {FaultUint, FaultReportLast, 7u});
-    module.Op(spv::OpConstant, {FaultUint, FaultOverflowWord, ShaderRecompiler::BdaAbi::WrittenOverflowWord});
+    module.Op(spv::OpConstant, {FaultUint, FaultOverflowWord, ShaderRecompiler::BdaAbi::WrittenDirtyWord});
     module.Op(spv::OpConstant, {FaultUint, FaultScope, spv::ScopeDevice});
     module.Op(spv::OpConstant, {FaultUint, FaultSemantics, 0u});
     module.Op(spv::OpVariable, {FaultBlockPointer, FaultVariable, spv::StorageClassStorageBuffer});

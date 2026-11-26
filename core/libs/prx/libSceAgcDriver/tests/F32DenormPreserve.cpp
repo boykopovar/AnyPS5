@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "Recompiler.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -36,7 +37,7 @@ std::vector<std::uint32_t> recompile(bool preserve, bool flush, bool flushCapabi
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 64;
-    request.target.bdaAbiVersion = 1;
+    request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     request.target.supportedCapabilities = std::span<const std::uint32_t>(capabilities).first(flushCapability ? capabilities.size() : capabilities.size() - 1);
     request.target.supportedExtensions = extensions;
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};

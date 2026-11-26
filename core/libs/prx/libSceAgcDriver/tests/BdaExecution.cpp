@@ -110,57 +110,119 @@ private:
 
 }
 
-static void RunWrittenRangeDecodeTests() {
+void RunWrittenRangeDecodeTests() {
     namespace Abi = ShaderRecompiler::BdaAbi;
+    using Marks = std::vector<std::pair<std::uint64_t, std::size_t>>;
     std::vector<std::uint32_t> words(Abi::FaultBufferBytes / sizeof(std::uint32_t));
-    std::vector<std::pair<std::uint64_t, std::size_t>> marked;
-    const auto decode = [&] {
+    Marks marked;
+    const auto decode = [&](const Abi::Range& range) {
         marked.clear();
-        return Abi::ForEachWrittenRange(words.data(), [&](std::uint64_t address, std::size_t bytes) { marked.emplace_back(address, bytes); });
+        return Abi::ForEachWrittenRange(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) { marked.emplace_back(address, bytes); });
     };
-    const auto claim = [&](std::uint32_t index, std::uint32_t slot, std::uint64_t address, std::uint32_t mask) {
-        words[Abi::WrittenListWord + index] = slot;
-        words[Abi::WrittenSlotsWord + 2 * slot] = Abi::WrittenChunkKey(address);
-        words[Abi::WrittenSlotsWord + 2 * slot + 1] = mask;
-        words[Abi::WrittenCountWord] = std::max(words[Abi::WrittenCountWord], index + 1);
+    const auto set = [&](const Abi::Range& range, std::uint64_t granule) {
+        const auto block = Abi::DecodeWrittenBlock(range.written);
+        words[block.word + granule / 32u] |= 1u << (granule % 32u);
     };
     constexpr std::uint64_t page = std::uint64_t{1} << Abi::WrittenPageShift;
-    Require(decode() && marked.empty(), "an empty written-page record marked pages");
     constexpr std::uint64_t top = 0x7ffffffe0000ULL;
-    claim(0, 5, top, 0b1011u);
-    Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{top, 2 * page}, {top + 3 * page, page}}, "written pages near the top of the address space were not decoded as written");
+    Abi::Range fine{top, top + 64 * page, 0x1000, Abi::Read | Abi::Write, 0};
+    Require(Abi::AssignWrittenBlocks(&fine, 1) && fine.written == Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, Abi::WrittenPageShift}), "a small writable range was not given 4 KiB granules at the start of the pool");
+    Require(decode(fine) && marked.empty(), "an empty written-page block marked pages");
+    set(fine, 0);
+    set(fine, 1);
+    set(fine, 3);
+    set(fine, 63);
+    Require(decode(fine) && marked == Marks{{top, 2 * page}, {top + 3 * page, page}, {top + 63 * page, page}}, "written pages near the top of the address space were not decoded exactly");
     std::fill(words.begin(), words.end(), 0u);
-    constexpr std::uint64_t high = 0x200000001000ULL;
-    claim(0, Abi::WrittenPageSlots - 1, high, 1u << ((high >> Abi::WrittenPageShift) & (Abi::WrittenChunkPages - 1u)));
-    Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{high, page}}, "a written page above 16 TiB was decoded at another address");
+    Abi::Range ragged{top + 0x800, top + 4 * page + 0x10, 0x1000, Abi::Write, 0};
+    Require(Abi::AssignWrittenBlocks(&ragged, 1), "an unaligned writable range was not assigned");
+    words[Abi::DecodeWrittenBlock(ragged.written).word] = 0xffffffffu;
+    Require(decode(ragged) && marked == Marks{{top + 0x800, 4 * page + 0x10 - 0x800}}, "granules past an unaligned range were marked, or its ends were not clipped");
     std::fill(words.begin(), words.end(), 0u);
-    constexpr std::uint64_t chunk = 0x3e0000000ULL;
-    claim(0, 7, chunk, 0xffffffffu);
-    claim(1, 8, chunk + (std::uint64_t{1} << Abi::WrittenChunkShift), 1u);
-    claim(2, 9, chunk - (std::uint64_t{1} << Abi::WrittenChunkShift), 0x80000000u);
-    Require(decode() && marked == std::vector<std::pair<std::uint64_t, std::size_t>>{{chunk, 32 * page}, {chunk + 32 * page, page}, {chunk - page, page}}, "whole, first-page and last-page chunks were not decoded exactly");
-    words[Abi::WrittenListWord + 1] = Abi::WrittenPageSlots;
-    Require(!decode(), "a claim outside the slots was accepted");
+    Abi::Range readOnly{top, top + page, 0x1000, Abi::Read, 0};
+    Require(Abi::AssignWrittenBlocks(&readOnly, 1) && readOnly.written == 0 && decode(readOnly) && marked.empty(), "a read-only range was given a written-page block");
+    auto bad = fine;
+    bad.written = Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, Abi::WrittenPageShift - 1});
+    Require(!decode(bad), "a granule below 4 KiB was accepted");
+    bad.written = Abi::EncodeWrittenBlock({Abi::WrittenDirtyWord, Abi::WrittenPageShift});
+    Require(!decode(bad), "a block over the dirty word was accepted");
+    bad.written = Abi::EncodeWrittenBlock({Abi::SrtGuardWord - 1, Abi::WrittenPageShift});
+    Require(!decode(bad), "a block over the SRT guard word was accepted");
+
+    std::vector<Abi::Range> mixed;
+    for (std::uint64_t index = 0; index < 64; ++index) mixed.push_back({0x100000000ULL + index * 0x100000ULL, 0x100000000ULL + index * 0x100000ULL + 0x40000ULL, 0x1000, Abi::Read | Abi::Write, 0});
+    mixed.push_back({0x10000000000ULL, 0x20000000000ULL, 0x1000, Abi::Read | Abi::Write, 0});
+    mixed.push_back({0x30000000000ULL, 0x30000001000ULL, 0x1000, Abi::Read, 0});
+    Abi::WrittenAssignment used{};
+    Require(Abi::AssignWrittenBlocks(mixed.data(), mixed.size(), &used), "64 small ranges and one 1 TiB range did not fit the pool");
+    Require(used.writable == 65 && used.coarse == 1 && used.words <= Abi::WrittenPoolWords && mixed.back().written == 0, "the pool assignment counts are wrong");
+    auto next = Abi::WrittenPoolWord;
+    for (const auto& range : mixed) {
+        if (range.written == 0) continue;
+        const auto block = Abi::DecodeWrittenBlock(range.written);
+        Require(block.word == next, "written-page blocks overlap or leave gaps");
+        Require(block.shift == (range.end - range.begin > 0x40000ULL ? used.maxShift : Abi::WrittenPageShift), "a range was coarsened that fits at 4 KiB");
+        next += static_cast<std::uint32_t>(Abi::WrittenBlockWords(range.begin, range.end, block.shift));
+    }
+    Require(next - Abi::WrittenPoolWord == used.words && used.maxShift > Abi::WrittenPageShift, "the 1 TiB range kept 4 KiB granules");
+    auto again = mixed;
+    Require(Abi::AssignWrittenBlocks(again.data(), again.size()) && std::equal(again.begin(), again.end(), mixed.begin(), [](const Abi::Range& left, const Abi::Range& right) { return left.written == right.written; }), "the pool assignment depends on more than the ranges");
+
+    std::vector<Abi::Range> many;
+    for (std::uint64_t index = 0; index < Abi::WrittenPoolWords; ++index) many.push_back({0x100000000ULL + index * 0x10000ULL, 0x100000000ULL + index * 0x10000ULL + 0x8000ULL, 0x1000, Abi::Write, 0});
+    Require(Abi::AssignWrittenBlocks(many.data(), many.size(), &used) && used.words == Abi::WrittenPoolWords, "one word per writable range did not fill the pool exactly");
+    many.push_back({0x200000000ULL, 0x200001000ULL, 0x1000, Abi::Write, 0});
+    Require(!Abi::AssignWrittenBlocks(many.data(), many.size()), "more writable ranges than pool words were accepted");
+
     std::fill(words.begin(), words.end(), 0u);
-    words[Abi::WrittenCountWord] = 1;
-    Require(!decode(), "a claim of an empty slot was accepted");
-    words[Abi::WrittenCountWord] = Abi::WrittenPageSlots + 1;
-    Require(!decode(), "more claims than slots were accepted");
+    constexpr std::uint64_t huge = 0x8000000000ULL;
+    Abi::Range coarse{huge, huge + (std::uint64_t{1} << 30), 0x1000, Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, 21})};
+    words[Abi::WrittenPoolWord] = 1u << 3;
+    const auto setPage = [&](std::uint64_t address) { words[Abi::WrittenPageMapWordOf(address >> Abi::WrittenPageShift)] |= Abi::WrittenPageMapMaskOf(address >> Abi::WrittenPageShift); };
+    const auto granule3 = huge + 3 * (std::uint64_t{1} << 21);
+    setPage(granule3 + 5 * page);
+    setPage(granule3 + 6 * page);
+    setPage(granule3 + 300 * page);
+    setPage(granule3 + (std::uint64_t{1} << 21));
+    std::vector<std::pair<std::uint64_t, std::size_t>> granted;
+    const auto decodePages = [&](const Abi::Range& range) {
+        marked.clear();
+        granted.clear();
+        return Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) { marked.emplace_back(address, bytes); },
+            [&](std::uint64_t address, std::size_t bytes) { granted.emplace_back(address, bytes); });
+    };
+    Require(decodePages(coarse) && marked == Marks{{granule3 + 5 * page, 2 * page}, {granule3 + 300 * page, page}} && granted == Marks{{granule3, std::size_t{1} << 21}},
+        "the page map did not narrow a coarse granule to its stored pages");
+    for (const auto& [address, bytes] : granted) Abi::ClearWrittenPageMap(words.data(), address, bytes);
+    Require(words[Abi::WrittenPageMapWordOf((granule3 + (std::uint64_t{1} << 21)) >> Abi::WrittenPageShift)] != 0, "clearing a granule's page bits cleared a page outside it");
+    words[Abi::WrittenPageMapWordOf((granule3 + (std::uint64_t{1} << 21)) >> Abi::WrittenPageShift)] = 0;
+    Require(std::all_of(words.begin() + Abi::WrittenPageMapWord, words.begin() + Abi::WrittenPoolWord, [](std::uint32_t word) { return word == 0; }), "clearing a granule left page bits set");
+
+    std::fill(words.begin(), words.end(), 0u);
+    Abi::Range wide{huge, huge + (std::uint64_t{1} << 30), 0x1000, Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, 30})};
+    words[Abi::WrittenPoolWord] = 1u;
+    setPage(huge + 7 * page);
+    Require(decodePages(wide) && marked.size() == ((std::uint64_t{1} << 30) >> Abi::WrittenPageShift) / Abi::WrittenPageMapBits, "a granule longer than the page map did not mark each congruent page once");
+    for (std::size_t index = 0; index < marked.size(); ++index) {
+        Require(marked[index] == std::pair<std::uint64_t, std::size_t>{huge + 7 * page + index * (Abi::WrittenPageMapBits << Abi::WrittenPageShift), page}, "a granule longer than the page map marked the wrong pages");
+    }
+    Abi::ClearWrittenPageMap(words.data(), huge, std::size_t{1} << 30);
+    Require(std::all_of(words.begin() + Abi::WrittenPageMapWord, words.begin() + Abi::WrittenPoolWord, [](std::uint32_t word) { return word == 0; }), "clearing a granule longer than the page map left page bits set");
 }
 
 static void RunBdaDwordWriteTests(const Context& context) {
-    RunWrittenRangeDecodeTests();
     namespace Abi = ShaderRecompiler::BdaAbi;
     constexpr std::uint64_t guest = 0x7fff12340f80ULL;
     constexpr std::size_t firstBytes = 160;
     Buffer first(context, firstBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     Buffer second(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     Buffer readOnly(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    const std::array<Abi::Range, 3> ranges{{
+    std::array<Abi::Range, 3> ranges{{
         {guest, guest + firstBytes, first.DeviceAddress(), Abi::Read | Abi::Write, 0},
         {guest + firstBytes, guest + firstBytes + 16, second.DeviceAddress(), Abi::Read | Abi::Write, 0},
         {guest + firstBytes + 16, guest + firstBytes + 32, readOnly.DeviceAddress(), Abi::Read, 0},
     }};
+    Require(Abi::AssignWrittenBlocks(ranges.data(), ranges.size()), "the dword-write ranges did not fit the written-page pool");
     Buffer table(context, sizeof(Abi::Header) + sizeof(ranges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -176,10 +238,12 @@ static void RunBdaDwordWriteTests(const Context& context) {
     const auto notedBytes = [&](std::uint64_t first, std::uint64_t last) {
         std::uint64_t covered = 0, total = 0;
         const auto* faultWords = reinterpret_cast<const std::uint32_t*>(fault.Bytes().data());
-        Require(Abi::ForEachWrittenRange(faultWords, [&](std::uint64_t begin, std::size_t bytes) {
-            total += bytes;
-            for (const auto address : {first, last}) covered += address >= begin && address < begin + bytes ? 1u : 0u;
-        }), "a BDA dword write left an invalid written-page record");
+        for (const auto& range : ranges) {
+            Require(Abi::ForEachWrittenPage(faultWords, Abi::FaultBufferBytes / sizeof(std::uint32_t), range, [&](std::uint64_t begin, std::size_t bytes) {
+                total += bytes;
+                for (const auto address : {first, last}) covered += address >= begin && address < begin + bytes ? 1u : 0u;
+            }, [](std::uint64_t, std::size_t) {}), "a BDA dword write left an invalid written-page record");
+        }
         return std::pair{covered, total};
     };
     const auto write = [&](std::uint64_t address, std::uint32_t dwords, std::uint32_t storedBytes, Abi::FaultReason reason, std::uint32_t groups = 1) {
@@ -205,15 +269,22 @@ static void RunBdaDwordWriteTests(const Context& context) {
             Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.instruction == 0x1234, "a BDA dword write did not publish its fault");
         }
         const auto [covered, total] = notedBytes(address, address + (storedBytes != 0 ? storedBytes - 1u : 0u));
+        std::uint32_t dirty = 0;
+        std::memcpy(&dirty, fault.Bytes().data() + Abi::WrittenDirtyWord * sizeof(std::uint32_t), sizeof(dirty));
         if (storedBytes == 0) {
-            Require(total == 0, "a BDA dword write that stored nothing noted pages");
+            Require(total == 0 && dirty == 0, "a BDA dword write that stored nothing noted pages");
         } else {
-            const auto pages = ((address + storedBytes - 1u) >> Abi::WrittenPageShift) - (address >> Abi::WrittenPageShift) + 1u;
-            Require(covered == 2 && total == pages << Abi::WrittenPageShift, "a BDA dword write did not note exactly its written pages");
-            const auto chunks = ((address + storedBytes - 1u) >> Abi::WrittenChunkShift) - (address >> Abi::WrittenChunkShift) + 1u;
-            std::uint32_t claims = 0;
-            std::memcpy(&claims, fault.Bytes().data() + Abi::WrittenCountWord * sizeof(std::uint32_t), sizeof(claims));
-            Require(claims == chunks, "a BDA dword write claimed a written-page slot more than once per chunk");
+            std::uint64_t expected = 0;
+            for (const auto& range : ranges) {
+                if (range.written == 0) continue;
+                const auto low = std::max(range.begin, address);
+                const auto high = std::min(range.end, address + storedBytes);
+                if (low >= high) continue;
+                const auto pageLow = std::max(range.begin, low & ~((std::uint64_t{1} << Abi::WrittenPageShift) - 1u));
+                const auto pageHigh = std::min(range.end, ((high - 1u) | ((std::uint64_t{1} << Abi::WrittenPageShift) - 1u)) + 1u);
+                expected += pageHigh - pageLow;
+            }
+            Require(covered == 2 && total == expected && dirty == 1, "a BDA dword write did not note exactly its written pages");
         }
     };
     write(guest + 16, 4, 16, static_cast<Abi::FaultReason>(0));
@@ -547,6 +618,85 @@ void RunBdaExecutionTests(const Context& context) {
     RunBdaAnchorTests(context);
 }
 
+static void RunBdaCoarseStoreTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::uint64_t page = std::uint64_t{1} << Abi::WrittenPageShift;
+    constexpr std::uint64_t granuleShift = 21;
+    constexpr std::uint64_t firstBytes = std::uint64_t{8} << 20;
+    constexpr std::uint64_t secondBytes = std::uint64_t{4} << 20;
+    constexpr std::uint64_t firstGuest = 0x7f0000000000ULL;
+    constexpr std::uint64_t secondGuest = firstGuest + (Abi::WrittenPageMapBits << Abi::WrittenPageShift);
+    Buffer first(context, firstBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer second(context, secondBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer table(context, sizeof(Abi::Header) + 2 * sizeof(Abi::Range), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const std::array<Abi::Range, 2> ranges{{
+        {firstGuest, firstGuest + firstBytes, first.DeviceAddress(), Abi::Read | Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord, granuleShift})},
+        {secondGuest, secondGuest + secondBytes, second.DeviceAddress(), Abi::Read | Abi::Write, Abi::EncodeWrittenBlock({Abi::WrittenPoolWord + 1, granuleShift})},
+    }};
+    const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
+    std::memcpy(table.Bytes().data(), &header, sizeof(header));
+    std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+    constexpr std::uint64_t wide = std::uint64_t{1} << 63;
+    const std::array<std::uint32_t, 4> values{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
+    const auto check = [&](const std::string& name, const std::vector<std::uint64_t>& addresses) {
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        std::set<std::uint64_t> stored;
+        for (const auto entry : addresses) {
+            const auto address = entry & ~wide;
+            const auto bytes = (entry & wide) != 0 ? 16u : 4u;
+            Pipeline pipeline(context, (entry & wide) != 0 ? MakeBdaDwordWriteTestShader(address, 4, values.data()) : MakeBdaStoreTestShader(address, 0xa1b2c3d4u, 32, false), {&table, &fault, &output});
+            pipeline.Run(1);
+            for (auto at = address; at < address + bytes; ++at) stored.insert(at >> Abi::WrittenPageShift);
+        }
+        Abi::Fault report{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        Require(report.state == Abi::FaultState::Empty, "BDA coarse store " + name + ": a mapped store published a fault");
+        std::vector<std::uint32_t> words(Abi::FaultBufferBytes / sizeof(std::uint32_t));
+        std::memcpy(words.data(), fault.Bytes().data(), words.size() * sizeof(std::uint32_t));
+        std::set<std::uint64_t> marked;
+        std::set<std::uint64_t> granted;
+        for (const auto& range : ranges) {
+            Require(Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) {
+                for (auto at = address >> Abi::WrittenPageShift; at <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++at) marked.insert(at);
+            }, [&](std::uint64_t address, std::size_t bytes) {
+                for (auto at = address >> Abi::WrittenPageShift; at <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++at) granted.insert(at);
+            }), "BDA coarse store " + name + ": invalid written-page record");
+        }
+        std::set<std::uint64_t> residues;
+        for (const auto stored_page : stored) residues.insert(stored_page % Abi::WrittenPageMapBits);
+        std::set<std::uint64_t> expected;
+        for (const auto candidate : granted) {
+            if (residues.contains(candidate % Abi::WrittenPageMapBits)) expected.insert(candidate);
+        }
+        Require(std::includes(marked.begin(), marked.end(), stored.begin(), stored.end()), "BDA coarse store " + name + ": a stored page was not marked");
+        Require(marked == expected, "BDA coarse store " + name + ": marked pages other than the stored pages and their page-map aliases inside set granules");
+        return std::vector<std::uint64_t>(marked.begin(), marked.end());
+    };
+    const auto pageOf = [](std::uint64_t address) { return address >> Abi::WrittenPageShift; };
+
+    const auto exact = check("scattered", {firstGuest, firstGuest + page + 8, firstGuest + 37 * page, firstGuest + 511 * page + 4,
+        firstGuest + 101 * page - 2, firstGuest + 1029 * page + 100, firstGuest + firstBytes - 4, wide | (firstGuest + 512 * page - 8)});
+    Require(exact == std::vector<std::uint64_t>{pageOf(firstGuest), pageOf(firstGuest) + 1, pageOf(firstGuest) + 37, pageOf(firstGuest) + 100, pageOf(firstGuest) + 101,
+        pageOf(firstGuest) + 511, pageOf(firstGuest) + 512, pageOf(firstGuest) + 1029, pageOf(firstGuest + firstBytes) - 1}, "BDA coarse store scattered: the marked pages are not exactly the stored pages");
+
+    const auto alias = check("alias", {firstGuest + 3 * page, secondGuest + 5 * page});
+    Require(alias == std::vector<std::uint64_t>{pageOf(firstGuest) + 3, pageOf(firstGuest) + 5, pageOf(secondGuest) + 3, pageOf(secondGuest) + 5}, "BDA coarse store alias: the marked pages are not the two stored pages and their two aliases");
+
+    std::vector<std::uint64_t> addresses;
+    std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+    for (int index = 0; index < 48; ++index) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const bool inSecond = (state >> 63) != 0;
+        const auto span = inSecond ? secondBytes : firstBytes;
+        const auto offset = ((state >> 20) % (span / 4)) * 4;
+        addresses.push_back((inSecond ? secondGuest : firstGuest) + offset);
+        if (index % 8 == 0) addresses.push_back((inSecond ? firstGuest : secondGuest) + (offset % (inSecond ? firstBytes : secondBytes)));
+    }
+    check("random", addresses);
+}
+
 void RunBdaStoreExecutionTests(const Context& context) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     Buffer first(context, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
@@ -563,8 +713,10 @@ void RunBdaStoreExecutionTests(const Context& context) {
         const std::string label = std::string(runtime ? "BDA runtime write " : "BDA store ") + name + (coherent ? " coherent: " : ": ");
         std::memset(first.Bytes().data(), 0xcd, first.Bytes().size());
         std::memset(second.Bytes().data(), 0xcd, second.Bytes().size());
+        auto annotated = ranges;
+        Require(Abi::AssignWrittenBlocks(annotated.data(), annotated.size()), label + "ranges did not fit the written-page pool");
         std::memcpy(table.Bytes().data(), &header, sizeof(header));
-        std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+        std::memcpy(table.Bytes().data() + sizeof(header), annotated.data(), sizeof(annotated));
         std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
         std::memset(output.Bytes().data(), 0, output.Bytes().size());
         Pipeline pipeline(context, runtime ? MakeBdaWriteTestShader(address, 0xa1b2c3d4u, bits, coherent) : MakeBdaStoreTestShader(address, 0xa1b2c3d4u, bits, coherent), {&table, &fault, &output});
@@ -580,23 +732,18 @@ void RunBdaStoreExecutionTests(const Context& context) {
         } else {
             Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && Abi::OtherFaults(report) == 1, label + "incorrect first fault metadata");
         }
-        std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
-        std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));
-        Require(words[Abi::WrittenOverflowWord] == 0, label + "written-page table overflowed");
+        std::vector<std::uint32_t> words(Abi::FaultBufferBytes / sizeof(std::uint32_t));
+        std::memcpy(words.data(), fault.Bytes().data(), words.size() * sizeof(std::uint32_t));
         std::set<std::uint64_t> recordedPages;
-        Require(Abi::ForEachWrittenRange(words.data(), [&](std::uint64_t address, std::size_t bytes) {
-            for (std::size_t offset = 0; offset < bytes; offset += std::size_t{1} << Abi::WrittenPageShift) {
-                Require(recordedPages.insert((address + offset) >> Abi::WrittenPageShift).second, label + "written-page table contains duplicate pages");
-            }
-        }), label + "invalid written-page record");
-        std::set<std::uint64_t> expectedPages;
-        std::set<std::uint32_t> expectedChunks;
-        for (const auto writtenAddress : writtenAddresses) {
-            expectedPages.insert(writtenAddress >> Abi::WrittenPageShift);
-            expectedChunks.insert(Abi::WrittenChunkKey(writtenAddress));
+        for (const auto& range : annotated) {
+            Require(Abi::ForEachWrittenPage(words.data(), words.size(), range, [&](std::uint64_t address, std::size_t bytes) {
+                for (auto page = address >> Abi::WrittenPageShift; page <= (address + bytes - 1u) >> Abi::WrittenPageShift; ++page) recordedPages.insert(page);
+            }, [](std::uint64_t, std::size_t) {}), label + "invalid written-page record");
         }
+        std::set<std::uint64_t> expectedPages;
+        for (const auto writtenAddress : writtenAddresses) expectedPages.insert(writtenAddress >> Abi::WrittenPageShift);
         Require(recordedPages == expectedPages, label + "incorrect written-page set");
-        Require(words[Abi::WrittenCountWord] == expectedChunks.size(), label + "incorrect written-chunk claim count");
+        Require(words[Abi::WrittenDirtyWord] == (expectedPages.empty() ? 0u : 1u), label + "the dirty word does not match the written pages");
         std::uint32_t completed = 0;
         std::memcpy(&completed, output.Bytes().data(), sizeof(completed));
         Require(completed == 1, label + "store did not finish its per-byte accesses");
@@ -617,6 +764,7 @@ void RunBdaStoreExecutionTests(const Context& context) {
         ranges = {{{guest + 3, guest + 5, first.DeviceAddress(), writable, 0}, {guest + 5, guest + 8, second.DeviceAddress(), writable, 0}}};
         run("split aligned dword", guest + 3, 32, coherent, {0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, {}, Abi::FaultReason::Unmapped, guest + 3, 4);
     }
+    RunBdaCoarseStoreTests(context);
 }
 
 void RunBdaFaultSlotExecutionTests(const Context& context) {
