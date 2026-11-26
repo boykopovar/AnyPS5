@@ -2419,17 +2419,25 @@ std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std
         if (spanEnd > spanBegin) walkWrites(tracker, spanBegin & ~std::uint64_t{WritePageBytes - 1}, (spanEnd + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1}, StampKind::Cpu);
         spanBegin = spanEnd = 0;
     };
-    for (auto block = first; block <= last; ++block) {
-        const auto [begin, stop] = clip(block);
-        if (!tracker.covers(begin, stop - begin)) {
-            walkSpan();
-            continue;
-        }
+    const auto extend = [&](std::uint64_t begin, std::uint64_t stop) {
         if (spanEnd != begin) {
             walkSpan();
             spanBegin = begin;
         }
         spanEnd = stop;
+    };
+    for (auto block = first; block <= last; ++block) {
+        const auto [begin, stop] = clip(block);
+        if (tracker.covers(begin, stop - begin)) {
+            extend(begin, stop);
+            continue;
+        }
+        for (auto page = begin & ~std::uint64_t{WritePageBytes - 1}; page < stop; page += WritePageBytes) {
+            const auto from = std::max(begin, page);
+            const auto to = std::min<std::uint64_t>(stop, page + WritePageBytes);
+            if (tracker.covers(from, static_cast<std::size_t>(to - from))) extend(from, to);
+            else walkSpan();
+        }
     }
     walkSpan();
     const auto append = [&](std::uint64_t begin, std::uint64_t stop) {
@@ -2559,6 +2567,59 @@ std::uint64_t CollectEpoch() {
 
 namespace {
 
+struct ComparedPage {
+    std::uint64_t hash = 0;
+    bool known = false;
+};
+
+std::atomic<bool> leftWatchCompare{false};
+std::mutex comparedMutex;
+std::atomic<void (*)()> comparedDecisionHookForTest{nullptr};
+std::map<std::uint64_t, ComparedPage> comparedPages;
+
+template<typename Each>
+void eachPage(std::uint64_t address, std::size_t bytes, const Each& each) {
+    const auto stop = address + bytes;
+    for (auto page = address & ~std::uint64_t{WritePageBytes - 1}; page < stop; page += WritePageBytes) each(page);
+}
+
+std::vector<std::optional<std::uint64_t>> hashGuestPages(std::span<const std::uint64_t> pages) {
+    std::vector<std::optional<std::uint64_t>> hashes(pages.size());
+    for (std::size_t from = 0; from < pages.size();) {
+        auto to = from + 1;
+        while (to < pages.size() && pages[to] == pages[to - 1] + WritePageBytes) ++to;
+        const bool whole = Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(pages[from])), (to - from) * WritePageBytes);
+        for (auto index = from; index < to; ++index) {
+            const auto* pointer = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(pages[index]));
+            if (whole || Accessible(pointer, WritePageBytes)) hashes[index] = HashPage(pointer);
+        }
+        from = to;
+    }
+    return hashes;
+}
+
+void compareLeavingPages(std::uint64_t address, std::size_t bytes) {
+    if (!leftWatchCompare.load(std::memory_order_acquire)) return;
+    std::vector<std::uint64_t> fresh;
+    {
+        const std::lock_guard lock(comparedMutex);
+        eachPage(address, bytes, [&](std::uint64_t page) {
+            if (!comparedPages.contains(page)) fresh.push_back(page);
+        });
+    }
+    const auto hashes = hashGuestPages(fresh);
+    const std::lock_guard lock(comparedMutex);
+    for (std::size_t index = 0; index < fresh.size(); ++index) {
+        if (hashes[index]) comparedPages.try_emplace(fresh[index], ComparedPage{*hashes[index], true});
+    }
+}
+
+void noteLeftWatch(std::uint64_t address, std::size_t bytes) {
+    if (!leftWatchCompare.load(std::memory_order_acquire)) return;
+    const std::lock_guard lock(comparedMutex);
+    eachPage(address, bytes, [&](std::uint64_t page) { comparedPages.try_emplace(page); });
+}
+
 std::atomic<void (*)(std::uint64_t, std::size_t)> unwatchHook{nullptr};
 
 thread_local bool unwatchWritesProven = true;
@@ -2566,6 +2627,7 @@ std::atomic<int> importWalkFailureForTest{0};
 std::atomic<std::uint64_t> importWalkFailureSpanForTest{0};
 
 void beforeUnwatch(std::uint64_t address, std::size_t bytes) {
+    compareLeavingPages(address, bytes);
     const auto hook = unwatchHook.load(std::memory_order_acquire);
     if (hook == nullptr) return;
 #ifdef _WIN32
@@ -2600,6 +2662,7 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
     if (tracker.coverage.Exclude(address, bytes, GuestArena::GuestArenaCommitGeneration_nid_postfix())) {
         unwatchSerial.fetch_add(1, std::memory_order_release);
         bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
+        noteLeftWatch(address, bytes);
     }
     if (bytes != 0 && !tracker.rewatchStamps.empty()) {
         for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) tracker.rewatchStamps.erase(block);
@@ -2608,6 +2671,7 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
     if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) {
         unwatchSerial.fetch_add(1, std::memory_order_release);
         bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
+        noteLeftWatch(address, bytes);
     }
 #endif
 }
@@ -2639,6 +2703,63 @@ private:
 
 void SetUnwatchHook(void (*hook)(std::uint64_t, std::size_t)) {
     unwatchHook.store(hook, std::memory_order_release);
+}
+
+void SetLeftWatchCompare(bool compare) {
+    leftWatchCompare.store(compare, std::memory_order_release);
+    if (compare) return;
+    const std::lock_guard lock(comparedMutex);
+    comparedPages.clear();
+}
+
+void SeedComparedPages(std::uint64_t address, std::span<const std::byte> bytes) {
+    if (!leftWatchCompare.load(std::memory_order_acquire)) return;
+    const auto first = (address + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+    const std::lock_guard lock(comparedMutex);
+    for (auto page = first; page + WritePageBytes <= address + bytes.size(); page += WritePageBytes) comparedPages[page] = {HashPage(bytes.data() + (page - address)), true};
+}
+
+void UpdateComparedPages(std::uint64_t address, std::span<const std::byte> bytes) {
+    const auto first = (address + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+    const std::lock_guard lock(comparedMutex);
+    for (auto found = comparedPages.lower_bound(first); found != comparedPages.end() && found->first + WritePageBytes <= address + bytes.size(); ++found) found->second = {HashPage(bytes.data() + (found->first - address)), true};
+}
+
+void ChangedComparedPages(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed) {
+    changed.clear();
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    const auto end = address + bytes;
+    std::vector<std::pair<std::uint64_t, ComparedPage>> pages;
+    {
+        const std::lock_guard lock(comparedMutex);
+        for (auto found = comparedPages.lower_bound(address & ~std::uint64_t{WritePageBytes - 1}); found != comparedPages.end() && found->first < end; ++found) pages.push_back(*found);
+    }
+    std::vector<std::uint64_t> addresses;
+    for (const auto& [page, compared] : pages) addresses.push_back(page);
+    const auto hashes = hashGuestPages(addresses);
+    for (std::size_t index = 0; index < pages.size(); ++index) {
+        const auto& [page, compared] = pages[index];
+        const auto& hash = hashes[index];
+        if (!hash || (compared.known && *hash == compared.hash)) continue;
+        const auto begin = std::max(address, page);
+        const auto stop = std::min(end, page + WritePageBytes);
+        if (!changed.empty() && changed.back().second == begin) changed.back().second = stop;
+        else changed.emplace_back(begin, stop);
+    }
+    if (pages.empty()) return;
+    if (const auto hook = comparedDecisionHookForTest.load(std::memory_order_acquire)) hook();
+    auto& tracker = Tracker();
+    const auto trackerLock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return;
+    const std::lock_guard lock(comparedMutex);
+    for (const auto page : addresses) {
+        if (tracker.covers(page, WritePageBytes)) comparedPages.erase(page);
+    }
+}
+
+void SetComparedDecisionHookForTest(void (*hook)()) {
+    comparedDecisionHookForTest.store(hook, std::memory_order_release);
 }
 
 bool UnwatchWritesProven() {
