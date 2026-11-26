@@ -62,6 +62,42 @@ class FeatureTests(unittest.TestCase):
         for state in ("done_names", "todo_names", "inert_names"):
             self.assertEqual(alias[state], {"added": [], "removed": []})
 
+    def compare_library_groups(self, baseline, candidate):
+        paths = [self.root / "base.json", self.root / "head.json"]
+        for path, groups in zip(paths, [baseline, candidate]):
+            snapshot = {"libraries": {"percent": 0, "groups": groups}, "shaders": {"percent": 0, "groups": []}}
+            path.write_text(json.dumps(snapshot), encoding="utf-8")
+        return self.cli("progress_diff.py", *paths)
+
+    def test_shared_source_chain_compares_symbols_under_the_terminal_owner(self):
+        owner = {"name": "A", "done_names": ["Ready"]}
+        middle = {"name": "B", "shared_sources": "A"}
+        baseline = [owner, middle, {"name": "W", "done_names": ["Ready", "Gone"]}]
+        candidate = [owner, middle, {"name": "W", "shared_sources": "B"}]
+
+        result = self.compare_library_groups(baseline, candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        groups = json.loads(result.stdout)["libraries"]["groups"]
+        self.assertEqual([(row["name"], row["done_names"]["removed"]) for row in groups],
+                         [("A", ["Gone"]), ("B", []), ("W", [])])
+
+    def test_wrapper_only_snapshot_keeps_changes_under_the_wrapper(self):
+        baseline = [{"name": "W", "done_names": ["Ready", "Gone"]}]
+        candidate = [{"name": "W", "shared_sources": "A"}]
+
+        result = self.compare_library_groups(baseline, candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        group, = json.loads(result.stdout)["libraries"]["groups"]
+        self.assertEqual(group["name"], "W")
+        self.assertEqual(group["done_names"], {"added": [], "removed": ["Gone", "Ready"]})
+
+    def test_shared_source_cycle_is_rejected(self):
+        candidate = [{"name": "A", "shared_sources": "B"}, {"name": "B", "shared_sources": "A"}]
+
+        result = self.compare_library_groups([], candidate)
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertIn("shared-source cycle", result.stderr)
+
     def test_percentage_point_change_is_rounded_like_the_snapshot_percentages(self):
         base, head = self.root / "base.json", self.root / "head.json"
         for old, new, change in ((40.03, 40.09, 0.06), (40.09, 40.03, -0.06)):
