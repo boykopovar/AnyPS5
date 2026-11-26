@@ -350,16 +350,32 @@ def base_commit(base):
     return git("ls-remote", "--exit-code", f"https://github.com/{REPO}.git", f"refs/heads/{base}").split()[0]
 
 
-def fetch_heads(base_sha, prs):
+def missing_commits(commits):
+    try:
+        out = subprocess.run(
+            ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            cwd=_repository_root(), input="\n".join(commits) + "\n",
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return list(commits)
+    present = {line.split()[0] for line in out.splitlines() if line.endswith(" commit")}
+    return [commit for commit in commits if commit not in present]
+
+
+def fetch_heads(base_sha, prs, check_existing=False):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
+    if check_existing:
+        commits = missing_commits(commits)
     for start in range(0, len(commits), FETCH_REFS):
         batch = commits[start:start + FETCH_REFS]
         try:
             git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
         except subprocess.CalledProcessError:
             fetch_each(remote, batch, base_sha, prs)
-        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+        progress(f"fetched {min(start + FETCH_REFS, len(commits))}/{len(commits)} missing commits" if check_existing
+                 else f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
@@ -612,14 +628,80 @@ def base_exports(ref):
 
 
 def merge_base(ref):
-    bases = git("merge-base", "--all", BASE_REF, ref).split()
+    try:
+        bases = git("merge-base", "--all", BASE_REF, ref).split()
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        bases = []
+    if not bases:
+        return None
     if len(bases) == 1:
         return bases[0]
     return min(bases, key=lambda base: git("diff", "--name-only", "--no-renames", "-z", base, ref).count("\0"))
 
 
+def pull_file_data(pr):
+    number = pr.get("_number")
+    if number is None:
+        raise RuntimeError("pull request number is required when histories have no merge base")
+    metadata = json.loads(gh("api", f"repos/{REPO}/pulls/{number}"))
+    changed_files = metadata.get("changed_files")
+    if type(changed_files) is not int or changed_files < 0:
+        raise ValueError(f"pull request {number} returned an invalid changed_files count")
+    pages = json_pages(gh("api", "--paginate", f"repos/{REPO}/pulls/{number}/files?per_page=100"))
+    files, added, existing, patches = set(), set(), set(), []
+    entries = 0
+    for page_items in pages:
+        for item in page_items:
+            entries += 1
+            path = item.get("filename")
+            status = item.get("status")
+            if not isinstance(path, str) or not path or not isinstance(status, str):
+                raise ValueError(f"pull request {number} returned an invalid file entry")
+            files.add(path)
+            old_path = item.get("previous_filename")
+            if status == "renamed":
+                if not isinstance(old_path, str) or not old_path:
+                    raise ValueError(f"pull request {number} returned an invalid renamed file entry")
+                files.add(old_path)
+                added.add(path)
+                existing.add(old_path)
+            elif status == "added":
+                added.add(path)
+            elif status in {"removed", "modified", "changed", "unchanged"}:
+                existing.add(path)
+            elif status == "copied":
+                added.add(path)
+            else:
+                raise ValueError(f"pull request {number} returned an unsupported file status: {status}")
+            patch = item.get("patch")
+            if patch is None:
+                production = (path, old_path) if status == "renamed" else (path,)
+                if any(candidate and candidate.startswith("core/libs/prx/") and candidate.endswith(".cpp") for candidate in production):
+                    raise RuntimeError(f"pull request {number} has no patch for {path}")
+                continue
+            if not isinstance(patch, str):
+                raise ValueError(f"pull request {number} returned an invalid patch for {path}")
+            before = old_path if status == "renamed" else path
+            patches.append(f"diff --git a/{before} b/{path}\n--- a/{before}\n+++ b/{path}\n{patch}")
+    if entries != changed_files:
+        raise RuntimeError(f"pull request {number} returned {entries} of {changed_files} changed files")
+    return files, added, existing, "\n".join(patches)
+
+
 def scan(pr):
-    tree, conflicted = merge(BASE_REF, pr["ref"])
+    try:
+        tree, conflicted = merge(BASE_REF, pr["ref"])
+    except RuntimeError:
+        if merge_base(pr["ref"]) is not None:
+            raise
+        pr["files"], pr["added"], _, diff = pull_file_data(pr)
+        pr["tree"] = None
+        pr["exports"] = exports(diff)
+        pr["added_exports"] = source_changed_exports(diff, "+")
+        pr["removed_exports"] = source_changed_exports(diff, "-")
+        return
     pr["tree"] = None if conflicted else commit(tree, pr["ref"])
     old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else (BASE_REF, pr["tree"])
     pr["files"], pr["added"] = set(), set()
@@ -636,6 +718,11 @@ def scan(pr):
 
 def probe(pr):
     base = merge_base(pr["ref"])
+    if base is None:
+        files, _, existing, diff = pull_file_data(pr)
+        if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
+            return files, (set(), {}), existing
+        return files, (exports(diff), source_changed_exports(diff, "+")), existing
     changes = git("diff", "--name-status", "--no-renames", "-z", base, pr["ref"]).split("\0")
     files, existing = set(), set()
     for status, path in zip(changes[::2], changes[1::2]):
@@ -657,7 +744,16 @@ def related(prs, executor):
     mine_files = mine["files"]
     mine_exports = mine["exports"]
     mine_keys = set(mine.get("added_exports", {}))
-    for index, ((n, pr), (files, found, existing)) in enumerate(zip(others.items(), executor.map(probe, others.values())), 1):
+
+    def inspect(item):
+        number, pr = item
+        pr["_number"] = number
+        try:
+            return probe(pr)
+        finally:
+            pr.pop("_number", None)
+
+    for index, ((n, pr), (files, found, existing)) in enumerate(zip(others.items(), executor.map(inspect, others.items())), 1):
         found_exports, found_added = found
         if files & mine_files or (found_exports & mine_exports) or (set(found_added) & mine_keys) or existing - base_paths:
             chosen[n] = pr
@@ -671,7 +767,16 @@ def related(prs, executor):
 def scan_all(prs, jobs):
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         pending = related(prs, executor) if 0 in prs else prs
-        for index, _ in enumerate(executor.map(scan, pending.values()), 1):
+
+        def inspect(item):
+            number, pr = item
+            pr["_number"] = number
+            try:
+                scan(pr)
+            finally:
+                pr.pop("_number", None)
+
+        for index, _ in enumerate(executor.map(inspect, pending.items()), 1):
             if index % PROGRESS_EVERY == 0 or index == len(pending):
                 progress(f"merged {index}/{len(pending)} pull requests into the base")
 
@@ -935,6 +1040,8 @@ def body_exports(pr, files, names):
     if not paths:
         return set()
     base = merge_base(pr["ref"])
+    if base is None:
+        raise RuntimeError(f"cannot inspect function bodies for pull request {pr.get('_number', '?')} without a merge base")
     found = set()
     for path in paths:
         ranges = [(int(start), int(count or 1)) for start, count in HUNK.findall(
@@ -979,12 +1086,17 @@ def pull_requests_with(names, prs, jobs):
             for name in defined:
                 bodies.setdefault(library, {}).setdefault(canonical(name), set()).update(requested)
 
-    def inspect(pr):
-        files, (exported, added), existing = probe(pr)
-        return files, (exported | body_exports(pr, existing, bodies), added), existing
+    def inspect(item):
+        number, pr = item
+        pr["_number"] = number
+        try:
+            files, (exported, added), existing = probe(pr)
+            return files, (exported | body_exports(pr, existing, bodies), added), existing
+        finally:
+            pr.pop("_number", None)
 
     with ThreadPoolExecutor(max_workers=jobs) as executor:
-        for index, (number, (_files, (exported, added), _existing)) in enumerate(zip(prs, executor.map(inspect, prs.values())), 1):
+        for index, (number, (_files, (exported, added), _existing)) in enumerate(zip(prs, executor.map(inspect, prs.items())), 1):
             touched = {canonical(name) for name in exported}
             for (_library, nid), defined in added.items():
                 touched.update(canonical(name) for name in defined)
@@ -1094,7 +1206,7 @@ def main(argv=None):
         prs = open_prs(args.base)
         BASE_REF = base_commit(args.base)
         branch_sha = resolve_branch(args.branch) if args.branch else None
-        fetch_heads(BASE_REF, prs)
+        fetch_heads(BASE_REF, prs, check_existing=bool(args.names))
         if args.names:
             found = pull_requests_with(args.names, prs, args.jobs)
             status = main_status(args.names, BASE_REF)

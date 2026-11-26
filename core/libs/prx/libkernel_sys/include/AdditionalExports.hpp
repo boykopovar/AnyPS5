@@ -10,7 +10,7 @@ extern "C" {
 int APS5_VABI __cfi_slowpath_diag_nid_postfix();
 int APS5_VABI __cfi_slowpath_nid_postfix();
 int APS5_VABI __freeze_nid_postfix();
-int APS5_VABI __sceKernelGetGPI_nid_postfix();
+std::uint64_t APS5_VABI __sceKernelGetGPI_nid_postfix();
 int APS5_VABI __sys_debug_init_nid_postfix();
 int APS5_VABI __sys_dl_get_info_2_nid_postfix();
 int APS5_VABI __sys_dl_get_info_nid_postfix();
@@ -42,7 +42,8 @@ int APS5_VABI __sys_opmc_set_hw_nid_postfix();
 int APS5_VABI __sys_osem_close_nid_postfix();
 int APS5_VABI __sys_osem_open_nid_postfix();
 int APS5_VABI __sys_randomized_path_nid_postfix();
-int APS5_VABI __sys_rdup_nid_postfix();
+int GuestRdup_nid_no_patch(int pid, int fd);
+int APS5_VABI __sys_rdup_nid_postfix(int pid, int fd);
 int APS5_VABI __sys_regmgr_call_nid_postfix();
 int APS5_VABI __sys_resume_internal_hdd_nid_postfix();
 int APS5_VABI __sys_resume_process_nid_postfix();

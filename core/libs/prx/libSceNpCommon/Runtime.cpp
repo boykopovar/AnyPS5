@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <stdexcept>
@@ -749,7 +750,24 @@ int APS5_VABI sceNpGetProcessId(void) {
 }
 
 int APS5_VABI sceNpDbgDumpText(const char* text, int length) {
-    return std::printf("%.*s", length, text);
+    if (text == nullptr) return 0;
+    const std::size_t maximum = length < 0 ? std::numeric_limits<std::size_t>::max() : static_cast<std::size_t>(length);
+    char chunk[4096];
+    std::size_t printed = 0;
+    while (printed < maximum) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + printed;
+        const std::size_t count = std::min(sizeof(chunk) - address % sizeof(chunk), maximum - printed);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, text + printed, count);
+        errno = savedErrno;
+        if (!copied) break;
+        const void* end = std::memchr(chunk, 0, count);
+        const std::size_t used = end != nullptr ? static_cast<std::size_t>(static_cast<const char*>(end) - chunk) : count;
+        if (std::fwrite(chunk, 1, used, stdout) != used) return -1;
+        printed += used;
+        if (end != nullptr) break;
+    }
+    return static_cast<int>(printed);
 }
 
 int APS5_VABI sceNpIpc2ClientInit(void) {
