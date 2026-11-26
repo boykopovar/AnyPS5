@@ -20,6 +20,10 @@ cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > sum
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
+The text summary previews the first five rows of each missing-function or unsupported-shader list. A message saying
+there are more rows in the full report refers to entries still present in the JSON. An omitted count refers to
+observations the runtime left out of the JSON.
+
 ## Triage multiple reports
 
 Pass the report files to `--triage` to print a JSON overview without starting a game:
