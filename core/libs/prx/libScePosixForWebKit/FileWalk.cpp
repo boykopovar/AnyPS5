@@ -56,13 +56,13 @@ int Visit(Walk& walk, const std::string& path) {
             *__error_nid_postfix() = GuestEloop;
             return -1;
         }
-    void* handle = opendir_nid_postfix(path.c_str());
+    void* handle = OpenDirectory_nid_no_patch(path.c_str());
     if (handle == nullptr) return Invoke(walk, path, status, FtwDnr);
     std::vector<std::string> names;
     *__error_nid_postfix() = 0;
-    while (GuestDirectoryEntry* entry = readdir_nid_postfix(handle)) names.emplace_back(entry->name, entry->nameLength);
+    while (GuestDirectoryEntry* entry = ReadDirectory_nid_no_patch(handle)) names.emplace_back(entry->name, entry->nameLength);
     const int readError = *__error_nid_postfix();
-    const int closeResult = closedir_nid_postfix(handle);
+    const int closeResult = CloseDirectory_nid_no_patch(handle);
     const int closeError = *__error_nid_postfix();
     if (readError != 0) {
         *__error_nid_postfix() = readError;
