@@ -97,6 +97,24 @@ void CheckPushbackReadByFread() {
     Require(fgetc_nid_postfix(&file.stream) == 'b', "a pushback read by fread does not come back");
 }
 
+void CheckInputAfterReopen() {
+    constexpr const char* path = "guest_stream_purge.reopen.tmp";
+    auto* replacement = std::fopen(path, "wb");
+    Require(replacement != nullptr, "open replacement input");
+    Require(std::fwrite("new", 1, 3, replacement) == 3 && std::fclose(replacement) == 0, "prepare replacement input");
+    BufferedStream file;
+    Require(std::fwrite("old", 1, 3, file.native) == 3 && std::fflush(file.native) == 0, "prepare original input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind original input");
+    Require(fgetc_nid_postfix(&file.stream) == 'o', "read original input");
+    Require(ungetc_nid_postfix('Q', &file.stream) == 'Q', "push back on the original input");
+    Require(freopen_nid_postfix(path, "rb", &file.stream) == &file.stream, "reopen replacement input");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge reopened input");
+    char bytes[3]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &file.stream) == sizeof(bytes), "read replacement bytes");
+    Require(std::memcmp(bytes, "new", sizeof(bytes)) == 0, "reopen discards the previous stream's pushback");
+    Require(file.stream.Close() == 0 && std::remove(path) == 0, "close and remove replacement input");
+}
+
 void CheckUnbuffered() {
     BufferedStream file;
     Require(std::setvbuf(file.native, nullptr, _IONBF, 0) == 0, "disable buffering");
@@ -164,6 +182,7 @@ int main() {
     CheckOutput();
     CheckInput();
     CheckPushbackReadByFread();
+    CheckInputAfterReopen();
     CheckUnbuffered();
     CheckLineBuffered();
     CheckPipe();
