@@ -43,6 +43,7 @@
 #include <future>
 #include <map>
 #include <mutex>
+#include <limits>
 #include <new>
 #include <memory>
 #include <stdexcept>
@@ -2360,6 +2361,10 @@ void AsyncInputCopies(int ssl, std::string_view input, std::string_view access) 
         Require(sceHttp2WaitAsync(client.request, &empty, &timeout, nullptr) == static_cast<int>(0x817b1065), "rejected input registers no operation");
         Require(timeout == 0 && empty.req_id == -1, "rejected input leaves poll outputs untouched");
         Require(sceHttp2WaitAsync(client.request, &empty, nullptr, nullptr) == static_cast<int>(0x817b1065), "rejected input leaves no blocking wait");
+        if (upload) {
+            Require(sceHttp2SetAutoRedirect(client.request, 1) == 0, "a rejected upload leaves the request settings open");
+            Require(sceHttp2SendRequestAsync(client.request, bad, std::numeric_limits<std::size_t>::max() / 2, &queue.option, nullptr) == static_cast<int>(0x817b1225), "an impossible upload extent returns null pointer");
+        }
     }
     const int submitted = read ? sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &queue.option, nullptr)
         : sceHttp2SendRequestAsync(client.request, unused ? bad : upload ? payload.data() : nullptr, upload ? payload.size() : 0, &queue.option, nullptr);

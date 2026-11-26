@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
@@ -258,6 +259,18 @@ static bool IsConnectionHeader(const char* name) {
     return true;
 }
 
+static bool StageUpload(std::vector<std::uint8_t>& body, const void* data, std::size_t size) {
+    constexpr std::size_t Chunk = std::size_t{1} << 20u;
+    const auto* source = static_cast<const std::uint8_t*>(data);
+    for (std::size_t copied = 0; copied < size;) {
+        const auto bytes = std::min(Chunk, size - copied);
+        body.resize(copied + bytes);
+        if (!Http2Guest::CopyIn(body.data() + copied, source + copied, bytes)) return false;
+        copied += bytes;
+    }
+    return true;
+}
+
 static std::shared_ptr<Http2::Request> Transport(int id, bool create, std::shared_ptr<Http2AsyncState>* async = nullptr, bool ignoresTotalTimeout = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindHandle(id, Http2Kind::Request);
@@ -441,13 +454,22 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         if (!Http2Guest::CopyIn(&copied, kqueue_option, sizeof(copied))) return ERROR_NULL_POINTER;
         async = copied;
     }
+    const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
+    std::vector<std::uint8_t> body;
+    if (!disconnected && size) {
+        {
+            std::lock_guard lock(g_handlesMutex);
+            if (!FindHandle(req_id, Http2Kind::Request)) return ERROR_INVALID_ID;
+        }
+        if (!StageUpload(body, post_data, size)) return ERROR_NULL_POINTER;
+    }
     std::shared_ptr<Http2AsyncState> state;
     const auto request = Transport(req_id, true, &state, true);
     if (!request) return ERROR_INVALID_ID;
     ObserveAsync(req_id, GuestSceHttp2Test::AsyncPhase::SubmissionResolved);
     auto registration = PrepareAsync(req_id, 0);
     const auto operation = registration.front();
-    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+    if (disconnected) {
         {
             std::lock_guard lock(state->mutex);
             if (state->deleted || state->retired) return ERROR_INVALID_ID;
@@ -463,11 +485,6 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         CompleteAsync(state, operation, __func__, req_id, async ? &*async : nullptr, result, std::move(failure));
         return 0;
     }
-    std::unique_ptr<std::uint8_t[]> body;
-    if (size) {
-        body = std::make_unique_for_overwrite<std::uint8_t[]>(size);
-        if (!Http2Guest::CopyIn(body.get(), post_data, size)) return ERROR_NULL_POINTER;
-    }
     std::thread worker;
     {
         std::lock_guard lock(state->mutex);
@@ -477,7 +494,7 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
             int result = 0;
             std::exception_ptr failure;
             try {
-                result = request->Send(body.get(), size);
+                result = request->Send(body.data(), size);
             } catch (...) {
                 failure = std::current_exception();
             }
