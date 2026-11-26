@@ -49,6 +49,29 @@ void decoding() {
     const Bytes memory{0x64, 0x67, 0xC4, 0x02, 0xAB, 0xF6, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeMulx(memory.data(), memory.size());
     require(operands && operands->HighDestination == 9 && operands->LowDestination == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "MULX memory extensions or prefixes were lost");
+    for (const auto segment : {std::uint8_t{0x64}, std::uint8_t{0x65}}) {
+        const Bytes segmented{segment, 0x67, 0xC4, 0x02, 0xAB, 0xF6, 0x8C, 0xAC, 0x10, 0, 0, 0};
+        const auto segmentedOperands = Codegen::DecodeMulx(segmented.data(), segmented.size());
+        require(segmentedOperands && segmentedOperands->Memory, "FS/GS MULX memory operand did not decode");
+        Codegen::StubBodyBuilder body;
+        Codegen::EmitMulx(body, *segmentedOperands);
+        const auto lowered = body.Finish();
+        require(lowered.Bytes.size() >= 10 && lowered.Bytes[0] == segment && lowered.Bytes[1] == 0x67
+                    && lowered.Bytes[3] == 0x8B && lowered.Bytes[4] == 0x8C && lowered.Bytes[5] == 0xAC
+                    && lowered.Bytes[6] == 0x10 && lowered.Bytes[7] == 0 && lowered.Bytes[8] == 0 && lowered.Bytes[9] == 0
+                    && lowered.Relocations.empty(),
+                "MULX preload changed FS/GS, address-size, or SIB memory addressing");
+        const Bytes ripRelative{segment, 0xC4, 0xE2, 0xEB, 0xF6, 0x05, 0x40, 0, 0, 0};
+        const auto ripOperands = Codegen::DecodeMulx(ripRelative.data(), ripRelative.size());
+        require(ripOperands && ripOperands->Memory && ripOperands->Memory->RipRelative, "FS/GS RIP-relative MULX did not decode");
+        Codegen::StubBodyBuilder ripBody;
+        Codegen::EmitMulx(ripBody, *ripOperands);
+        const auto ripLowered = ripBody.Finish();
+        require(ripLowered.Bytes.size() >= 3 && ripLowered.Bytes[0] == segment && ripLowered.Bytes[2] == 0x8B
+                    && ripLowered.Relocations.size() == 1
+                    && ripLowered.Relocations[0].SiteTarget == static_cast<std::int64_t>(ripRelative.size()) + 0x40,
+                "MULX preload changed the FS/GS RIP-relative memory target");
+    }
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0xC4, 0xE2, 0xF0}, Bytes{0xC4, 0xE1, 0xF3, 0xF6, 0xC0}, Bytes{0xC4, 0xE2, 0xF0, 0xF6, 0xC0}})
         require(!Codegen::DecodeMulx(bytes.data(), bytes.size()), "Unrelated or truncated opcode matched MULX");
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0xF7, 0xF6, 0xC0}, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x84}}) {
