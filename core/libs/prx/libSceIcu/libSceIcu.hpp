@@ -14,6 +14,7 @@
 #include "Utf8.hpp"
 #include "Numeric.hpp"
 #include "Set.hpp"
+#include "HashTable.hpp"
 #include "Version.hpp"
 #include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"

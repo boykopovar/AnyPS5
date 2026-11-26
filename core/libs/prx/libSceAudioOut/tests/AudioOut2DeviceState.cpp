@@ -100,8 +100,8 @@ void PortStateRejectsBadArguments(AudioOut2ContextHandle context) {
 void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
     const AudioOut2Attribute attribute{0, 0, nullptr, 0};
     Require(sceAudioOut2ContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidArgument);
-    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == 0);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == static_cast<int>(0x80268001));
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == static_cast<int>(0x80268001));
     Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
 }
 

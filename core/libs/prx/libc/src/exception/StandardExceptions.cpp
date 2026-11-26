@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -399,9 +400,13 @@ const CategoryObject SystemCategory {SystemCategoryVtable + 2};
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
+static std::atomic<LibcRaiseHandler> RaiseHandler {nullptr};
 }
 
 extern "C" {
+LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler) {
+    return LibcException::RaiseHandler.exchange(handler);
+}
 const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value) {
     return LibcException::GenericErrorMessage(value);
 }
@@ -429,6 +434,7 @@ const char* APS5_VABI _ZNKSt9exception4whatEv_nid_postfix(const LibcException::E
 
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self) {
     if (!self) throw std::invalid_argument("exception object is null");
+    if (const auto handler = LibcException::RaiseHandler.load()) handler(*self);
     LibcException::ThrowPlain(_ZTVSt9exception_nid_postfix);
 }
 void APS5_VABI _ZNSt9exceptionC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9exception_nid_postfix.destroy; }
