@@ -1,15 +1,17 @@
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <stdexcept>
 
 namespace JumpBuffer {
 namespace {
 
 constexpr std::size_t MaskOffset = 72;
+constexpr std::size_t MaskBytes = 16;
 constexpr std::size_t MaskSavedOffset = 88;
 constexpr int SigBlock = 1;
 constexpr int SigSetmask = 3;
@@ -25,16 +27,28 @@ void GuestSigprocmaskRegister_nid_no_patch(Sigprocmask sigprocmask) {
 }
 
 void APS5_VABI JumpBufferSaveMask_nid_no_patch(unsigned char* buffer) {
+    if (!buffer) throw std::invalid_argument("JumpBufferSaveMask: null buffer");
     const auto sigprocmask = guestSigprocmask.load();
-    const std::int32_t saved = sigprocmask != nullptr && sigprocmask(SigBlock, nullptr, buffer + MaskOffset) == 0;
-    std::memcpy(buffer + MaskSavedOffset, &saved, sizeof(saved));
+    std::array<std::uint8_t, MaskBytes> mask{};
+    const std::int32_t saved = sigprocmask != nullptr && sigprocmask(SigBlock, nullptr, mask.data()) == 0;
+    if (saved != 0 && !GuestCopyOut_nid_no_patch(buffer + MaskOffset, mask.data(), mask.size()))
+        throw std::invalid_argument("JumpBufferSaveMask: unwritable buffer");
+    if (!GuestCopyOut_nid_no_patch(buffer + MaskSavedOffset, &saved, sizeof(saved)))
+        throw std::invalid_argument("JumpBufferSaveMask: unwritable buffer");
 }
 
 void APS5_VABI JumpBufferRestoreMask_nid_no_patch(const unsigned char* buffer) {
+    if (!buffer) throw std::invalid_argument("JumpBufferRestoreMask: null buffer");
     std::int32_t saved = 0;
-    std::memcpy(&saved, buffer + MaskSavedOffset, sizeof(saved));
+    if (!GuestCopyIn_nid_no_patch(&saved, buffer + MaskSavedOffset, sizeof(saved)))
+        throw std::invalid_argument("JumpBufferRestoreMask: unreadable buffer");
     const auto sigprocmask = guestSigprocmask.load();
-    if (saved != 0 && sigprocmask != nullptr) sigprocmask(SigSetmask, buffer + MaskOffset, nullptr);
+    if (saved != 0 && sigprocmask != nullptr) {
+        std::array<std::uint8_t, MaskBytes> mask{};
+        if (!GuestCopyIn_nid_no_patch(mask.data(), buffer + MaskOffset, mask.size()))
+            throw std::invalid_argument("JumpBufferRestoreMask: unreadable buffer");
+        sigprocmask(SigSetmask, mask.data(), nullptr);
+    }
 }
 
 }

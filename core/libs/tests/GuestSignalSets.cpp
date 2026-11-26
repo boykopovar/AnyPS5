@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
@@ -176,6 +177,16 @@ static void CheckLongjmp() {
     Require(LongjumpBack(7, 0x80000009u, 0u) == 7);
     Require(BlockedMask() == 0x80000009u);
     SetBlockedMask(0);
+
+    const auto requireInvalid = [](auto&& action) {
+        bool threw = false;
+        try { action(); } catch (const std::invalid_argument&) { threw = true; }
+        Require(threw);
+    };
+    requireInvalid([] { JumpBuffer::JumpBufferSaveMask_nid_no_patch(nullptr); });
+    requireInvalid([] { JumpBuffer::JumpBufferSaveMask_nid_no_patch(reinterpret_cast<unsigned char*>(0x10)); });
+    requireInvalid([] { JumpBuffer::JumpBufferRestoreMask_nid_no_patch(nullptr); });
+    requireInvalid([] { JumpBuffer::JumpBufferRestoreMask_nid_no_patch(reinterpret_cast<const unsigned char*>(0x10)); });
 }
 
 static void CheckInvalidHow() {
