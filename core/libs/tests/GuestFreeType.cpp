@@ -1356,6 +1356,11 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     }
     rejected.xx = std::numeric_limits<std::int64_t>::max();
     rejectedDelta.x = std::numeric_limits<std::int64_t>::min();
+    errno = 111;
+    FT_Set_Transform_nid_postfix(face, reinterpret_cast<FreeType::GuestMatrix*>(0x10), nullptr);
+    Require(errno == 111);
+    FT_Set_Transform_nid_postfix(face, nullptr, reinterpret_cast<FreeType::GuestVector*>(0x10));
+    Require(errno == 111);
     FT_Set_Transform_nid_postfix(nullptr, &rejected, &rejectedDelta);
     FT_Set_Transform_nid_postfix(nullptr, nullptr, nullptr);
 
@@ -1434,6 +1439,9 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
     Require(FT_New_Size_nid_postfix(nullptr, nullptr) == FT_New_Size(nullptr, nullptr));
     Require(FT_Done_Size_nid_postfix(nullptr) == FT_Done_Size(nullptr));
     Require(FT_Activate_Size_nid_postfix(nullptr) == FT_Activate_Size(nullptr));
+    errno = 222;
+    Require(FT_Activate_Size_nid_postfix(reinterpret_cast<GuestSizeRec*>(0x10)) == FT_Err_Invalid_Size_Handle);
+    Require(errno == 222);
     GuestSizeRec sentinel{};
     GuestSizeRec* untouched = &sentinel;
     Require(FT_New_Size_nid_postfix(nullptr, &untouched) == FT_Err_Invalid_Face_Handle && untouched == &sentinel);
@@ -1487,6 +1495,9 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
                 };
                 if (native->size) remember(face->size, native->size);
                 Require(FT_New_Size_nid_postfix(face, nullptr) == FT_New_Size(native, nullptr));
+                errno = 333;
+                Require(FT_New_Size_nid_postfix(face, reinterpret_cast<GuestSizeRec**>(0x10)) == FT_Err_Invalid_Argument);
+                Require(errno == 333);
                 for (int index = 0; index < count; ++index) {
                     GuestSizeRec* before = face->size;
                     FT_Size previous = native->size;
