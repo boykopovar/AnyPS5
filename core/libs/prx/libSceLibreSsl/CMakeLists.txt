@@ -714,6 +714,19 @@ target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspBasicR
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509V3Print.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl_x509_check_issued_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509CheckIssued.cpp)
+    target_include_directories(guest_libressl_x509_check_issued_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_x509_check_issued_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_x509_check_issued_tests)
+    add_test(NAME guest_libressl_x509_check_issued COMMAND guest_libressl_x509_check_issued_tests)
+    set_tests_properties(guest_libressl_x509_check_issued PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_x509_check_issued PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_verify_param_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509VerifyParam.cpp)
     target_include_directories(guest_libressl_x509_verify_param_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_x509_verify_param_tests PRIVATE libSceLibreSsl libc)

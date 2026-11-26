@@ -550,11 +550,6 @@ int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store*, void* crl) {
     return 0;
 }
 
-int APS5_VABI X509_check_issued_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_free_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
