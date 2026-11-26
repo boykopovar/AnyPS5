@@ -457,14 +457,79 @@ int APS5_VABI sceRegMgrEvtGetRegIdForPS4(void) {
 }
 
 char* APS5_VABI sceRegMgrStrncpy(char* destination, const char* source, std::size_t size) {
+    constexpr auto InvalidResult = static_cast<std::uintptr_t>(1);
     if (destination == nullptr || source == nullptr)
-        return reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
-    return std::strncpy(destination, source, size);
+        return reinterpret_cast<char*>(InvalidResult);
+    if (size == 0) return destination;
+    const int savedErrno = errno;
+    constexpr std::size_t ChunkBytes = 4096;
+    std::array<char, ChunkBytes> buffer{};
+    std::size_t offset = 0;
+    bool terminated = false;
+    while (offset < size && !terminated) {
+        const std::size_t chunk = std::min(ChunkBytes, size - offset);
+        std::size_t valid = 0;
+        if (GuestCopyIn_nid_no_patch(buffer.data(), source + offset, chunk)) {
+            valid = chunk;
+        } else {
+            while (valid < chunk) {
+                char byte = 0;
+                if (!GuestCopyIn_nid_no_patch(&byte, source + offset + valid, 1)) {
+                    errno = savedErrno;
+                    return reinterpret_cast<char*>(InvalidResult);
+                }
+                buffer[valid++] = byte;
+                if (byte == '\0') break;
+            }
+        }
+        std::size_t copyCount = valid;
+        for (std::size_t index = 0; index < valid; ++index) {
+            if (buffer[index] == '\0') {
+                terminated = true;
+                copyCount = index + 1;
+                break;
+            }
+        }
+        if (!GuestCopyOut_nid_no_patch(destination + offset, buffer.data(), copyCount)) {
+            errno = savedErrno;
+            return reinterpret_cast<char*>(InvalidResult);
+        }
+        offset += copyCount;
+    }
+    if (offset < size) {
+        buffer.fill('\0');
+        while (offset < size) {
+            const std::size_t chunk = std::min(ChunkBytes, size - offset);
+            if (!GuestCopyOut_nid_no_patch(destination + offset, buffer.data(), chunk)) {
+                errno = savedErrno;
+                return reinterpret_cast<char*>(InvalidResult);
+            }
+            offset += chunk;
+        }
+    }
+    errno = savedErrno;
+    return destination;
 }
 
 void* APS5_VABI sceRegMgrMemset(void* destination, int value, std::size_t size) {
-    if (destination == nullptr) return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
-    return std::memset(destination, value, size);
+    constexpr auto InvalidResult = static_cast<std::uintptr_t>(1);
+    if (destination == nullptr) return reinterpret_cast<void*>(InvalidResult);
+    if (size == 0) return destination;
+    const int savedErrno = errno;
+    constexpr std::size_t ChunkBytes = 4096;
+    std::array<std::uint8_t, ChunkBytes> buffer{};
+    buffer.fill(static_cast<std::uint8_t>(value));
+    auto* target = static_cast<std::uint8_t*>(destination);
+    for (std::size_t offset = 0; offset < size;) {
+        const std::size_t chunk = std::min(ChunkBytes, size - offset);
+        if (!GuestCopyOut_nid_no_patch(target + offset, buffer.data(), chunk)) {
+            errno = savedErrno;
+            return reinterpret_cast<void*>(InvalidResult);
+        }
+        offset += chunk;
+    }
+    errno = savedErrno;
+    return destination;
 }
 
 int APS5_VABI sceRegMgrSetbin(void) {

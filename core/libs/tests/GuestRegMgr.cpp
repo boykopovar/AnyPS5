@@ -390,12 +390,63 @@ int main() {
     std::memset(fill, 0x5A, sizeof(fill));
     Require(sceRegMgrMemset(fill, 0xAB, 4) == static_cast<void*>(fill));
     Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
+    Require(sceRegMgrMemset(fill, 0xCD, 0) == static_cast<void*>(fill));
+    Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
     Require(sceRegMgrMemset(nullptr, 0, 0) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(1)));
+    errno = 123;
+    Require(sceRegMgrMemset(reinterpret_cast<void*>(0x10), 0x11, 4) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(1)));
+    Require(errno == 123);
+
     char copied[8];
     std::memset(copied, 0x5A, sizeof(copied));
     Require(sceRegMgrStrncpy(copied, "xyz", 3) == copied);
     Require(std::memcmp(copied, "xyz", 3) == 0 && copied[3] == 0x5A);
+    Require(sceRegMgrStrncpy(copied, "ab", 6) == copied);
+    Require(std::memcmp(copied, "ab\0\0\0\0", 6) == 0 && copied[6] == 0x5A);
+    Require(sceRegMgrStrncpy(copied, "zz", 0) == copied);
+    Require(copied[0] == 'a');
     Require(sceRegMgrStrncpy(nullptr, "x", 1) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
+    errno = 456;
+    Require(sceRegMgrStrncpy(reinterpret_cast<char*>(0x10), "x", 1) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
+    Require(errno == 456);
+    Require(sceRegMgrStrncpy(copied, reinterpret_cast<const char*>(0x10), 1) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
+    Require(errno == 456);
+
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    pageSize = sysInfo.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD prevProtect = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &prevProtect) != 0);
+#else
+    const long rawPage = sysconf(_SC_PAGESIZE);
+    Require(rawPage > 0);
+    pageSize = static_cast<std::size_t>(rawPage);
+    auto* pages = static_cast<char*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    char* boundarySource = pages + pageSize - 3;
+    boundarySource[0] = 'o';
+    boundarySource[1] = 'k';
+    boundarySource[2] = '\0';
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, boundarySource, sizeof(copied)) == copied);
+    Require(std::memcmp(copied, "ok\0\0\0\0\0\0", sizeof(copied)) == 0);
+    boundarySource[2] = '!';
+    errno = 789;
+    Require(sceRegMgrStrncpy(copied, boundarySource, sizeof(copied)) == reinterpret_cast<char*>(static_cast<std::uintptr_t>(1)));
+    Require(errno == 789);
+    Require(sceRegMgrMemset(pages + pageSize - 2, 0x33, 4) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(1)));
+    Require(errno == 789);
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, pageSize * 2);
+#endif
 
     CheckBoundedBinaryInput();
     return 0;
