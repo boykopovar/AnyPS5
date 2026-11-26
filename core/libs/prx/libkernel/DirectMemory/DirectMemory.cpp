@@ -1841,6 +1841,16 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
         if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
         if (mutation.Covers(*addr, len)) {
             constexpr int GuestMapNoOverwrite = 0x80;
+            if ((flags & GuestMapNoOverwrite) != 0 && Reserved(*addr, len)) {
+                try {
+                    ValidateRange(*addr, len, ValidateAlignment(alignment));
+                } catch (const std::invalid_argument&) {
+                    return SCE_KERNEL_ERROR_EINVAL;
+                }
+                RecordReservation(*addr, len);
+                Trace("reserve within existing reservation %p+0x%zx flags=0x%x align=0x%zx", *addr, len, flags, alignment);
+                return 0;
+            }
             if ((flags & GuestMapNoOverwrite) == 0 && RemapFixedIntoRegistered(mutation, *addr, len, 0, GuestMapFixedFlag)) {
                 RecordProtection(*addr, len, -1);
                 RecordReservation(*addr, len);

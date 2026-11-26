@@ -2787,12 +2787,13 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
     endif()
     add_test(NAME guest_memory COMMAND guest_memory_tests)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
+    add_test(NAME guest_memory_fixed_reservation COMMAND guest_memory_tests fixed-reservation)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
         set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     endif()
     if(WIN32)
-        set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_memory_fixed_reservation guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))

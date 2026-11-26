@@ -1601,6 +1601,19 @@ static void CheckFixedVirtualReservation() {
     Require(sceKernelReserveVirtualRange(&probe, page * 4, 0, 0) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(probe), page * 4) == 0);
     void* const requested = static_cast<unsigned char*>(probe) + page;
+    void* whole = probe;
+    Require(sceKernelReserveVirtualRange(&whole, page * 4, 0x10, 0) == 0);
+    void* middle = requested;
+    Require(sceKernelReserveVirtualRange(&middle, page * 2, 0x90, 0) == 0);
+    Require(middle == requested);
+    VirtualQueryInfo nested{};
+    Require(sceKernelVirtualQuery(middle, 0, &nested, sizeof(nested)) == 0);
+    const auto middleAddress = reinterpret_cast<std::uintptr_t>(middle);
+    Require(nested.start == middleAddress && nested.end == middleAddress + page * 2);
+    Require(!nested.is_committed && nested.protection == 0 && !nested.is_direct && !nested.is_flexible);
+    void* misaligned = static_cast<unsigned char*>(requested) + 1;
+    Require(sceKernelReserveVirtualRange(&misaligned, page, 0x90, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(whole), page * 4) == 0);
     void* fixed = requested;
     Require(sceKernelReserveVirtualRange(&fixed, page * 2, 0x400010, 0) == 0);
     Require(fixed == requested);
@@ -4854,6 +4867,10 @@ int main(int argc, char** argv) {
 #else
     setenv("APS5_PIN_WAIT_MS", "1000", 1);
 #endif
+    if (argc == 2 && std::strcmp(argv[1], "fixed-reservation") == 0) {
+        CheckFixedVirtualReservation();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "fixed-anonymous") == 0) {
         CheckPosixFixedAnonymousMapping();
         CheckPosixFixedAnonymousReleasesFlexibleAccounting();
