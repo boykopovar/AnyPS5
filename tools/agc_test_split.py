@@ -145,19 +145,24 @@ def commands(text):
     found, index = [], 0
     while index < len(lines):
         stripped = lines[index].strip()
-        if stripped.startswith("#") and (comment := BRACKET.match(stripped, 1)):
-            opening = offsets[index] + lines[index].index("#") + comment.end()
-            delimiter = "]" + comment[1] + "]"
-            close = text.find(delimiter, opening)
-            if close < 0:
-                raise SplitError(f"line {index + 1}: unterminated bracket comment")
-            index += text.count("\n", opening, close)
-            rest = text[close + len(delimiter):offsets[index + 1] - 1].strip()
-            if rest and not rest.startswith("#"):
-                raise SplitError(f"line {index + 1}: expected a command on its own line after a bracket comment")
+        if stripped.startswith("#"):
+            position = offsets[index] + lines[index].index("#") + 1
+            while comment := BRACKET.match(text, position):
+                delimiter = "]" + comment[1] + "]"
+                close = text.find(delimiter, comment.end())
+                if close < 0:
+                    raise SplitError(f"line {index + 1}: unterminated bracket comment")
+                index += text.count("\n", comment.end(), close)
+                after = close + len(delimiter)
+                rest = text[after:offsets[index + 1] - 1]
+                if not rest.strip():
+                    break
+                if not rest.lstrip().startswith("#"):
+                    raise SplitError(f"line {index + 1}: expected a command on its own line after a bracket comment")
+                position = after + rest.index("#") + 1
             index += 1
             continue
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
             index += 1
             continue
         call = CALL.match(lines[index])
