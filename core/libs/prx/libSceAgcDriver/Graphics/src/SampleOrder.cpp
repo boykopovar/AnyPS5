@@ -184,10 +184,44 @@ public:
     }
 
     void Depth(CommandState& recording, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, std::vector<std::shared_ptr<void>>& kept) {
-        const auto commands = recording.Commands();
         const bool stencil = target.method != SampleOrderMethod::Depth;
-        auto copy = copyFor(target.format, target.samples, target.extent, stencil);
+        auto copy = copySamples(recording.Commands(), target, region, order, stencil);
         kept.push_back(copy);
+        drawDepth(recording, target, map, region, order, copy->depthView, stencil ? copy->stencilView : copy->depthView, kept);
+    }
+
+    void Expand(CommandState& recording, const DepthAnchorExpand& expand, std::vector<std::shared_ptr<void>>& kept) {
+        const auto commands = recording.Commands();
+        const auto& twin = expand.twin;
+        const bool stencil = twin.method != SampleOrderMethod::Depth;
+        auto copy = copySamples(commands, expand.source, expand.region, expand.sourcePass, stencil);
+        kept.push_back(copy);
+        const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(twin.samples), {1, 1}, twin.samples, expand.twinPass.locations.data()};
+        VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, expand.twinPass.located ? &info : nullptr};
+        toGeneral.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = twin.image;
+        toGeneral.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(twin.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+        context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+        std::array<std::uint32_t, 4> map{};
+        for (std::size_t pixel = 0; pixel < map.size(); ++pixel) map[pixel] = expand.map[pixel] | 0x88888888u;
+        drawDepth(recording, twin, map, expand.region, expand.twinPass, copy->depthView, stencil ? copy->stencilView : copy->depthView, kept);
+    }
+
+    void Import(CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
+        constexpr std::uint32_t sameSamplesDrawn = KeptSampleOrder | 0x88888888u;
+        constexpr std::array<std::uint32_t, 4> map{sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn};
+        drawDepth(recording, target, map, target.extent, SampleOrderPass{}, samples, samples, kept);
+    }
+
+    Context context;
+
+private:
+    std::shared_ptr<CopyImage> copySamples(VkCommandBuffer commands, const SampleOrderTarget& target, VkExtent2D region, const SampleOrderPass& order, bool stencil) {
+        auto copy = copyFor(target.format, target.samples, target.extent, stencil);
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         const VkImageAspectFlags layoutAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(target.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         if (!copy->general) {
@@ -215,18 +249,9 @@ public:
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, target.image, located ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, copy->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region3d);
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, fragmentStages, depthAccess);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, fragmentStages, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | depthAccess);
-        drawDepth(recording, target, map, region, order, copy->depthView, stencil ? copy->stencilView : copy->depthView, kept);
+        return copy;
     }
 
-    void Import(CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {
-        constexpr std::uint32_t sameSamplesDrawn = KeptSampleOrder | 0x88888888u;
-        constexpr std::array<std::uint32_t, 4> map{sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn, sameSamplesDrawn};
-        drawDepth(recording, target, map, target.extent, SampleOrderPass{}, samples, samples, kept);
-    }
-
-    Context context;
-
-private:
     void drawDepth(CommandState& recording, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, VkImageView depthSource, VkImageView stencilSource, std::vector<std::shared_ptr<void>>& kept) {
         const auto commands = recording.Commands();
         const bool stencil = target.method != SampleOrderMethod::Depth;
@@ -674,6 +699,32 @@ void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands
     const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(depth.samples), depth.grid, depth.samples * depth.grid.width * depth.grid.height, depth.locations.data()};
     transitionLocated(context, commands, depth.image, depth.format, info, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyWrite, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     transitionLocated(context, commands, depth.image, depth.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyAccess);
+}
+
+std::string DepthAnchorRefusal(const Context& context, const State& state) {
+    Require(state.depth.has_value() && state.depthAnchorSamples > 1u && state.depthAnchorSamples < state.samples, "a depth target expanded for a color-writing draw has no fewer stored samples than the rasterizer");
+    if (!context.sampleRateShading) return "the device lacks sampleRateShading";
+    const auto host = HostDepthFormat(context, state.depth->format);
+    const auto stored = state.depthAnchorSamples;
+    if (!depthSampleable(context, host, stored)) return "depth format " + std::to_string(host) + " cannot be sampled at " + std::to_string(stored) + " samples";
+    if (stencilOf(context, *state.depth) && (context.limits.sampledImageStencilSampleCounts & stored) == 0u) return "its stencil cannot be sampled at " + std::to_string(stored) + " samples";
+    VkImageFormatProperties supported{};
+    const VkImageCreateFlags flags = SampleLocationsCompatibleDepth(context, host, state.samples) ? VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT : 0u;
+    constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (context.imageFormatProperties == nullptr || context.imageFormatProperties(context.physical, host, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, flags, &supported) != VK_SUCCESS || (supported.sampleCounts & state.samples) == 0u) return "depth format " + std::to_string(host) + " cannot be an attachment at " + std::to_string(state.samples) + " samples";
+    return {};
+}
+
+void RecordDepthAnchorExpand(const Context& context, CommandState& recording, const DepthAnchorExpand& expand, std::vector<std::shared_ptr<void>>& kept) {
+    Require(expand.source.image != VK_NULL_HANDLE && expand.twin.image != VK_NULL_HANDLE && expand.twin.view != VK_NULL_HANDLE && expand.source.format == expand.twin.format && expand.source.method == expand.twin.method && expand.source.samples > 1u && expand.source.samples < expand.twin.samples, "a depth expansion needs a stored depth target and a depth attachment with more samples of the same format");
+    if (expand.region.width == 0 || expand.region.height == 0) return;
+    const auto commands = recording.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    ordersFor(context).Expand(recording, expand, kept);
+    if (expand.source.keep != nullptr) kept.push_back(expand.source.keep);
+    if (expand.twin.keep != nullptr) kept.push_back(expand.twin.keep);
+    RecordMemoryBarrier(context, commands, reorderStages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);
+    if (Recorder::Active() != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
 }
 
 void RecordDepthSampleImport(const Context& context, CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept) {

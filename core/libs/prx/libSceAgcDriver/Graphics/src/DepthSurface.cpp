@@ -4364,6 +4364,96 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
     throw std::runtime_error("AGC graphics: the depth surface drawn at custom sample locations is not resident");
 }
 
+SampleOrderTarget DepthSurfaceAnchorSource(const Context& context, const DepthTarget& target) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::unique_lock lock(surfacesMutex());
+    for (const auto& candidate : surfaces()) {
+        if (!candidate->active->load(std::memory_order_acquire) || candidate->context.device != context.device || !holdsTarget(candidate->target, target)) continue;
+        Require(candidate->target.samples == target.samples && candidate->owned != nullptr, "the depth surface expanded for a color-writing draw is not a multisampled surface of its own");
+        return {candidate->image, candidate->view, candidate->hostFormat, candidate->target.extent, target.samples, DepthSampleOrderMethod(context, target), candidate->owned};
+    }
+    throw std::runtime_error("AGC graphics: the depth surface expanded for a color-writing draw is not resident");
+}
+
+namespace {
+
+class AnchorTwin {
+public:
+    AnchorTwin(const Context& context, VkFormat format, VkExtent2D extent, std::uint32_t samples, VkImageAspectFlags aspects) : context(context), format(format), extent(extent), samples(samples), aspects(aspects) {
+        this->context.bufferPool.reset();
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        if (SampleLocationsCompatibleDepth(context, format, samples)) info.flags = VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT;
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = format;
+        info.extent = {extent.width, extent.height, 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = static_cast<VkSampleCountFlagBits>(samples);
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImage image = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth expanded for a color-writing draw");
+        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
+        owned->Allocate(context, info, "vkAllocateMemory depth expanded for a color-writing draw");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory depth expanded for a color-writing draw");
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange = {aspects, 0, 1, 0, 1};
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth expanded for a color-writing draw");
+    }
+    ~AnchorTwin() {
+        if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    }
+    AnchorTwin(const AnchorTwin&) = delete;
+    AnchorTwin& operator=(const AnchorTwin&) = delete;
+
+    Context context;
+    VkFormat format;
+    VkExtent2D extent;
+    std::uint32_t samples;
+    VkImageAspectFlags aspects;
+    std::shared_ptr<OwnedImage> owned;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
+struct AnchorTwins {
+    std::mutex mutex;
+    std::vector<std::pair<std::shared_ptr<AnchorTwin>, std::uint64_t>> entries;
+    std::uint64_t uses = 0;
+};
+
+AnchorTwins& anchorTwins() {
+    static AnchorTwins twins;
+    return twins;
+}
+
+}
+
+SampleOrderTarget DepthSurfaceAnchorTwin(const Context& context, const DepthTarget& target, std::uint32_t samples) {
+    const auto format = HostDepthFormat(context, target.format);
+    const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+    const auto method = DepthSampleOrderMethod(context, target);
+    auto& twins = anchorTwins();
+    std::lock_guard lock(twins.mutex);
+    for (auto& [twin, used] : twins.entries) {
+        if (twin->context.device != context.device || twin->format != format || twin->extent.width != target.extent.width || twin->extent.height != target.extent.height || twin->samples != samples || twin->aspects != aspects) continue;
+        used = ++twins.uses;
+        return {twin->owned->image, twin->view, format, twin->extent, samples, method, twin};
+    }
+    constexpr std::size_t bound = 4;
+    while (twins.entries.size() >= bound) {
+        twins.entries.erase(std::ranges::min_element(twins.entries, {}, [](const auto& entry) { return entry.second; }));
+        surfacesReleased.fetch_add(1, std::memory_order_release);
+    }
+    auto twin = std::make_shared<AnchorTwin>(context, format, target.extent, samples, aspects);
+    twins.entries.emplace_back(twin, ++twins.uses);
+    return {twin->owned->image, twin->view, format, twin->extent, samples, method, twin};
+}
+
 bool DepthPlanesStale() {
     auto& planes = stalePlanes();
     return planes.begin.load(std::memory_order_acquire) < planes.end.load(std::memory_order_acquire);
@@ -4788,6 +4878,11 @@ void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
 
 void ClearDepthSurfaces(VkDevice device) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    {
+        auto& twins = anchorTwins();
+        std::lock_guard lock(twins.mutex);
+        std::erase_if(twins.entries, [&](const auto& entry) { return entry.first->context.device == device; });
+    }
     {
         std::lock_guard lock(htileMasksMutex());
         std::erase_if(htileMasks(), [&](const HtileMaskWrite& write) { return write.device == device; });

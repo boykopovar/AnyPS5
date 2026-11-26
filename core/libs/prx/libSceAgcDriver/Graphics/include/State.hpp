@@ -211,6 +211,8 @@ struct State {
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
     bool leadingSamples = false;
+    std::uint32_t depthAnchorSamples = 0;
+    std::array<std::uint32_t, 4> depthAnchorMap{};
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
@@ -257,6 +259,7 @@ std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::Shader
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
+State DepthAnchorSourceState(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 VkExtent2D SampleLocationGrid(const State& state);
 using SampleOrder = std::array<std::uint32_t, 4>;
