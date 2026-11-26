@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
@@ -768,6 +769,172 @@ void unwatchedEpochTests(Context context) {
     resources.reset();
     ClearCachedTextures(context.device);
     std::puts("template over an unwatched surface in the same collect epoch passed");
+}
+
+ShaderRecompiler::RecompileResult ImageProgramAt(std::uint64_t address, bool sampled) {
+    auto program = SampledProgram(address);
+    auto& binding = program.bindings.front();
+    if (!sampled) {
+        binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    }
+    return program;
+}
+
+void remappedEpochTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    WatchedSurface surface(context);
+    Block elsewhere(context);
+    ClearCachedTextures(context.device);
+    Require(ShaderResources::EpochProofs(), "the remapped-allocation fixture needs epoch proofs on");
+    const auto replaceRegistry = [](std::uint64_t address, std::size_t bytes) {
+        auto* memory = reinterpret_cast<void*>(address);
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory);
+        mutation.Add(memory, bytes, true, true, true);
+    };
+    const auto replacePages = [&](std::uint64_t address) {
+        auto* memory = reinterpret_cast<std::uint8_t*>(address);
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, SurfaceBytes);
+        GuestArena::GuestArenaCommit_nid_postfix(memory, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, SurfaceBytes);
+        Require(mmap(memory, SurfaceBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot map fresh pages over the surface");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, SurfaceBytes);
+#endif
+        mutation.Add(memory, SurfaceBytes, true, true, true);
+    };
+    const auto exitInputs = [] { return std::array<std::uint64_t, 6>{AgcDriver::GuestMemory::CollectEpoch(), AgcDriver::GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), AgcDriver::GuestMemory::UnwatchSerial(), RetiredImportSerial(), DepthSurfacesSerial()}; };
+    const auto movedInputs = [&](const std::array<std::uint64_t, 6>& before) {
+        constexpr std::array<const char*, 6> names{"epoch", "proof", "pending", "unwatch", "retired imports", "surfaces"};
+        const auto after = exitInputs();
+        std::string moved;
+        for (std::size_t input = 0; input < names.size(); ++input) {
+            if (before[input] != after[input]) moved += std::string(moved.empty() ? "" : ", ") + names[input];
+        }
+        return moved;
+    };
+    const auto reused = [](ShaderResources& resources, const CompiledShader& shader, bool& proved) {
+        const auto reuses = EpochProofCounts().resourceReuses.Sum();
+        proved = resources.Revalidate(shader);
+        return EpochProofCounts().resourceReuses.Sum() != reuses;
+    };
+    const auto settle = [&](ShaderResources& resources, const CompiledShader& shader) {
+        bool proved = false;
+        bool settled = false;
+        for (int round = 0; round < 4 && !settled; ++round) settled = reused(resources, shader, proved) && proved;
+        return settled;
+    };
+    for (const bool pages : {false, true}) {
+        for (const bool sampled : {true, false}) {
+            const char* kind = sampled ? "sampled" : "storage";
+            ClearHostImports(context.device);
+            std::memset(reinterpret_cast<void*>(surface.Address()), 0x5a, SurfaceBytes);
+            AgcDriver::GuestMemory::CollectWritesUncached(surface.Address(), SurfaceBytes);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const auto program = ImageProgramAt(surface.Address(), sampled);
+            const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+            auto resources = std::make_shared<ShaderResources>(context, shader);
+            Require(resources->Reusable() && (sampled ? resources->SampledTextures().size() == 1 : resources->StorageImages().size() == 1), std::string("the remapped-allocation ") + kind + " template is not reusable");
+            Require(settle(*resources, shader), std::string("an unchanged ") + kind + " template in the same collect epoch never took the epoch exit");
+            const auto bound = sampled ? resources->SampledTextures().front() : nullptr;
+            const auto before = exitInputs();
+            if (pages) replacePages(surface.Address());
+            else replaceRegistry(surface.Address(), SurfaceBytes);
+            auto moved = movedInputs(before);
+            if (bound != nullptr && bound->Released()) moved += std::string(moved.empty() ? "" : ", ") + "releases";
+            bool exitProved = false;
+            const bool exited = reused(*resources, shader, exitProved);
+            AgcDriver::GuestMemory::BreakProofs();
+            const bool fullProved = resources->Revalidate(shader);
+            const bool relooked = sampled && Sampled(context, surface.Address()) != bound;
+            std::printf("remapped allocation (%s): a %s template, exit inputs moved: %s; the next proof %s the exit and %s; the full proof %s%s\n", pages ? "fresh pages" : "registry only", kind, moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", exitProved ? "proved current" : "refused", fullProved ? "proved current" : "refused", sampled ? (relooked ? "; a new lookup makes another texture" : "; a new lookup hands back the bound texture") : "");
+            Require(!exitProved || fullProved, std::string("a ") + kind + " template proved current through the epoch exit over an image whose guest allocation was replaced, which the full proof refuses");
+            Require(!sampled || !pages || !fullProved, "the full proof kept a sampled image over fresh pages, so the case tests nothing");
+            resources.reset();
+            ClearCachedTextures(context.device);
+        }
+    }
+#ifdef _WIN32
+    for (const bool sampled : {true, false}) {
+        const char* kind = sampled ? "sampled" : "storage";
+        ClearHostImports(context.device);
+        auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, 65536));
+        Require(memory != nullptr, "cannot reserve the section-backed surface");
+        struct Views {
+            std::uint8_t* memory;
+            std::array<HANDLE, 2> sections{};
+            bool registered = false;
+            ~Views() {
+                if (registered) GuestAllocations::Mutation().Remove(memory);
+                GuestArena::GuestArenaReset_nid_postfix(memory, SurfaceBytes);
+                GuestArena::GuestArenaRelease_nid_postfix(memory, SurfaceBytes);
+                for (auto* section : sections) {
+                    if (section == nullptr) continue;
+                    GuestArena::GuestArenaForgetSection_nid_postfix(section);
+                    CloseHandle(section);
+                }
+            }
+        } views{memory};
+        for (auto& section : views.sections) section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(SurfaceBytes), nullptr);
+        Require(views.sections[0] != nullptr && views.sections[1] != nullptr, "cannot create the surface's section backings");
+        auto* fill = MapViewOfFile(views.sections[1], FILE_MAP_WRITE, 0, 0, SurfaceBytes);
+        Require(fill != nullptr, "cannot fill the replacement section");
+        std::memset(fill, 0x33, SurfaceBytes);
+        UnmapViewOfFile(fill);
+        GuestArena::GuestArenaMap_nid_postfix(memory, SurfaceBytes, views.sections[0], 0, PAGE_READWRITE);
+        std::memset(memory, 0x5a, SurfaceBytes);
+        GuestAllocations::Mutation().Add(memory, SurfaceBytes, true, true, true);
+        views.registered = true;
+        const auto address = reinterpret_cast<std::uint64_t>(memory);
+        AgcDriver::GuestMemory::CollectWritesUncached(address, SurfaceBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto program = ImageProgramAt(address, sampled);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        auto resources = std::make_shared<ShaderResources>(context, shader);
+        const bool settled = resources->Reusable() && settle(*resources, shader);
+        const auto before = exitInputs();
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(memory);
+            GuestArena::GuestArenaReset_nid_postfix(memory, SurfaceBytes);
+            GuestArena::GuestArenaMap_nid_postfix(memory, SurfaceBytes, views.sections[1], 0, PAGE_READWRITE);
+            mutation.Add(memory, SurfaceBytes, true, true, true);
+        }
+        const auto moved = movedInputs(before);
+        bool exitProved = false;
+        const bool exited = settled && reused(*resources, shader, exitProved);
+        AgcDriver::GuestMemory::BreakProofs();
+        const bool fullProved = resources->Revalidate(shader);
+        std::printf("remapped allocation (section view replaced): a %s template %s, exit inputs moved: %s; the next proof %s the exit and %s; the full proof %s\n", kind, settled ? "on the exit" : "never on the exit", moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", exitProved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
+        Require(settled, std::string("an unchanged section-backed ") + kind + " template in the same collect epoch never took the epoch exit");
+        Require(!exitProved || fullProved, std::string("a ") + kind + " template proved current through the epoch exit over a section view replaced under its image, which the full proof refuses");
+        Require(!sampled || !fullProved, "the full proof kept a sampled image over a replaced section view, so the case tests nothing");
+        resources.reset();
+        ClearCachedTextures(context.device);
+    }
+#endif
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto program = ImageProgramAt(surface.Address(), true);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable() && settle(*resources, shader), "the unrelated-allocation template never took the epoch exit");
+    const auto before = exitInputs();
+    replaceRegistry(elsewhere.Surface(0), BlockBytes);
+    const auto moved = movedInputs(before);
+    bool proved = false;
+    const bool exited = reused(*resources, shader, proved);
+    std::printf("remapped allocation: a sampled template after an allocation outside its images was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", proved ? "proved current" : "refused");
+    Require(exited && proved, "replacing an allocation outside the template's images kept it off the epoch exit");
+    resources.reset();
+    ClearCachedTextures(context.device);
+    std::puts("templates over a remapped allocation in the same collect epoch passed");
 }
 
 void releasedEpochTests(Context context) {
@@ -2002,6 +2169,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             unwatchedEpochTests(context);
             std::puts("resource cache unwatched epoch tests passed");
+            return 0;
+        }
+        if (mode == "resource-remapped-epoch") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            remappedEpochTests(context);
+            std::puts("resource cache remapped epoch tests passed");
             return 0;
         }
         if (mode == "resource-released-epoch") {
