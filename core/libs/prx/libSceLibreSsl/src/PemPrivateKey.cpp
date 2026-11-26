@@ -218,7 +218,7 @@ struct Cursor {
 enum class Field { Present, Absent, Failed };
 enum class CipherKind { Aes, Des3, Des };
 enum class DecryptResult { Success, BadDecrypt, UnknownPbe, DecodeError, UnsupportedKdf, UnsupportedCipher,
-                           UnsupportedPrf, CipherParameterError };
+                           UnsupportedPrf, CipherParameterError, KdfParameterWrongTag };
 
 struct Algorithm {
     const unsigned char* object;
@@ -556,6 +556,11 @@ DecryptResult DerivePbes2(const Algorithm& algorithm, const char* pass, int pass
     }
     mbedtls_md_type_t type = MBEDTLS_MD_SHA1;
     if (kdfParameters.length) {
+        Element trailing {};
+        if (ReadField(kdfParameters, -1, trailing) == Field::Present &&
+            (trailing.tag != Sequence || trailing.tagClass != 0 || !trailing.constructed)) {
+            return DecryptResult::KdfParameterWrongTag;
+        }
         Algorithm prf;
         if (!ReadAlgorithm(kdfParameters, prf, __func__)) return DecryptResult::DecodeError;
         if (!PrfDigest(AlgorithmNid(prf), type)) return DecryptResult::UnsupportedPrf;
@@ -688,6 +693,12 @@ void PushAlgorithmFailure(DecryptResult result) {
     switch (result) {
     case DecryptResult::UnknownPbe: PutError(EvpLibrary, ReasonUnknownPbeAlgorithm); break;
     case DecryptResult::DecodeError: PutError(EvpLibrary, ReasonDecodeError); break;
+    case DecryptResult::KdfParameterWrongTag:
+        PutError(Asn1Library, ReasonAsn1WrongTag);
+        PutError(Asn1Library, ReasonAsn1NestedError);
+        PutError(Asn1Library, ReasonAsn1NestedError);
+        PutError(EvpLibrary, ReasonDecodeError);
+        break;
     case DecryptResult::UnsupportedKdf: PutError(EvpLibrary, ReasonUnsupportedKeyDerivationFunction); break;
     case DecryptResult::UnsupportedCipher: PutError(EvpLibrary, ReasonUnsupportedCipher); break;
     case DecryptResult::UnsupportedPrf: PutError(EvpLibrary, ReasonUnsupportedPrf); break;

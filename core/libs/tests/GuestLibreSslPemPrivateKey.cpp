@@ -201,6 +201,48 @@ jDYiiVnQVoalxTKm9GwxNFawNsoKwvw4cH/9Pl0P12nZzXB34wvOm2XnxuZ0lmx3
 -----END ENCRYPTED PRIVATE KEY-----
 )pem";
 
+constexpr char KeyLengthOctetStringKey[] = R"pem(-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIIBvzBZBgkqhkiG9w0BBQ0wTDArBgkqhkiG9w0BBQwwHgQIKrMmhltlUSICAQgE
+ARAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEAQIEEHIbMP+Vx29Te8evqkkDK10E
+ggFg43v3MwgtVUZBNOGTizexWwS4hkdSIXea0gwfbh0qWi/da7HlPafqDt+tiEOM
+MuTdbLpSsTA/u9qlA825eYyGrWQPosh3cNQ1pzMWWO2yzPuRL9rF4JDj3iQfax57
+4znYSFUPVk+nqlh3xsretuPtVDhEDSlQXzecCqV/drdI+wpb0RCv5eV3CKxoGOLd
+T8ESR1OC1m8q4c7RztvZPk7tDROPQ6b9gjs+3SjLKcku5AePqBPxXKlLidnU3TF6
+/Z1MJ/kq6WCrxXol2k5h/ztk5frTrcl51eql/y+cTjcdQgZ7k9Tx/ukDGTlqLI5I
+mHdjTdDtX/RwURFxJwiuLoSh0HuHw3jxvpD/I2nTe7nWgydcJiZEOQOGIU20jUtQ
+9GBDq6DmESqdUzVdR71aBqNwA7+C25VXbWv4tY11VcNhLt6A1aQVyb0JtO9YdPlV
+stSdHfoaApL3ciMptoOzzh26Jw==
+-----END ENCRYPTED PRIVATE KEY-----
+)pem";
+
+constexpr char KeyLengthNullKey[] = R"pem(-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIIBsDBKBgkqhkiG9w0BBQ0wPTAcBgkqhkiG9w0BBQwwDwQIHAkKmFHHjDwCAQgF
+ADAdBglghkgBZQMEAQIEELkh0cavV5mrDfRlXpYHs1UEggFgPiU53HOXngxmU/WN
+ckdeY0kTqVdVcGzgcd7xl8K1yOZie/178nGL8Tz8qYQYgmIXVbZC2vlHPOBu/A5c
+otAPLAZgdcIyY0UZ3HtQJMZ7vKx/uMfmQl87GSCsUkgnkESzWo7FIyXzw/sXwdfm
+hlscoT+7FH2vBLBuUxod+cjQNUKp7MTS3qFgbKl5eBlzBcRj0hJTS/+mT3RtknXv
+fuPSE4JFTHJAgcg91qKi8cmjvZfOA/k96QMDWRxyYq2Oi5XVDlm9lekNwJ7zI7Xm
+Q4ydrSi8U+GWi9TWPX3JuMozq7eO1xCKftl958MlFBCLZdabd1u2reaHRW4dqHXH
+bgc3xkno8/ODYOWWq7I7GEkOIXD0OcOzwhgi5NkzPHBfZQiw8ru5JpCtsB5Rz8H/
+tz9j8kjvg9OrhQ4Cv2dw97s3skovBBL4XcgUZsIVzT1JuXoJlT+XF4ORFjtHwFyU
+NI1anQ==
+-----END ENCRYPTED PRIVATE KEY-----
+)pem";
+
+constexpr char KeyLengthAbsentKey[] = R"pem(-----BEGIN ENCRYPTED PRIVATE KEY-----
+MIIBvDBWBgkqhkiG9w0BBQ0wSTAoBgkqhkiG9w0BBQwwGwQIiM/O+Wp74sECAQgw
+DAYIKoZIhvcNAgkFADAdBglghkgBZQMEAQIEECIobxq9K2kMUl2XYKRHddwEggFg
+NAHPaB1ZRk1JERNQw4ouZCPQeKuzf5WAA7PrEU8KLKx2OKKUned9ACiASQCPeaev
+mrqRIo17RvIu10HztC5uj+wOSpkqmtpVNnutanVTxQ8+0/RkS+6pcEXk4YD2h9dm
+yzHfQVG7UK1x6l+qexwbicfn6Uda8UevyKnNd1TOvZuFnWaLTsHSb8/OVjHERR2Y
+Pp0IQ+S3+mQtL+SF62VeFBm/UbtaBydRZSpYoqRd2cAqcZoQNav+tr4mn6BfNNCq
+lNSgyBHfch8c24r9icWqAPQH9RYvoitpZx74tA9nKI8rdHmsRfgcRB8Uvns0+tBL
+xYG1qy+cKly3+fvL3Bw3MI/a3ffBpeRu7bdOMOEaRJs5o2EfOL87Lx8k0Hrv/HM5
+qI7jYmLkgyhaEyNiPrz7ubxqZvOr5hXZQJbIV1h+XYEEkTPIps+JLSHwUihDHdrI
+2GLtbwuKCqPe+2ATbmU4yw==
+-----END ENCRYPTED PRIVATE KEY-----
+)pem";
+
 constexpr char InvalidKdfParameterKey[] = R"pem(-----BEGIN ENCRYPTED PRIVATE KEY-----
 MIIBoTA7BgkqhkiG9w0BBQ0wLjANBgkqhkiG9w0BBQwFADAdBglghkgBZQMEAQIE
 EHEccUYbbsmW6tda2YWESAcEggFgvvqe1Rp12bvrNCZWUtnIR2Fkvt16tM8Ml9lO
@@ -750,7 +792,7 @@ void TestEncryptedPkcs8() {
     RequireEncryptedRsa(RsaPbeSha1ThreeDesKey, "pbe1pass");
     RequireEncryptedRsa(RsaPbes2Aes256HmacSha256Key, "sha256pass");
     for (const char* fixture : {Aes192Key, DesCbcKey, Sha224Key, Sha384Key, Sha512Key,
-                                PbeMd5DesKey, PbeSha1DesKey, SmallPbeSha1ThreeDesKey})
+                                PbeMd5DesKey, PbeSha1DesKey, SmallPbeSha1ThreeDesKey, KeyLengthAbsentKey})
         RequireEncryptedRsa(fixture, "fixture", 512);
 
     const struct { const char* fixture; std::initializer_list<std::uint64_t> errors; } failures[] {
@@ -761,7 +803,9 @@ void TestEncryptedPkcs8() {
         {UnsupportedPrfKey, {Error(6, 125), Error(6, 120), Error(35, 115), Error(35, 117), Error(9, 13)}},
         {InvalidKdfParameterKey, {Error(6, 114), Error(6, 120), Error(35, 115), Error(35, 117), Error(9, 13)}},
         {InvalidCipherParameterKey, {Error(13, 109), Error(6, 122), Error(6, 120), Error(35, 115), Error(35, 117), Error(9, 13)}},
-        {DecodeFailureKey, {Error(13, 168), Error(13, 58), Error(35, 101), Error(9, 13)}}
+        {DecodeFailureKey, {Error(13, 168), Error(13, 58), Error(35, 101), Error(9, 13)}},
+        {KeyLengthOctetStringKey, {Error(13, 168), Error(13, 58), Error(13, 58), Error(6, 114), Error(6, 120), Error(35, 115), Error(35, 117), Error(9, 13)}},
+        {KeyLengthNullKey, {Error(13, 168), Error(13, 58), Error(13, 58), Error(6, 114), Error(6, 120), Error(35, 115), Error(35, 117), Error(9, 13)}}
     };
     for (const auto& failure : failures) {
         ERR_clear_error_nid_postfix();
