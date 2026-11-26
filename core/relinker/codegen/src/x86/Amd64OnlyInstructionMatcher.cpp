@@ -483,14 +483,13 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 ) const {
     const DecodedInstruction instr{data, length};
 
-    if (instr.IsClflush())
-        return _inPlace(kClflush, length, {});
-
-    if (instr.IsClflushopt())
-        return _inPlace(kClflushopt, length, {});
-
-    if (instr.IsClwb())
-        return _inPlace(kClwb, length, {});
+    const Entry* flush = instr.IsClflush() ? &kClflush : instr.IsClflushopt() ? &kClflushopt : instr.IsClwb() ? &kClwb : nullptr;
+    if (flush != nullptr) {
+        const auto opcode = instr.Data + instr.OpcodeOffset();
+        if (std::find(instr.Data, opcode, X64OpcodeConstants::PrefixLock) != opcode)
+            throw CodegenException(std::string(flush->Name) + " with a LOCK prefix");
+        return _inPlace(*flush, length, {});
+    }
 
     if (instr.IsMovntss())
         return _matchMovnts(instr, kMovntss);
