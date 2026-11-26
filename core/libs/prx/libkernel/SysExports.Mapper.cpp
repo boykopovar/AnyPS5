@@ -14,15 +14,20 @@ int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, st
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
+    if ((result && !GuestWritable_nid_no_patch(result, sizeof(*result))) || (id && !GuestWritable_nid_no_patch(id, sizeof(*id)))) return SCE_KERNEL_ERROR_EFAULT;
     const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
-    if (result) *result = {0, 0};
-    if (id) *id = submitted;
+    if (result) {
+        const KernelMapperSubmitResult zero{0, 0};
+        if (!GuestCopyOut_nid_no_patch(result, &zero, sizeof(zero))) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
 int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
+    if (id && !GuestWritable_nid_no_patch(id, sizeof(*id))) return SCE_KERNEL_ERROR_EFAULT;
     const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
-    if (id) *id = submitted;
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

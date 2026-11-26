@@ -989,6 +989,11 @@ void CheckAmmMapperCalls() {
     }
     Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer(3, commands.data(), bytes); }));
     Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer3(0, nullptr, bytes, &thirdId); }));
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, nullptr, nullptr) == 0);
+    Require(sceKernelCallIndirectBuffer3(0, commands.data(), bytes, nullptr) == 0);
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, reinterpret_cast<KernelMapperSubmitResult*>(0x10), &id) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, &result, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCallIndirectBuffer3(0, commands.data(), bytes, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 }
 
 void CheckAmmWaitConcurrentSubmits() {
