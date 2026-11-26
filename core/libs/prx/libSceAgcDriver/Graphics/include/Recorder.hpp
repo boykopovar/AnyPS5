@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include <unordered_set>
@@ -1207,6 +1208,7 @@ private:
     std::atomic<std::uint64_t> directBatches{0};
     std::atomic<std::uint64_t> demotedBatches{0};
     std::atomic<std::uint64_t> poisonedBatches{0};
+    const std::exception_ptr unwoundDrawReason = std::make_exception_ptr(std::runtime_error("AGC graphics: a draw threw while recording into a deferred batch, so the batch holds part of it"));
     std::atomic<std::uint64_t> replayedBatches{0};
     std::atomic<std::uint64_t> failedReplays{0};
     mutable std::mutex demotionMutex;

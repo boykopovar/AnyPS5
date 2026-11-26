@@ -2297,7 +2297,7 @@ VkCommandBuffer Recorder::Begin(CommandStream& stream) {
 
 void Recorder::poisonOpen() noexcept {
     if (open == nullptr || open->stream == nullptr || open->stream->Materialized() != VK_NULL_HANDLE || open->stream->Poisoned()) return;
-    open->stream->Poison(std::make_exception_ptr(std::runtime_error("AGC graphics: a draw threw while recording into a deferred batch, so the batch holds part of it")));
+    open->stream->Poison(unwoundDrawReason);
 }
 
 std::unique_ptr<ReplayExecutor> Recorder::makeExecutor() {
