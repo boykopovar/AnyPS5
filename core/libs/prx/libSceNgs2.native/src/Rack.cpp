@@ -123,6 +123,12 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
             std::memcpy(options.common.name, bytes + 8, 16);
             std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
             std::memcpy(&options.mastering.max_channels, bytes + 128, 2 * sizeof(std::uint32_t));
+        } else if (PS4_LIBRARY && rackId == SCE_NGS2_RACK_ID_REVERB && option->size == 136) {
+            options = {};
+            options.common.size = size;
+            std::memcpy(options.common.name, bytes + 8, 16);
+            std::memcpy(&options.common.flags, bytes + 24, 6 * sizeof(std::uint32_t));
+            std::memcpy(&options.reverb.max_channels, bytes + 128, 2 * sizeof(std::uint32_t));
         } else throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
     } else {
         if (option->size != size) {

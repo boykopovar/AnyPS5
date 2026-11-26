@@ -712,6 +712,11 @@ static void TestPs4MasteringOption() {
     TestPs4RackOption(SCE_NGS2_RACK_ID_MASTERING, 136, 1, specific, 2);
 }
 
+static void TestPs4ReverbOption() {
+    const std::uint32_t specific[] {8, 1};
+    TestPs4RackOption(SCE_NGS2_RACK_ID_REVERB, 136, 1, specific, 2);
+}
+
 int main() {
 #ifdef APS5_NGS2_PS4_LIBRARY
     const std::uint64_t processSize = processParameters.size();
@@ -728,6 +733,7 @@ int main() {
     TestGainRouting();
     TestPs4SamplerOption();
     TestPs4MasteringOption();
+    TestPs4ReverbOption();
     TestPs4ZeroVoiceEvent();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
