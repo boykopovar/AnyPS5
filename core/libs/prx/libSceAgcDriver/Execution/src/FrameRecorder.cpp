@@ -611,13 +611,11 @@ void FrameRecorder::endGpuStores() {
 }
 
 void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes) {
-    GuestMemory::ForgetComparedPages(address, bytes.size());
     std::lock_guard lock(gpuStoresMutex);
     gpuStores.Store(address, bytes);
 }
 
 void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
-    GuestMemory::ForgetComparedPages(address, bytes);
     std::lock_guard lock(gpuStoresMutex);
     gpuStores.Fill(address, bytes, pattern);
 }

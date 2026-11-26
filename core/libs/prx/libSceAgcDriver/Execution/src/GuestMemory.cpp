@@ -1791,6 +1791,7 @@ struct WriteTracker {
     std::vector<std::uint64_t> unstampedStores;
 
     void noteUnstampedStore(std::uint64_t address, std::uint64_t end) {
+        ForgetComparedPages(address, static_cast<std::size_t>(end - address));
         if (unstampedStores.empty()) unstampedStores.assign(UnstampedSlots, 0);
         const auto first = address / WriteBlockBytes;
         const auto last = (end - 1) / WriteBlockBytes;
@@ -2726,7 +2727,7 @@ void UpdateComparedPages(std::uint64_t address, std::span<const std::byte> bytes
 }
 
 void ForgetComparedPages(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !leftWatchCompare.load(std::memory_order_acquire)) return;
+    if (!leftWatchCompare.load(std::memory_order_acquire) || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
     const std::lock_guard lock(comparedMutex);
     for (auto found = comparedPages.lower_bound(address & ~std::uint64_t{WritePageBytes - 1}); found != comparedPages.end() && found->first < address + bytes; ++found) found->second.known = false;
 }
