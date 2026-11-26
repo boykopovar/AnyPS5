@@ -2517,6 +2517,7 @@ void deferredBatchTests(const Device& device) {
         failing.deviceProc = replayFailingDeviceProc;
         Recorder recorder(failing, false, true, context.queueFamily);
         bool ran = false;
+        const auto counted = countedSubmits.load();
         recordBarrierThrough(failing, recorder.Commands());
         recorder.Submit();
         recorder.Sync();
@@ -20676,12 +20677,13 @@ int main(int argc, char** argv) {
         sealedBatchTests(device);
         finishAfterDeviceLossTests(device);
         recorder.Activate();
+        const auto replayedBefore = recorder.StreamCounts().replayed;
         const bool drew = vertexTargetRangeTests(device, recorder, false);
         const char* recordInline = std::getenv("APS5_RECORD_INLINE");
         const bool direct = recordInline != nullptr && std::strcmp(recordInline, "0") != 0;
         const auto counts = recorder.StreamCounts();
         Require(direct ? counts.deferred == 0 : counts.deferred != 0, "the recorder suite's recorder did not follow APS5_RECORD_INLINE: " + recorder.StreamReport());
-        Require(direct || !drew || counts.replayed != 0, "the recorder suite drew but replayed no deferred batch");
+        Require(direct || !drew || counts.replayed > replayedBefore, "the vertex-range workload drew but replayed no deferred batch");
         std::cout << recorder.StreamReport();
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
