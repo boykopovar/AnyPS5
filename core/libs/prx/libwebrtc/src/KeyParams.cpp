@@ -42,8 +42,21 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+}
 
 extern "C" {
 
@@ -51,8 +64,14 @@ void APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(WebRtcKeyParams* par
     if (!params)
         throw std::invalid_argument("KeyParams constructor requires parameters");
     if (keyType == WebRtcKeyTypeEcdsa) {
-        params->type = WebRtcKeyTypeEcdsa;
-        params->curve = WebRtcEcNistP256;
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(params, sizeof(*params)))
+            throw std::invalid_argument("KeyParams constructor requires parameters");
+        auto* typeField = reinterpret_cast<std::int32_t*>(reinterpret_cast<std::uintptr_t>(params) + offsetof(WebRtcKeyParams, type));
+        auto* curveField = reinterpret_cast<std::int32_t*>(reinterpret_cast<std::uintptr_t>(params) + offsetof(WebRtcKeyParams, curve));
+        if (!GuestPtr<std::int32_t>(typeField).CopyOut(WebRtcKeyTypeEcdsa) ||
+            !GuestPtr<std::int32_t>(curveField).CopyOut(WebRtcEcNistP256))
+            throw std::invalid_argument("KeyParams constructor requires parameters");
         return;
     }
     if (keyType == WebRtcKeyTypeRsa)

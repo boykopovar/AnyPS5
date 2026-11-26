@@ -281,6 +281,8 @@ int APS5_VABI AesCcmInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key,
         std::memcpy(ctx->iv, iv, NonceBytes(state));
         state.ivSet = 1;
     }
+    state.lengthSet = 0;
+    if (ctx->encrypt) state.tagSet = 0;
     return 1;
 }
 

@@ -145,6 +145,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
             }
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 Ngs2ClearCustomReverb(*this);
+                Ngs2ResetCustomFilterHistory(*this);
                 if (IsSampler()) {
                     Ngs2ReplaySampler(*this);
                     Ngs2ResetFilterHistory(*this);
@@ -247,6 +248,7 @@ void Ngs2Voice::ResetSetup() {
     else compressor.gain.fill(1.0f);
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
+    masteringLfe = {};
     channels = 0;
     inputChannels = 0;
     sampleRate = 0;
@@ -576,7 +578,7 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
     if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
 }
 
-static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
+static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
     const auto flags = param.flags;
     if (PS4_LIBRARY && (flags & 1u) != 0) return;
     if ((flags & ~0x3fu) != 0 || (PS4_LIBRARY ? (flags & 4u) != 0 : ((flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u))) {
@@ -584,7 +586,6 @@ static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVo
     }
     if ((flags & 1u) != 0) return;
     if (!(param.knee >= 0.0f && param.knee <= 2.0f)) throw std::runtime_error("NGS2: a submixer compressor knee outside 0 to 2 is not implemented");
-    if (!PS4_LIBRARY && (flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
     if (!(param.threshold > 0.0f) || !std::isfinite(param.threshold) || !std::isfinite(param.ratio) || !std::isfinite(param.level) ||
         !(param.attack_time >= 0.0f) || !std::isfinite(param.attack_time) || !(param.release_time >= 0.0f) || !std::isfinite(param.release_time)) {
         throw std::runtime_error("NGS2: submixer compressor values outside the measured range are not implemented");
@@ -615,12 +616,10 @@ static bool IsMasteringEffect(const Ngs2Voice& voice, std::uint32_t id) {
 static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
     if (param.size < sizeof(Ngs2MasteringVoiceEffectParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
     const auto& effect = reinterpret_cast<const Ngs2MasteringVoiceEffectParam&>(param);
-    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER) {
-        if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
-        return;
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER && effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE && effect.enable_flag != 0 && std::bit_cast<std::int32_t>(effect.value) < 0) {
+        throw std::runtime_error("NGS2: mastering LFE cutoff with the high bit set is not implemented");
     }
-    if (effect.enable_flag == 0 || param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) return;
-    throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
@@ -695,7 +694,7 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
-        CheckSubmixerCompressor(voice, ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+        CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
         return CopyParam(param);
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
@@ -1130,7 +1129,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
                 const auto& compressor = ParamAs<Ngs2SubmixerVoiceCompressorParam>(param);
-                CheckSubmixerCompressor(voice, compressor);
+                CheckSubmixerCompressor(compressor);
                 SetVoiceCompressor(voice, compressor);
                 return;
             }
@@ -1185,8 +1184,14 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (IsMasteringEffect(voice, param.id)) {
                 CheckMasteringEffect(param);
-                if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) {
-                    const auto& effect = ParamAs<Ngs2MasteringVoiceEffectParam>(param);
+                const auto& effect = ParamAs<Ngs2MasteringVoiceEffectParam>(param);
+                if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE) {
+                    auto& filter = voice.masteringLfe;
+                    const auto cutoff = effect.value <= 80 ? 80u : 120u;
+                    if (filter.cutoff != cutoff) filter.designRate = 0;
+                    filter.cutoff = cutoff;
+                    filter.enabled = effect.enable_flag != 0;
+                } else if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER) {
                     const float threshold = std::bit_cast<float>(effect.value);
                     if (effect.enable_flag == 0 || std::isnan(threshold)) {
                         voice.compressor = {};

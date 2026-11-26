@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv_cb.h"
 #include "unicode/ucnv_err.h"
 #include <array>
 #include <cstdint>
@@ -81,6 +82,10 @@ void APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix(const void* context, Icu::C
     RequireCallbackPointers(arguments, reason, error);
     if (!codeUnits && length > 0) APS5_INVALID_ARG_EX;
     UCNV_TO_U_CALLBACK_ESCAPE(context, reinterpret_cast<UConverterToUnicodeArgs*>(arguments), codeUnits, length, static_cast<UConverterCallbackReason>(reason), reinterpret_cast<UErrorCode*>(error));
+}
+
+void APS5_VABI ucnv_cbFromUWriteSub_nid_postfix(Icu::ConverterFromUnicodeArgs* arguments, std::int32_t offsetIndex, std::int32_t* error) {
+    ucnv_cbFromUWriteSub(reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), offsetIndex, reinterpret_cast<UErrorCode*>(error));
 }
 
 }

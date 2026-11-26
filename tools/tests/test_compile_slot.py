@@ -29,6 +29,15 @@ class CompileSlotTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("flock is required", result.stderr)
 
+    def test_lock_error_stops_the_compiler_wrapper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flock = Path(tmp) / "flock"
+            flock.write_text("#!/bin/sh\nexit 71\n")
+            flock.chmod(0o755)
+            result = run(os.pathsep.join((tmp, os.environ["PATH"])), Path(tmp), ["true"])
+        self.assertEqual(result.returncode, 71)
+        self.assertIn("flock failed", result.stderr)
+
     @unittest.skipUnless(shutil.which("flock"), "needs flock")
     def test_exits_when_the_slot_cannot_be_created(self):
         with tempfile.TemporaryDirectory() as tmp:

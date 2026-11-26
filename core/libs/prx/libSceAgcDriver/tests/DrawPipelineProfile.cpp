@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -85,6 +86,7 @@ void TestReport() {
     auto& pipeline = DrawPipeline::Queue0();
     Check(DrawPipeline::Depth() >= 2, "test requires at least two pipeline slots");
     const auto reportAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(10100);
+    const auto clockReads = DrawPipeline::CommitClockReads();
     StderrCapture capture;
     std::binary_semaphore release{0};
     std::exception_ptr failure;
@@ -102,6 +104,7 @@ void TestReport() {
     if (failure) std::rethrow_exception(failure);
     const auto report = capture.ReadReport();
     std::cout << report << '\n';
+    Check(DrawPipeline::CommitClockReads() - clockReads == 4, "the two timed commits did not read the clock exactly twice each");
     Check(report.find(" 2 read ranges, 1 stores held, 3 decode drains") != std::string::npos, "pipeline read counters changed");
     Check(Count(report, " read ranges") == 1, "pipeline read-range counters were printed more than once");
     Check(Count(report, " stores held") == 1, "pipeline held-store counters were printed more than once");
@@ -110,10 +113,26 @@ void TestReport() {
     Check(report.find("packet drains by opcode:") != std::string::npos, "pipeline opcode counters were lost");
 }
 
+void TestUntimedCommits() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    auto& pipeline = DrawPipeline::Queue0();
+    Check(DrawPipeline::Depth() >= 2, "test requires at least two pipeline slots");
+    unsigned ran = 0;
+    for (unsigned i = 0; i < 3; ++i) pipeline.Enqueue([&] { ++ran; }, {}, 0, {}, {}, true);
+    pipeline.Stop();
+    Check(ran == 3, "the queued commits did not run");
+    Check(DrawPipeline::CommitClockReads() == 0, "the committer read the clock with draw profiling and pipeline statistics off");
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--untimed") == 0) {
+            TestUntimedCommits();
+            std::cout << "Draw pipeline untimed commits passed\n";
+            return 0;
+        }
         TestReport();
         std::cout << "Draw pipeline profile passed\n";
         return 0;

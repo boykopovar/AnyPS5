@@ -43,6 +43,7 @@ struct HostImport {
     bool settleOnDemand = false;
     bool dmaBuf = false;
     bool joined = false;
+    bool label = false;
     std::shared_ptr<void> chunk;
     mutable std::uint64_t lastUse = 0;
     std::uint64_t lead = 0;
@@ -93,8 +94,8 @@ ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 bool DmaBufImportSelected(const Context& context);
 
-enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
-inline constexpr std::size_t ImportRequesterCount = 6;
+enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget, Label };
+inline constexpr std::size_t ImportRequesterCount = 7;
 
 struct HostImportRequesterCounts {
     std::uint64_t made = 0;
@@ -112,6 +113,9 @@ struct HostImportCounts {
     std::uint64_t growing = 0;
     std::uint64_t budgetChecks = 0;
     std::uint64_t retiredPinnedBytes = 0;
+    std::uint64_t credited = 0;
+    std::uint64_t creditedBytes = 0;
+    std::uint64_t labelBytes = 0;
 };
 
 const char* ImportRequesterName(ImportRequester requester);
@@ -125,6 +129,7 @@ void ReportHostImports();
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t address, std::size_t bytes);
 struct HostImportCopy {
     VkBuffer buffer;
     VkDeviceSize offset;
@@ -134,6 +139,7 @@ std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
+void SettleOwnImports(const Context& context, std::uint64_t address, std::size_t bytes);
 std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
@@ -145,6 +151,8 @@ VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysic
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
+void SetHeapMirrorRetry(bool enabled);
+void SetImportRetireCredit(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
@@ -173,6 +181,8 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // re-checks with HostImportFor when it binds the import.
 bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes);
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+bool HostImportSegmentsCover(const Context& context, std::uint64_t address, std::size_t bytes);
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page);
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 std::uint64_t HostImportSetGeneration();
 struct RegisteredPiece {
@@ -278,6 +288,8 @@ struct LeaseStats {
     std::uint64_t contentionDrains = 0;
     std::uint64_t cacheDrops = 0;
     double contentionMs = 0;
+    std::uint64_t retireSnapshots = 0;
+    std::uint64_t retireSnapshotsSkipped = 0;
 };
 LeaseStats LeaseCounters();
 
@@ -301,6 +313,10 @@ struct AddressSpaceStats {
     std::uint64_t waiterDrops = 0;
     std::uint64_t patchedEpoch = 0;
     std::uint64_t rebuiltGrowth = 0;
+    std::uint64_t heapRetries = 0;
+    std::uint64_t heapRetryImports = 0;
+    std::uint64_t heapRetryOwed = 0;
+    std::uint64_t heapRetryRetakes = 0;
 };
 AddressSpaceStats AddressSpaceCounters();
 
@@ -391,6 +407,7 @@ public:
     // calls RecordCopyBacks (a dispatch or a recorded draw), since a staged region's results reach
     // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void AllowPassStaging() { passStaging = true; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
     bool HoldsMirror(const std::shared_ptr<ImageMirror>& mirror) const;
@@ -449,6 +466,15 @@ public:
     // regions was recorded (ShaderResources::MarkGpuWrites), under GuestMemory::GpuMutex. A use that
     // never calls it (a synchronous draw) stores the staging bytes from the CPU in WriteBack.
     void RecordCopyBacks(Recorder& recorder);
+    void DeferCopyBacks(Recorder& recorder);
+    void NotePassShadows(const Recorder& recorder);
+    struct PassStagingCounts {
+        std::uint64_t joined = 0;
+        std::uint64_t deferred = 0;
+        std::uint64_t landed = 0;
+        std::uint64_t shared = 0;
+    };
+    static PassStagingCounts PassStagingTotals();
     bool HasGpuCopies() const {
         for (const auto& region : regions) if (region.gpuCopy) return true;
         return false;
@@ -565,6 +591,8 @@ private:
         bool unstaged = false;
         bool overlay = false;
         bool adaptiveInPlace = false;
+        bool sharedShadow = false;
+        std::shared_ptr<void> passShadow;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -606,6 +634,7 @@ private:
     // instead of the CPU (see Region::gpuCopy): live guest bytes, not sparse, at most the size
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
+    bool copyBehindGpuWork(const Region& region, bool locked) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
     // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
     // written element inside, and an atomic element or a size within the written-shadow window.
@@ -619,12 +648,15 @@ private:
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
+    bool joinPassShadows(Recorder& recorder, std::span<Region* const> copies);
+    std::shared_ptr<Buffer> regionShadow(Region& region, bool addressable) const;
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
     void publishIntoMirrors();
     std::vector<MirrorPublishEntry> mirrorPublishes;
     Context context;
     bool stagingAllowed = false;
+    bool passStaging = false;
     bool addressStaging = true;
     bool adjustedRegions = false;
     GuestAllocations::Lease lease;
