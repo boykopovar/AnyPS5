@@ -56,27 +56,35 @@ int StoreResult(PosixForWebKitPasswd** result, PosixForWebKitPasswd* value) {
     return 0;
 }
 
+int Report(PosixForWebKitPasswd** result, int error) {
+    if (result != nullptr) StoreResult(result, nullptr);
+    return error;
+}
+
+int LookupRoot(PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result) {
+    const int error = CopyRootAccount(pwd, buffer, bufsize);
+    if (error != 0) return Report(result, error);
+    return StoreResult(result, pwd);
+}
+
 }
 
 int APS5_VABI getpwuid_r_nid_postfix(std::uint32_t uid, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result) {
     if (result == nullptr) return PosixEinval;
     if (uid != 0) return StoreResult(result, nullptr);
-    const int error = CopyRootAccount(pwd, buffer, bufsize);
-    if (error != 0) return error;
-    return StoreResult(result, pwd);
+    return LookupRoot(pwd, buffer, bufsize, result);
 }
 
 int APS5_VABI getpwnam_r_nid_postfix(const char* name, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result) {
-    if (name == nullptr || result == nullptr) return PosixEinval;
+    if (result == nullptr) return PosixEinval;
+    if (name == nullptr) return Report(result, PosixEinval);
     std::string copy;
     const int copyError = CopyGuestString_nid_no_patch(name, MaximumName, copy);
     if (copyError == 63) return StoreResult(result, nullptr);
-    if (copyError == 12) return copyError;
-    if (copyError != 0) return PosixEfault;
+    if (copyError == 12) return Report(result, copyError);
+    if (copyError != 0) return Report(result, PosixEfault);
     if (copy != "root") return StoreResult(result, nullptr);
-    const int error = CopyRootAccount(pwd, buffer, bufsize);
-    if (error != 0) return error;
-    return StoreResult(result, pwd);
+    return LookupRoot(pwd, buffer, bufsize, result);
 }
 
 PosixForWebKitPasswd* APS5_VABI getpwnam_nid_postfix(const char* name) {
