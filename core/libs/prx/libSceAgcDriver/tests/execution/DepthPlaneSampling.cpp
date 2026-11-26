@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -256,7 +257,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0, bool useCache = false) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
@@ -273,7 +274,7 @@ void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& sh
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
+    request.useCache = useCache;
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -487,12 +488,19 @@ void FrameCopiesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::sp
     }
     const Shape shape{Format32Float, extent.width, extent.height, Type2DArray, 2, Swizzle64KbZX};
     const auto sample = [&](std::size_t copy) {
-        Load(device, bases[copy], shape, 2, output);
+        Load(device, bases[copy], shape, 2, output, false, 0, true);
         Expect(output, Bits(expected[copy]), "D32 2D array " + std::to_string(copy) + " slice 2");
     };
     AgcDriver::Graphics::Recorder::CountPresent();
     AgcDriver::Graphics::Recorder::CountPresent();
     sample(0);
+    std::weak_ptr<AgcDriver::Graphics::Texture> evictedCopy;
+    {
+        const auto words = TextureDescriptor(bases[0], shape);
+        const auto texture = AgcDriver::Graphics::CachedSampledTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words);
+        Require(texture != nullptr && !texture->Released() && texture.use_count() >= 3, "the sampled depth plane copy is not held by both the copy cache and the resource cache");
+        evictedCopy = texture;
+    }
     sample(1);
     sample(0);
     sample(1);
@@ -500,15 +508,33 @@ void FrameCopiesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::sp
     Require(kept == 2, std::to_string(kept) + " depth plane copies were kept after two copies over the 1 MiB budget were sampled in one present, expected both");
     const auto pair = AgcDriver::Graphics::DepthPlaneCopyBytes();
     Require(pair > budget && pair <= 2u * budget, "the two copies sampled in one present hold " + std::to_string(pair) + " bytes, the case needs more than the 1 MiB budget and no more than twice it");
+    {
+        const auto locked = evictedCopy.lock();
+        Require(locked != nullptr && !locked->Released(), "a depth plane copy still within twice the budget was marked released");
+    }
     sample(2);
     const auto capped = AgcDriver::Graphics::DepthPlaneCopyBytes();
     Require(capped <= 2u * budget, "the depth plane copies sampled in one present hold " + std::to_string(capped) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " copies, more than twice the 1 MiB budget");
     Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 2, std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies were kept after a third copy took the ones sampled in one present past twice the budget, expected the two most recently used");
+    Require(evictedCopy.expired(), "an evicted depth plane copy stayed alive in the resource cache instead of releasing its image");
+    std::weak_ptr<AgcDriver::Graphics::Texture> hitEvictedCopy;
+    {
+        const auto words = TextureDescriptor(bases[2], shape);
+        const auto texture = AgcDriver::Graphics::CachedSampledTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words);
+        Require(texture != nullptr && !texture->Released() && texture.use_count() >= 3, "the third depth plane copy is not held by both the copy cache and the resource cache");
+        hitEvictedCopy = texture;
+    }
     AgcDriver::Graphics::Recorder::CountPresent();
     AgcDriver::Graphics::Recorder::CountPresent();
+    const auto cachedBeforeHit = AgcDriver::Graphics::SharedResourceCache().Size();
+    AgcDriver::Graphics::Texture::TakeReuseLookupCounts();
     sample(1);
+    const auto hitCounts = AgcDriver::Graphics::Texture::TakeReuseLookupCounts();
+    Require(hitCounts.held == 1 && hitCounts.changed == 0, "the cache-hit depth plane eviction check did not reuse the cached resource set (" + std::to_string(hitCounts.held) + " held, " + std::to_string(hitCounts.changed) + " changed)");
     const auto left = AgcDriver::Graphics::DepthPlaneCopyCount();
     Require(left == 1, std::to_string(left) + " depth plane copies were kept two presents after the other copy was last sampled, expected only the newest");
+    Require(hitEvictedCopy.expired(), "a depth plane copy evicted during a resource cache hit stayed alive in the resource cache");
+    Require(AgcDriver::Graphics::SharedResourceCache().Size() < cachedBeforeHit, "the resource cache did not drop the entry holding the depth plane copy evicted on a cache hit");
 }
 
 void ExpectRefusal(AgcDriver::VulkanDevice& device, GuestBlock& block, std::size_t offset, const Shape& shape, std::uint32_t baseArray, const std::string& expected, const std::string& what) {

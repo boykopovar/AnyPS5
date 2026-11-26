@@ -13829,6 +13829,43 @@ void stagingPoolBudgetTests() {
     Require(AgcDriver::Graphics::BufferPool::DeviceBudget(memory, &reported, true) == VkDeviceSize{192} << 20u, "the staging pool budget of an integrated GPU is not a sixty-fourth of its reported budget");
 }
 
+void depthPlaneCopyBudgetTests() {
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {VkDeviceSize{32} << 30u, 0};
+    memory.memoryHeaps[1] = {VkDeviceSize{16} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{1} << 30u, "the depth plane copy budget is not a sixteenth of the device-local heap");
+    memory.memoryHeaps[1].size = VkDeviceSize{8} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{512} << 20u, "the depth plane copy budget on an 8 GiB heap is not 512 MiB");
+    memory.memoryHeaps[1].size = VkDeviceSize{2} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{256} << 20u, "the depth plane copy budget fell below 256 MiB");
+    memory.memoryHeapCount = 1;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{256} << 20u, "a host heap sized the depth plane copy budget");
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[1].size = VkDeviceSize{32} << 30u;
+    memory.memoryTypeCount = 2;
+    memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+    memory.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1};
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{512} << 20u, "the depth plane copy budget on a 32 GiB heap of system memory is not a sixty-fourth of it");
+    memory.memoryHeaps[1].size = VkDeviceSize{16} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{256} << 20u, "the depth plane copy budget on system memory fell below 256 MiB");
+    memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1};
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory) == VkDeviceSize{1} << 30u, "a heap with a device-only memory type was taken for system memory");
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, nullptr, true) == VkDeviceSize{256} << 20u, "an integrated GPU's device-local heap with a device-only memory type was not taken for system memory");
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, &reported) == VkDeviceSize{1} << 30u, "a zero reported budget did not fall back to a sixteenth of the heap");
+    reported.heapBudget[0] = VkDeviceSize{1} << 30u;
+    reported.heapBudget[1] = VkDeviceSize{10} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, &reported) == VkDeviceSize{640} << 20u, "a 10 GiB budget on the 16 GiB heap does not limit depth plane copies to a sixteenth of the budget");
+    reported.heapBudget[1] = VkDeviceSize{2} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, &reported) == VkDeviceSize{256} << 20u, "a 2 GiB budget does not keep the 256 MiB floor");
+    reported.heapBudget[1] = VkDeviceSize{40} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, &reported) == VkDeviceSize{1} << 30u, "a budget above the heap size raised depth plane copies past a sixteenth of the heap");
+    memory.memoryHeaps[1].size = VkDeviceSize{32} << 30u;
+    reported.heapBudget[1] = VkDeviceSize{24} << 30u;
+    Require(AgcDriver::Graphics::DepthPlaneCopyBudget(memory, &reported, true) == VkDeviceSize{384} << 20u, "the depth plane copy budget of an integrated GPU is not a sixty-fourth of its reported budget");
+}
+
 void meshArgumentTests() {
     using AgcDriver::Graphics::MeshArguments;
     using AgcDriver::Graphics::ResolveMeshArguments;
@@ -16317,6 +16354,7 @@ int main(int argc, char** argv) {
         meshLimitTests();
         meshIndexBufferTests();
         stagingPoolBudgetTests();
+        depthPlaneCopyBudgetTests();
         validationTests();
         vertexCopyTests();
         vertexCopyStartTests();

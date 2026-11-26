@@ -34,6 +34,7 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+void NoteReleasedTexture(const std::shared_ptr<Texture>& texture, std::uint64_t address);
 struct WriteIndexOutcomes {
     std::uint64_t accepted = 0;
     std::uint64_t partial = 0;
@@ -884,6 +885,7 @@ public:
     // With `object`, erases the entry only while it still holds that object (a replacement made
     // meanwhile by another worker stays).
     void Remove(const Key& key, const ShaderResources* object = nullptr);
+    void DropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a

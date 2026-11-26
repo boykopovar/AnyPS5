@@ -2665,7 +2665,7 @@ bool DepthPlaneReuse() {
 
 class DepthPlaneCopy {
 public:
-    DepthPlaneCopy(const Context& context, VkExtent2D extent, VkFormat format, std::uint32_t layers) : context(context), extent(extent), format(format), layers(layers), guestLayers(layers), surfaceLayers(layers) {
+    DepthPlaneCopy(const Context& context, std::uint64_t address, VkExtent2D extent, VkFormat format, std::uint32_t layers) : context(context), address(address), extent(extent), format(format), layers(layers), guestLayers(layers), surfaceLayers(layers) {
         VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         info.flags = layers % 6u == 0 && extent.width == extent.height ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u;
         info.imageType = VK_IMAGE_TYPE_2D;
@@ -2750,6 +2750,7 @@ public:
     }
 
     const Context context;
+    const std::uint64_t address;
     const VkExtent2D extent;
     const VkFormat format;
     const std::uint32_t layers;
@@ -2859,6 +2860,15 @@ private:
     }
 
     void release() noexcept {
+        for (const auto& [key, texture] : textures) {
+            static_cast<void>(key);
+            if (texture == nullptr || texture.use_count() <= 1) continue;
+            try {
+                NoteReleasedTexture(texture, address);
+            } catch (...) {
+                texture->MarkReleased();
+            }
+        }
         textures.clear();
         staging.reset();
         if (owned != nullptr) owned.reset();
@@ -2881,28 +2891,59 @@ std::uint64_t& planeCopyClock() {
     return clock;
 }
 
-void evictPlaneCopies(const std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>& keep) {
-    static const VkDeviceSize budget = [] {
+bool systemMemoryHeap(const VkPhysicalDeviceMemoryProperties& memory, std::uint32_t heap) {
+    bool typed = false;
+    for (std::uint32_t type = 0; type < std::min<std::uint32_t>(memory.memoryTypeCount, VK_MAX_MEMORY_TYPES); ++type) {
+        if (memory.memoryTypes[type].heapIndex != heap) continue;
+        if ((memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0) return false;
+        typed = true;
+    }
+    return typed;
+}
+
+VkDeviceSize depthPlaneCopyBudget(const Context& context) {
+    static const std::optional<VkDeviceSize> configured = []() -> std::optional<VkDeviceSize> {
         const char* text = std::getenv("APS5_DEPTH_PLANE_COPY_MIB");
-        return static_cast<VkDeviceSize>(text != nullptr ? std::strtoull(text, nullptr, 10) : 256ull) << 20u;
+        if (text == nullptr) return std::nullopt;
+        return static_cast<VkDeviceSize>(std::strtoull(text, nullptr, 10)) << 20u;
     }();
-    if (budget == 0) return;
+    if (configured.has_value()) return *configured;
+    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return DepthPlaneCopyBudget(context.memory, nullptr, context.integratedGpu);
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    properties.pNext = &reported;
+    context.memoryProperties2(context.physical, &properties);
+    return DepthPlaneCopyBudget(context.memory, &reported, context.integratedGpu);
+}
+
+bool evictPlaneCopies(const Context& context, const std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>& keep) {
     auto& copies = planeCopies();
+    bool evictable = false;
     VkDeviceSize total = 0;
-    for (const auto& entry : copies) total += entry.second->HeldBytes();
+    for (const auto& entry : copies) {
+        if (std::get<0>(entry.first) != context.device) continue;
+        total += entry.second->HeldBytes();
+        if (entry.first != keep) evictable = true;
+    }
+    if (!evictable) return false;
+    const auto budget = depthPlaneCopyBudget(context);
+    if (budget == 0) return false;
     const auto present = Recorder::Presents();
     const auto ceiling = budget + std::min(budget, std::numeric_limits<VkDeviceSize>::max() - budget);
+    bool evicted = false;
     while (total > budget) {
         const bool over = total > ceiling;
         auto oldest = copies.end();
         for (auto it = copies.begin(); it != copies.end(); ++it) {
-            if (it->first == keep || (!over && it->second->lastPresent + 1u >= present)) continue;
+            if (std::get<0>(it->first) != context.device || it->first == keep || (!over && it->second->lastPresent + 1u >= present)) continue;
             if (oldest == copies.end() || it->second->lastUse < oldest->second->lastUse) oldest = it;
         }
         if (oldest == copies.end()) break;
         total -= oldest->second->HeldBytes();
         copies.erase(oldest);
+        evicted = true;
     }
+    return evicted;
 }
 
 struct LayeredSlice {
@@ -4857,6 +4898,14 @@ VkDeviceSize DepthPlaneCopyBytes() {
     return total;
 }
 
+VkDeviceSize DepthPlaneCopyBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, bool integratedGpu) {
+    const auto largest = LargestDeviceLocalHeap(memory);
+    VkDeviceSize size = largest ? memory.memoryHeaps[*largest].size : 0;
+    if (largest && reported != nullptr && reported->heapBudget[*largest] != 0) size = std::min(size, reported->heapBudget[*largest]);
+    if (largest && (integratedGpu || systemMemoryHeap(memory, *largest))) return std::max<VkDeviceSize>(VkDeviceSize{256} << 20u, size / 64u);
+    return std::max<VkDeviceSize>(VkDeviceSize{256} << 20u, size / 16u);
+}
+
 namespace {
 
 thread_local bool depthCopySourceActive = false;
@@ -4883,7 +4932,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     settlePendingHtileClear(context, resource.baseAddress);
-    std::lock_guard lock(surfacesMutex());
+    std::unique_lock lock(surfacesMutex());
     auto* found = planeSurface(context.device, resource.baseAddress);
     if (found == nullptr) return nullptr;
     const auto& base = found->target;
@@ -4956,14 +5005,26 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     auto& copies = planeCopies();
     const std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat> copyKey{context.device, stencil ? base.stencilAddress : base.address, extent.width, extent.height, imageFormat};
     auto& copy = copies[copyKey];
-    if (copy == nullptr || copy->layers < layers) copy = std::make_unique<DepthPlaneCopy>(context, extent, imageFormat, layers);
+    const bool replaced = copy != nullptr && copy->layers < layers;
+    if (copy == nullptr || replaced) copy = std::make_unique<DepthPlaneCopy>(context, base.address, extent, imageFormat, layers);
     copy->lastUse = ++planeCopyClock();
     copy->lastPresent = Recorder::Presents();
     auto texture = copy->Refresh(slices, resource, components, cube || resource.dimension == TextureDimension::k2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, layered && !cube ? resource.baseArray : 0u);
     if (DepthPlaneReuse() && !texture->HasReuseLookup()) {
         texture->SetReuseLookup([context, lookupWords = std::vector<std::uint32_t>(words.begin(), words.end()), resource, components] { return DepthSurfaceTexture(context, lookupWords, resource, components); });
     }
-    evictPlaneCopies(copyKey);
+    const bool evicted = evictPlaneCopies(context, copyKey);
+    lock.unlock();
+    if (replaced || evicted) {
+        std::vector<std::shared_ptr<ShaderResources>> stale;
+        SharedResourceCache().DropReleasedTextures(&stale);
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
+            for (auto& entry : stale) {
+                entry->KeepStorageImageBytes(*recorder);
+                recorder->Keep(std::move(entry));
+            }
+        }
+    }
     return texture;
 }
 

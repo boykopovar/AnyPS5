@@ -1815,6 +1815,10 @@ std::uint64_t SampledTextureCacheBudget(const Context& context) {
     return sampledBudget(context, cache);
 }
 
+void NoteReleasedTexture(const std::shared_ptr<Texture>& texture, std::uint64_t address) {
+    if (texture != nullptr) noteReleased(texture, address);
+}
+
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType) {
     const auto resource = DecodeTextureResource(words);
     return cachedTexture(context, words, resource, ViewComponents(resource), 0, false, multisampleViewType);
@@ -3919,11 +3923,11 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
         surface.committedProved = false;
+        if (textures[i]->Released()) return fail(FastFail::Replaced);
         if (surface.depth) {
             if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
-        if (textures[i]->Released()) return fail(FastFail::Replaced);
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
@@ -4073,11 +4077,11 @@ bool ShaderResources::fastRevalidateEach() {
     for (std::size_t i = 0; i < textures.size(); ++i) {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
+        if (textures[i]->Released()) return false;
         if (surface.depth) {
             if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
             continue;
         }
-        if (textures[i]->Released()) return false;
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return false;
@@ -5298,6 +5302,11 @@ void ResourceCache::Remove(const Key& key, const ShaderResources* object) {
         if (found == index.end() || found->second->second.get() != object) return;
     }
     erase(key);
+}
+
+void ResourceCache::DropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted) {
+    std::lock_guard lock(mutex);
+    dropReleasedTextures(evicted);
 }
 
 void ResourceCache::RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted) {

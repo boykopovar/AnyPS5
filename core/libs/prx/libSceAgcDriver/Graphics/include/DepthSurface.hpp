@@ -132,6 +132,7 @@ std::optional<VkExtent2D> ActiveDepthExtent(VkDevice device, std::uint64_t addre
 std::shared_ptr<Texture> DepthSurfaceFirstSample(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components);
 std::size_t DepthPlaneCopyCount();
 VkDeviceSize DepthPlaneCopyBytes();
+VkDeviceSize DepthPlaneCopyBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported = nullptr, bool integratedGpu = false);
 VkFormat HostDepthFormat(const Context& context, VkFormat format);
 float HostDepthBiasConstant(const Context& context, VkFormat format, float constant);
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
