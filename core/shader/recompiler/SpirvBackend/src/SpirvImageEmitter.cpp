@@ -1643,7 +1643,6 @@ void EmitByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.image.dimension != RdnaImageDimension::Dim2D || components == 0u || components * elements != access.mem.dataDwords || access.mem.dataDwords > 4u || access.mem.dataBits != 32u) {
         ctx.Fail(access.inst, "is a MIMG BY2/BY4 store outside the measured 2D, 32-bit data subset");
     }
-    if (access.mem.dmask != (1u << access.mem.dataDwords) - 1u) return;
     state.module.EmitCapability(spv::CapabilityImageQuery);
     const auto condition = ctx.Arg(access.inst, 3);
     EmitIfCondition(state, condition, [&]() {
