@@ -220,6 +220,10 @@ void FileStreams() {
     RequireInvalidArgument([&] { PKFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "unmapped PKFree pointer accepted");
     RequireInvalidArgument([&] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); }, "unmapped factory pointer accepted");
     RequireInvalidArgument([&] { PKCodecFactory_CreateFormatConverter_nid_postfix(reinterpret_cast<void**>(0x10)); }, "unmapped converter pointer accepted");
+    failAllocation = true;
+    Require(PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0) == OutOfMemory, "factory allocation failure masked by unmapped slot");
+    Require(PKCodecFactory_CreateFormatConverter_nid_postfix(reinterpret_cast<void**>(0x10)) == OutOfMemory, "converter allocation failure masked by unmapped slot");
+    failAllocation = false;
     Require(liveBlocks == blocksAfterRelease, "failed pointer probes leaked blocks");
 }
 

@@ -201,9 +201,8 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
     const auto result = WMPAlloc_nid_postfix(&guard.pointer, sizeof(Jxr::Stream));
     if (result < 0) {
         Jxr::Stream* const none = nullptr;
-        const bool wroteNull = GuestCopyOut_nid_no_patch(stream, &none, sizeof(none));
+        GuestCopyOut_nid_no_patch(stream, &none, sizeof(none));
         errno = savedErrno;
-        if (!wroteNull) APS5_INVALID_ARG_EX;
         return result;
     }
     Jxr::Stream local{};
@@ -272,9 +271,8 @@ std::int64_t APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix(void** c
     const auto result = AllocateZeroed(&guard.pointer, sizeof(Jxr::FormatConverter));
     if (result != WmpErrSuccess) {
         void* const none = nullptr;
-        const bool wroteNull = GuestCopyOut_nid_no_patch(converter, &none, sizeof(none));
+        GuestCopyOut_nid_no_patch(converter, &none, sizeof(none));
         errno = savedErrno;
-        if (!wroteNull) APS5_INVALID_ARG_EX;
         return result;
     }
     Jxr::FormatConverter local{};
@@ -327,9 +325,8 @@ std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t
     const auto result = AllocateZeroed(&guard.pointer, sizeof(Jxr::Factory));
     if (result != WmpErrSuccess) {
         void* const none = nullptr;
-        const bool wroteNull = GuestCopyOut_nid_no_patch(factory, &none, sizeof(none));
+        GuestCopyOut_nid_no_patch(factory, &none, sizeof(none));
         errno = savedErrno;
-        if (!wroteNull) APS5_INVALID_ARG_EX;
         return result;
     }
     Jxr::Factory local{};
