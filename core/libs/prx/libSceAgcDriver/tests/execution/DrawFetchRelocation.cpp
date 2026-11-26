@@ -24,6 +24,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -303,13 +304,64 @@ void ChangedFetchTablesDoNotRelocate() {
     std::printf("changed fetch table contents: no reuse, %llu inserts, fetched through the changed table\n", static_cast<unsigned long long>(counters.inserts));
 }
 
+// The vertex decode reads all four dwords of a V#, so a relocated hit has to compare all four at the moved table:
+// a table that differs from the donor's only past the first dword of a V# must not reuse the donor's decode.
+// The changed table is a third copy that was never drawn, so the draw can only be served through a relocation.
+void ChangedSharpTailDoesNotRelocate(const char* field, std::size_t dword, std::uint32_t (*change)(std::uint32_t), bool movesOutput) {
+    GuestBlock evenTables, oddTables, changedTables, slots, output, data, target;
+    WriteSlots(slots, SlotsOffset, 0);
+    WriteFetchTables(evenTables, slots);
+    WriteFetchTables(oddTables, slots);
+    WriteFetchTables(changedTables, slots);
+    const auto draw = [&](const GuestBlock& tables) {
+        ClearFetchOutput(output);
+        return SubmitFetchDraw(tables, output, data, target);
+    };
+    const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    AgcDriver::DriverDetail::DrawEntryCounters counters{};
+    for (std::size_t i = 0; i < 4; ++i) counters = draw(i % 2 == 0 ? evenTables : oddTables);
+    counters = draw(evenTables);
+    Expect(counters.hits > start.hits, std::string("the teaching did not relocate a moved identical table before the ") + field + " change (" + std::to_string(counters.hits - start.hits) + " hits)");
+    const auto reference = ReadFetchOutput(output);
+    auto descriptor = SlotDescriptor(slots.At(SlotsOffset));
+    const auto value = change(descriptor[dword]);
+    Expect(descriptor[dword] != value, std::string("the ") + field + " case does not change the descriptor");
+    descriptor[dword] = value;
+    std::memcpy(changedTables.Bytes(FetchBufferTableOffset), descriptor.data(), sizeof(descriptor));
+    const auto before = counters;
+    counters = draw(changedTables);
+    Expect(counters.hits == before.hits, std::string("a draw whose moved table differs from the donor's only in the ") + field + " of a vertex V# (dword " + std::to_string(dword) + ") reused the donor's entry (" + std::to_string(counters.hits - before.hits) + " hits, " + std::to_string(counters.inserts - before.inserts) + " inserts)");
+    const auto changed = ReadFetchOutput(output);
+    Expect(std::any_of(changed.begin(), changed.end(), [](std::uint32_t word) { return word != Unwritten; }), std::string("the draw through the table with the changed ") + field + " wrote no fetched output");
+    if (movesOutput) Expect(changed != reference, std::string("the draw through the table with the changed ") + field + " produced the unchanged table's output");
+    std::printf("changed V# %s (dword %zu) in a moved table: no reuse\n", field, dword);
+}
+
+void ChangedSharpTailsDoNotRelocate() {
+    ChangedSharpTailDoesNotRelocate("stride", 1, [](std::uint32_t word) { return (word & 0xffffu) | (8u << 16u); }, true);
+    ChangedSharpTailDoesNotRelocate("record count", 2, [](std::uint32_t word) { return word / 2u; }, false);
+    ChangedSharpTailDoesNotRelocate("format", 3, [](std::uint32_t word) { return word & ~0x38u; }, false);
+}
+
 }
 
 int main() {
-    RegisterFetchVertex();
-    RegisterPixel();
-    MovedFetchTablesRelocate();
-    ChangedFetchTablesDoNotRelocate();
-    std::printf("draw fetch relocation tests passed\n");
-    return 0;
+    try {
+        {
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+        }
+        RegisterFetchVertex();
+        RegisterPixel();
+        MovedFetchTablesRelocate();
+        ChangedFetchTablesDoNotRelocate();
+        ChangedSharpTailsDoNotRelocate();
+        AgcDriverShutdown_nid_postfix();
+        std::printf("draw fetch relocation tests passed\n");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
+        return 1;
+    }
 }

@@ -377,7 +377,9 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             auto use = stageCapture.userDataUse;
             if (readsContained) {
                 use.asBase |= decodePointerWords & ~use.asValue;
-                for (const auto& read : decodeReads[i]) use.reads.emplace_back(read.address, read.word);
+                for (const auto& read : decodeReads[i]) {
+                    for (std::uint32_t offset = 0; offset < read.size; offset += sizeof(std::uint32_t)) use.reads.emplace_back(read.address + offset, read.word);
+                }
             }
             tagVariantRuns(*variant, regions, use, relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
             variant->decodePointerWords = decodePointerWords & variant->relocatableWords;
