@@ -7641,7 +7641,12 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         // Only ranges a descriptor may write need the copy the write-back diffs against; the
         // registered ranges of an address-based shader are read-only to it (AddressRanges).
         if (!region.sparse) {
-            GuestMemory::Read(region.begin, region.buffer->Bytes());
+            try {
+                GuestMemory::Read(region.begin, region.buffer->Bytes());
+            } catch (const std::runtime_error&) {
+                GuestMemory::ReadCommitted(region.begin, region.buffer->Bytes());
+                uploadGeneration = 0;
+            }
             readBytes += region.buffer->Bytes().size();
             if (written) region.uploaded.assign(region.buffer->Bytes().begin(), region.buffer->Bytes().end());
         } else {
