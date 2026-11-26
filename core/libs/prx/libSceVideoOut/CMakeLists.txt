@@ -127,6 +127,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_video_out_global_alpha_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutGlobalAlpha.cpp)
+    target_include_directories(guest_video_out_global_alpha_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_global_alpha_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_global_alpha_tests)
+    add_test(NAME guest_video_out_global_alpha COMMAND guest_video_out_global_alpha_tests)
+    set_tests_properties(guest_video_out_global_alpha PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_global_alpha PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_video_out_output_mode_checks_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutOutputModeChecks.cpp)
     target_include_directories(guest_video_out_output_mode_checks_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_video_out_output_mode_checks_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)

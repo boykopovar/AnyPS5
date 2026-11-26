@@ -17,6 +17,7 @@ constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
 constexpr int VideoOutErrorDeviceFailure = static_cast<int>(0x802900FFu);
 constexpr int VideoOutErrorNoDevice = static_cast<int>(0x80290018u);
 constexpr int VideoOutErrorNoMemory = static_cast<int>(0x8029100Cu);
+constexpr int VideoOutErrorPortUnsupported = static_cast<int>(0x8029001Bu);
 constexpr std::uintptr_t VideoOutEventDisplayPosition = 12;
 
 bool OpenPort(int handle) {
@@ -328,8 +329,14 @@ int APS5_VABI sceVideoOutRemoveBuffer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetAlphaControl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetAlphaControl(int handle, int enable, std::uint32_t alpha, const std::uint32_t* control, void* reserved) {
+    (void)enable;
+    (void)alpha;
+    (void)control;
+    if (reserved != nullptr) return VIDEO_OUT_ERROR_INVALID_OPTION;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorPortUnsupported;
 }
 
 int APS5_VABI sceVideoOutSetBlankAfterResume() {
@@ -363,8 +370,12 @@ int APS5_VABI sceVideoOutSetGamutMetadata_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSetGlobalAlpha() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSetGlobalAlpha(int handle, int enable, std::uint32_t alpha) {
+    (void)enable;
+    (void)alpha;
+    if (!OpenPort(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (VideoOutDriver::Get().GetConfig(handle)->busType != VIDEO_OUT_BUS_TYPE_MAIN) NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorPortUnsupported;
 }
 
 int APS5_VABI sceVideoOutSetToneMap_() {
