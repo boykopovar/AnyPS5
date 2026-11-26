@@ -1,13 +1,18 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -28,7 +33,9 @@ constexpr int Efault = 14;
 constexpr int Ebusy = 16;
 constexpr int Einval = 22;
 constexpr int Enospc = 28;
+constexpr int Espipe = 29;
 constexpr int Eagain = 35;
+constexpr int Eopnotsupp = 45;
 constexpr int Etimedout = 60;
 constexpr int Eoverflow = 84;
 
@@ -100,6 +107,78 @@ void Timed() {
     Require(ksem_post_nid_postfix(id) == 0);
     const auto later = FromNow(std::chrono::seconds(5));
     Require(ksem_timedwait_nid_postfix(id, &later) == 0 && Value(id) == 0);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+bool SameTime(const KernelTimespec& left, const KernelTimespec& right) {
+    return left.tv_sec == right.tv_sec && left.tv_nsec == right.tv_nsec;
+}
+
+bool Later(const KernelTimespec& left, const KernelTimespec& right) {
+    return left.tv_sec > right.tv_sec || (left.tv_sec == right.tv_sec && left.tv_nsec > right.tv_nsec);
+}
+
+FileStat Status(int descriptor) {
+    FileStat status;
+    std::memset(&status, 0xff, sizeof(status));
+    Require(_fstat_nid_postfix(descriptor, &status) == 0);
+    FileStat kernel;
+    std::memset(&kernel, 0xee, sizeof(kernel));
+    Require(sceKernelFstat(descriptor, &kernel) == 0 && std::memcmp(&kernel, &status, sizeof(status)) == 0);
+    return status;
+}
+
+void Metadata() {
+    const auto start = std::chrono::system_clock::now();
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    const FileStat created = Status(d);
+    Require(created.st_mode == (0100000 | (0770 & ~File::GetCreationMask_nid_no_patch())));
+    Require(created.st_dev == 0 && created.st_ino == 0 && created.st_nlink == 0 && created.st_rdev == 0);
+    Require(created.st_uid == static_cast<std::uint32_t>(getuid_nid_postfix()) && created.st_gid == static_cast<std::uint32_t>(getgid_nid_postfix()));
+    Require(created.st_size == 0 && created.st_blocks == 0 && created.st_blksize == 0 && created.st_flags == 0 && created.st_gen == 0);
+    const auto born = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+        std::chrono::seconds(created.st_birthtim.tv_sec) + std::chrono::nanoseconds(created.st_birthtim.tv_nsec)));
+    Require(born + std::chrono::microseconds(1) >= start && created.st_birthtim.tv_nsec % 1000 == 0);
+    Require(SameTime(created.st_atim, created.st_birthtim) && SameTime(created.st_mtim, created.st_birthtim) && SameTime(created.st_ctim, created.st_birthtim));
+    Require(fchmod_nid_postfix(d, 07604) == 0 && Status(d).st_mode == 0100604);
+    Require(sceKernelFchmod(d, 0640) == 0);
+    FileStat changed = Status(d);
+    Require(changed.st_mode == 0100640 && SameTime(changed.st_ctim, created.st_ctim) && SameTime(changed.st_atim, created.st_atim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_post_nid_postfix(id) == 0);
+    const FileStat posted = Status(d);
+    Require(Later(posted.st_ctim, created.st_ctim) && SameTime(posted.st_atim, created.st_atim) && SameTime(posted.st_mtim, created.st_mtim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_trywait_nid_postfix(id) == 0 && ksem_trywait_nid_postfix(id) == 0);
+    const FileStat waited = Status(d);
+    Require(Later(waited.st_atim, posted.st_ctim) && SameTime(waited.st_ctim, posted.st_ctim) && SameTime(waited.st_mtim, created.st_mtim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_trywait_nid_postfix(id) == -1 && Error() == Eagain);
+    const FileStat refused = Status(d);
+    Require(Later(refused.st_atim, waited.st_atim) && SameTime(refused.st_ctim, posted.st_ctim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    int value = -1;
+    Require(ksem_getvalue_nid_postfix(id, &value) == 0 && value == 0);
+    const FileStat read = Status(d);
+    Require(Later(read.st_atim, refused.st_atim));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(ksem_getvalue_nid_postfix(id, nullptr) == -1 && Error() == Efault);
+    Require(Later(Status(d).st_atim, read.st_atim));
+    KernelEqueue queue = 0;
+    Require(sceKernelCreateEqueue(&queue, "ksem") == 0);
+    for (const bool write : {false, true}) {
+        bool threw = false;
+        try {
+            if (write) sceKernelAddWriteEvent(queue, d, 1, nullptr);
+            else sceKernelAddReadEvent(queue, d, 1, nullptr);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+    Require(sceKernelDeleteEqueue(queue) == 0);
     Require(ksem_destroy_nid_postfix(id) == 0);
 }
 
@@ -289,6 +368,49 @@ void BadPointers() {
     Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_timedwait_nid_postfix(id, &valid) == 0 && ksem_destroy_nid_postfix(id) == 0);
 }
 
+void Transfers() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    char byte = 'k';
+    KernelIovec one{&byte, 1};
+    KernelIovec none{&byte, 0};
+    Require(read_nid_postfix(d, &byte, 1) == -1 && Error() == Eopnotsupp);
+    Require(read_nid_postfix(d, nullptr, 1) == -1 && Error() == Eopnotsupp);
+    Require(write_nid_postfix(d, "x", 1) == -1 && Error() == Eopnotsupp);
+    Require(write_nid_postfix(d, nullptr, 1) == -1 && Error() == Eopnotsupp);
+    Require(read_nid_postfix(d, &byte, 0) == 0);
+    Require(write_nid_postfix(d, "x", 0) == -1 && Error() == Eopnotsupp);
+    Require(readv_nid_postfix(d, &one, 1) == -1 && Error() == Eopnotsupp);
+    Require(writev_nid_postfix(d, &one, 1) == -1 && Error() == Eopnotsupp);
+    Require(readv_nid_postfix(d, &none, 1) == 0);
+    Require(writev_nid_postfix(d, &none, 1) == -1 && Error() == Eopnotsupp);
+    Require(lseek_nid_postfix(d, 0, 0) == -1 && Error() == Espipe);
+    Require(lseek_nid_postfix(d, 0, 7) == -1 && Error() == Espipe);
+    Require(lseek_nid_postfix(d, -1, 0) == -1 && Error() == Espipe);
+    Require(pread_nid_postfix(d, &byte, 1, 0) == -1 && Error() == Espipe);
+    Require(pread_nid_postfix(d, nullptr, 1, -1) == -1 && Error() == Espipe);
+    Require(pwrite_nid_disambig1_nid_postfix(d, &byte, 1, 0) == -1 && Error() == Espipe);
+    Require(preadv_nid_postfix(d, &one, 1, 0) == -1 && Error() == Espipe);
+    Require(pwritev_nid_postfix(d, &one, 1, 0) == -1 && Error() == Espipe);
+    Require(pread_nid_postfix(d, &byte, 0, 0) == -1 && Error() == Espipe);
+    Require(pwrite_nid_disambig1_nid_postfix(d, &byte, 0, 0) == -1 && Error() == Espipe);
+    Require(preadv_nid_postfix(d, &one, 0, 0) == -1 && Error() == Espipe);
+    Require(pwritev_nid_postfix(d, &none, 1, 0) == -1 && Error() == Espipe);
+    Require(sceKernelRead(d, &byte, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelWrite(d, &byte, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelReadv(d, &one, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelWritev(d, &one, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelLseek(d, 0, 0) == SceKernelError(Espipe));
+    Require(sceKernelLseek(d, 0, 7) == SceKernelError(Espipe));
+    Require(sceKernelPread(d, &byte, 1, 0) == SceKernelError(Espipe));
+    Require(sceKernelPwrite(d, &byte, 1, 0) == SceKernelError(Espipe));
+    Require(sceKernelPreadv(d, &one, 1, 0) == SceKernelError(Espipe));
+    Require(sceKernelPwritev(d, &one, 1, 0) == SceKernelError(Espipe));
+    Require(byte == 'k' && Value(id) == 1);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
 int main() {
     BadPointers();
     Counting();
@@ -297,7 +419,9 @@ int main() {
     TimedWakeup();
     Blocking();
     Identifiers();
+    Metadata();
     Duplicates();
+    Transfers();
     Limit();
     std::puts("ksem unnamed semaphores passed");
     return 0;

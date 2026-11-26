@@ -84,18 +84,18 @@ void* APS5_VABI __cxa_vec_new_nid_postfix(std::size_t n, std::size_t s, std::siz
     return LibcException::NewArray(n, s, p, ctor, dtor, _Znam_nid_postfix, [](void* ptr, std::size_t) { _ZdaPv_nid_postfix(ptr); });
 }
 void* APS5_VABI __cxa_vec_new2_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (APS5_VABI *ctor)(void*), void (APS5_VABI *dtor)(void*), void* (APS5_VABI *alloc)(std::size_t), void (APS5_VABI *dealloc)(void*)) {
-    return LibcException::NewArray(n, s, p, ctor, dtor, alloc, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });
+    return LibcException::NewArray(n, s, p, ctor, dtor, alloc, [dealloc](void* ptr, std::size_t) { if (dealloc) dealloc(ptr); });
 }
 void* APS5_VABI __cxa_vec_new3_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (APS5_VABI *ctor)(void*), void (APS5_VABI *dtor)(void*), void* (APS5_VABI *alloc)(std::size_t), void (APS5_VABI *dealloc)(void*, std::size_t)) {
-    return LibcException::NewArray(n, s, p, ctor, dtor, alloc, dealloc);
+    return LibcException::NewArray(n, s, p, ctor, dtor, alloc, [dealloc](void* ptr, std::size_t size) { if (dealloc) dealloc(ptr, size); });
 }
 void APS5_VABI __cxa_vec_delete_nid_postfix(void* array, std::size_t s, std::size_t p, void (APS5_VABI *dtor)(void*)) {
     LibcException::DeleteArray(array, s, p, dtor, [](void* ptr, std::size_t) { _ZdaPv_nid_postfix(ptr); });
 }
 void APS5_VABI __cxa_vec_delete2_nid_postfix(void* array, std::size_t s, std::size_t p, void (APS5_VABI *dtor)(void*), void (APS5_VABI *dealloc)(void*)) {
-    LibcException::DeleteArray(array, s, p, dtor, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });
+    LibcException::DeleteArray(array, s, p, dtor, [dealloc](void* ptr, std::size_t) { if (dealloc) dealloc(ptr); });
 }
 void APS5_VABI __cxa_vec_delete3_nid_postfix(void* array, std::size_t s, std::size_t p, void (APS5_VABI *dtor)(void*), void (APS5_VABI *dealloc)(void*, std::size_t)) {
-    LibcException::DeleteArray(array, s, p, dtor, dealloc);
+    LibcException::DeleteArray(array, s, p, dtor, [dealloc](void* ptr, std::size_t size) { if (dealloc) dealloc(ptr, size); });
 }
 }

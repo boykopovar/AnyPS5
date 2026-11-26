@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <barrier>
 #include <cstddef>
@@ -234,7 +235,7 @@ void Pending(unsigned bit) {
 int main(int argc,char** argv) {
     Require(argc==2 || argc==3,"expected libc path and optional pending exception bit");
 #ifdef _WIN32
-    const auto library=LoadLibraryA(argv[1]);
+    const auto library=LoadLibraryW(ArgumentPath(argv,1).c_str());
     Require(library!=nullptr,"load libc");
     setEnvironment=reinterpret_cast<SetEnvironment>(GetProcAddress(library,"fesetenv_nid_postfix"));
 #else

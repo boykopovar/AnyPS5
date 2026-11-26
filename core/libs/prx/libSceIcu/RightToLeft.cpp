@@ -1,7 +1,9 @@
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIcu/DefaultLocaleName.hpp"
+#include "loclikelysubtags.h"
 #include "unicode/uchar.h"
+#include "unicode/uloc.h"
 #include "unicode/uscript.h"
 
 #include <array>
@@ -105,7 +107,11 @@ std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale) {
             if (LanguageDirections[next] == '-') return 0;
             if (LanguageDirections[next] == '+') return 1;
         }
-        NotImplemented_nid_no_patch("uloc_isRightToLeft of a locale whose script comes from the likely subtags data");
+        UErrorCode status = U_ZERO_ERROR;
+        if (!icu::LikelySubtags::getSingleton(status)) {
+            NotImplemented_nid_no_patch("uloc_isRightToLeft needs the ICU likely subtags data");
+        }
+        return uloc_isRightToLeft(locale);
     }
     const auto script = static_cast<UScriptCode>(u_getPropertyValueEnum(UCHAR_SCRIPT, subtags.script.c_str()));
     return uscript_isRightToLeft(script) ? 1 : 0;

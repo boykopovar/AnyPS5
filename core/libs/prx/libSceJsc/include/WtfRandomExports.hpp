@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceJsc/src/WtfStringAbi.hpp"
 
 #include <cstdint>
 
@@ -11,5 +12,6 @@ unsigned int APS5_VABI _ZN3WTF16weakRandomUint32Ev();
 std::uint64_t APS5_VABI _ZN3WTF20ObjectIdentifierBase26generateIdentifierInternalEv();
 std::uint64_t APS5_VABI _ZN3WTF20ObjectIdentifierBase36generateThreadSafeIdentifierInternalEv();
 std::uint32_t APS5_VABI _ZN3WTF29cryptographicallyRandomNumberEv();
+Jsc::WtfAbi::StringImpl** APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv(Jsc::WtfAbi::StringImpl** result);
 
 }

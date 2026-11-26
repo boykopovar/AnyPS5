@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -87,6 +88,12 @@ void TestParagraph() {
     ExpectVisualRun(bidi, 1, 4, 3, Rtl, "ubidi_getVisualRun(1)");
     ExpectVisualRun(bidi, 2, 7, 4, Ltr, "ubidi_getVisualRun(2)");
     ExpectInt(ubidi_getVisualRun_nid_postfix(bidi, 3, nullptr, nullptr), Ltr, "ubidi_getVisualRun out of range");
+    std::int32_t untouchedStart = 0x5a5a;
+    std::int32_t untouchedLength = 0x6b6b;
+    ExpectInt(ubidi_getVisualRun_nid_postfix(bidi, 3, &untouchedStart, &untouchedLength), Ltr,
+              "ubidi_getVisualRun out of range with outputs");
+    ExpectInt(untouchedStart, 0x5a5a, "ubidi_getVisualRun out of range leaves the start");
+    ExpectInt(untouchedLength, 0x6b6b, "ubidi_getVisualRun out of range leaves the length");
 
     std::int32_t limit = -1;
     std::uint8_t level = 0xff;
@@ -96,6 +103,11 @@ void TestParagraph() {
     ubidi_getLogicalRun_nid_postfix(bidi, 0, &limit, &level);
     ExpectInt(limit, 4, "ubidi_getLogicalRun(0) limit");
     ExpectInt(level, 0, "ubidi_getLogicalRun(0) level");
+    limit = -7;
+    level = 0xa5;
+    ubidi_getLogicalRun_nid_postfix(bidi, 11, &limit, &level);
+    ExpectInt(limit, -7, "ubidi_getLogicalRun out of range leaves the limit");
+    ExpectInt(level, 0xa5, "ubidi_getLogicalRun out of range leaves the level");
 
     const char16_t hebrew[] = u"אב abc";
     ubidi_setPara_nid_postfix(bidi, hebrew, -1, DefaultLtr, nullptr, &error);
@@ -145,6 +157,11 @@ void TestStatelessHelpers() {
     ubidi_reorderVisual_nid_postfix(levels, 6, map);
     const std::int32_t expected[] = {0, 1, 4, 3, 2, 5};
     for (int i = 0; i < 6; ++i) ExpectInt(map[i], expected[i], "ubidi_reorderVisual");
+
+    const std::uint8_t invalidLevels[] = {0, 127, 1};
+    std::int32_t untouchedMap[3] = {41, 42, 43};
+    ubidi_reorderVisual_nid_postfix(invalidLevels, 3, untouchedMap);
+    for (int i = 0; i < 3; ++i) ExpectInt(untouchedMap[i], 41 + i, "ubidi_reorderVisual invalid level leaves the map");
 
     ExpectInt(ubidi_getClass_nid_postfix(u'A'), LeftToRight, "ubidi_getClass(A)");
     ExpectInt(ubidi_getClass_nid_postfix(0x05D0), RightToLeft, "ubidi_getClass(U+05D0)");
@@ -211,6 +228,7 @@ private:
 template <typename TCall>
 void RejectsFaulted(TCall call, const char* what) {
     errno = EINVAL;
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
     bool threw = false;
     try {
         call();
@@ -219,6 +237,7 @@ void RejectsFaulted(TCall call, const char* what) {
     }
     Expect(threw, what);
     ExpectInt(errno, EINVAL, "errno preserved");
+    Expect(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unusable guest pointer was reported as an unimplemented export");
 }
 
 void TestGuestPointers() {

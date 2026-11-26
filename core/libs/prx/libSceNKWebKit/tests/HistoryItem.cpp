@@ -230,6 +230,76 @@ static void TestChangedHook() {
     value.impl = nullptr;
 }
 
+static void TestTarget() {
+    HistoryItem item;
+    Require(!_ZNK7WebCore11HistoryItem6targetEv(&item).impl);
+
+    auto target = Make("_blank");
+    String targetString(&target);
+    target.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+    Require(_ZNK7WebCore11HistoryItem6targetEv(&item).impl == &target);
+    Require(target.refCount == 6);
+
+    static int calls = 0;
+    calls = 0;
+    {
+        ScopedChangedHook guard(+[](HistoryItem*) { ++calls; });
+        _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+        Require(calls == 1);
+    }
+
+    HistoryItem first;
+    HistoryItem second;
+    auto firstName = Make("main");
+    auto secondName = Make("side");
+    String firstString(&firstName);
+    String secondString(&secondName);
+    firstName.refCount = secondName.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &firstString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &secondString);
+
+    HistoryItem* storage[2] = {&first, &second};
+    HistoryItem parent;
+    parent.children = {storage, 2, 2};
+
+    auto lookupMain = Make("main");
+    auto lookupSide = Make("side");
+    auto lookupMissing = Make("gone");
+    String mainString(&lookupMain);
+    String sideString(&lookupSide);
+    String missingString(&lookupMissing);
+    lookupMain.refCount = lookupSide.refCount = lookupMissing.refCount = 4;
+
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &mainString) == &first);
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &sideString) == &second);
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &missingString));
+
+    HistoryItem empty;
+    empty.children = {nullptr, 0, 0};
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&empty, &mainString));
+
+    bool threw = false;
+    try { _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(nullptr, &mainString); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    String emptyString;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &emptyString);
+    for (auto* impl : {&target, &firstName, &secondName, &lookupMain, &lookupSide, &lookupMissing}) impl->refCount = 2;
+    targetString.impl = firstString.impl = secondString.impl = mainString.impl = sideString.impl = missingString.impl = nullptr;
+}
+
 int main() {
     TestStrings();
     TestScalars();
@@ -237,5 +307,6 @@ int main() {
     TestCachedPageExpiry();
     TestNull();
     TestChangedHook();
+    TestTarget();
     return 0;
 }
