@@ -1,4 +1,4 @@
-// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/platform/graphics/MIMETypeCache.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from https://github.com/WebKit/WebKit/blob/9d2532291ea8c8182d78314fc3da10baa9d4a639/Source/WebCore/platform/graphics/MIMETypeCache.cpp
 /*
  * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
  *
@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-// Derived from neonmodder123/PS5-WebKit-11.x/Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from https://github.com/WebKit/WebKit/blob/9d2532291ea8c8182d78314fc3da10baa9d4a639/Source/WTF/wtf/text/StringHasher.h
 /*
  * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Patrick Gansterer <paroga@paroga.com>
@@ -46,7 +46,7 @@
  *
  */
 
-// Derived from neonmodder123/PS5-WebKit-11.x/Source/WTF/wtf/HashTable.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from https://github.com/WebKit/WebKit/blob/9d2532291ea8c8182d78314fc3da10baa9d4a639/Source/WTF/wtf/HashTable.h
 /*
  * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2008 David Levin <levin@chromium.org>
