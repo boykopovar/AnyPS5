@@ -287,6 +287,7 @@ function(add_shader_recompiler target runtimeTarget)
             RayTracingStrict
             RayTracingMiss
             ReadWholeFile
+            RetargetTableCallPointer
             SetDiagnosticSink
             Recompile
             RecompileCacheKey::ContextHash
