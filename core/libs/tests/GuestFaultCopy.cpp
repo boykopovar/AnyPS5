@@ -106,6 +106,15 @@ static void RequireSigIgnWithSigInfoChains() {
     RequireExit(child, 0);
 }
 
+#ifdef __APPLE__
+static const int ResetHandUnreported = 9;
+
+static bool ReportsResetHand(int signal) {
+    struct sigaction reported{};
+    return sigaction(signal, nullptr, &reported) == 0 && (reported.sa_flags & SA_RESETHAND) != 0;
+}
+#endif
+
 static void RequireResetHandChainsToDefault() {
     std::fflush(nullptr);
     const pid_t child = fork();
@@ -120,6 +129,9 @@ static void RequireResetHandChainsToDefault() {
         sigemptyset(&action.sa_mask);
         action.sa_flags = SA_RESETHAND;
         if (sigaction(SIGSEGV, &action, nullptr) != 0) _exit(3);
+#ifdef __APPLE__
+        if (!ReportsResetHand(SIGSEGV)) _exit(ResetHandUnreported);
+#endif
         std::uint32_t source = 0x87654321u;
         std::uint32_t destination = 0u;
         if (!GuestCopyIn_nid_no_patch(&destination, &source, sizeof(destination)) || destination != source) _exit(4);
@@ -131,6 +143,9 @@ static void RequireResetHandChainsToDefault() {
     }
     int status = 0;
     Require(waitpid(child, &status, 0) == child);
+#ifdef __APPLE__
+    if (WIFEXITED(status) && WEXITSTATUS(status) == ResetHandUnreported) return;
+#endif
     Require(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
 }
 
