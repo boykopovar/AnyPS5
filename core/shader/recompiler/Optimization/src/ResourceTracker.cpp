@@ -1298,13 +1298,13 @@ private:
             return MayHoldDescriptor(selected, depth + 1u, visited) || MayHoldDescriptor(kept, depth + 1u, visited);
         }
         if (!first.IsPhi()) {
-            return false;
+            return true;
         }
         for (std::size_t edge = 0; edge < first.ArgumentCount(); edge++) {
             std::array<IrValue*, 8> incoming {};
             for (std::size_t dword = 0; dword < tuple.size(); dword++) {
                 if (!tuple[dword]->IsPhi() || tuple[dword]->Parent() != first.Parent()) {
-                    return false;
+                    return true;
                 }
                 incoming[dword] = PhiIncoming(*tuple[dword], first.PhiBlock(edge));
                 if (incoming[dword] == nullptr) {

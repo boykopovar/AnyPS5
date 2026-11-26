@@ -1409,6 +1409,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         if (!source.tableColumn.has_value()) continue;
         const auto& column = *source.tableColumn;
         if (column.buffer && (column.sampler || column.dwordCount != 4u)) return false;
+        if (column.laneKey && column.dwordCount != 8u) return false;
         const auto& parent = plan.descriptorSources[column.heapSource].tableColumn;
         if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
         if (column.pointerKeyed && (!column.indirect || column.buffer || parent.has_value())) return false;
