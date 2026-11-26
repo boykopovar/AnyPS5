@@ -378,17 +378,21 @@ void CheckIcuDateIntervalFormat() {
 
     std::int32_t status = 0;
     UFormattedDateInterval* result = udtitvfmt_openResult_nid_postfix(&status);
-    if (result != nullptr) {
-        if (UDateIntervalFormat* fmt = udtitvfmt_open_nid_postfix("en_US", u"yMMMd", -1, u"UTC", -1, &status)) {
-            udtitvfmt_formatToResult_nid_postfix(fmt, 0.0, 86400000.0, result, &status);
-            if (status <= 0) {
-                const UFormattedValue* value = udtitvfmt_resultAsValue_nid_postfix(result, &status);
-                std::int32_t len = 0;
-                const char16_t* text = ufmtval_getString_nid_postfix(value, &len, &status);
-                IcuRecoveredTest::Require(text != nullptr && len > 0 && status <= 0);
-            }
-            udtitvfmt_close_nid_postfix(fmt);
-        }
+    IcuRecoveredTest::Require(result != nullptr && status <= 0);
+    if (UDateIntervalFormat* fmt = udtitvfmt_open_nid_postfix("en_US", u"yMMMd", -1, u"UTC", -1, &status)) {
+        IcuRecoveredTest::Require(status <= 0);
+        udtitvfmt_formatToResult_nid_postfix(fmt, 0.0, 86400000.0, result, &status);
+        IcuRecoveredTest::Require(status <= 0);
+        const UFormattedValue* value = udtitvfmt_resultAsValue_nid_postfix(result, &status);
+        IcuRecoveredTest::Require(value != nullptr && status <= 0);
+        std::int32_t len = 0;
+        const char16_t* text = ufmtval_getString_nid_postfix(value, &len, &status);
+        IcuRecoveredTest::Require(text != nullptr && len > 0 && status <= 0);
+        udtitvfmt_close_nid_postfix(fmt);
+        udtitvfmt_closeResult_nid_postfix(result);
+        IcuRecoveredTest::RequireThrows([&] { ufmtval_getString_nid_postfix(value, &len, &status); });
+    } else {
+        IcuRecoveredTest::Require(status == 2);
         udtitvfmt_closeResult_nid_postfix(result);
     }
 }

@@ -2,21 +2,27 @@
 #include "unicode/uformattedvalue.h"
 #include <cstdint>
 #include <mutex>
-#include <unordered_set>
+#include <unordered_map>
 
 namespace {
 
 std::mutex g_formattedValueMutex;
-std::unordered_set<const void*> g_formattedValues;
+std::unordered_map<const void*, const void*> g_formattedValues;
 
 }
 
 namespace Icu::FormattedValueBackend {
 
-void Register(const void* value) {
-    if (!value) return;
+void Register(const void* value, const void* owner) {
+    if (!value || !owner) return;
     std::lock_guard lock(g_formattedValueMutex);
-    g_formattedValues.insert(value);
+    g_formattedValues.insert_or_assign(value, owner);
+}
+
+void UnregisterOwner(const void* owner) {
+    if (!owner) return;
+    std::lock_guard lock(g_formattedValueMutex);
+    std::erase_if(g_formattedValues, [owner](const auto& entry) { return entry.second == owner; });
 }
 
 bool IsRegistered(const void* value) {

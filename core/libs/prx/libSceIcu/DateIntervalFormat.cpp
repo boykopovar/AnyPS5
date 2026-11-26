@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/DateIntervalFormatBackend.hpp"
 #include "prx/libSceIcu/FormattedValueBackend.hpp"
+#include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
@@ -124,6 +125,7 @@ void APS5_VABI udtitvfmt_close_nid_postfix(UDateIntervalFormat* formatter) {
 void APS5_VABI udtitvfmt_closeResult_nid_postfix(UFormattedDateInterval* result) {
     if (!result) return;
     if (!UnregisterResult(result)) NotImplemented_nid_no_patch(__func__);
+    Icu::FormattedValueBackend::UnregisterOwner(result);
     Icu::DateIntervalFormatBackend::CloseResult(result);
 }
 
@@ -168,7 +170,7 @@ UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, co
         return nullptr;
     }
     std::string hostLocale;
-    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : nullptr;
+    const char* localePtr = locale ? (hostLocale = ReadGuestCString(locale, __func__), hostLocale.c_str()) : uloc_getDefault();
     const std::u16string hostSkeleton =
         skeleton ? ReadGuestU16(skeleton, skeletonLength, __func__) : std::u16string{};
     const std::u16string hostTzID = tzID ? ReadGuestU16(tzID, tzIDLength, __func__) : std::u16string{};
@@ -203,7 +205,7 @@ const UFormattedValue* APS5_VABI udtitvfmt_resultAsValue_nid_postfix(const UForm
     auto local = incoming;
     const UFormattedValue* value = Icu::DateIntervalFormatBackend::ResultAsValue(result, &local);
     WriteStatus(status, incoming, local, __func__);
-    if (local <= 0 && value) Icu::FormattedValueBackend::Register(value);
+    if (local <= 0 && value) Icu::FormattedValueBackend::Register(value, result);
     return value;
 }
 
