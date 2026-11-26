@@ -4382,7 +4382,7 @@ bool DepthSurfacePendingResultsOverlap(std::uint64_t address, std::size_t bytes)
 
 bool DepthPlanesStaleOver(std::uint64_t address, std::size_t bytes) {
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
-    return overlapsStalePlane(address, end);
+    return bytes != 0u && overlapsStalePlane(address, end);
 }
 
 std::uint64_t StalePlanesSerial() {

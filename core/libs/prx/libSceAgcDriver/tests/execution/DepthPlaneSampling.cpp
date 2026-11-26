@@ -420,6 +420,8 @@ void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     AgcDriver::GuestMemory::MarkProofThread();
     Require(ShaderResources::EpochProofs(), "depth plane epoch exit: epoch proofs are off");
     Require(AgcDriver::Graphics::DepthPlanesStale(), "depth plane epoch exit: the draw away from the buffer left no stale plane");
+    Require(AgcDriver::Graphics::DepthPlanesStaleOver(unrelated + 4u, 4u), "depth plane epoch exit: a range inside the stale plane was not reported stale");
+    Require(!AgcDriver::Graphics::DepthPlanesStaleOver(unrelated + 4u, 0u), "depth plane epoch exit: an empty range inside a stale plane was reported stale");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     auto resources = std::make_shared<ShaderResources>(context, shader);
     const auto reads = resources->InPlaceReads();
