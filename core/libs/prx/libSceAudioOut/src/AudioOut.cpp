@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -632,11 +633,23 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     if (param == nullptr || num == 0) {
         return -2144993276;
     }
-    std::vector<AudioOutOutputParam> outputs(num);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(outputs.data(), param, num * sizeof(AudioOutOutputParam));
-    errno = savedErrno;
-    if (!copied) {
+    constexpr std::uint32_t OutputChunk = 32;
+    std::array<AudioOutOutputParam, OutputChunk> chunk{};
+    std::vector<AudioOutOutputParam> outputs;
+    try {
+        outputs.reserve(std::min<std::uint32_t>(num, OutputChunk));
+        for (std::uint32_t offset = 0; offset < num;) {
+            const std::uint32_t count = std::min(OutputChunk, num - offset);
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), param + offset, count * sizeof(AudioOutOutputParam));
+            errno = savedErrno;
+            if (!copied) {
+                return -2144993276;
+            }
+            outputs.insert(outputs.end(), chunk.begin(), chunk.begin() + count);
+            offset += count;
+        }
+    } catch (const std::bad_alloc&) {
         return -2144993276;
     }
 
