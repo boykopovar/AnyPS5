@@ -110,6 +110,14 @@ int main() {
     second.thread.join();
     require("second result", second.result, 0);
     require("second pattern", second.pattern, 2);
+
+    errno = 55;
+    require("poll bad result_pat", static_cast<std::uint32_t>(sceKernelPollEventFlag(flag, 1, EVF_WAITMODE_OR, reinterpret_cast<std::uint64_t*>(0x10))), 0x8002000Eu);
+    require("wait bad timeout", static_cast<std::uint32_t>(sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR, nullptr, reinterpret_cast<KernelUseconds*>(0x10))), 0x8002000Eu);
+    KernelUseconds zeroTimeout = 0;
+    require("wait bad result_pat", static_cast<std::uint32_t>(sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR, reinterpret_cast<std::uint64_t*>(0x10), &zeroTimeout)), 0x8002000Eu);
+    if (errno != 55) fail();
+
     require("delete", sceKernelDeleteEventFlag(flag), 0);
     return 0;
 }
