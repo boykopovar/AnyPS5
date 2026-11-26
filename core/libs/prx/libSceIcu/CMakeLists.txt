@@ -807,9 +807,11 @@ set(ICU_RECOVERED_SOURCES
     DataMemoryClose.cpp
     DateFormat.cpp
     DateIntervalFormat.cpp
+    DateIntervalFormatBackend.cpp
     DateTimePatternGenerator.cpp
     FieldPositionIterator.cpp
     FormattedValue.cpp
+    FormattedValueBackend.cpp
     Idna.cpp
     ListFormatter.cpp
     LocaleDisplayNames.cpp
