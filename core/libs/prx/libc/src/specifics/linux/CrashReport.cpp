@@ -286,7 +286,7 @@ void OnFatalSignal(int signal, siginfo_t* info, void* context) {
     if (GuestFaultCopy::Resume(info, context)) return;
     if (signal == SIGSEGV && info->si_code > 0 && context != nullptr) {
         const auto* state = static_cast<const ucontext_t*>(context);
-        if ((state->uc_mcontext.gregs[REG_ERR] & 2) != 0 && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
+        if ((state->uc_mcontext.gregs[REG_ERR] & 2) != 0 && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(reinterpret_cast<std::uintptr_t>(info->si_addr), true)) return;
     }
     const int savedErrno = errno;
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {

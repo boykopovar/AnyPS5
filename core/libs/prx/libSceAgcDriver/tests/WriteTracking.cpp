@@ -618,8 +618,9 @@ void CheckFaultAfterAnotherPublication() {
     Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base, Page), "cannot begin the first publication");
     GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
     Require(GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(base + Page, Page), "cannot begin the second publication");
-    Require(GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base), "a fault from the first publication was not retried after the second started");
-    Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(0x10), "an unmapped address was retried as a publication fault");
+    Require(GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base, true), "a fault from the first publication was not retried after the second started");
+    Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(base, false), "a non-write fault on a writable page was retried");
+    Require(!GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(0x10, true), "an unmapped address was retried as a publication fault");
     GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, 2 * Page);
     Require(::munmap(memory, 2 * Page) == 0, "cannot release the two-publication block");

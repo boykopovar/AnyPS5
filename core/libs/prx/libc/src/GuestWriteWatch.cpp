@@ -214,7 +214,8 @@ public:
         _publicationState.unlock();
     }
 
-    bool HandleFault(std::uintptr_t address) {
+    bool HandleFault(std::uintptr_t address, bool write) {
+        if (!write) return false;
         if (address < _publicationBegin.load(std::memory_order_relaxed) || address >= _publicationEnd.load(std::memory_order_relaxed)) return publicationPageWritable(address);
         timespec started{};
         static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &started));
@@ -1440,8 +1441,8 @@ public:
         return (next != _ranges.begin() && std::prev(next)->second.end > begin) || (next != _ranges.end() && next->first < end);
     }
 
-    bool HandleFault(std::uintptr_t address) {
-        return _available && record(address);
+    bool HandleFault(std::uintptr_t address, bool write) {
+        return write && _available && record(address);
     }
 
     enum class Take { All, Armed, Fresh };
@@ -2173,13 +2174,21 @@ void GuestWriteWatchEndPublication_nid_no_patch() {
 #endif
 }
 
-bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address) {
-#if defined(__APPLE__) || defined(APS5_GUEST_WRITE_WATCH)
-    return Watch::Get().HandleFault(address);
+bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address, bool write) {
+#if defined(__APPLE__)
+    return Watch::Get().HandleFault(address, write);
+#elif defined(APS5_GUEST_WRITE_WATCH)
+    if (Watch::Get().HandleFault(address, write)) return true;
+#if defined(APS5_LINUX_READ_TRAPS)
+    return ReadTraps::Get().HandleFault(address);
+#else
+    return false;
+#endif
 #elif defined(APS5_LINUX_READ_TRAPS)
     return ReadTraps::Get().HandleFault(address);
 #else
     static_cast<void>(address);
+    static_cast<void>(write);
     return false;
 #endif
 }

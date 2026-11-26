@@ -1255,7 +1255,7 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
     Fault fault{};
     const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
-    if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
+    if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address, (fault.trap.error & 2) != 0)) return;
     const auto handler = deliverable ? Handler(fault.signum) : nullptr;
     if (handler == nullptr || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
         ChainFault(hostSignal, info, context);
