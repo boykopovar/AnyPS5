@@ -1432,6 +1432,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10
         std::lock_guard<std::mutex> lock(g_libContextGuard);
         LibContextState* existing = FindLibContextLocked(context);
         if (existing != nullptr) {
+            if (!existing->terminated) return LibContextAlreadyInitialized;
             DetachLibContextLocked(existing);
             existing->released = true;
             previous = existing;
