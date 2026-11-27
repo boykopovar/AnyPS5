@@ -296,7 +296,7 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
     double result = 0.0;
     if (magnitude < 0x7ff00000u && (magnitude | low) != 0) {
         const double absolute = std::fabs(x);
-        const double orderValue = Signed(n);
+        const double orderValue = static_cast<double>(n);
         if (absolute >= orderValue) {
             if (magnitude >= 0x52d00000u) {
                 double sum;
@@ -311,7 +311,7 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
                 double previous = j0_nid_postfix(absolute);
                 result = j1_nid_postfix(absolute);
                 std::uint32_t twice = 2;
-                for (std::int32_t index = 1; index < static_cast<std::int32_t>(n); ++index) {
+                for (std::uint32_t remaining = n - 1; remaining != 0; --remaining) {
                     const double next = Fused(result, Signed(twice) / absolute, -previous);
                     previous = result;
                     result = next;
@@ -329,7 +329,7 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
                 }
                 result = power / factorial;
             }
-        } else {
+        } else if (n < 0x40000000u) {
             const double h = 2.0 / absolute;
             const double w = Signed(2u * n) / absolute;
             double q0 = w;
