@@ -370,10 +370,11 @@ int main(int argc, char** argv) {
         *error = 123;
         Require(sceNetRecvmsg(receiver, message, 0) == static_cast<std::int64_t>(sizeof(payload)) && *error == 123,
             "writable receive name succeeds and preserves errno");
-        Require(message->name_length == senderAddress.size() && message->flags == 0 && message->control_length == 0,
-            "successful receive name updates the message");
-        Require(std::memcmp(nameOutput, senderAddress.data(), senderAddress.size()) == 0,
-            "receive name receives the sender address");
+        Require(message->name_length == (stream ? 0u : senderAddress.size()) && message->flags == 0 &&
+            message->control_length == 0, "successful receive name updates the message");
+        Require(stream ? std::all_of(nameOutput, nameOutput + 16, [](unsigned char value) { return value == 0xa5; }) :
+            std::memcmp(nameOutput, senderAddress.data(), senderAddress.size()) == 0,
+            "datagram receive name receives the sender address, stream receive writes no name bytes");
         Require(std::memcmp(buffer, payload, sizeof(payload)) == 0, "successful receive name writes the destination");
         Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(nameMapping), page) == 0, "unmap receive name memory");
         Require(sceKernelReleaseDirectMemory(namePhysical, page) == 0, "release receive name memory");

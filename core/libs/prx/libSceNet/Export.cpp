@@ -2049,12 +2049,6 @@ static int64_t ReceiveMessage(int s, NetMsghdr* msg, int flags) {
     }
     if (header.name) {
         std::array<std::uint8_t, 28> bytes{};
-#ifdef _WIN32
-        if (!datagram) {
-            peer_length = sizeof(peer);
-            if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &peer_length) != 0) peer = {};
-        }
-#endif
         if (!native_to_guest_address(peer, bytes.data(), &header.name_length)) header.name_length = 0;
         else if (!GuestCopyOut_nid_no_patch(header.name, bytes.data(), header.name_length)) return fail(NET_EFAULT);
     }
