@@ -618,6 +618,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (const auto offset : preservedOffsets)
         preservedToNewOffset.emplace_back(offset, valueOffsets.at(ReadCStr(origDynStr, offset)));
 
+    std::uint64_t relocatedSceDynlibSourceOffset = 0;
+    std::uint64_t relocatedSceDynlibOffset = 0;
+    std::uint64_t relocatedSceDynlibSize = 0;
+    bool relocatedSceDynlib = false;
+
     if (newDynStr.size() > dynStrSize && options.executable) {
         if (ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0 || ehdr.e_phnum >= 0xfffdu)
             throw std::runtime_error("invalid ELF program header table for string growth");
@@ -642,16 +647,14 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         const auto fileOffset = align(elf.size());
         const auto address = align(virtualEnd);
         const auto tableSize = (segments.size() + 1u) * sizeof(Elf64_Phdr);
-        const auto segmentSize = tableSize + newDynStr.size();
-        if (segmentSize > UINT64_MAX - address || segmentSize > SIZE_MAX - fileOffset)
-            throw std::runtime_error("ELF string segment overflow");
-        const auto newDynStrOffset = fileOffset + tableSize;
+        if (tableSize > UINT64_MAX - fileOffset)
+            throw std::runtime_error("ELF program header table overflow");
+        const auto minimumDataOffset = fileOffset + tableSize;
 
         for (auto& segment : segments) {
             if (segment.p_type != 6) continue;
             segment = {6, 4, fileOffset, address, address, tableSize, tableSize, 8};
         }
-        const auto newDynStrEnd = newDynStrOffset + newDynStr.size();
 
         const auto dynamicEntries = DynamicEntryOffsets(elf, ehdr);
         std::size_t standardAddressCount = 0;
@@ -675,10 +678,12 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             (hasStandardPair && hasScePair))
             throw std::runtime_error("ELF executable requires exactly one complete DT_STRTAB/DT_STRSZ pair");
 
-        std::uint64_t sceDynlibOffset = 0;
+        std::size_t sceDynlibIndex = segments.size();
+        std::uint64_t sceDynlibSourceOffset = 0;
+        std::uint64_t sceDynlibSize = 0;
+        std::uint64_t sceDynlibOffset = minimumDataOffset;
         if (hasScePair) {
             constexpr std::uint32_t kPtSceDynlibData = 0x61000000u;
-            std::size_t sceDynlibIndex = segments.size();
             for (std::size_t index = 0; index < segments.size(); ++index) {
                 if (segments[index].p_type != kPtSceDynlibData) continue;
                 if (sceDynlibIndex != segments.size())
@@ -687,17 +692,46 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             }
             if (sceDynlibIndex == segments.size())
                 throw std::runtime_error("missing PT_SCE_DYNLIBDATA for SCE executable string growth");
-            auto& sceDynlib = segments[sceDynlibIndex];
-
+            const auto& sceDynlib = segments[sceDynlibIndex];
             RequireElfRange(elf, sceDynlib.p_offset, sceDynlib.p_filesz, "SCE dynamic data");
-            if (newDynStrOffset < sceDynlib.p_offset)
-                throw std::runtime_error("new SCE dynamic string table precedes PT_SCE_DYNLIBDATA");
-            sceDynlibOffset = sceDynlib.p_offset;
-            const auto requiredSize = newDynStrEnd - sceDynlibOffset;
-            sceDynlib.p_filesz = std::max(sceDynlib.p_filesz, requiredSize);
-            sceDynlib.p_memsz = std::max(sceDynlib.p_memsz, sceDynlib.p_filesz);
+            sceDynlibSourceOffset = sceDynlib.p_offset;
+            sceDynlibSize = sceDynlib.p_filesz;
+
+            const auto alignToSegment = [](std::uint64_t value, std::uint64_t alignment, std::uint64_t segmentAddress) {
+                if (alignment <= 1u) return value;
+                if ((alignment & (alignment - 1u)) != 0u)
+                    throw std::runtime_error("invalid PT_SCE_DYNLIBDATA alignment");
+                const auto mask = alignment - 1u;
+                const auto current = value & mask;
+                const auto target = segmentAddress & mask;
+                const auto delta = (target - current) & mask;
+                if (delta > UINT64_MAX - value)
+                    throw std::runtime_error("ELF SCE dynamic data offset overflow");
+                return value + delta;
+            };
+            sceDynlibOffset = alignToSegment(minimumDataOffset, sceDynlib.p_align, sceDynlib.p_vaddr);
         }
 
+        const auto newDynStrSize = static_cast<std::uint64_t>(newDynStr.size());
+        const auto dataPrefixSize = sceDynlibOffset - fileOffset;
+        if (sceDynlibSize > UINT64_MAX - dataPrefixSize ||
+            newDynStrSize > UINT64_MAX - dataPrefixSize - sceDynlibSize)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto segmentSize = dataPrefixSize + sceDynlibSize + newDynStrSize;
+        if (segmentSize > UINT64_MAX - address || segmentSize > SIZE_MAX - fileOffset)
+            throw std::runtime_error("ELF string segment overflow");
+        const auto newDynStrOffset = sceDynlibOffset + sceDynlibSize;
+
+        if (hasScePair) {
+            auto& sceDynlib = segments[sceDynlibIndex];
+            sceDynlib.p_offset = sceDynlibOffset;
+            sceDynlib.p_filesz = sceDynlibSize + newDynStrSize;
+            sceDynlib.p_memsz = std::max(sceDynlib.p_memsz, sceDynlib.p_filesz);
+            relocatedSceDynlibSourceOffset = sceDynlibSourceOffset;
+            relocatedSceDynlibOffset = sceDynlibOffset;
+            relocatedSceDynlibSize = sceDynlibSize;
+            relocatedSceDynlib = true;
+        }
         segments.push_back({1, 4, fileOffset, address, address, segmentSize, segmentSize, 4096});
         elf.resize(static_cast<std::size_t>(fileOffset + segmentSize), 0);
         for (std::size_t index = 0; index < segments.size(); ++index)
@@ -706,7 +740,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         Write(elf, offsetof(Elf64_Ehdr, e_phnum), static_cast<std::uint16_t>(segments.size()));
         dynStrOffset = static_cast<std::size_t>(newDynStrOffset);
         dynStrSize = newDynStr.size();
-        const auto stringAddress = address + tableSize;
+        const auto stringAddress = address + (newDynStrOffset - fileOffset);
         const auto sectionOffset = ehdr.e_shoff + dynSymSectionLink * sizeof(Elf64_Shdr);
         auto strings = Read<Elf64_Shdr>(elf, sectionOffset);
         strings.sh_offset = dynStrOffset;
@@ -747,6 +781,13 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);
     }
     if (sysvHashOffset != 0u) RebuildSysvHash(elf, sysvHashOffset, newSymbolNames);
+    if (relocatedSceDynlib) {
+        std::copy_n(
+            elf.begin() + static_cast<std::size_t>(relocatedSceDynlibSourceOffset),
+            static_cast<std::size_t>(relocatedSceDynlibSize),
+            elf.begin() + static_cast<std::size_t>(relocatedSceDynlibOffset)
+        );
+    }
 }
 
 }
