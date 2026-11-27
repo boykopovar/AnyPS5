@@ -521,6 +521,27 @@ class RebaseVerifyTests(unittest.TestCase):
         self.prepare_shorter_overlap_rebase()
         self.assertEqual(self.verify(), [])
 
+    def prepare_duplicate_upstream_line_rebase(self):
+        base = "a\nb\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add duplicate credit fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "a\nA\nX\nA\nX\nb\n")
+        self.git("commit", "-q", "-am", "feat(tools): add duplicate boundary lines")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        self.write("f.txt", "a\nX\nb\n")
+        self.git("commit", "-q", "-am", "docs(tools): add one shared X upstream")
+        new_commit = self.commit_tree_file("main", "f.txt", "a\nA\nX\nA\nX\nb\n".encode("utf-8"),
+                                           "feat(tools): add duplicate boundary lines")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_duplicate_upstream_lines_are_credited_at_ordered_rebased_positions(self):
+        self.prepare_duplicate_upstream_line_rebase()
+        self.assertEqual(self.verify(), [])
+
     def prepare_separated_shared_line_rebase(self):
         base = "section A\na1\na2\na3\nsection B\nb1\nb2\nb3\n"
         self.git("checkout", "-q", "main")

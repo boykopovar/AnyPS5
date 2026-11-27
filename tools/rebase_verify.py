@@ -174,31 +174,44 @@ def addition_order_differences(root, old_base, old, new_base, new, expected_adde
     for path, credits in credited_order.items():
         if expected_added.get(path, collections.Counter()) != new_added.get(path, collections.Counter()):
             continue
-        rebased_by_text = collections.defaultdict(collections.deque)
-        for old_range, lines in rebased.get(path, {}).items():
-            for text, position in zip(lines, rebased_positions[path][old_range]):
-                rebased_by_text[text].append(position)
-        tokens = []
-        valid = True
+        positions_by_text = collections.defaultdict(list)
+        branch_tokens = []
+        branch_text_by_position = {}
         for old_range, lines in original.get(path, {}).items():
             for text, branch_position in zip(lines, original_positions[path][old_range]):
-                if branch_position in credits:
-                    position = line_after_diff(credits[branch_position], line_ranges.get(path, ()))
-                    if position is None:
-                        valid = False
-                        break
-                else:
-                    positions = rebased_by_text.get(text)
-                    if not positions:
-                        valid = False
-                        break
-                    position = positions.popleft()
-                tokens.append((branch_position, position))
-            if not valid:
+                branch_tokens.append((branch_position, text))
+                branch_text_by_position[branch_position] = text
+        for old_range, lines in rebased.get(path, {}).items():
+            for text, position in zip(lines, rebased_positions[path][old_range]):
+                positions_by_text[text].append(position)
+        valid = True
+        for branch_position, upstream_position in credits.items():
+            text = branch_text_by_position.get(branch_position)
+            if text is None:
+                valid = False
                 break
+            position = line_after_diff(upstream_position, line_ranges.get(path, ()))
+            if position is None:
+                valid = False
+                break
+            positions_by_text[text].append(position)
         if not valid:
             continue
-        tokens.sort()
+        for positions in positions_by_text.values():
+            positions.sort()
+        next_position = collections.defaultdict(int)
+        tokens = []
+        for branch_position, text in sorted(branch_tokens):
+            positions = positions_by_text.get(text, ())
+            index = next_position[text]
+            if index >= len(positions):
+                valid = False
+                break
+            tokens.append((branch_position, positions[index]))
+            next_position[text] += 1
+        if not valid or any(next_position[text] != len(positions)
+                            for text, positions in positions_by_text.items()):
+            continue
         if any(before[1] >= after[1] for before, after in zip(tokens, tokens[1:])):
             problems.append(f"{path}: branch-added lines are out of order after upstream credit")
     return problems
@@ -274,6 +287,7 @@ def additions_satisfied_upstream(root, old_base, old, new_base):
         if not upstream_hunks:
             continue
         used_upstream = set()
+        used_extents = {}
         upstream_by_start = collections.defaultdict(list)
         upstream_by_end = collections.defaultdict(list)
         for upstream_range, upstream_lines in upstream_hunks.items():
@@ -296,6 +310,12 @@ def additions_satisfied_upstream(root, old_base, old, new_base):
                 credited[path].add(upstream_position)
                 credited_order[path][branch_line_positions[branch_index]] = upstream_position
                 used_upstream.add(occurrence)
+                extent = used_extents.get(upstream_range)
+                if extent is None:
+                    used_extents[upstream_range] = [upstream_index, upstream_index]
+                else:
+                    extent[0] = min(extent[0], upstream_index)
+                    extent[1] = max(extent[1], upstream_index)
 
         ordered_hunks = sorted(hunks.items())
         for branch_range, lines in ordered_hunks:
@@ -324,8 +344,12 @@ def additions_satisfied_upstream(root, old_base, old, new_base):
 
             def available(candidate):
                 upstream_range, _, upstream_start, length = candidate
-                return all((upstream_range, index) not in used_upstream
-                           for index in range(upstream_start, upstream_start + length))
+                extent = used_extents.get(upstream_range)
+                if extent is None:
+                    return True
+                if upstream_start == 0:
+                    return extent[0] >= length
+                return extent[1] < upstream_start
 
             preceding = [candidate for candidate in preceding if available(candidate)]
             following = [candidate for candidate in following if available(candidate)]
