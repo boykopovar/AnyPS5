@@ -1,4 +1,5 @@
 import argparse
+from contextlib import suppress
 import getpass
 import json
 import os
@@ -92,12 +93,10 @@ def host_text():
     )
 
 
-def make_bundle(report, out, *, home, user, host, log=None, input_config=None, environ=None):
-    report = Path(report)
-    out = Path(out)
-    if out.exists():
-        raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
+def bundle_members(report, *, home, user, host, log=None, input_config=None, environ=None):
+    data = json.loads(Path(report).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_object)
+    if not isinstance(data, dict):
+        raise ValueError("run report must be a JSON object")
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2, allow_nan=False) + "\n"}
     profile = input_profile_path(data, input_config) if input_config else None
@@ -111,10 +110,26 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, e
         members["anyps5-settings.txt"] = settings_text(environ, identity)
     members["host.txt"] = redact(host_text(), **identity)
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for name, content in members.items():
-            bundle.writestr(name, content.encode("utf-8", errors="backslashreplace"))
-    return sorted(members)
+    return ((name, content.encode("utf-8", errors="backslashreplace")) for name, content in members.items())
+
+
+def make_bundle(report, out, *, home, user, host, log=None, input_config=None, environ=None):
+    out = Path(out)
+    if out.exists():
+        raise FileExistsError(f"{out} already exists")
+    members = bundle_members(report, home=home, user=user, host=host, log=log, input_config=input_config, environ=environ)
+    names = []
+    destination = out.open("xb")
+    try:
+        with destination, zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for name, content in members:
+                bundle.writestr(name, content)
+                names.append(name)
+    except BaseException:
+        with suppress(OSError):
+            out.unlink()
+        raise
+    return sorted(names)
 
 
 def identities():
@@ -135,14 +150,22 @@ def main(argv=None):
     default_config = os.environ.get("ANYPS5_INPUT_CONFIG") or "anyps5-input.ini"
     parser.add_argument("--input-config", default=default_config, help="input mapping to include (default: ANYPS5_INPUT_CONFIG or ./anyps5-input.ini)")
     parser.add_argument("--out", default="bug-report.zip", help="bundle to write; an existing file is never overwritten (default: bug-report.zip)")
+    parser.add_argument("--preview", action="store_true", help="list redacted ZIP entries and uncompressed sizes without writing an archive")
     args = parser.parse_args(argv)
-    if not Path(args.report).is_file():
+    if not args.preview and not Path(args.report).is_file():
         print(f"bug_report: no run report at {args.report}", file=sys.stderr)
         return 1
     try:
-        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, environ=os.environ, **identities())
+        inputs = dict(log=args.log, input_config=args.input_config, environ=os.environ, **identities())
+        if args.preview:
+            sizes = sorted((name, len(content)) for name, content in bundle_members(args.report, **inputs))
+            for name, size in sizes:
+                print(f"{name} ({size} bytes)")
+            return 0
+        names = make_bundle(args.report, args.out, **inputs)
     except (OSError, ValueError, RecursionError) as error:
-        print(f"bug_report: {error}", file=sys.stderr)
+        message = "could not prepare the preview. Check the run report and input files." if args.preview else str(error)
+        print(f"bug_report: {message}", file=sys.stderr)
         return 1
     print(f"wrote {args.out}: {', '.join(names)}")
     return 0

@@ -162,8 +162,9 @@ void TestVirtuals() {
     const std::int32_t types[] = {1};
     RequireRuntimeError([&] { CallIndirect<void*, 10>(buffer, &mapped, WebRtcVideoFrameBufferTypes{types, 1}); }, "GetMappedFrameBuffer");
     void* cropped = nullptr;
-    RequireRuntimeError([&] { CallIndirect<void*, 9>(buffer, &cropped, 0, 0, 6, 5, 3, 2); }, "CropAndScale");
-    Require(mapped == nullptr && cropped == nullptr && buffer->refCount.load() == 1);
+    Require(CallIndirect<void*, 9>(buffer, &cropped, 0, 0, 6, 5, 3, 2) == &cropped && cropped != nullptr && cropped != buffer);
+    Require(Call<int, 5>(cropped) == 3 && Call<int, 6>(cropped) == 2 && Call<std::int32_t, 1>(cropped) == 0);
+    Require(mapped == nullptr && buffer->refCount.load() == 1);
     WebRtcGuestString representation;
     std::memset(&representation, 0xcc, sizeof(representation));
     Require(CallIndirect<WebRtcGuestString, 11>(buffer, &representation) == &representation);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/ResourceResponseStatusAbi.hpp"
 #include "prx/libSceNKWebKit/src/FormDataAbi.hpp"
 #include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
 #include "prx/libSceNKWebKit/src/LegacyResourceRequestAbi.hpp"
@@ -47,6 +48,9 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(NKWebKit
 void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, const NKWebKit::WtfAbi::String* name);
+NKWebKit::WebCoreAbi::LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(
+    const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, const NKWebKit::WebCoreAbi::ResourceResponseBase* redirectResponse,
+    bool shouldClearReferrerOnHTTPSToHTTPRedirect);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(const NKWebKit::WtfAbi::String* domain);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);

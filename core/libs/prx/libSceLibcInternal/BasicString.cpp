@@ -31,11 +31,28 @@ void SetSize(String* string, std::size_t size) {
     Data(string)[size] = 0;
 }
 
+std::size_t CapacityFor(const String* string, std::size_t size) {
+    if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    const std::size_t rounded = size | GuestLocale::StringCapacityMask;
+    if (rounded < size || rounded > MaxSize) return size;
+    if (string->capacity > GuestLocale::StringInlineCapacity && string->capacity / 2 > rounded / 3) {
+        if (string->capacity > MaxSize - string->capacity / 2) _ZSt11_Xbad_allocv_nid_postfix();
+        return string->capacity + string->capacity / 2;
+    }
+    return rounded;
+}
+
+std::size_t AllocationBytes(std::size_t capacity) {
+    const std::size_t bytes = capacity + 1;
+    if (bytes >= GuestStringStorage::LargeAllocation && bytes > NoPosition - GuestStringStorage::AllocationPadding) _ZSt11_Xbad_allocv_nid_postfix();
+    return bytes;
+}
+
 void Reserve(String* string, std::size_t size) {
     if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
     if (size <= string->capacity) return;
-    const std::size_t capacity = std::min(size | GuestLocale::StringCapacityMask, MaxSize);
-    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    const std::size_t capacity = CapacityFor(string, size);
+    auto* data = static_cast<char*>(GuestStringStorage::Allocate(AllocationBytes(capacity)));
     char* old = Data(string);
     std::memcpy(data, old, string->size + 1);
     if (string->capacity > GuestLocale::StringInlineCapacity) GuestStringStorage::Deallocate(old, string->capacity + 1);
@@ -62,8 +79,8 @@ void Assign(String* string, const char* source, std::size_t count) {
         return;
     }
     if (count > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
-    const std::size_t capacity = std::min(count | GuestLocale::StringCapacityMask, MaxSize);
-    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    const std::size_t capacity = CapacityFor(string, count);
+    auto* data = static_cast<char*>(GuestStringStorage::Allocate(AllocationBytes(capacity)));
     std::memcpy(data, source, count);
     data[count] = 0;
     char* old = Data(string);
