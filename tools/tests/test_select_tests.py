@@ -341,6 +341,19 @@ class TargetsTests(SelectFixture):
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
 
+    def test_uses_configured_ctest_without_path_lookup(self):
+        calls = (
+            (["ctest", str(self.build), "-N", "-R", "^alpha$"], "Total Tests: 1"),
+            (["targets", str(self.build), "^alpha$"], "alpha_tests"),
+        )
+        for arguments, expected in calls:
+            with self.subTest(command=arguments[0]):
+                result = subprocess.run([sys.executable, str(TOOL), *arguments],
+                                        env={**os.environ, "PATH": ""}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout)
+
+
 
 class SelectArgumentTests(SelectFixture):
     def test_cmake_env_wrapper_uses_its_test_executable(self):
@@ -1020,6 +1033,7 @@ class CTestIndexFileTests(unittest.TestCase):
 
             build = object.__new__(select_tests.Build)
             build.path = str(root)
+            build.ctest = "ctest"
             build.source = str(root)
             graph = {"tests": {f"test_{i}": {} for i in range(1, count + 2)}}
             picked = set(graph["tests"]) - {f"test_{count + 1}"}
@@ -1062,6 +1076,7 @@ class PlanTests(unittest.TestCase):
             build = object.__new__(select_tests.Build)
             build.path = str(root)
             build.source = str(root)
+            build.ctest = "ctest"
             with mock.patch.object(build, "leaves", return_value=[]):
                 run, targets, total = select_tests.plan(build, {"tests": {"off": {}}}, {"off"})
             self.assertEqual((run, targets, total), ({}, [], 1))
@@ -1094,6 +1109,7 @@ class MissingCommandTests(unittest.TestCase):
             listed[4]["command"] = [helper]
             build = object.__new__(select_tests.Build)
             build.path = str(root)
+            build.ctest = "ctest"
             with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps({"tests": listed}))) as run:
                 _, recovered = build.tests()
             self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")

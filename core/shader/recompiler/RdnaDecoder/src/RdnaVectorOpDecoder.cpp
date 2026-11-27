@@ -748,6 +748,11 @@ bool isNativeVop3I16TernaryOpcode(RdnaOpcode opcode) {
         opcode == RdnaOpcode::VMadI32I16;
 }
 
+bool isNativeVop3I32TernaryOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VMed3I32 || opcode == RdnaOpcode::VMed3U32 || opcode == RdnaOpcode::VMax3I32 ||
+        opcode == RdnaOpcode::VMax3U32 || opcode == RdnaOpcode::VMin3I32 || opcode == RdnaOpcode::VMin3U32;
+}
+
 bool isNativeVop3AlignOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VAlignbitB32 || opcode == RdnaOpcode::VAlignbyteB32;
 }
@@ -1168,7 +1173,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
@@ -2007,6 +2012,7 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         return true;
     }
     switch (opcode) {
+        case RdnaOpcode::VMullitF32:
         case RdnaOpcode::VAddF32:
         case RdnaOpcode::VSubF32:
         case RdnaOpcode::VSubrevF32:
@@ -2015,7 +2021,9 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
         case RdnaOpcode::VMinF32:
         case RdnaOpcode::VMaxF32:
         case RdnaOpcode::VMacF32:
+        case RdnaOpcode::VMacLegacyF32:
         case RdnaOpcode::VMadF32:
+        case RdnaOpcode::VMadLegacyF32:
         case RdnaOpcode::VFmaF32:
         case RdnaOpcode::VAddF16:
         case RdnaOpcode::VSubF16:
@@ -2054,12 +2062,16 @@ bool isF32DivisionStepOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VDivFmasF32 || opcode == RdnaOpcode::VDivFixupF32;
 }
 
+bool isF64ToIntegerConversion(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VCvtI32F64 || opcode == RdnaOpcode::VCvtU32F64;
+}
+
 bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
     if (isNativeVop3F16TernaryOpcode(opcode)) {
         return true;
     }
-    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || usesIntegerSaturateClamp(opcode) ||
-        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
+    return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || isF64ToIntegerConversion(opcode) ||
+        usesIntegerSaturateClamp(opcode) || isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
 }
 
 bool readsVop2Accumulator(RdnaOpcode opcode) {
@@ -2078,6 +2090,12 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     }
     if (isNativeVop3I16TernaryOpcode(opcode)) {
         if (abs != 0u || omod != 0u || neg != 0u) {
+            throw std::invalid_argument("VOP3 source modifiers are not implemented");
+        }
+        return;
+    }
+    if (isNativeVop3I32TernaryOpcode(opcode)) {
+        if (abs != 0u || opSel != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2141,7 +2159,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
     const bool sourceModifiers = supportsNativeVop3SourceModifiers(opcode);
     const bool resultModifiers = supportsNativeVop3ResultModifiers(opcode);
     const bool clampModifier = supportsNativeVop3Clamp(opcode);
-    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16;
+    const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16 || isF64ToIntegerConversion(opcode);
     if (sourceModifiers) {
         const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu && encodedOpcode != 0x136u;
         if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers) || unmeasuredAccumulatorModifiers) {
@@ -2321,7 +2339,13 @@ RdnaInstruction DecodeRdnaVop2(std::uint32_t programCounter, std::span<const std
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::VOP2;
     instruction.opcodeId = opcode;
-    instruction.op = lookupVectorOpcode(vop2Opcodes, opcode, "VOP2 opcode is not implemented");
+    const auto* entry = findVectorOpcodeEntry(vop2Opcodes, opcode);
+    if (entry == nullptr) {
+        char reason[160];
+        std::snprintf(reason, sizeof(reason), "VOP2 opcode is not implemented: opcode 0x%x at program counter 0x%08x raw word 0x%08x", opcode, programCounter, word);
+        throw std::invalid_argument(reason);
+    }
+    instruction.op = entry->opcode;
     SetRdnaRawWords(instruction, code, wordIndex, 1);
 
     if (src0 == 249u) {

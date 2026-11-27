@@ -135,7 +135,7 @@ const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
         Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
     }
     static const bool reporting = LibcRunReportEnabled_nid_no_patch();
-    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
+    if (reporting) formatUse[guestFormat].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 
@@ -255,6 +255,24 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
         case VK_FORMAT_R8_SRGB:
         case VK_FORMAT_R8G8_SRGB:
         case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+        case VK_FORMAT_BC2_SRGB_BLOCK:
+        case VK_FORMAT_BC3_SRGB_BLOCK:
+        case VK_FORMAT_BC7_SRGB_BLOCK: return true;
+        default: return false;
+    }
+}
+
+bool IsSrgbViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SRGB:
+        case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_SRGB:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
         case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
         case VK_FORMAT_BC2_SRGB_BLOCK:
         case VK_FORMAT_BC3_SRGB_BLOCK:
