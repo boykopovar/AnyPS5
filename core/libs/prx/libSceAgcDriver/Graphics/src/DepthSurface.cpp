@@ -439,6 +439,7 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
         StorageTexture::FlushPending(range.address, range.bytes);
         GuestMemory::FlushGpuWrites(range.address, range.bytes);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) || !GuestMemory::Watched(range.address, range.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+        GuestMemory::MaterializeKnownZero(range.address, range.bytes);
         range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
@@ -549,6 +550,7 @@ DepthSamplingState prepareDepthPlaneSampling(const Context& context, const Depth
     StorageTexture::FlushPending(plane.address, plane.bytes);
     GuestMemory::FlushGpuWrites(plane.address, plane.bytes);
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(plane.address), plane.bytes) || !GuestMemory::Watched(plane.address, plane.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
+    GuestMemory::MaterializeKnownZero(plane.address, plane.bytes);
     plane.generation = GuestMemory::CollectWritesUncached(plane.address, plane.bytes);
     if (plane.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     if (state.aliasDepth) state.initialDepth = *state.aliasDepth;

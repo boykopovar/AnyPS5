@@ -286,7 +286,7 @@ struct SharedBackingScope {
 
 class TargetMemory {
 public:
-    explicit TargetMemory(std::size_t bytes, bool registerAllocation = false) : bytes(bytes), registered(registerAllocation) {
+    explicit TargetMemory(std::size_t bytes, bool registerAllocation = false, bool initialise = true) : bytes(bytes), registered(registerAllocation) {
 #ifdef _WIN32
         pointer = GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536u);
         GuestArena::GuestArenaCommit_nid_postfix(pointer, bytes, PAGE_READWRITE, bytes);
@@ -315,7 +315,7 @@ public:
         GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pointer, bytes);
 #endif
         Require(pointer != nullptr, "multisample target fixture allocation failed");
-        std::memset(pointer, 0xa5, bytes);
+        if (initialise) std::memset(pointer, 0xa5, bytes);
         if (registered) GuestAllocations::Mutation().Add(pointer, bytes, true, true, true);
     }
     ~TargetMemory() {
@@ -3747,6 +3747,70 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckDemandZeroPlanes(Context context, std::uint32_t samples, bool withStencil, bool race) {
+    constexpr VkExtent2D extent{129u, 67u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory depth(depthBytes, false, false);
+    std::unique_ptr<TargetMemory> stencil;
+    if (withStencil) stencil = std::make_unique<TargetMemory>(stencilBytes, false, false);
+    DepthTarget target{depth.Address(), 0u, extent, withStencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT, 0.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.stencilAddress = stencil ? stencil->Address() : 0u;
+    Recorder recorder(context);
+    recorder.Activate();
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    const auto lookup = [&] { return DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); };
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() {
+            AgcDriver::GuestMemory::SetReadGuard(nullptr);
+            action();
+        }
+    } cleanup{clear};
+    static std::uintptr_t racedAddress = 0u;
+    static std::uint32_t racedReads = 0u;
+    racedAddress = withStencil ? stencil->Address() : depth.Address();
+    racedReads = 0u;
+    if (race) AgcDriver::GuestMemory::SetReadGuard([](std::uint64_t address, std::size_t bytes) {
+        if (racedAddress < address || racedAddress - address >= bytes) return;
+        *reinterpret_cast<volatile std::byte*>(racedAddress) = std::byte{0};
+        ++racedReads;
+    });
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a demand-zero depth target has no attachment view");
+    if (race) {
+        TargetRefuses([&] { lookup(); }, "guest writes raced native multisample depth import");
+        Require(racedReads != 0u, "the depth import did not exercise its racing zero store");
+        std::printf("Zero store during depth import refused: samples=%u stencil=%d\n", samples, withStencil);
+        return;
+    }
+    auto texture = lookup();
+    Require(texture != nullptr && texture->View() != VK_NULL_HANDLE, "a demand-zero depth plane was not imported");
+    const auto count = extent.width * extent.height * samples;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+    CommandBatch batch(context);
+    fetch.Run(batch.Handle(), count);
+    RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    batch.SubmitAndWait();
+    output.Invalidate();
+    for (std::uint32_t index = 0u; index < count; ++index) {
+        std::array<float, 4> sampled{};
+        std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+        Require(sampled == std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}, "a demand-zero plane did not initialise every depth sample to zero");
+    }
+    auto* written = stencil ? stencil->Data() : depth.Data();
+    *reinterpret_cast<volatile std::byte*>(written) = std::byte{0};
+    TargetRefuses([&] { lookup(); }, "guest writes");
+    std::printf("Demand-zero depth imported and sampled, later zero store refused: samples=%u stencil=%d\n", samples, withStencil);
+}
+
 void CheckUnevenPlaneWithoutHtile(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{129u, 67u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -5530,6 +5594,20 @@ int main(int argc, char** argv) {
             return checked == 0u ? VulkanTestSkipped : 0;
         }
         const auto context = device->GetContext();
+        if ((argc == 3 || argc == 4) && std::string_view(argv[1]) == "--demand-zero-planes") {
+            const bool withStencil = std::string_view(argv[2]) == "stencil";
+            Require(withStencil || std::string_view(argv[2]) == "depth", "unknown demand-zero plane mode");
+            const bool race = argc == 4 && std::string_view(argv[3]) == "race";
+            Require(argc == 3 || race, "unknown demand-zero import mode");
+            std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, HostDepthFormat(context, withStencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT), samples)) continue;
+                CheckDemandZeroPlanes(context, samples, withStencil, race);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--publication") {
             std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
             TextureDetiler detiler(context);
