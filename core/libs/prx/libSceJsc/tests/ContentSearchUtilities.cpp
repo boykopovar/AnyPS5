@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceJsc/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 
@@ -11,6 +12,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace Jsc::WtfAbi;
 
@@ -175,13 +183,118 @@ void TestFailures() {
     RegisterPersistenceAllocator_nid_no_patch(&allocator);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* Writable() const { return base; }
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename Function>
+void RequireNotImplemented(Function&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
 }
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    const std::string text = "a\nb";
+    StringImpl validImpl{2, 3, text.data(), StringImplFlag8Bit};
+    const String validString{&validImpl};
+    SizeVector vector = Garbage();
+    const unsigned allocationsBefore = allocateCalls;
+
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(
+            reinterpret_cast<SizeVector*>(pages.Guard()), &validString);
+    });
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(
+            reinterpret_cast<SizeVector*>(pages.ReadOnly()), &validString);
+    });
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(
+            reinterpret_cast<SizeVector*>(pages.Guard() - sizeof(SizeVector) / 2), &validString);
+    });
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(
+            &vector, reinterpret_cast<const String*>(pages.Guard()));
+    });
+    Require(vector.buffer == Garbage().buffer && vector.capacity == 77 && vector.size == 99);
+
+    const String badImpl{reinterpret_cast<StringImpl*>(pages.Guard())};
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(&vector, &badImpl);
+    });
+    Require(vector.buffer == Garbage().buffer && vector.capacity == 77 && vector.size == 99);
+
+    StringImpl badData8{2, 8, pages.Guard(), StringImplFlag8Bit};
+    const String badData8String{&badData8};
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(&vector, &badData8String);
+    });
+    Require(vector.buffer == Garbage().buffer && vector.capacity == 77 && vector.size == 99);
+
+    StringImpl splitData16{2, 4, pages.Guard() - sizeof(char16_t), 0};
+    const String splitData16String{&splitData16};
+    RequireNotImplemented([&] {
+        _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(&vector, &splitData16String);
+    });
+    Require(vector.buffer == Garbage().buffer && vector.capacity == 77 && vector.size == 99);
+    Require(allocateCalls == allocationsBefore);
+}
+
+}  // namespace
 
 int main() {
     RegisterPersistenceAllocator_nid_no_patch(&allocator);
     TestEndings();
     TestCapacity();
     TestFailures();
+    TestGuestPointers();
     RegisterPersistenceAllocator_nid_no_patch(nullptr);
     Require(liveAllocations.empty());
     return 0;

@@ -47,6 +47,8 @@
  *
  */
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceJsc/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceJsc/src/WtfFastMalloc.hpp"
 
@@ -56,6 +58,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -65,6 +68,10 @@ using Jsc::WtfAbi::String;
 using Jsc::WtfAbi::StringImpl;
 using Jsc::WtfAbi::StringImplFlag8Bit;
 
+static_assert(std::is_trivially_copyable_v<String>);
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<SizeVector>);
+
 constexpr std::size_t NotFound = static_cast<std::size_t>(-1);
 constexpr std::size_t VectorMinCapacity = 16;
 constexpr std::size_t VectorMaxCapacity = std::numeric_limits<unsigned>::max() / sizeof(std::size_t);
@@ -73,6 +80,46 @@ struct Text {
     const void* characters;
     unsigned length;
     bool is8Bit;
+};
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+struct BufferGuard {
+    void (*deallocate)(void*);
+    void* buffer;
+
+    ~BufferGuard() {
+        if (buffer && deallocate) {
+            try {
+                deallocate(buffer);
+            } catch (...) {
+            }
+        }
+    }
 };
 
 std::size_t FindLineFeed(const Text& text, unsigned start) {
@@ -94,18 +141,41 @@ void Append(std::vector<std::size_t>& values, std::size_t& capacity, std::size_t
     values.push_back(value);
 }
 
-}
+}  // namespace
 
 extern "C" {
 
 SizeVector* APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE(SizeVector* result, const String* text) {
     if (!result) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings: null return storage");
     if (!text) throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings requires a string");
+    RequireWritableGuestBytes(result, sizeof(SizeVector), __func__);
 
-    const StringImpl* impl = text->impl;
-    const Text view{impl ? impl->data : nullptr, impl ? impl->length : 0, !impl || (impl->hashAndFlags & StringImplFlag8Bit)};
-    if (view.length && !view.characters)
-        throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings: string has no characters");
+    const StringImpl* const impl = ReadGuestValue(text, __func__).impl;
+    std::vector<unsigned char> narrow;
+    std::vector<char16_t> wide;
+    Text view{nullptr, 0, true};
+    if (impl) {
+        const StringImpl header = ReadGuestValue(impl, __func__);
+        view.length = header.length;
+        view.is8Bit = (header.hashAndFlags & StringImplFlag8Bit) != 0;
+        if (header.length) {
+            if (!header.data)
+                throw std::invalid_argument("Inspector::ContentSearchUtilities::lineEndings: string has no characters");
+            const std::size_t byteLength = static_cast<std::size_t>(header.length) * (view.is8Bit ? 1u : sizeof(char16_t));
+            RequireReadableGuestBytes(header.data, byteLength, __func__);
+            if (view.is8Bit) {
+                narrow.resize(header.length);
+                if (!GuestCopyIn_nid_no_patch(narrow.data(), header.data, byteLength))
+                    NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                view.characters = narrow.data();
+            } else {
+                wide.resize(header.length);
+                if (!GuestCopyIn_nid_no_patch(wide.data(), header.data, byteLength))
+                    NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                view.characters = wide.data();
+            }
+        }
+    }
 
     std::vector<std::size_t> endings;
     std::size_t capacity = 0;
@@ -127,8 +197,13 @@ SizeVector* APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF
         throw std::runtime_error("Inspector::ContentSearchUtilities::lineEndings: Vector storage requires libSceNKWebKit fastMalloc");
     auto* buffer = static_cast<std::size_t*>(allocator->allocate(capacity * sizeof(std::size_t)));
     if (!buffer) throw std::bad_alloc();
-    std::memcpy(buffer, endings.data(), endings.size() * sizeof(std::size_t));
-    *result = SizeVector{buffer, static_cast<unsigned>(capacity), static_cast<unsigned>(endings.size())};
+    BufferGuard guard{allocator->deallocate, buffer};
+    if (!GuestCopyOut_nid_no_patch(buffer, endings.data(), endings.size() * sizeof(std::size_t)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const SizeVector output{buffer, static_cast<unsigned>(capacity), static_cast<unsigned>(endings.size())};
+    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    guard.buffer = nullptr;
     return result;
 }
 
