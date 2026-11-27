@@ -325,6 +325,14 @@ static void TestGuestPointers() {
     });
     Require(shared.ltr->refCount == ltrBefore);
 
+    BidiContext deepParent{1, Bits(1, kRTL, false, kStyle), shared.ltr};
+    BidiContext deepChild{1, Bits(2, kLTR, false, kStyle), &deepParent};
+    RequireNotImplemented([&] {
+        copyStack(reinterpret_cast<BidiContextRef*>(pages.ReadOnly() - 4), &deepChild);
+    });
+    Require(shared.ltr->refCount == ltrBefore);
+    Require(deepParent.refCount == 1 && deepChild.refCount == 1);
+
     RequireNotImplemented([&] {
         copyStack(&reference, reinterpret_cast<BidiContext*>(pages.Guard()));
     });

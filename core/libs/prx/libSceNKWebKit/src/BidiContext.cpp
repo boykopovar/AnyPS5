@@ -75,15 +75,12 @@ void Ref(BidiContext* context, const char* function) {
     std::atomic_ref<unsigned>(context->refCount).fetch_add(1);
 }
 
-void ReleaseChain(BidiContext* context) noexcept {
+void DecrementRefCountNoThrow(BidiContext* context) noexcept {
+    if (!context) return;
     try {
-        while (context) {
-            const GuestArena::HostWrite guard(context, sizeof(BidiContext));
-            if (!guard.Open() || !GuestWritable_nid_no_patch(context, sizeof(BidiContext))) return;
-            BidiContext* const parent = context->parent;
-            if (std::atomic_ref<unsigned>(context->refCount).fetch_sub(1) > 1) return;
-            _ZN3WTF8fastFreeEPv(context);
-            context = parent;
+        const GuestArena::HostWrite guard(context, sizeof(BidiContext));
+        if (guard.Open() && GuestWritable_nid_no_patch(context, sizeof(BidiContext))) {
+            std::atomic_ref<unsigned>(context->refCount).fetch_sub(1);
         }
     } catch (...) {
     }
@@ -91,13 +88,14 @@ void ReleaseChain(BidiContext* context) noexcept {
 
 struct RawAllocGuard {
     BidiContext* ptr = nullptr;
+    BidiContext* referencedParent = nullptr;
 
     ~RawAllocGuard() {
-        if (ptr) {
-            try {
-                _ZN3WTF8fastFreeEPv(ptr);
-            } catch (...) {
-            }
+        if (!ptr) return;
+        DecrementRefCountNoThrow(referencedParent);
+        try {
+            _ZN3WTF8fastFreeEPv(ptr);
+        } catch (...) {
         }
     }
 };
@@ -106,6 +104,7 @@ struct CreatedContext {
     BidiContext* ptr = nullptr;
     BidiContext* referencedParent = nullptr;
     bool allocated = false;
+    bool ownsLocalRef = true;
 };
 
 struct CreatedContextGuard {
@@ -115,20 +114,47 @@ struct CreatedContextGuard {
         if (!created.ptr) return;
         try {
             if (created.allocated) {
-                if (created.referencedParent) {
-                    const GuestArena::HostWrite guard(created.referencedParent, sizeof(BidiContext));
-                    if (guard.Open() && GuestWritable_nid_no_patch(created.referencedParent, sizeof(BidiContext))) {
-                        std::atomic_ref<unsigned>(created.referencedParent->refCount).fetch_sub(1);
-                    }
-                }
+                DecrementRefCountNoThrow(created.referencedParent);
                 _ZN3WTF8fastFreeEPv(created.ptr);
-            } else {
-                const GuestArena::HostWrite guard(created.ptr, sizeof(BidiContext));
-                if (guard.Open() && GuestWritable_nid_no_patch(created.ptr, sizeof(BidiContext))) {
-                    std::atomic_ref<unsigned>(created.ptr->refCount).fetch_sub(1);
-                }
+            } else if (created.ownsLocalRef) {
+                DecrementRefCountNoThrow(created.ptr);
             }
         } catch (...) {
+        }
+    }
+};
+
+struct CopiedStackGuard {
+    std::vector<CreatedContext> nodes;
+
+    void PushAndTransferParentRef(CreatedContext node) {
+        const std::size_t previousCount = nodes.size();
+        nodes.push_back(node);
+        if (previousCount) {
+            DecrementRefCountNoThrow(nodes[previousCount - 1].ptr);
+            nodes[previousCount - 1].ownsLocalRef = false;
+        }
+    }
+
+    BidiContext* Top() const {
+        return nodes.empty() ? nullptr : nodes.back().ptr;
+    }
+
+    void ReleaseOwnership() noexcept {
+        nodes.clear();
+    }
+
+    ~CopiedStackGuard() {
+        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+            try {
+                if (it->allocated) {
+                    DecrementRefCountNoThrow(it->referencedParent);
+                    _ZN3WTF8fastFreeEPv(it->ptr);
+                } else if (it->ownsLocalRef) {
+                    DecrementRefCountNoThrow(it->ptr);
+                }
+            } catch (...) {
+            }
         }
     }
 };
@@ -160,13 +186,17 @@ BidiContext* CreateUncached(unsigned char level, std::int32_t direction, bool ov
     context->bits = (level & kBidiLevelMask) | ((static_cast<std::uint32_t>(direction) & kBidiDirectionMask) << kBidiDirectionShift)
         | ((override ? 1U : 0U) << kBidiOverrideShift) | ((source & 1) << kBidiSourceShift);
     context->parent = parent;
-    if (parent) Ref(parent, function);
+    if (parent) {
+        Ref(parent, function);
+        alloc.referencedParent = parent;
+    }
     alloc.ptr = nullptr;
+    alloc.referencedParent = nullptr;
     return context;
 }
 
 CreatedContext Create(unsigned char level, std::int32_t direction, bool override, std::uint32_t source, BidiContext* parent, const char* function) {
-    if (parent) return CreatedContext{CreateUncached(level, direction, override, source, parent, function), parent, true};
+    if (parent) return CreatedContext{CreateUncached(level, direction, override, source, parent, function), parent, true, true};
     BidiContext* shared = nullptr;
     if (!level) {
         if (!override) {
@@ -184,23 +214,15 @@ CreatedContext Create(unsigned char level, std::int32_t direction, bool override
         shared = rtlOverrideContext;
     }
     Ref(shared, function);
-    return CreatedContext{shared, nullptr, false};
+    return CreatedContext{shared, nullptr, false, true};
 }
 
-BidiContext* CopyAndRebaselineLevel(const BidiContext& context, BidiContext* parent, const char* function) {
+CreatedContext CopyAndRebaselineLevel(const BidiContext& context, BidiContext* parent, const char* function) {
     int newLevel = parent ? static_cast<int>(Level(*parent)) : 0;
     if (Direction(context) == kRightToLeft) newLevel = static_cast<unsigned char>((newLevel + 1) | 1);
     else if (parent) newLevel = static_cast<unsigned char>((newLevel + 2) & ~1);
-    return Create(static_cast<unsigned char>(newLevel), Direction(context), Override(context), Source(context), parent, function).ptr;
+    return Create(static_cast<unsigned char>(newLevel), Direction(context), Override(context), Source(context), parent, function);
 }
-
-struct BidiContextGuard {
-    BidiContext* ptr = nullptr;
-
-    ~BidiContextGuard() {
-        if (ptr) ReleaseChain(ptr);
-    }
-};
 
 }  // namespace
 
@@ -232,16 +254,22 @@ BidiContextRef* APS5_VABI _ZN7WebCore11BidiContext41copyStackRemovingUnicodeEmbe
         ancestor = snapshot.parent;
     }
     if (contexts.empty()) throw std::invalid_argument("WebCore::BidiContext::copyStackRemovingUnicodeEmbeddingContexts: every context comes from Unicode");
-    BidiContextGuard top{CopyAndRebaselineLevel(contexts.back(), nullptr, __func__)};
-    for (std::size_t index = contexts.size() - 1; index; --index) {
-        BidiContext* next = CopyAndRebaselineLevel(contexts[index - 1], top.ptr, __func__);
-        std::atomic_ref<unsigned>(top.ptr->refCount).fetch_sub(1);
-        top.ptr = next;
+    CopiedStackGuard stack;
+    stack.nodes.reserve(contexts.size());
+    {
+        CreatedContextGuard root{CopyAndRebaselineLevel(contexts.back(), nullptr, __func__)};
+        stack.PushAndTransferParentRef(root.created);
+        root.created.ptr = nullptr;
     }
-    const BidiContextRef output{top.ptr};
+    for (std::size_t index = contexts.size() - 1; index; --index) {
+        CreatedContextGuard next{CopyAndRebaselineLevel(contexts[index - 1], stack.Top(), __func__)};
+        stack.PushAndTransferParentRef(next.created);
+        next.created.ptr = nullptr;
+    }
+    const BidiContextRef output{stack.Top()};
     if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    top.ptr = nullptr;
+    stack.ReleaseOwnership();
     return result;
 }
 
