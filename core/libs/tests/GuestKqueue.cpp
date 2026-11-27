@@ -200,7 +200,8 @@ static void BadPointersFaultAndBatchesFill() {
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, readOnly, 16, &zero), fault);
     Require(readOnly[0].ident == 0 && readOnly[0].filter == 0);
     const KernelEvent bad = Change(200, EvfiltUser, 0, NoteTrigger);
-    RequireFailure(kevent_nid_postfix(kq, &bad, 1, readOnly, 1, &zero), fault);
+    Require(kevent_nid_postfix(kq, &bad, 1, readOnly, 1, &zero) == 1);
+    Require(readOnly[0].ident == 0 && readOnly[0].filter == 0);
     Require(Poll(kq, events, INT_MAX) == 12);
     for (std::uintptr_t ident = 1000; ident < 2030; ++ident) {
         Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
@@ -1470,6 +1471,40 @@ static void RandomDeviceReadWrite() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void ErrorEventsAndChangeBatches() {
+    constexpr int fault = 14;
+    const int kq = kqueue_nid_postfix();
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x8000, 3, 0) == 0 && page != nullptr);
+    auto* base = static_cast<std::uint8_t*>(page);
+    auto* boundary = reinterpret_cast<KernelEvent*>(base + 0x4000);
+    const KernelEvent missing = Change(201, EvfiltUser, 0, NoteTrigger);
+    const KernelEvent mixed[3] = {missing, Change(210, EvfiltUser, EvAdd), Change(202, EvfiltUser, EvDelete)};
+    Require(sceKernelMprotect(base + 0x4000, 0x4000, 1) == 0);
+    Require(kevent_nid_postfix(kq, mixed, 3, boundary - 1, 2, nullptr) == 2);
+    Require(boundary[-1].ident == 201 && boundary[-1].flags == EvError && boundary[-1].data == GuestEnoent);
+    Require(boundary[0].ident == 0 && boundary[0].filter == 0);
+    Require(Apply(kq, Change(210, EvfiltUser, EvDelete)) == 0);
+    RequireFailure(kevent_nid_postfix(kq, mixed, 3, boundary, 1, nullptr), GuestEnoent);
+    Require(Apply(kq, Change(210, EvfiltUser, EvDelete)) == 0);
+    const KernelEvent receipt = Change(211, EvfiltUser, EvAdd | EvReceipt);
+    Require(kevent_nid_postfix(kq, &receipt, 1, boundary, 1, nullptr) == 1);
+    Require(Apply(kq, Change(211, EvfiltUser, EvDelete)) == 0);
+    Require(sceKernelMprotect(base + 0x4000, 0x4000, 0) == 0);
+    auto* full = boundary - 8;
+    for (int i = 0; i < 8; ++i) full[i] = Change(300 + static_cast<std::uintptr_t>(i), EvfiltUser, EvAdd);
+    RequireFailure(kevent_nid_postfix(kq, full, 9, nullptr, 0, nullptr), fault);
+    for (std::uintptr_t ident = 300; ident < 308; ++ident) Require(Apply(kq, Change(ident, EvfiltUser, EvDelete)) == 0);
+    auto* split = boundary - 2;
+    split[0] = Change(400, EvfiltUser, EvAdd);
+    split[1] = Change(401, EvfiltUser, EvAdd);
+    RequireFailure(kevent_nid_postfix(kq, split, 3, nullptr, 0, nullptr), fault);
+    RequireFailure(Apply(kq, Change(400, EvfiltUser, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(401, EvfiltUser, EvDelete)), GuestEnoent);
+    Require(sceKernelMprotect(base + 0x4000, 0x4000, 3) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void ProcdescOnFiles() {
     const int kq = kqueue_nid_postfix();
     const int other = kqueue_nid_postfix();
@@ -2105,5 +2140,6 @@ int main(int argc, char** argv) {
 #endif
     Timeout();
     BadPointersFaultAndBatchesFill();
+    ErrorEventsAndChangeBatches();
     return 0;
 }
