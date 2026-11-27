@@ -236,9 +236,10 @@ int RunTitleContext(const char* program, const std::filesystem::path& directory)
     CloseHandle(child.hProcess);
     return static_cast<int>(code);
 #else
+    extern char** environ;
     char* arguments[] = {const_cast<char*>(program), const_cast<char*>(titleContextMode), const_cast<char*>(directory.c_str()), nullptr};
     pid_t child = 0;
-    if (posix_spawn(&child, program, nullptr, nullptr, arguments, environ) != 0) return -1;
+    if (posix_spawnp(&child, program, nullptr, nullptr, arguments, environ) != 0) return -1;
     int status = 0;
     if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return -1;
     return WEXITSTATUS(status);
