@@ -3128,6 +3128,11 @@ bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     return KeysServeSurface(descriptor.dccAddress, uploadedKeys, filledKeys, dccAddress, readFollowed, readNamed);
 }
 
+std::array<std::pair<std::uint64_t, std::uint64_t>, 2> StorageTexture::KeySpansServing(std::uint64_t dccAddress) const {
+    const auto span = [&](std::uint64_t address) { return address != 0 ? std::pair<std::uint64_t, std::uint64_t>{address, address + DccKeyBytes(guestBytes)} : std::pair<std::uint64_t, std::uint64_t>{}; };
+    return {span(descriptor.dccAddress), span(dccAddress != descriptor.dccAddress ? dccAddress : 0)};
+}
+
 namespace {
 
 // Debug aid (APS5_TRACE_DCC_KEYS=1): who stores uncompressed keys over a surface (recommendation

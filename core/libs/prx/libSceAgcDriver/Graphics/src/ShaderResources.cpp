@@ -4805,13 +4805,18 @@ void ShaderResources::recordFlushRanges() {
     planesClean = 0;
     flushUnscoped = textures.size() > validatedTextures.size();
     for (const auto& region : directRegions) flushRanges.emplace_back(region.begin, region.end);
+    const auto imageKeys = [&](const StorageTexture& image, std::uint64_t dccAddress) {
+        for (const auto& span : image.KeySpansServing(dccAddress)) {
+            if (span.first != span.second) flushRanges.push_back(span);
+        }
+    };
     for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
         if (textures[index] == nullptr) continue;
         const auto& surface = validatedTextures[index];
         if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
         flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
         if (surface.resource.dccAddress != 0) flushRanges.emplace_back(surface.resource.dccAddress, surface.resource.dccAddress + DccKeyBytes(surface.bytes));
-        if (surface.source != nullptr && surface.source->Descriptor().dccAddress != 0 && surface.source->Descriptor().dccAddress != surface.resource.dccAddress) flushRanges.emplace_back(surface.source->Descriptor().dccAddress, surface.source->Descriptor().dccAddress + DccKeyBytes(surface.source->GuestBytes()));
+        if (surface.source != nullptr) imageKeys(*surface.source, surface.resource.dccAddress);
     }
     for (const auto& image : storageTextures) {
         if (image == nullptr) continue;

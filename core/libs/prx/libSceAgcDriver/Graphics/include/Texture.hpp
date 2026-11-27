@@ -613,6 +613,7 @@ public:
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
     DccKeys ProvedKeys() const;
     bool ServesKeysAt(std::uint64_t dccAddress) const;
+    std::array<std::pair<std::uint64_t, std::uint64_t>, 2> KeySpansServing(std::uint64_t dccAddress) const;
     // Brings the image up to date with guest memory before another use; returns whether its content
     // was still current (nothing uploaded).
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).

@@ -1020,7 +1020,7 @@ void remappedEpochTests(Context context) {
         AgcDriver::GuestMemory::CollectWritesUncached(memory.Address(), bytes);
     };
     enum class ViewKeys { None, Source, Named };
-    for (const auto mode : {ViewKeys::None}) {
+    for (const auto mode : {ViewKeys::None, ViewKeys::Source, ViewKeys::Named}) {
         const char* kind = mode == ViewKeys::None ? "an unkeyed view" : mode == ViewKeys::Source ? "a view naming its image's keys" : "a view naming other keys";
         ClearCachedTextures(context.device);
         WatchedSurface chain(context, 2 * SurfaceBytes);
