@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
@@ -196,7 +197,9 @@ int GuestRandomizedPath_nid_no_patch(const char* set, char* get, std::size_t* le
     const std::size_t copied = std::min(capacity - 1, pathLength);
     std::string output(path, copied);
     output.push_back('\0');
-    if (!GuestWritable_nid_no_patch(get, output.size()) || !GuestCopyOut_nid_no_patch(get, output.data(), output.size())) {
+    const GuestArena::HostWrite guard(get, output.size());
+    if (!guard.Open() || !GuestWritable_nid_no_patch(get, output.size()) ||
+        !GuestCopyOut_nid_no_patch(get, output.data(), output.size())) {
         *__error_nid_postfix() = GuestEfault;
         return -1;
     }
