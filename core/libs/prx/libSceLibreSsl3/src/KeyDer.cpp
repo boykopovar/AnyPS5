@@ -347,6 +347,7 @@
  */
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/DsaKeys.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
@@ -405,6 +406,7 @@ constexpr int Asn1TypeInteger = 2;
 constexpr int Asn1TypeNull = 5;
 constexpr int Asn1TypeObject = 6;
 constexpr int Asn1TypeOctetString = 4;
+constexpr int Asn1TypeSequence = 16;
 constexpr int Asn1ObjDynamic = 0x01;
 constexpr int Asn1ObjDynamicData = 0x08;
 
@@ -414,11 +416,20 @@ constexpr int Secp256r1 = 415;
 constexpr int Secp384r1 = 715;
 constexpr int PointConversionUncompressed = 4;
 constexpr int EcNamedCurveFlag = 1;
+constexpr int DsaOldType = 67;
+constexpr int DsaWithShaType = 66;
+constexpr int DsaWithSha1Type = 113;
+constexpr int DsaWithSha1OldType = 70;
 
 constexpr std::array<unsigned char, 9> RsaOid{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01};
 constexpr std::array<unsigned char, 7> EcPublicKeyOid{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01};
 constexpr std::array<unsigned char, 8> P256Oid{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
 constexpr std::array<unsigned char, 5> P384Oid{0x2b, 0x81, 0x04, 0x00, 0x22};
+constexpr std::array<unsigned char, 7> DsaOid{0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x01};
+constexpr std::array<unsigned char, 5> DsaOldOid{0x2b, 0x0e, 0x03, 0x02, 0x0c};
+constexpr std::array<unsigned char, 5> DsaWithShaOid{0x2b, 0x0e, 0x03, 0x02, 0x0d};
+constexpr std::array<unsigned char, 7> DsaWithSha1Oid{0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x03};
+constexpr std::array<unsigned char, 5> DsaWithSha1OldOid{0x2b, 0x0e, 0x03, 0x02, 0x1b};
 
 struct Tlv {
     unsigned char tag;
@@ -621,6 +632,15 @@ std::vector<unsigned char> EncodeSmallInteger(unsigned char value) {
 
 bool IsOid(std::span<const unsigned char> value, std::span<const unsigned char> oid) {
     return value.size() == oid.size() && std::equal(value.begin(), value.end(), oid.begin());
+}
+
+int DsaTypeFromOid(std::span<const unsigned char> oid) {
+    if (IsOid(oid, DsaOid)) return LibreSsl3PkeyDsa;
+    if (IsOid(oid, DsaOldOid)) return DsaOldType;
+    if (IsOid(oid, DsaWithShaOid)) return DsaWithShaType;
+    if (IsOid(oid, DsaWithSha1Oid)) return DsaWithSha1Type;
+    if (IsOid(oid, DsaWithSha1OldOid)) return DsaWithSha1OldType;
+    return 0;
 }
 
 LibreSsl3Bignum* DecodeBn(std::span<const unsigned char> value) {
@@ -1085,7 +1105,8 @@ void FreePkcs8(LibreSsl3Pkcs8PrivKeyInfo* info) {
 
 LibreSsl3X509Algor* BuildAlgor(
     std::span<const unsigned char> oidBytes, int oidNid,
-    bool hasNullParam, std::span<const unsigned char> paramOidBytes, int paramNid) {
+    bool hasNullParam, std::span<const unsigned char> paramOidBytes, int paramNid,
+    std::span<const unsigned char> sequenceParameter) {
     auto* algor = static_cast<LibreSsl3X509Algor*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Algor)));
     if (!algor) {
         PutError(ErrLibAsn1, ErrRMallocFailure);
@@ -1096,7 +1117,7 @@ LibreSsl3X509Algor* BuildAlgor(
         free_nid_postfix(algor);
         return nullptr;
     }
-    if (hasNullParam || !paramOidBytes.empty()) {
+    if (hasNullParam || !paramOidBytes.empty() || !sequenceParameter.empty()) {
         algor->parameter = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
         if (!algor->parameter) {
             FreeAlgor(algor);
@@ -1105,6 +1126,18 @@ LibreSsl3X509Algor* BuildAlgor(
         }
         if (hasNullParam) {
             algor->parameter->type = Asn1TypeNull;
+        } else if (!sequenceParameter.empty()) {
+            auto* sequence = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
+            algor->parameter->type = Asn1TypeSequence;
+            algor->parameter->value = sequence;
+            if (!sequence || sequenceParameter.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
+                || !ASN1_STRING_set_nid_postfix(sequence, sequenceParameter.data(),
+                    static_cast<int>(sequenceParameter.size()))) {
+                FreeAlgor(algor);
+                PutError(ErrLibAsn1, ErrRMallocFailure);
+                return nullptr;
+            }
+            sequence->type = Asn1TypeSequence;
         } else {
             algor->parameter->type = Asn1TypeObject;
             algor->parameter->value = CreateOidObject(paramOidBytes, paramNid);
@@ -1175,11 +1208,14 @@ LibreSsl3X509Algor* DecodePkcs8Algor(std::span<const unsigned char> body) {
     int oidNid = 0;
     if (IsOid(oid.content, RsaOid)) oidNid = RsaType;
     else if (IsOid(oid.content, EcPublicKeyOid)) oidNid = EcType;
+    else oidNid = DsaTypeFromOid(oid.content);
 
     bool hasNullParam = false;
     std::span<const unsigned char> paramOidBytes{};
+    std::span<const unsigned char> sequenceParameter{};
     int paramNid = 0;
     if (!body.empty()) {
+        const std::span<const unsigned char> encodedParameter = body;
         Tlv param{};
         if (!ReadTlv(body, param)) {
             PutError(ErrLibAsn1, ErrRNestedAsn1Error);
@@ -1195,13 +1231,15 @@ LibreSsl3X509Algor* DecodePkcs8Algor(std::span<const unsigned char> body) {
         } else if (param.tag == 0x06) {
             paramOidBytes = param.content;
             paramNid = CurveFromOid(paramOidBytes);
+        } else if (param.tag == 0x30) {
+            sequenceParameter = encodedParameter;
         } else {
             PutError(ErrLibAsn1, Asn1RWrongTag);
             PutError(ErrLibAsn1, ErrRNestedAsn1Error);
             return nullptr;
         }
     }
-    return BuildAlgor(oid.content, oidNid, hasNullParam, paramOidBytes, paramNid);
+    return BuildAlgor(oid.content, oidNid, hasNullParam, paramOidBytes, paramNid, sequenceParameter);
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* DecodePkcs8(std::span<const unsigned char>& input) {
@@ -1266,6 +1304,10 @@ std::vector<unsigned char> EncodePkcs8(const LibreSsl3Pkcs8PrivKeyInfo* info) {
             if (!paramObj->data || paramObj->length <= 0) return {};
             Append(algorithm, Wrap(0x06, std::span<const unsigned char>(
                 paramObj->data, static_cast<std::size_t>(paramObj->length))));
+        } else if (info->algorithm->parameter->type == Asn1TypeSequence && info->algorithm->parameter->value) {
+            const auto* sequence = static_cast<const Asn1String*>(info->algorithm->parameter->value);
+            if (!sequence->data || sequence->length <= 0) return {};
+            algorithm.insert(algorithm.end(), sequence->data, sequence->data + sequence->length);
         } else {
             return {};
         }
@@ -1425,6 +1467,8 @@ LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3Ev
                 key = nullptr;
             }
         }
+    } else if (type == LibreSsl3PkeyDsa) {
+        key = DsaDecodeTraditionalKey_nid_no_patch(*input, available);
     }
     if (key) {
         ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
@@ -1644,13 +1688,18 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
         }
         return key;
     }
+    if (DsaTypeFromOid(oidSpan) != 0) {
+        auto* key = DsaDecodePkcs8Key_nid_no_patch(info->algorithm, keyBytes.data(), keyBytes.size());
+        if (!key) PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
+        return key;
+    }
     PutError(ErrLibEvp, EvpRUnsupportedAlgorithm);
     PutError(ErrLibEvp, EvpRUnsupportedPrivateKeyAlgorithm);
     return nullptr;
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3EvpPkey* key) {
-    if (!key || !key->key || (!key->method && key->type != EcType)) {
+    if (!key || !key->key || (!key->method && key->type != EcType && key->type != LibreSsl3PkeyDsa)) {
         PutError(ErrLibEvp, EvpRUnsupportedPrivateKeyAlgorithm);
         return nullptr;
     }
@@ -1660,7 +1709,7 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3E
             PutError(ErrLibEvp, EvpRPrivateKeyEncodeError);
             return nullptr;
         }
-        auto* algor = BuildAlgor(RsaOid, RsaType, true, {}, 0);
+        auto* algor = BuildAlgor(RsaOid, RsaType, true, {}, 0, {});
         if (!algor) return nullptr;
         constexpr std::array<unsigned char, 1> version{0};
         return NewPkcs8(algor, version, encoded, {});
@@ -1674,7 +1723,16 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI EVP_PKEY2PKCS8_nid_postfix(const LibreSsl3E
         }
         std::span<const unsigned char> curveOid = curve == Secp256r1 ? std::span<const unsigned char>(P256Oid)
             : std::span<const unsigned char>(P384Oid);
-        auto* algor = BuildAlgor(EcPublicKeyOid, EcType, false, curveOid, curve);
+        auto* algor = BuildAlgor(EcPublicKeyOid, EcType, false, curveOid, curve, {});
+        if (!algor) return nullptr;
+        constexpr std::array<unsigned char, 1> version{0};
+        return NewPkcs8(algor, version, encoded, {});
+    }
+    if (key->type == LibreSsl3PkeyDsa && !key->method) {
+        std::vector<unsigned char> parameters;
+        std::vector<unsigned char> encoded;
+        DsaEncodePkcs8Parts_nid_no_patch(static_cast<const LibreSsl3Dsa*>(key->key), parameters, encoded);
+        auto* algor = BuildAlgor(DsaOid, LibreSsl3PkeyDsa, false, {}, 0, parameters);
         if (!algor) return nullptr;
         constexpr std::array<unsigned char, 1> version{0};
         return NewPkcs8(algor, version, encoded, {});

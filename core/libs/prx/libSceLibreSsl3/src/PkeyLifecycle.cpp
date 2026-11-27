@@ -280,6 +280,7 @@
  */
 
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/DsaKeys.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -341,6 +342,8 @@ void ReleasePkeyData(LibreSsl3EvpPkey* key) {
         RSA_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3Rsa*>(key->key));
     } else if (key->type == EcType) {
         EC_KEY_free_nid_postfix(static_cast<EcKey*>(key->key));
+    } else if (key->type == LibreSsl3PkeyDsa) {
+        DsaFree_nid_no_patch(static_cast<LibreSsl3Dsa*>(key->key));
     }
     key->key = nullptr;
 }
@@ -366,6 +369,10 @@ void APS5_VABI EVP_PKEY_free_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key) {
     if (references.fetch_sub(1, std::memory_order_acq_rel) > 1) return;
     if (key->type == EcType && key->key) {
         EC_KEY_free_nid_postfix(static_cast<EcKey*>(key->key));
+        key->key = nullptr;
+    }
+    if (key->type == LibreSsl3PkeyDsa && key->key && !key->method) {
+        DsaFree_nid_no_patch(static_cast<LibreSsl3Dsa*>(key->key));
         key->key = nullptr;
     }
     if (IsNativePkeyMethod_nid_no_patch(key->method)) {
