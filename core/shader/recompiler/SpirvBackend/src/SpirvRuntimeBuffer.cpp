@@ -263,11 +263,16 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     return access;
 }
 
-std::uint32_t baseMisalignment(SpirvValueEmitContext& context, const IrValue& instruction) {
+std::uint32_t descriptorMisalignment(SpirvValueEmitContext& context, const IrValue& instruction) {
     const auto& memory = context.Memory(instruction);
-    if (memory.kind == ResourceKind::ScalarBuffer) return ConstantU32(context.state, 0u);
     auto& state = context.state;
+    if (ReadsBaseMisalignmentAtRunTime(state.program.Info().buffers.at(memory.resource))) return EmitAndConstant(state, state.memoryByteOffsets.at(ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource)), 3u);
     return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::BufferBase + memory.resource * PipelineSpecialization::BufferWords + 3u, 0u);
+}
+
+std::uint32_t baseMisalignment(SpirvValueEmitContext& context, const IrValue& instruction) {
+    if (context.Memory(instruction).kind == ResourceKind::ScalarBuffer) return ConstantU32(context.state, 0u);
+    return descriptorMisalignment(context, instruction);
 }
 
 std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t address) {
@@ -1216,7 +1221,7 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThan, TypeBool(state), word, limit)));
     if (!context.Memory(instruction).gpuDescriptor) {
         const auto first = PipelineSpecialization::BufferBase + context.Memory(instruction).resource * PipelineSpecialization::BufferWords;
-        const auto misalignment = state.module.SpecializationConstant(TypeU32(state), first + 3u, 0u);
+        const auto misalignment = descriptorMisalignment(context, instruction);
         const auto tail = state.module.SpecializationConstant(TypeU32(state), first + 2u, 0u);
         const auto whole = both(state, equal(state, misalignment, ConstantU32(state, 0u)), equal(state, tail, ConstantU32(state, 0u)));
         return readBuffer(context, instruction, byte, 32u, inBounds, Select(state, TypeBool(state), whole, noCarry, inBounds));

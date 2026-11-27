@@ -1693,7 +1693,8 @@ void verifyBindingPlanSelection() {
     snapshot.buffers[0].dwords[0] &= ~3u;
     info.buffers[1].typedAlignment = 2u;
     snapshot.buffers[1].dwords[0] |= 2u;
-    static_cast<void>(builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot));
+    const auto readPlan = builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot);
+    require(std::ranges::none_of(readPlan.specialization, [](const PipelineSpecializationConstant& constant) { return constant.id == PipelineSpecialization::BufferBase + PipelineSpecialization::BufferWords + 3u; }), "a read-only V# off a DWORD boundary specialized its module on the misalignment");
     snapshot.buffers[1].dwords[0] |= 1u;
     rejectsAlignment("base is not aligned to its element");
     info.buffers[1].typedAlignment = 1u;
