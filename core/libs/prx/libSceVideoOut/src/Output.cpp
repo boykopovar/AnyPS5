@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -37,6 +38,18 @@ std::uint32_t ParseVideoOutHostDimension(const char* text, const char* name) {
     const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
     if (value.empty() || result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed == 0) {
         throw std::runtime_error(std::string("VideoOut: invalid ") + name + " '" + std::string(value) + "'");
+    }
+    return parsed;
+}
+
+std::optional<int> ForcedFlipRate() {
+    const char* text = std::getenv("APS5_FLIP_RATE");
+    if (text == nullptr || text[0] == '\0') return std::nullopt;
+    const std::string_view value(text);
+    int parsed = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed < 0 || parsed > 2) {
+        throw std::runtime_error("APS5_FLIP_RATE must be 0, 1 or 2, not '" + std::string(value) + "'");
     }
     return parsed;
 }
@@ -126,6 +139,11 @@ static void validateOpenParam(const void* param) {
     }
 }
 
+int ConfiguredFlipRate(int requested) {
+    if (const auto forced = ForcedFlipRate()) return *forced;
+    return requested;
+}
+
 extern "C" {
 
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param) try {
@@ -200,7 +218,7 @@ int APS5_VABI sceVideoOutSetFlipRate(int handle, int rate) try {
     if (rate < 0 || rate > 2) return VIDEO_OUT_ERROR_INVALID_VALUE;
     std::lock_guard lock(cfg->mutex);
     cfg->Check();
-    cfg->flipRate = rate;
+    cfg->flipRate = ConfiguredFlipRate(rate);
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();

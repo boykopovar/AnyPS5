@@ -30,6 +30,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
@@ -458,6 +459,7 @@ int VideoOutDriver::Open(int busType) {
     cfg->generation = generation;
     cfg->busType = busType;
     cfg->opened = true;
+    cfg->flipRate = ConfiguredFlipRate(0);
     cfg->flipStatus.flipArg = -1;
     cfg->flipStatus.currentBuffer = -1;
     auto output = std::make_shared<VideoOutput>(cfg, flipQueue);
