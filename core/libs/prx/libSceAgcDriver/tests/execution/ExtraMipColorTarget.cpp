@@ -57,7 +57,10 @@ std::size_t TexelOffset(const GuestTextureResource& descriptor, const SurfaceGeo
     std::uint64_t offset = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
     if (descriptor.tileMode == TextureTileMode::kLinear) return static_cast<std::size_t>(offset);
     const auto bytes = BytesPerElement(descriptor.format);
-    ColorTargetLayout layout(mip.tail ? 64u : mip.width, mip.tail ? 64u : mip.height, mode, bytes);
+    const auto blockBits = static_cast<std::uint32_t>(std::countr_zero(ColorTileModeBlockBytes(mode))) - static_cast<std::uint32_t>(std::countr_zero(bytes));
+    const auto blockWidth = 1u << ((blockBits + 1u) / 2u);
+    const auto blockHeight = 1u << (blockBits / 2u);
+    ColorTargetLayout layout(mip.tail ? blockWidth : mip.width, mip.tail ? blockHeight : mip.height, mode, bytes);
     auto within = layout.Offset(mip.tail ? mip.tailX : 0u, mip.tail ? mip.tailY : 0u);
     if (ColorTileModeIsXor(mode)) {
         const auto equation = std::ranges::find_if(kTextureSwizzleEquations, [&](const auto& item) { return item.swizzleMode == XorSwizzleMode(descriptor.tileMode) && item.elementBytes == bytes; });
