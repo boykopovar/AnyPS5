@@ -575,6 +575,15 @@ NKWebKit::WtfAbi::String TrimmedExtension(const NKWebKit::WtfAbi::String& extens
 
 }  // namespace
 
+namespace NKWebKit {
+
+bool SchemeShouldBypassContentSecurityPolicy(const WtfAbi::StringImpl* scheme) {
+    std::lock_guard lock(g_schemeMutex);
+    return HasScheme(g_cspBypassingSchemes, scheme);
+}
+
+}  // namespace NKWebKit
+
 extern "C" {
 
 bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry15isBuiltinSchemeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {
