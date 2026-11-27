@@ -119,6 +119,11 @@ void GuestPointers(const char16_t* pattern, const char16_t* text) {
     std::int32_t status = 0;
     Rejects([&] { usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), -1, text, 8, "en", nullptr, &status); });
     Require(status == 0);
+    Rejects([&] {
+        usearch_open_nid_postfix(reinterpret_cast<const char16_t*>(0x10), std::numeric_limits<std::int32_t>::max(), text, 8,
+                                 "en", nullptr, &status);
+    });
+    Require(status == 0);
     Rejects([&] { usearch_open_nid_postfix(pattern, 4, text, 8, reinterpret_cast<const char*>(0x10), nullptr, &status); });
     Require(status == 0);
 }

@@ -4,6 +4,7 @@
 #include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -72,23 +73,30 @@ bool CopyBytes(void* destination, const void* source, std::size_t bytes) {
 
 std::vector<char16_t> CopyUnits(const char16_t* source, std::int32_t length, const char* caller) {
     std::vector<char16_t> result;
+    std::array<char16_t, PageBytes / sizeof(char16_t)> scratch{};
+    auto address = reinterpret_cast<std::uintptr_t>(source);
     if (length >= 0) {
-        result.resize(static_cast<std::size_t>(length));
-        if (length > 0 && !CopyBytes(result.data(), source, result.size() * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
+        auto remaining = static_cast<std::size_t>(length);
+        while (remaining > 0) {
+            const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t), 1);
+            const std::size_t count = std::min({remaining, page, scratch.size()});
+            if (!CopyBytes(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(char16_t))) {
+                NotImplemented_nid_no_patch(caller);
+            }
+            result.insert(result.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count));
+            remaining -= count;
+            address += count * sizeof(char16_t);
+        }
         return result;
     }
-    auto address = reinterpret_cast<std::uintptr_t>(source);
     while (true) {
-        const std::size_t count = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t), 1);
+        const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t), 1);
+        const std::size_t count = std::min(page, scratch.size());
         if (result.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) - count) NotImplemented_nid_no_patch(caller);
-        const std::size_t offset = result.size();
-        result.resize(offset + count);
-        if (!CopyBytes(result.data() + offset, reinterpret_cast<const void*>(address), count * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
-        const auto end = std::find(result.begin() + static_cast<std::ptrdiff_t>(offset), result.end(), char16_t{});
-        if (end != result.end()) {
-            result.erase(end, result.end());
-            return result;
-        }
+        if (!CopyBytes(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
+        const auto end = std::find(scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count), char16_t{});
+        result.insert(result.end(), scratch.begin(), end);
+        if (end != scratch.begin() + static_cast<std::ptrdiff_t>(count)) return result;
         address += count * sizeof(char16_t);
     }
 }

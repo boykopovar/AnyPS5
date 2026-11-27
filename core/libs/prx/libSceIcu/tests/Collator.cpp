@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -192,8 +193,19 @@ void Run() {
         }
     }
 
-    const std::string previous = uloc_getDefault();
     std::int32_t status = 0;
+    auto* closed = ucol_open_nid_postfix("en", &status);
+    Require(closed != nullptr && status <= 0);
+    ucol_close_nid_postfix(closed);
+    status = 0;
+    auto* live = ucol_open_nid_postfix("en", &status);
+    Require(live != nullptr && live != closed && status <= 0);
+    RequireThrows([&] { ucol_close_nid_postfix(closed); });
+    Require(ucol_strcoll_nid_postfix(live, u"a", -1, u"b", -1) == UCOL_LESS);
+    ucol_close_nid_postfix(live);
+
+    const std::string previous = uloc_getDefault();
+    status = 0;
     uloc_setDefault_nid_postfix("sv", &status);
     Require(status <= 0);
     auto* selected = ucol_open_nid_postfix(nullptr, &status);
@@ -504,6 +516,7 @@ void Run() {
     rejectsRuntime([&] { ucol_open_nid_postfix(badBytes, &status); });
     rejectsRuntime([&] { ucol_strcoll_nid_postfix(collator, badText, -1, u"a", -1); });
     rejectsRuntime([&] { ucol_strcoll_nid_postfix(collator, u"a", -1, badText, 4); });
+    rejectsRuntime([&] { ucol_strcoll_nid_postfix(collator, badText, std::numeric_limits<std::int32_t>::max(), u"a", -1); });
     rejectsRuntime([&] { ucol_strcollUTF8_nid_postfix(collator, badBytes, -1, "a", -1, &status); });
     rejectsRuntime([&] { ucol_strcollUTF8_nid_postfix(collator, "a", -1, "b", -1, badStatus); });
     rejectsRuntime([&] { ucol_getAttribute_nid_postfix(collator, UCOL_STRENGTH, badStatus); });

@@ -16,6 +16,8 @@ else()
     list(APPEND icu_host_compilers -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
 endif()
 set(icu_host_dir ${CMAKE_BINARY_DIR}/icu-host)
+string(REPLACE ";" "|" icu_host_c_launcher "${CMAKE_C_COMPILER_LAUNCHER}")
+string(REPLACE ";" "|" icu_host_cxx_launcher "${CMAKE_CXX_COMPILER_LAUNCHER}")
 set(icu_host_outputs)
 foreach(tool genbrk gendict genrb gencnval icupkg genccode)
     if(CMAKE_HOST_WIN32)
@@ -26,14 +28,15 @@ foreach(tool genbrk gendict genrb gencnval icupkg genccode)
     list(APPEND icu_host_outputs ${icu_host_${tool}})
 endforeach()
 ExternalProject_Add(icu_host_tools
+    LIST_SEPARATOR |
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/cmake/icu-host
     BINARY_DIR ${icu_host_dir}
     CMAKE_ARGS ${icu_host_compilers}
         -DICU_SOURCE_DIR=${ICU_SOURCE_DIR}
         -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
         -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
-        -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
+        "-DCMAKE_C_COMPILER_LAUNCHER:STRING=${icu_host_c_launcher}"
+        "-DCMAKE_CXX_COMPILER_LAUNCHER:STRING=${icu_host_cxx_launcher}"
     BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release --parallel 6
     INSTALL_COMMAND ""
     BUILD_ALWAYS TRUE

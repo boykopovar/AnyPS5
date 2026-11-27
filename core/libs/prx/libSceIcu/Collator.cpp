@@ -4,13 +4,15 @@
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -21,7 +23,8 @@ constexpr std::size_t PageBytes = 4096;
 
 struct Registry {
     std::shared_mutex mutex;
-    std::unordered_set<const void*> collators;
+    std::unordered_map<const void*, void*> collators;
+    std::uintptr_t nextHandle{1};
 };
 
 struct RegisteredCollator {
@@ -76,14 +79,19 @@ bool CollationKeyword(const char* keyword, const char* caller) {
 RegisteredCollator Registered(const UCollator* coll, const char* caller) {
     auto& registry = Collators();
     std::shared_lock lock(registry.mutex);
-    if (!registry.collators.contains(coll)) NotImplemented_nid_no_patch(caller);
-    return {std::move(lock), const_cast<UCollator*>(coll)};
+    const auto found = registry.collators.find(coll);
+    if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
+    return {std::move(lock), found->second};
 }
 
-void Register(void* collator) {
+void* Register(void* collator) {
     auto& registry = Collators();
     const std::unique_lock lock(registry.mutex);
-    registry.collators.insert(collator);
+    if (registry.nextHandle > std::numeric_limits<std::uintptr_t>::max() - 2) NotImplemented_nid_no_patch(__func__);
+    void* key = reinterpret_cast<void*>(registry.nextHandle);
+    registry.nextHandle += 2;
+    registry.collators.emplace(key, collator);
+    return key;
 }
 
 bool Unregister(const void* collator) {
@@ -95,31 +103,41 @@ bool Unregister(const void* collator) {
 void CloseRegistered(void* collator, const char* caller) {
     auto& registry = Collators();
     const std::unique_lock lock(registry.mutex);
-    if (registry.collators.erase(collator) == 0) NotImplemented_nid_no_patch(caller);
-    Icu::CollatorHost::Close(collator);
+    const auto found = registry.collators.find(collator);
+    if (found == registry.collators.end()) NotImplemented_nid_no_patch(caller);
+    void* native = found->second;
+    registry.collators.erase(found);
+    Icu::CollatorHost::Close(native);
 }
 
 template<class TUnit>
 std::basic_string<TUnit> CopyUnits(const TUnit* text, std::int32_t length, const char* caller) {
     std::basic_string<TUnit> units;
+    std::array<TUnit, PageBytes / sizeof(TUnit)> scratch{};
+    auto address = reinterpret_cast<std::uintptr_t>(text);
     if (length >= 0) {
-        units.resize(static_cast<std::size_t>(length));
-        if (length > 0 && !CopyIn(units.data(), text, units.size() * sizeof(TUnit))) NotImplemented_nid_no_patch(caller);
+        auto remaining = static_cast<std::size_t>(length);
+        while (remaining > 0) {
+            const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(TUnit), 1);
+            const std::size_t count = std::min({remaining, page, scratch.size()});
+            if (!CopyIn(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(TUnit))) {
+                NotImplemented_nid_no_patch(caller);
+            }
+            units.append(scratch.data(), count);
+            remaining -= count;
+            address += count * sizeof(TUnit);
+        }
         return units;
     }
-    auto address = reinterpret_cast<std::uintptr_t>(text);
     while (true) {
-        const std::size_t count = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(TUnit), 1);
-        const std::size_t offset = units.size();
-        units.resize(offset + count);
-        if (!CopyIn(units.data() + offset, reinterpret_cast<const void*>(address), count * sizeof(TUnit))) {
+        const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(TUnit), 1);
+        const std::size_t count = std::min(page, scratch.size());
+        if (!CopyIn(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(TUnit))) {
             NotImplemented_nid_no_patch(caller);
         }
-        const auto end = std::find(units.begin() + static_cast<std::ptrdiff_t>(offset), units.end(), TUnit{});
-        if (end != units.end()) {
-            units.erase(end, units.end());
-            return units;
-        }
+        const auto end = std::find(scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count), TUnit{});
+        units.append(scratch.begin(), end);
+        if (end != scratch.begin() + static_cast<std::ptrdiff_t>(count)) return units;
         Icu::Checked(static_cast<std::int64_t>(units.size()));
         address += count * sizeof(TUnit);
     }
@@ -224,15 +242,16 @@ UCollator* APS5_VABI ucol_open_nid_postfix(const char* locale, std::int32_t* sta
     auto outgoing = incoming;
     void* collator = Icu::CollatorHost::Open(locale ? name.c_str() : Icu::DefaultLocaleName(), outgoing);
     if (collator) {
+        void* handle = nullptr;
         try {
-            Register(collator);
+            handle = Register(collator);
             UpdateStatus(status, incoming, outgoing, __func__);
         } catch (...) {
-            Unregister(collator);
+            Unregister(handle);
             Icu::CollatorHost::Close(collator);
             throw;
         }
-        return static_cast<UCollator*>(collator);
+        return static_cast<UCollator*>(handle);
     }
     UpdateStatus(status, incoming, outgoing, __func__);
     return nullptr;
