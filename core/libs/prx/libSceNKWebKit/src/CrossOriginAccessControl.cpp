@@ -68,9 +68,15 @@
 #include <string_view>
 #include <utility>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstring>
+#include <type_traits>
+
 namespace {
 
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler;
+using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtable;
 using NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisablerVtableStorage;
 using NKWebKit::HttpAbi::HTTPHeaderName;
 using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
@@ -80,16 +86,78 @@ using NKWebKit::WebCoreAbi::SecurityOrigin;
 using NKWebKit::WebCoreAbi::StoredCredentialsPolicy;
 using NKWebKit::WtfAbi::ExpectedVoidString;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringView;
 
-CrossOriginAccessControlCheckDisabler& Checked(CrossOriginAccessControlCheckDisabler* self) {
-    if (!self) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
-    return *self;
+static_assert(sizeof(bool) == 1);
+static_assert(std::is_trivially_copyable_v<CrossOriginAccessControlCheckDisablerVtable>);
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+
+constexpr std::size_t kDisablerInitializedBytes = offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled) + sizeof(bool);
+static_assert(kDisablerInitializedBytes == 9);
+constexpr unsigned kStringImplFlag8Bit = 4u;
+
+struct RequestFlags {
+    bool allowCookies : 1;
+    bool resourceRequestUpdated : 1;
+    bool platformRequestUpdated : 1;
+    bool resourceRequestBodyUpdated : 1;
+    bool platformRequestBodyUpdated : 1;
+    bool hiddenFromInspector : 1;
+    bool isTopSite : 1;
+};
+static_assert(sizeof(RequestFlags) == 1);
+static_assert(std::is_trivially_copyable_v<RequestFlags>);
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-const CrossOriginAccessControlCheckDisabler& Checked(const CrossOriginAccessControlCheckDisabler* self) {
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const GuestArena::HostWrite guard(pointer, size);
+    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void ReadDisablerRaw(const CrossOriginAccessControlCheckDisabler* self, unsigned char (&raw)[sizeof(CrossOriginAccessControlCheckDisabler)], const char* function) {
     if (!self) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
-    return *self;
+    if (!GuestCopyIn_nid_no_patch(raw, self, sizeof(raw)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void ValidateGuestStringImplReadable(const StringImpl* guestImpl, const char* function) {
+    if (!guestImpl) return;
+    StringImpl header{};
+    if (!GuestCopyIn_nid_no_patch(&header, guestImpl, sizeof(header)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!header.length) return;
+    if (!header.data) return;
+    const bool is8Bit = (header.hashAndFlags & kStringImplFlag8Bit) != 0;
+    const std::size_t unitSize = is8Bit ? 1u : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    RequireReadableGuestBytes(header.data, static_cast<std::size_t>(header.length) * unitSize, function);
+}
+
+void SetResourceRequestUpdated(const LegacyResourceRequestBase* request, const char* function) {
+    constexpr std::size_t kFlagsByteOffset =
+        offsetof(LegacyResourceRequestBase, inspectorInitiatorNodeIdentifier) + sizeof(NKWebKit::WebCoreAbi::LegacyOptionalInt32);
+    static_assert(kFlagsByteOffset == 180);
+    auto* flagByte = reinterpret_cast<unsigned char*>(const_cast<LegacyResourceRequestBase*>(request)) + kFlagsByteOffset;
+    RequireReadableGuestBytes(flagByte, sizeof(RequestFlags), function);
+    RequireWritableGuestBytes(flagByte, sizeof(RequestFlags), function);
+    RequestFlags flags{};
+    if (!GuestCopyIn_nid_no_patch(&flags, flagByte, sizeof(flags)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    flags.resourceRequestUpdated = true;
+    if (!GuestCopyOut_nid_no_patch(flagByte, &flags, sizeof(flags)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 const CrossOriginAccessControlCheckDisablerVtableStorage Vtable = {
@@ -101,6 +169,46 @@ const CrossOriginAccessControlCheckDisablerVtableStorage Vtable = {
         &_ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv,
     },
 };
+
+void ConstructDefaultDisabler(CrossOriginAccessControlCheckDisabler* self, const char* function) {
+    if (!self) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
+    RequireWritableGuestBytes(self, sizeof(CrossOriginAccessControlCheckDisabler), function);
+    unsigned char bytes[kDisablerInitializedBytes]{};
+    const CrossOriginAccessControlCheckDisablerVtable* const vptr = &Vtable.dispatch;
+    std::memcpy(bytes + offsetof(CrossOriginAccessControlCheckDisabler, vptr), &vptr, sizeof(vptr));
+    bytes[offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled)] = 1;
+    if (!GuestCopyOut_nid_no_patch(self, bytes, sizeof(bytes)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void ConstructCopyDisabler(CrossOriginAccessControlCheckDisabler* self, const CrossOriginAccessControlCheckDisabler* other, const char* function) {
+    if (!self || !other) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
+    RequireWritableGuestBytes(self, sizeof(CrossOriginAccessControlCheckDisabler), function);
+    unsigned char sourceRaw[sizeof(CrossOriginAccessControlCheckDisabler)]{};
+    ReadDisablerRaw(other, sourceRaw, function);
+    unsigned char bytes[kDisablerInitializedBytes]{};
+    const CrossOriginAccessControlCheckDisablerVtable* const vptr = &Vtable.dispatch;
+    std::memcpy(bytes + offsetof(CrossOriginAccessControlCheckDisabler, vptr), &vptr, sizeof(vptr));
+    bytes[offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled)] =
+        sourceRaw[offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled)] ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(self, bytes, sizeof(bytes)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+CrossOriginAccessControlCheckDisabler& AssignDisabler(CrossOriginAccessControlCheckDisabler* self, const CrossOriginAccessControlCheckDisabler* other, const char* function) {
+    if (!self || !other) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
+    RequireWritableGuestBytes(self, sizeof(CrossOriginAccessControlCheckDisabler), function);
+    unsigned char sourceRaw[sizeof(CrossOriginAccessControlCheckDisabler)]{};
+    ReadDisablerRaw(other, sourceRaw, function);
+    const unsigned char enabledByte =
+        sourceRaw[offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled)] ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(
+            reinterpret_cast<unsigned char*>(self) + offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled),
+            &enabledByte,
+            sizeof(enabledByte)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return *self;
+}
 
 StringView Literal(std::string_view text) {
     return {text.data(), static_cast<unsigned>(text.size()), true};
@@ -146,25 +254,42 @@ String Concatenate(std::initializer_list<StringView> parts) {
     return result;
 }
 
-bool CheckEnabled(const CrossOriginAccessControlCheckDisabler& disabler) {
-    if (!disabler.vptr || !disabler.vptr->crossOriginAccessControlCheckEnabled)
+bool CheckEnabled(const CrossOriginAccessControlCheckDisabler* disabler, const char* function) {
+    unsigned char raw[sizeof(CrossOriginAccessControlCheckDisabler)]{};
+    ReadDisablerRaw(disabler, raw, function);
+    const CrossOriginAccessControlCheckDisablerVtable* vptr = nullptr;
+    std::memcpy(&vptr, raw + offsetof(CrossOriginAccessControlCheckDisabler, vptr), sizeof(vptr));
+    if (!vptr)
         throw std::invalid_argument("WebCore::CrossOriginAccessControlCheckDisabler without a virtual table");
-    return disabler.vptr->crossOriginAccessControlCheckEnabled(&disabler);
+    CrossOriginAccessControlCheckDisablerVtable table{};
+    if (!GuestCopyIn_nid_no_patch(&table, vptr, sizeof(table)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!table.crossOriginAccessControlCheckEnabled)
+        throw std::invalid_argument("WebCore::CrossOriginAccessControlCheckDisabler without a virtual table");
+    return table.crossOriginAccessControlCheckEnabled(disabler);
 }
 
-int StatusCode(const ResourceResponseBase& response) {
-    return reinterpret_cast<const ResourceResponseStatusLayout&>(response).httpStatusCode;
+int StatusCode(const ResourceResponseBase* response, const char* function) {
+    short code = 0;
+    if (!GuestCopyIn_nid_no_patch(
+            &code,
+            reinterpret_cast<const unsigned char*>(response) + offsetof(ResourceResponseStatusLayout, httpStatusCode),
+            sizeof(code)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return code;
 }
 
-ExpectedVoidString AccessControlCheck(const ResourceResponseBase& response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin& securityOrigin,
-                                      const CrossOriginAccessControlCheckDisabler* checkDisabler, bool reportStatusCode) {
-    const String allowedOrigin = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(&response, HTTPHeaderName::AccessControlAllowOrigin);
+ExpectedVoidString AccessControlCheck(const ResourceResponseBase* response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin* securityOrigin,
+                                      const CrossOriginAccessControlCheckDisabler* checkDisabler, bool reportStatusCode, const char* function) {
+    RequireReadableGuestBytes(response, sizeof(ResourceResponseStatusLayout), function);
+    RequireReadableGuestBytes(securityOrigin, sizeof(SecurityOrigin), function);
+    const String allowedOrigin = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowOrigin);
     bool starAllowed = storedCredentialsPolicy == StoredCredentialsPolicy::DoNotUse;
-    if (!starAllowed) starAllowed = checkDisabler && !CheckEnabled(*checkDisabler);
+    if (!starAllowed) starAllowed = checkDisabler && !CheckEnabled(checkDisabler, function);
     const bool isStar = EqualsLiteral(allowedOrigin, "*");
     if (isStar && starAllowed) return ExpectedVoidString();
 
-    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(&securityOrigin);
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
     if (!_ZN3WTF5equalEPKNS_10StringImplES2_(allowedOrigin.impl, origin.impl)) {
         if (isStar)
             return ExpectedVoidString(Concatenate({Literal("Cannot use wildcard in Access-Control-Allow-Origin when credentials flag is true.")}));
@@ -172,17 +297,49 @@ ExpectedVoidString AccessControlCheck(const ResourceResponseBase& response, Stor
             return ExpectedVoidString(Concatenate({Literal("Access-Control-Allow-Origin cannot contain more than one origin.")}));
         if (!reportStatusCode)
             return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl), Literal(" is not allowed by Access-Control-Allow-Origin.")}));
-        const std::string statusCode = std::to_string(StatusCode(response));
+        const std::string statusCode = std::to_string(StatusCode(response, function));
         return ExpectedVoidString(Concatenate({Literal("Origin "), NKWebKit::WtfAbi::ViewOf(origin.impl),
                                                Literal(" is not allowed by Access-Control-Allow-Origin."), Literal(" Status code: "), Literal(statusCode)}));
     }
 
     if (storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
         const String allowCredentials =
-            _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(&response, HTTPHeaderName::AccessControlAllowCredentials);
+            _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(response, HTTPHeaderName::AccessControlAllowCredentials);
         if (!EqualsLiteral(allowCredentials, "true"))
             return ExpectedVoidString(Concatenate({Literal("Credentials flag is true, but Access-Control-Allow-Credentials is not \"true\".")}));
     }
+    return ExpectedVoidString();
+}
+
+ExpectedVoidString ValidatePreflightResponseImpl(const LegacyResourceRequestBase* request, const ResourceResponseBase* response,
+                                                 StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin* securityOrigin,
+                                                 const CrossOriginAccessControlCheckDisabler* checkDisabler, const char* function) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
+    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
+    RequireReadableGuestBytes(request, sizeof(LegacyResourceRequestBase), function);
+    RequireReadableGuestBytes(response, sizeof(ResourceResponseStatusLayout), function);
+    RequireReadableGuestBytes(securityOrigin, sizeof(SecurityOrigin), function);
+    const int statusCode = StatusCode(response, function);
+    if (statusCode < 200 || statusCode >= 300) return ExpectedVoidString(Concatenate({Literal("Preflight response is not successful")}));
+    ExpectedVoidString accessControlCheckResult = AccessControlCheck(response, storedCredentialsPolicy, securityOrigin, checkDisabler, false, function);
+    if (!accessControlCheckResult.hasValue) return accessControlCheckResult;
+    auto result = NKWebKit::PreflightCache::Create(storedCredentialsPolicy, *response);
+    if (!result.item) return ExpectedVoidString(std::move(result.error));
+    const StringImpl* methodImpl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&methodImpl, reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, httpMethod), sizeof(methodImpl)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    ValidateGuestStringImplReadable(methodImpl, function);
+    const StringImpl* urlImpl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&urlImpl, reinterpret_cast<const unsigned char*>(request) + offsetof(LegacyResourceRequestBase, url), sizeof(urlImpl)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    ValidateGuestStringImplReadable(urlImpl, function);
+    SetResourceRequestUpdated(request, function);
+    auto errorDescription = NKWebKit::PreflightCache::ValidateMethodAndHeaders(
+        *result.item, request->httpMethod, reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap&>(request->httpHeaderFields));
+    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
+    NKWebKit::PreflightCache::Append(origin, request->url, std::move(result.item));
+    if (errorDescription) return ExpectedVoidString(std::move(*errorDescription));
     return ExpectedVoidString();
 }
 
@@ -196,38 +353,40 @@ CrossOriginAccessControlCheckDisabler& APS5_VABI _ZN7WebCore37CrossOriginAccessC
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisabler39setCrossOriginAccessControlCheckEnabledEb(CrossOriginAccessControlCheckDisabler* self, bool enabled) {
-    Checked(self).accessControlCheckEnabled = enabled;
+    if (!self) throw std::invalid_argument("null WebCore::CrossOriginAccessControlCheckDisabler");
+    RequireWritableGuestBytes(self, sizeof(CrossOriginAccessControlCheckDisabler), __func__);
+    const unsigned char enabledByte = enabled ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(
+            reinterpret_cast<unsigned char*>(self) + offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled),
+            &enabledByte,
+            sizeof(enabledByte)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 bool APS5_VABI _ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv(const CrossOriginAccessControlCheckDisabler* self) {
-    return Checked(self).accessControlCheckEnabled;
+    unsigned char raw[sizeof(CrossOriginAccessControlCheckDisabler)]{};
+    ReadDisablerRaw(self, raw, __func__);
+    return raw[offsetof(CrossOriginAccessControlCheckDisabler, accessControlCheckEnabled)] != 0;
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2Ev(CrossOriginAccessControlCheckDisabler* self) {
-    auto& disabler = Checked(self);
-    disabler.vptr = &Vtable.dispatch;
-    disabler.accessControlCheckEnabled = true;
+    ConstructDefaultDisabler(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC1Ev(CrossOriginAccessControlCheckDisabler* self) {
-    _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2Ev(self);
+    ConstructDefaultDisabler(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2ERKS0_(CrossOriginAccessControlCheckDisabler* self, const CrossOriginAccessControlCheckDisabler* other) {
-    auto& disabler = Checked(self);
-    const auto& source = Checked(other);
-    disabler.vptr = &Vtable.dispatch;
-    disabler.accessControlCheckEnabled = source.accessControlCheckEnabled;
+    ConstructCopyDisabler(self, other, __func__);
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC1ERKS0_(CrossOriginAccessControlCheckDisabler* self, const CrossOriginAccessControlCheckDisabler* other) {
-    _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2ERKS0_(self, other);
+    ConstructCopyDisabler(self, other, __func__);
 }
 
 CrossOriginAccessControlCheckDisabler& APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisableraSERKS0_(CrossOriginAccessControlCheckDisabler* self, const CrossOriginAccessControlCheckDisabler* other) {
-    auto& disabler = Checked(self);
-    disabler.accessControlCheckEnabled = Checked(other).accessControlCheckEnabled;
-    return disabler;
+    return AssignDisabler(self, other, __func__);
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev(CrossOriginAccessControlCheckDisabler*) {
@@ -238,6 +397,7 @@ void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev(CrossOrigi
 }
 
 void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev(CrossOriginAccessControlCheckDisabler* self) {
+    if (self) RequireWritableGuestBytes(self, sizeof(CrossOriginAccessControlCheckDisabler), __func__);
     _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev(self);
     _ZdlPv_nid_postfix(self);
 }
@@ -247,28 +407,13 @@ ExpectedVoidString APS5_VABI _ZN7WebCore24passesAccessControlCheckERKNS_16Resour
     const CrossOriginAccessControlCheckDisabler* checkDisabler) {
     if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
     if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
-    return AccessControlCheck(*response, storedCredentialsPolicy, *securityOrigin, checkDisabler, true);
+    return AccessControlCheck(response, storedCredentialsPolicy, securityOrigin, checkDisabler, true, __func__);
 }
 
 ExpectedVoidString APS5_VABI _ZN7WebCore25validatePreflightResponseERKNS_15ResourceRequestERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE(
     const LegacyResourceRequestBase* request, const ResourceResponseBase* response, StoredCredentialsPolicy storedCredentialsPolicy, const SecurityOrigin* securityOrigin,
     const CrossOriginAccessControlCheckDisabler* checkDisabler) {
-    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
-    if (!response) throw std::invalid_argument("null WebCore::ResourceResponse");
-    if (!securityOrigin) throw std::invalid_argument("null WebCore::SecurityOrigin");
-    const int statusCode = StatusCode(*response);
-    if (statusCode < 200 || statusCode >= 300) return ExpectedVoidString(Concatenate({Literal("Preflight response is not successful")}));
-    ExpectedVoidString accessControlCheckResult = AccessControlCheck(*response, storedCredentialsPolicy, *securityOrigin, checkDisabler, false);
-    if (!accessControlCheckResult.hasValue) return accessControlCheckResult;
-    auto result = NKWebKit::PreflightCache::Create(storedCredentialsPolicy, *response);
-    if (!result.item) return ExpectedVoidString(std::move(result.error));
-    request->resourceRequestUpdated = true;
-    auto errorDescription = NKWebKit::PreflightCache::ValidateMethodAndHeaders(
-        *result.item, request->httpMethod, reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap&>(request->httpHeaderFields));
-    const String origin = _ZNK7WebCore14SecurityOrigin8toStringEv(securityOrigin);
-    NKWebKit::PreflightCache::Append(origin, request->url, std::move(result.item));
-    if (errorDescription) return ExpectedVoidString(std::move(*errorDescription));
-    return ExpectedVoidString();
+    return ValidatePreflightResponseImpl(request, response, storedCredentialsPolicy, securityOrigin, checkDisabler, __func__);
 }
 
 }
