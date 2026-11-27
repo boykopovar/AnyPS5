@@ -199,6 +199,9 @@ struct SpirvEmitterState {
     bool integerFloat64 = false;
     std::uint32_t integerAddF64Function = 0;
     std::uint32_t integerMulF64Function = 0;
+    std::array<std::uint32_t, 4> roundedAddF64Functions {};
+    std::array<std::uint32_t, 4> roundedMulF64Functions {};
+    std::array<std::uint32_t, 8> roundedFmaF64Functions {};
     std::uint32_t integerF64FromF32Function = 0;
     std::uint32_t integerF32FromF64Function = 0;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};

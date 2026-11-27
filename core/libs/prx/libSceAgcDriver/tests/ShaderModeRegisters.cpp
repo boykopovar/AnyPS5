@@ -324,6 +324,24 @@ void verifyDirectedF16Conversion() {
     }
 }
 
+void verifyDirectedF64Arithmetic() {
+    struct Form {
+        std::uint32_t first;
+        std::uint32_t second;
+        RdnaOpcode opcode;
+    };
+    for (const Form& form : {Form{0xd564000au, 0x00020d04u, RdnaOpcode::VAddF64}, Form{0xd565000au, 0x00020d04u, RdnaOpcode::VMulF64}, Form{0xd54c000au, 0x04220d04u, RdnaOpcode::VFmaF64}}) {
+        requireOpcode(form.first, form.opcode);
+        for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+            const std::array<std::uint32_t, 4> runtime{roundMode(rounding << 2u), form.first, form.second, endProgram};
+            const std::array<std::uint32_t, 3> declared{form.first, form.second, endProgram};
+            const auto rounded = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
+            require(rounded == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f64 rounding does not match the declared rounding");
+            require(rounded != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f64 rounding did not change the arithmetic");
+        }
+    }
+}
+
 void verifyDenormInstruction() {
     for (std::uint32_t mode = 0; mode < 256; ++mode) {
         for (std::uint32_t value = 0; value < 16; ++value) {
@@ -442,13 +460,13 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 22> checks{{
+    constexpr std::array<Check, 23> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
         {"denormInstruction", verifyDenormInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
-        {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
+        {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding}, {"directed64", verifyDirectedF64Arithmetic},
         {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
         {"outputModifierRounding", verifyOutputModifierRounding},

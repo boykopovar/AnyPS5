@@ -28,9 +28,13 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         }
     }
     const IrType type = IrOpcodeType(opcode);
-    IrValue* result = count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
-    if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result));
-    if (opcode == IrOpcode::FPTrigPreop64) result = &flushTinyF64Result(opcode, *args[0], *args[1], nullptr, *result);
+    const std::uint32_t rounding = floatMode.has_value() && arithmetic ? (floatMode->floatMode >> 2u) & 3u : 0u;
+    const bool roundedFma = rounding != 0u && opcode == IrOpcode::FPFma64;
+    IrValue* result = roundedFma ? &ir.Emit(IrOpcode::FPFmaRound64, type, {args[0], args[1], args[2], &ir.Constant(rounding | ((floatMode->floatMode & 0x80u) == 0u ? 4u : 0u))})
+        : rounding != 0u ? &ir.Emit(opcode == IrOpcode::FPAdd64 ? IrOpcode::FPAddRound64 : IrOpcode::FPMulRound64, type, {args[0], args[1], &ir.Constant(rounding)})
+        : count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
+    if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], roundedFma ? *result : flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result, rounding));
+    if (opcode == IrOpcode::FPTrigPreop64) result = &flushTinyF64Result(opcode, *args[0], *args[1], nullptr, *result, 0u);
     if (type == IrType::U64) {
         writeF64Result(inst.destination, *result);
         return true;
@@ -57,12 +61,13 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     return true;
 }
 
-IrValue& TranslationContext::flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result) {
+IrValue& TranslationContext::flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result, std::uint32_t rounding) {
     if (!floatMode.has_value() || (floatMode->floatMode & 0x80u) != 0u) return result;
     const bool product = opcode == IrOpcode::FPMul64;
     const bool fused = opcode == IrOpcode::FPFma64;
     IrValue& tested = fused
         ? ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&lhs, &rhs, addend, &ir.Constant(64u)})
+        : product && rounding != 0u ? ir.Emit(IrOpcode::FPMulRound64, IrType::U64, {&ir.Emit(IrOpcode::FPMulRound64, IrType::U64, {&lhs, &ir.ConstantU64(0x43f0000000000000ull), &ir.Constant(rounding)}), &rhs, &ir.Constant(rounding)})
         : product ? ir.Emit(IrOpcode::FPMul64, IrType::U64, {&ir.Emit(IrOpcode::FPMul64, IrType::U64, {&lhs, &ir.ConstantU64(0x43f0000000000000ull)}), &rhs}) : result;
     IrValue& magnitude = ir.Emit(IrOpcode::BitwiseAnd64, IrType::U64, {&tested, &ir.ConstantU64(0x7fffffffffffffffull)});
     IrValue& below = ir.Emit(IrOpcode::ISub64, IrType::U64, {&magnitude, &ir.ConstantU64(1u)});
