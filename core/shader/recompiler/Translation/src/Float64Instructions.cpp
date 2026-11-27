@@ -267,7 +267,7 @@ bool TranslationContext::vDivScaleF64(const RdnaInstruction& inst) {
     result[1] = IrU32(ir.Select(zero.Value(), ir.Constant(0xfff80000u), result[1].Value()));
     result = flushF64Bits(result, 0x80u);
     writeF64Result(inst.destination, ir.ConstructU64(result[0].Value(), result[1].Value()));
-    writeMask(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
+    writeCompareResult(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
     return true;
 }
 

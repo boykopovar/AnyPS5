@@ -632,7 +632,7 @@ bool TranslationContext::vDivScaleF32(const RdnaInstruction& inst) {
     const IrU1 zero(ir.LogicalOr(isZero(denominator).Value(), isZero(numerator).Value()));
     const IrU32 result(ir.Select(zero.Value(), ir.Constant(0xffc00000u), scaled.Value()));
     writeOperand(inst.destination, &ir.BitCastF32(result.Value()));
-    writeMask(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
+    writeCompareResult(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
     return true;
 }
 
