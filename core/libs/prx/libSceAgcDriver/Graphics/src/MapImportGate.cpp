@@ -199,7 +199,13 @@ ImportHold::ImportHold(const Stripes& stripes) : held(stripes) {
     if (fastPublishers.load(std::memory_order_seq_cst) != 0) {
         drainWaits.fetch_add(1, std::memory_order_relaxed);
         drainingImports.fetch_add(1, std::memory_order_acq_rel);
-        for (std::uint32_t round = 0; fastPublishers.load(std::memory_order_seq_cst) != 0; ++round) Backoff(round);
+        try {
+            for (std::uint32_t round = 0; fastPublishers.load(std::memory_order_seq_cst) != 0; ++round) Backoff(round);
+        } catch (...) {
+            drainingImports.fetch_sub(1, std::memory_order_acq_rel);
+            activeImports.fetch_sub(1, std::memory_order_release);
+            throw;
+        }
         drainingImports.fetch_sub(1, std::memory_order_acq_rel);
     }
     auto& locks = StripeLocks();

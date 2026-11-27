@@ -6,7 +6,9 @@ if(BUILD_TESTING)
     add_test(NAME agc_map_import_gate_backoff COMMAND agc_map_import_gate_backoff_tests)
     set_tests_properties(agc_map_import_gate_backoff PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
     if(WIN32)
-        set_tests_properties(agc_map_import_gate_backoff PROPERTIES ENVIRONMENT_MODIFICATION
+        add_test(NAME agc_map_import_gate_backoff_fls_exhausted COMMAND agc_map_import_gate_backoff_tests --fls-exhausted)
+        set_tests_properties(agc_map_import_gate_backoff_fls_exhausted PROPERTIES TIMEOUT 30)
+        set_tests_properties(agc_map_import_gate_backoff agc_map_import_gate_backoff_fls_exhausted PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

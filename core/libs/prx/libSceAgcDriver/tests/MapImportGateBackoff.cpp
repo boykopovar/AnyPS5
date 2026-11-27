@@ -8,7 +8,16 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -65,9 +74,56 @@ double DrainLatencyMs(std::chrono::microseconds releaseOffset) {
     return std::chrono::duration<double, std::milli>(importedAt - releasedAt).count();
 }
 
+#ifdef _WIN32
+int FlsExhausted() {
+    std::vector<DWORD> slots;
+    for (DWORD slot = FlsAlloc(nullptr); slot != FLS_OUT_OF_INDEXES; slot = FlsAlloc(nullptr)) slots.push_back(slot);
+    Require(!slots.empty(), "no fiber-local slot was free before the test");
+
+    std::atomic<bool> published{false};
+    std::atomic<bool> release{false};
+    std::atomic<bool> done{false};
+    bool threw = false;
+    std::thread publisher([&] {
+        const Gate::PublishHold hold(Address, Bytes);
+        published.store(true, std::memory_order_release);
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+    });
+    while (!published.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::thread importer([&] {
+        try {
+            const Gate::ImportHold hold(Gate::StripesOf(Address, Address + Bytes));
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        done.store(true, std::memory_order_release);
+    });
+    const auto deadline = Clock::now() + std::chrono::seconds(2);
+    while (!done.load(std::memory_order_acquire) && Clock::now() < deadline) std::this_thread::yield();
+    release.store(true, std::memory_order_release);
+    importer.join();
+    publisher.join();
+    for (const DWORD slot : slots) FlsFree(slot);
+
+    Require(threw, "the map-time import's backoff did not fail without a fiber-local slot");
+    Require(Gate::DrainingImportsForTest() == 0, "a failed map-time import still counts as draining");
+    const auto before = Gate::CountersForTest();
+    {
+        const Gate::PublishHold hold(Address, Bytes);
+    }
+    const auto after = Gate::CountersForTest();
+    Require(after.fastPublications == before.fastPublications + 1, "a failed map-time import keeps later publications off the fast path");
+    std::puts("a map-time import whose backoff throws releases its import and drain counts");
+    return 0;
+}
+#endif
+
 }
 
-int main() {
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    if (argc == 2 && std::string_view(argv[1]) == "--fls-exhausted") return FlsExhausted();
+#endif
     std::array<double, 9> latencies{};
     for (std::size_t index = 0; index < latencies.size(); ++index) latencies[index] = DrainLatencyMs(std::chrono::microseconds(113 * index));
     for (const double latency : latencies) std::printf("import drain wake latency %.3f ms\n", latency);
