@@ -91,14 +91,16 @@ std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint
     return StorageTexture::FindLive(address, SurfaceBytes);
 }
 
-enum class RetainedBatchCase { Budget, ReleaseOpen, ReleaseSubmitted };
+enum class RetainedBatchCase { Budget, ReleaseOpen, ReleaseSubmitted, EvictSubmitted };
 
-void CheckReleasedUpload(AgcDriver::VulkanDevice& device, Recorder& recorder, std::uint64_t address, bool submitted) {
+void CheckReleasedUpload(AgcDriver::VulkanDevice& device, Recorder& recorder, std::uint64_t address, RetainedBatchCase scenario) {
+    const bool submitted = scenario != RetainedBatchCase::ReleaseOpen;
     std::weak_ptr<StorageTexture> uploaded;
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto resource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(address));
-        auto image = AgcDriver::Graphics::CachedStorageSurface(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), resource);
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+        auto image = AgcDriver::Graphics::CachedStorageSurface(context, resource);
         Require(image && image->Cached() && !image->Dirty() && Recorder::Presents() == 0, "expected a clean cached upload before the first present");
         const auto bytes = image->BudgetBytes();
         uploaded = image;
@@ -106,11 +108,17 @@ void CheckReleasedUpload(AgcDriver::VulkanDevice& device, Recorder& recorder, st
         if (submitted) recorder.Submit();
         const auto retainedBytes = [&] { return submitted ? recorder.InFlightKeptBytes() : recorder.OpenKeptBytes(); };
         const auto before = retainedBytes();
-        Require(AgcDriver::Graphics::ReleaseTextureCaches(bytes) == 0, "cache release physically freed an upload still held by a batch");
+        if (scenario == RetainedBatchCase::EvictSubmitted) {
+            const auto replacement = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(address - SurfaceBytes));
+            const auto next = AgcDriver::Graphics::CachedStorageSurface(context, replacement);
+            Require(next && next->Cached(), "replacement upload was not cached");
+        } else {
+            Require(AgcDriver::Graphics::ReleaseTextureCaches(bytes) == 0, "cache release physically freed an upload still held by a batch");
+        }
         const auto held = uploaded.lock();
         Require(held && !held->Cached(), "cache release did not evict the batch's upload");
         Require(retainedBytes() == before + bytes, "cache release did not charge the evicted upload to its batch");
-        Require(!submitted || !recorder.Recording(), "cache release opened a new batch for a submitted upload");
+        Require(scenario != RetainedBatchCase::ReleaseSubmitted || !recorder.Recording(), "cache release opened a new batch for a submitted upload");
     }
     device.WaitIdle();
     Require(uploaded.expired(), "the evicted upload survived completion of its batch");
@@ -162,7 +170,7 @@ int RetainedBatch(RetainedBatchCase scenario) {
             Require(StorageTexture::FindLive(base, SurfaceBytes) == nullptr, "surface 0 remained cached after the storage budget was exceeded");
             Require(recorder->OpenKeptBytes() >= beforeEviction + retainedBytes, "an evicted storage image held by a batch without a shared resource-cache entry was not charged to that batch");
         } else {
-            CheckReleasedUpload(*device, *recorder, base + (MaxSurfaces - 1u) * Stride, scenario == RetainedBatchCase::ReleaseSubmitted);
+            CheckReleasedUpload(*device, *recorder, base + (MaxSurfaces - 1u) * Stride, scenario);
         }
     } catch (...) {
         release();
@@ -179,6 +187,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "--retained-batch") return RetainedBatch(RetainedBatchCase::Budget);
         if (argc == 2 && std::string(argv[1]) == "--release-open") return RetainedBatch(RetainedBatchCase::ReleaseOpen);
         if (argc == 2 && std::string(argv[1]) == "--release-submitted") return RetainedBatch(RetainedBatchCase::ReleaseSubmitted);
+        if (argc == 2 && std::string(argv[1]) == "--evict-submitted") return RetainedBatch(RetainedBatchCase::EvictSubmitted);
         const bool budgetOnly = argc == 2 && std::string(argv[1]) == "--budget-only";
         Require(argc == 1 || budgetOnly, "storage cache budget: unknown arguments");
 #ifdef _WIN32
