@@ -3,13 +3,11 @@
 
 #include <charconv>
 #if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 260000
-#include <cctype>
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
 #include <string>
 #include <string_view>
-#include <strings.h>
 #include <type_traits>
 #include <xlocale.h>
 #endif
@@ -29,7 +27,11 @@ std::from_chars_result ParseDecimal_nid_no_patch(const char* first, const char* 
         }
     };
     const auto takeWord = [&](std::string_view word) {
-        if (static_cast<std::size_t>(last - cursor) < word.size() || strncasecmp(cursor, word.data(), word.size()) != 0) return false;
+        if (static_cast<std::size_t>(last - cursor) < word.size()) return false;
+        for (std::size_t index = 0; index < word.size(); ++index) {
+            const char character = cursor[index];
+            if (character != word[index] && character != word[index] - 'a' + 'A') return false;
+        }
         cursor += word.size();
         return true;
     };
@@ -39,7 +41,7 @@ std::from_chars_result ParseDecimal_nid_no_patch(const char* first, const char* 
     const char* end = cursor;
     if (isNan && cursor != last && *cursor == '(') {
         do ++cursor;
-        while (cursor != last && (std::isalnum(static_cast<unsigned char>(*cursor)) || *cursor == '_'));
+        while (cursor != last && ((*cursor >= '0' && *cursor <= '9') || (*cursor >= 'a' && *cursor <= 'z') || (*cursor >= 'A' && *cursor <= 'Z') || *cursor == '_'));
         if (cursor != last && *cursor == ')') end = cursor + 1;
     }
     if (!isInfinity && !isNan) {
