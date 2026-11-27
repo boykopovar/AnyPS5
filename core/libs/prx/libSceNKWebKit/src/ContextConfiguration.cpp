@@ -1,6 +1,18 @@
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+std::mutex overrideLanguagesLock;
+std::vector<std::u16string> processOverrideLanguages;
+
+}
+
 extern "C" {
 const void* APS5_VABI WKContextConfigurationCreate() {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProcessPoolConfiguration>());
@@ -131,26 +143,23 @@ void APS5_VABI WKContextConfigurationSetNetworkProcessPath(const void* configura
         NKWebKit::OptionalString(networkProcessPath, __func__);
 }
 
-const void* APS5_VABI WKContextConfigurationCopyOverrideLanguages(const void* configuration) {
-    auto* pool = NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__);
-    auto array = NKWebKit::Make<NKWebKit::Array>();
-    for (const auto& lang : pool->overrideLanguages) {
-        array->elements.push_back(NKWebKit::Make<NKWebKit::String>(lang));
-    }
-    return NKWebKit::ToRef(array);
+const void* APS5_VABI WKContextConfigurationCopyOverrideLanguages(const void*) {
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Array>());
 }
 
-void APS5_VABI WKContextConfigurationSetOverrideLanguages(const void* configuration, const void* overrideLanguages) {
-    auto* pool = NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__);
-    pool->overrideLanguages.clear();
-    if (!overrideLanguages) return;
-    const auto* array = NKWebKit::Cast<NKWebKit::Array>(overrideLanguages, __func__);
-    for (const auto& element : array->elements) {
-        if (!element) continue;
-        if (element->Type() == NKWebKit::ObjectType::String) {
-            pool->overrideLanguages.push_back(static_cast<const NKWebKit::String*>(element.Get())->characters);
+void APS5_VABI WKContextConfigurationSetOverrideLanguages(const void*, const void* overrideLanguages) {
+    std::vector<std::u16string> languages;
+    if (overrideLanguages) {
+        const auto* array = NKWebKit::Cast<NKWebKit::Array>(overrideLanguages, __func__);
+        for (const auto& element : array->elements) {
+            if (!element) continue;
+            if (element->Type() == NKWebKit::ObjectType::String) {
+                languages.push_back(static_cast<const NKWebKit::String*>(element.Get())->characters);
+            }
         }
     }
+    std::lock_guard<std::mutex> lock(overrideLanguagesLock);
+    processOverrideLanguages = std::move(languages);
 }
 
 bool APS5_VABI WKContextConfigurationPrewarmsProcessesAutomatically(const void* configuration) {

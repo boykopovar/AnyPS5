@@ -90,7 +90,7 @@ static void CheckGuardSize() {
 
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrGetguardsize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 4096);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 16384);
 
     for (const std::size_t size : std::array<std::size_t, 5>{0, 4096, 8192, 16384, 65536}) {
         Require(scePthreadAttrSetguardsize(&attr, size) == SCE_OK);
