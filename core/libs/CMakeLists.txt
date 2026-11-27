@@ -309,6 +309,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_abstract_youtube_immediate_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractYoutube>")
     endif()
+
+    add_test_executable(guest_playready_profile_tests tests/GuestPlayReadyProfile.cpp)
+    target_include_directories(guest_playready_profile_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_playready_profile_tests PRIVATE libScePlayReady4 libc)
+    configure_windows_unwind(guest_playready_profile_tests)
+    add_test(NAME guest_playready_profile COMMAND guest_playready_profile_tests)
+    if(WIN32)
+        set_tests_properties(guest_playready_profile PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady4>")
+    endif()
 endif()
 
 include(prx/libSceFreeType/PostScriptInfo.cmake)
