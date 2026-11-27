@@ -52,17 +52,17 @@ std::optional<TParsed> loadTitleFile(const std::string& guestPath, const char* w
     try {
         bytes = readTitleFile(guestPath);
     } catch (const std::runtime_error& error) {
-        std::fprintf(stderr, "[trophy] %s is not used, so %s: %s\n", guestPath.c_str(), without, error.what());
+        WriteLogLine(stderr, "[trophy] %s is not used, so %s: %s\n", guestPath.c_str(), without, error.what());
         return std::nullopt;
     }
     if (!bytes) {
-        if (tracing()) std::fprintf(stderr, "[uds] %s does not exist, so %s\n", guestPath.c_str(), without);
+        if (tracing()) WriteLogLine(stderr, "[uds] %s does not exist, so %s\n", guestPath.c_str(), without);
         return std::nullopt;
     }
     try {
         return parse(*bytes);
     } catch (const std::runtime_error& error) {
-        std::fprintf(stderr, "[trophy] %s is malformed, so %s: %s\n", guestPath.c_str(), without, error.what());
+        WriteLogLine(stderr, "[trophy] %s is malformed, so %s: %s\n", guestPath.c_str(), without, error.what());
         return std::nullopt;
     }
 }
@@ -94,18 +94,18 @@ TitleTrophies LoadTitleTrophies(std::uint32_t serviceLabel, std::string_view lan
     title.package = loadTitleFile<TrophyPackage>(packagePath, "trophy queries report placeholders and stats unlock no trophies",
                                                  [language](std::string_view bytes) { return ParseTrophyPackage(bytes, language); });
     if (title.package) {
-        std::fprintf(stderr, "[trophy] %s: %s, %s, texts in %s\n", packagePath.c_str(), counted(title.package->trophies.size(), "trophy", "trophies").c_str(),
+        WriteLogLine(stderr, "[trophy] %s: %s, %s, texts in %s\n", packagePath.c_str(), counted(title.package->trophies.size(), "trophy", "trophies").c_str(),
                      counted(title.package->groups.size(), "group", "groups").c_str(), title.package->language.c_str());
-        for (const auto& skipped : title.package->skipped) std::fprintf(stderr, "[trophy] %s: %s\n", packagePath.c_str(), skipped.c_str());
+        for (const auto& skipped : title.package->skipped) WriteLogLine(stderr, "[trophy] %s: %s\n", packagePath.c_str(), skipped.c_str());
     }
     const auto rulesPath = StatRulesPath(serviceLabel);
     title.rules = loadTitleFile<StatRules>(rulesPath, "posted events update no stats", [](std::string_view bytes) { return ParseStatRules(bytes); });
     if (title.rules) {
         std::size_t count = 0;
         for (const auto& [name, rules] : title.rules->events) count += rules.size();
-        std::fprintf(stderr, "[trophy] %s: %s, %s for %s\n", rulesPath.c_str(), counted(title.rules->stats.size(), "stat", "stats").c_str(), counted(count, "rule", "rules").c_str(),
+        WriteLogLine(stderr, "[trophy] %s: %s, %s for %s\n", rulesPath.c_str(), counted(title.rules->stats.size(), "stat", "stats").c_str(), counted(count, "rule", "rules").c_str(),
                      counted(title.rules->events.size(), "event", "events").c_str());
-        for (const auto& skipped : title.rules->skipped) std::fprintf(stderr, "[trophy] %s: %s\n", rulesPath.c_str(), skipped.c_str());
+        for (const auto& skipped : title.rules->skipped) WriteLogLine(stderr, "[trophy] %s: %s\n", rulesPath.c_str(), skipped.c_str());
     }
     return title;
 }
@@ -246,11 +246,11 @@ extern "C" void NpTrophy2ApplyEvent_nid_no_patch(std::int32_t userId, std::uint3
     if (!title.rules) return;
     const auto changes = NpTrophy2::ApplyStatRules(*title.rules, event, NpTrophy2::TitleStats(), userId, serviceLabel);
     for (const auto& problem : changes.problems) {
-        if (NpTrophy2::firstProblem(problem.rule)) std::fprintf(stderr, "[trophy] ignored %s: %s\n", problem.rule.c_str(), problem.reason.c_str());
+        if (NpTrophy2::firstProblem(problem.rule)) WriteLogLine(stderr, "[trophy] ignored %s: %s\n", problem.rule.c_str(), problem.reason.c_str());
     }
     if (NpTrophy2::tracing()) {
         for (const auto& update : changes.updates) {
-            std::fprintf(stderr, "[uds] stat %llu of user %d is %llu (%s $.%s)\n", static_cast<unsigned long long>(update.statId), userId,
+            WriteLogLine(stderr, "[uds] stat %llu of user %d is %llu (%s $.%s)\n", static_cast<unsigned long long>(update.statId), userId,
                          static_cast<unsigned long long>(update.value), event.name.c_str(), update.input.c_str());
         }
     }
