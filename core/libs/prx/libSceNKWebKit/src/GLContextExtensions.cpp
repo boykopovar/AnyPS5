@@ -35,20 +35,21 @@ namespace {
 bool CopyGuestCString(const char* source, std::string& destination) {
     destination.clear();
     if (!source) return false;
-    constexpr std::size_t kChunkSize = 4096;
-    char chunk[kChunkSize];
+    constexpr std::size_t kMaxChunk = 4096;
+    char chunk[kMaxChunk];
     auto address = reinterpret_cast<std::uintptr_t>(source);
     for (;;) {
-        const std::size_t pageRemaining = kChunkSize - (address & (kChunkSize - 1));
         const std::size_t maxStep = std::numeric_limits<std::uintptr_t>::max() - address;
-        const std::size_t count = std::min(pageRemaining, maxStep);
-        if (count == 0) {
+        if (maxStep == 0) {
             char last = '\0';
             if (!GuestCopyIn_nid_no_patch(&last, reinterpret_cast<const void*>(address), 1))
                 return false;
             return last == '\0';
         }
-        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count))
+        std::size_t count = std::min(kMaxChunk, maxStep);
+        while (count > 1 && !GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count))
+            count /= 2;
+        if (count == 1 && !GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), 1))
             return false;
         if (const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', count))) {
             destination.append(chunk, static_cast<std::size_t>(end - chunk));
