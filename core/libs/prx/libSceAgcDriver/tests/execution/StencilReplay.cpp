@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Recompiler.hpp"
 #include "StencilReplay.hpp"
 #include "VulkanTestDevice.hpp"
+#include "../WatchedBlock.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -758,6 +760,49 @@ int main() {
             Check(even, "a four-sample bounded stencil export replaces even columns");
         } else {
             std::printf("stencil replay four-sample checks skipped: %s\n", multisampleSkip.c_str());
+        }
+        if ((limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0u) {
+            std::puts("stencil replay native depth write checks skipped: the device has no four-sample colour, depth and stencil targets");
+        } else {
+            const VkExtent2D extent{Width, Height};
+            const auto depthBytes = static_cast<std::size_t>(AgcDriver::Graphics::MultisampledDepthBytes_nid_no_patch(extent, 4u, 4u));
+            const auto stencilBytes = static_cast<std::size_t>(AgcDriver::Graphics::MultisampledDepthBytes_nid_no_patch(extent, 1u, 4u));
+            auto* const nativeDepth = AllocateWatched(depthBytes, 65536u);
+            auto* const nativeStencil = AllocateWatched(stencilBytes, 65536u);
+            if (nativeDepth == nullptr || nativeStencil == nullptr) {
+                std::puts("stencil replay native depth write checks skipped: guest memory is not write-watched");
+            } else {
+                const auto depthAddress = reinterpret_cast<std::uint64_t>(nativeDepth);
+                const auto native = [&](AgcDriver::Graphics::State& state) {
+                    multisampled(true)(state);
+                    state.depth = AgcDriver::Graphics::DepthTarget{depthAddress, reinterpret_cast<std::uint64_t>(nativeStencil), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+                    state.depth->samples = 4u;
+                    state.depth->depthSwizzle = 24u;
+                };
+                const auto hostWritten = [&] {
+                    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+                    AgcDriver::Graphics::AppendHostWrittenDepthRanges(depthAddress, depthBytes, ranges);
+                    return !ranges.empty();
+                };
+                alignas(256) const std::array<std::uint32_t, 8> overflowing{3u, 1u, 0u, 0u, 3u, 2u, 0u, 0xffffffffu};
+                bool overflowRefused = false;
+                try { Draw(*device, ordered, exported, replace(), 0u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(overflowing.data(), 0x2cu, 16u, 2u); }); } catch (const std::exception& error) { overflowRefused = std::string(error.what()).find("draw indices overflow") != std::string::npos; if (!overflowRefused) throw; }
+                Require(overflowRefused, "an indirect record whose instances overflow was not refused on a native multisample depth target");
+                if (!AgcDriver::Graphics::ResidentDepthGuardOverlaps_nid_no_patch(depthAddress, depthBytes)) {
+                    std::puts("stencil replay native depth write checks skipped: the device does not sample native multisample depth");
+                } else {
+                    Require(!hostWritten(), "a refused indirect stencil replay marked its native multisample depth written");
+                    alignas(256) const std::array<std::uint32_t, 8> empty{0u, 1u, 0u, 0u, 3u, 0u, 0u, 0u};
+                    ExpectedBinds = 0u;
+                    Draw(*device, ordered, exported, replace(), 0u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(empty.data(), 0x2cu, 16u, 2u); });
+                    ExpectedBinds = 1u;
+                    Require(!hostWritten(), "indirect records without vertices or instances marked their native multisample depth written");
+                    alignas(256) const std::array<std::uint32_t, 4> drawn{3u, 1u, 0u, 0u};
+                    Draw(*device, ordered, exported, replace(), 0u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(drawn.data(), 0x2cu, 16u, 1u); });
+                    Require(hostWritten(), "an indirect stencil replay that draws left its native multisample depth unwritten");
+                    std::puts("stencil replay native depth write checks passed");
+                }
+            }
         }
         std::puts("stencil replay tests passed");
         return 0;
