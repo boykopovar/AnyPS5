@@ -653,10 +653,11 @@ void SecondSlice(TexelReader& reader) {
     std::puts("  slice 0 of the write base still holds what the CPU wrote");
 }
 
-Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, const std::string& what, bool readStencil = true) {
+Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, const std::string& what, bool readStencil = true, std::uint32_t zInfo = ZInfo) {
     const auto live = NewSurfaces();
     auto draw = DepthDrawn(live, Gradient, stencil ? StencilInfo : NoStencilInfo);
     draw.width = width;
+    draw.zInfo = zInfo;
     if (stencil) {
         draw.depthControl = StencilReplaceAlways;
         draw.stencilControl = StencilPassReplace;
@@ -703,14 +704,15 @@ void LiveSurfacePartlyCovered(TexelReader& reader) {
     RequireRefused(surfaces, Expand(live.depth), "into a live depth surface it does not cover", "partly covered live surface");
 }
 
-void LiveStencilPlaneOnly(TexelReader& reader) {
-    std::puts("an expand whose stencil write base holds the stencil plane of a live surface with drawn depth at another base");
-    const auto live = NewLiveSurface(reader, true, Width, "live stencil plane");
+void LiveStencilPlaneOnly(TexelReader& reader, bool d16) {
+    const auto name = std::string(d16 ? "live 16-bit depth stencil plane" : "live stencil plane");
+    std::puts(d16 ? "an expand whose stencil write base holds the stencil plane of a live Z_16 surface with drawn depth at another base" : "an expand whose stencil write base holds the stencil plane of a live surface with drawn depth at another base");
+    const auto live = NewLiveSurface(reader, true, Width, name, true, d16 ? Z16Info : ZInfo);
     const auto surfaces = NewSurfaces();
-    Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), "live stencil plane: depth draw into the read surface");
+    Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), name + ": depth draw into the read surface");
     auto expand = Expand(NewPlane());
     expand.stencilWriteBase = live.stencil;
-    RequireRefused(surfaces, expand, "into the stencil plane of a live depth surface whose host-only depth it does not write", "live stencil plane");
+    RequireRefused(surfaces, expand, "into the stencil plane of a live depth surface whose host-only depth it does not write", name);
 }
 
 void StencilMoved(TexelReader& reader, bool depthMoves) {
@@ -764,8 +766,8 @@ int main(int argc, char** argv) {
 #endif
             std::_Exit(0);
         }
-        if (argc > 1 && std::string_view(argv[1]) == "--live-stencil-plane") {
-            LiveStencilPlaneOnly(reader);
+        if (argc > 1 && (std::string_view(argv[1]) == "--live-stencil-plane" || std::string_view(argv[1]) == "--live-d16-stencil-plane")) {
+            LiveStencilPlaneOnly(reader, std::string_view(argv[1]) == "--live-d16-stencil-plane");
             std::puts("depth expand review refusal test passed");
             std::fflush(stdout);
 #ifdef _WIN32

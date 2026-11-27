@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    foreach(entry "partly_covered_live;--partly-covered-live" "live_stencil_plane;--live-stencil-plane")
+    foreach(entry "partly_covered_live;--partly-covered-live" "live_stencil_plane;--live-stencil-plane" "live_d16_stencil_plane;--live-d16-stencil-plane")
         list(GET entry 0 name)
         list(GET entry 1 option)
         add_test(NAME agc_driver_depth_expand_${name} COMMAND agc_driver_depth_expand_review_tests ${option})

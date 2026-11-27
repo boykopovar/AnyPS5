@@ -5181,7 +5181,7 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         {
             std::lock_guard lock(surfacesMutex());
             if (planeSurface(context.device, address) == nullptr) continue;
-            if (stencil && std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->context.device == context.device && !surface->retired && surface->target.stencilAddress == address && surface->AnyStale(); })) throw failure(address, "into the stencil plane of a live depth surface whose host-only depth it does not write");
+            if (stencil && std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->context.device == context.device && !surface->retired && surface->target.stencilAddress == address && (surface->AnyStale() || !mirrorable(surface->target)); })) throw failure(address, "into the stencil plane of a live depth surface whose host-only depth it does not write");
         }
         RetireCoveredDepthSurfaces(context.device, {}, extents);
         std::lock_guard lock(surfacesMutex());
