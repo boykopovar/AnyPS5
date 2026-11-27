@@ -436,6 +436,17 @@ void TestGuestPointers() {
             _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
                 pages.ReadOnly(), &readOnlyTargetSrc);
         }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+
+        StringImpl badElemData{2, 16, pages.Guard(), 4};
+        MediaVector badElemVec(1);
+        new (&badElemVec.buffer[0]) MediaContentType{String(&badElemData)};
+        badElemVec.size = 1;
+        RequireNotImplemented([&] {
+            _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(
+                settings(), &badElemVec);
+        }, "_ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6VectorINS_11ContentTypeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE");
+        badElemVec.buffer[0].type.impl = nullptr;
+        Require(target.size == 1 && FamilyEquals(target.buffer[0].type, "video/mp4"));
     }
 
     ResetMediaVector();

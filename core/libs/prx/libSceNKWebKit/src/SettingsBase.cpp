@@ -143,7 +143,10 @@ T ReadGuestValue(const T* pointer, const char* function) {
 }
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
-    if (size && (!pointer || !GuestReadable_nid_no_patch(pointer, size)))
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -459,8 +462,13 @@ void APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareS
     for (unsigned i = 0; i < source.size; ++i) {
         StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(source.buffer) + i, __func__);
         if (impl) {
-            static_cast<void>(ReadGuestValue(impl, __func__));
+            const StringImpl header = ReadGuestValue(impl, __func__);
             RequireWritableGuestValue(impl, __func__);
+            if (header.length) {
+                if (!header.data) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+                const std::size_t byteLength = static_cast<std::size_t>(header.length) * ((header.hashAndFlags & 4u) ? 1u : sizeof(char16_t));
+                RequireReadableGuestBytes(header.data, byteLength, __func__);
+            }
         }
         sourceImpls[i] = impl;
     }
