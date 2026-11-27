@@ -1454,9 +1454,9 @@ int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count,
     size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
     if (count == 0) return nullptr;
-    if (!key || !base || !compare || size == 0)
+    if (!base || !compare)
         throw std::invalid_argument("bsearch: invalid arguments");
-    if (count > std::numeric_limits<size_t>::max() / size)
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("bsearch: array size overflow");
     const auto* bytes = static_cast<const unsigned char*>(base);
     size_t first = 0;
@@ -1481,7 +1481,7 @@ void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* cou
     errno = savedErrno;
     if (!readable) throw std::invalid_argument("lfind: unreadable element count");
     if (elements == 0 || size == 0) return nullptr;
-    if (!key || !base || !compare)
+    if (!base || !compare)
         throw std::invalid_argument("lfind: invalid arguments");
     if (elements > std::numeric_limits<size_t>::max() / size)
         throw std::overflow_error("lfind: array size overflow");
@@ -1546,12 +1546,11 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
 }
 
 void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*)) {
+    if (count <= 1 || (size == 0 && count < 7)) return;
     if (!compare) throw std::invalid_argument("qsort_r: null comparator");
     if (size == 0) throw std::invalid_argument("qsort_r: zero element size");
-    if (count == 0) return;
     if (!base) throw std::invalid_argument("qsort_r: null base");
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort_r: array size overflow");
-    if (count == 1) return;
 
     ReentrantSortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
 }

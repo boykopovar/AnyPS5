@@ -403,9 +403,7 @@ NKWebKit::GuestJpegErrorMgr* APS5_VABI jpeg_std_error_nid_postfix(NKWebKit::Gues
     localErr.first_addon_message = 0;
     localErr.last_addon_message = 0;
 
-    const int savedErrno = errno;
     const bool copiedOut = GuestCopyOut_nid_no_patch(err, &localErr, sizeof(localErr));
-    errno = savedErrno;
     if (!copiedOut) throw std::invalid_argument("libjpeg: unwritable error manager");
     return err;
 }

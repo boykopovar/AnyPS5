@@ -101,12 +101,20 @@ public:
 #else
 #ifdef ANYPS5_ENABLE_ASAN
         constexpr std::uintptr_t FirstHint = 0x60000000;
+        constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 12u;
 #else
         constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
+        constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 32u;
 #endif
-        for (std::uintptr_t hint = FirstHint; data == nullptr && hint < GcnAddressLimit; hint += std::uintptr_t{1} << 32u) {
+        const std::uintptr_t rounded = (BlockBytes + 0xfffu) & ~std::uintptr_t{0xfffu};
+        const std::uintptr_t stride = rounded < MinimumStride ? MinimumStride : rounded;
+        static std::uintptr_t next = FirstHint;
+        for (std::uintptr_t hint = next; data == nullptr && hint < GcnAddressLimit; hint += stride) {
             void* mapped = mmap(reinterpret_cast<void*>(hint), BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-            if (mapped != MAP_FAILED) data = static_cast<std::uint8_t*>(mapped);
+            if (mapped != MAP_FAILED) {
+                next = hint + stride;
+                data = static_cast<std::uint8_t*>(mapped);
+            }
         }
         if (data != nullptr && AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, BlockBytes);
 #endif

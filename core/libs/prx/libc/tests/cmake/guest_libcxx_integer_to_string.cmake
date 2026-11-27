@@ -1,0 +1,10 @@
+add_test_executable(guest_libcxx_integer_to_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxIntegerToString.cpp)
+target_include_directories(guest_libcxx_integer_to_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libcxx_integer_to_string_tests PRIVATE libc)
+configure_windows_unwind(guest_libcxx_integer_to_string_tests)
+add_test(NAME guest_libcxx_integer_to_string COMMAND guest_libcxx_integer_to_string_tests)
+set_tests_properties(guest_libcxx_integer_to_string PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_libcxx_integer_to_string PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

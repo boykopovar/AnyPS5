@@ -228,6 +228,7 @@ for (const kind of ["zip", "batch", "folder"]) {
     assert.equal(get("warnings").hidden, false);
     assert.equal(get("app-list").children.length, first.messages[0].inputs.length);
     assert.equal(get("app-list").hidden, kind !== "batch");
+    assert.equal(get("patch-options").hidden, kind === "batch");
     get("acknowledge").checked = true;
     get("acknowledge").listeners.get("change")();
     assert.equal(get("convert").disabled, false);
@@ -236,6 +237,8 @@ for (const kind of ["zip", "batch", "folder"]) {
     assert.equal(first.terminated, true);
     assert.equal(get("file").value, "");
     assert.equal(get("folder").value, "");
+    assert.equal(get("patch").value, "");
+    assert.equal(get("patch-options").hidden, true);
     assert.equal(get("selection").hidden, true);
     assert.equal(get("warnings").hidden, true);
     assert.equal(get("app-list").hidden, true);
@@ -262,8 +265,11 @@ for (const kind of ["zip", "batch", "folder"]) {
     get("acknowledge").checked = true;
     get("acknowledge").listeners.get("change")();
     assert.equal(get("convert").disabled, false);
+    const patch = new File(["format = 1"], "patch.toml");
+    get("patch").files = [patch];
     await get("convert").onclick();
     assert.equal(replacement.messages.at(-1).type, "convert");
+    assert.equal(replacement.messages.at(-1).patchFile, patch);
     assert.equal(replacement.terminated, false);
   });
 }
@@ -786,9 +792,11 @@ for (const kind of ["batch", "single", "folder"]) {
     assert.equal(worker.messages.at(-1).type, "convert");
     await worker.onmessage({ data: {
       type: "complete", mode: worker.messages.at(-1).mode, blob: kind === "folder" ? null : new Blob([new Uint8Array(5)]),
-      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length
+      outputName: kind === "batch" ? "anyps5-apps" : "main.elf", size: 5, release: "v1-test", apps: inputs.length,
+      revision: "0123456789abcdef0123456789abcdef01234567"
     } });
     assert.equal(get("done").hidden, false);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     const href = get("download").href;
     const download = get("download").download;
     const note = get("result-note");
@@ -805,6 +813,7 @@ for (const kind of ["batch", "single", "folder"]) {
     get("locale").onclick();
     assert.equal(document.documentElement.lang, "de");
     assert.match(get("result-info").textContent, /Systembibliotheken/);
+    assert.match(get("result-info").textContent, /v1-test \(0123456789abcdef0123456789abcdef01234567\)/u);
     if (kind === "folder") {
       assert.match(get("result-info").textContent, /Gespeichert in first-linux\//);
       assert.match(get("result-info").textContent, /chmod \+x "main\.elf"/);
@@ -873,6 +882,31 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.lang, "en");
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
+});
+
+test("expanded failure details stay open across interface updates", async t => {
+  const { get } = await setup(t, "expanded-failure-details", { fetch: async () => ({ ok: false, status: 404 }) });
+  const error = get("error");
+  assert.equal(error.hidden, false);
+  const details = error.children[1];
+  const summary = details.children[0];
+  details.open = true;
+
+  get("locale").onclick();
+  assert.equal(error.children[1], details);
+  assert.equal(details.children[0], summary);
+  assert.equal(details.open, true);
+  assert.equal(summary.textContent, translate("de", "failureDetails"));
+
+  get("save").listeners.get("change")();
+  assert.equal(error.children[1], details);
+  assert.equal(details.open, true);
+
+  get("file").files = [{ name: "readme.txt" }];
+  get("file").onchange();
+  await setImmediate();
+  assert.notEqual(error.children[1], details);
+  assert.equal(Boolean(error.children[1].open), false);
 });
 
 test("a browser that denies direct ZIP writes explains how to continue", async t => {

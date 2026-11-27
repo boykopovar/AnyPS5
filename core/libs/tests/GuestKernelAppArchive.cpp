@@ -86,6 +86,7 @@ constexpr std::uint16_t RegularType = 0100000;
 constexpr std::uint16_t DirectoryType = 0040000;
 constexpr int DuplicateFrom = 0;
 constexpr std::uint64_t ReadableRequest = 0x4004667f;
+constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 
 void Archive(const std::filesystem::path& root) {
     std::map<std::string, std::vector<char>> files{
@@ -260,6 +261,7 @@ void Directories() {
     Check(_fstatfs_nid_postfix(fd, nullptr) == -1);
     int available = 0;
     Check(ioctl_nid_postfix(fd, ReadableRequest, &available) == -1);
+    Check(ioctl_nid_postfix(fd, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
     Check(mmap_nid_postfix(nullptr, 4096, 1, 1, fd, 0) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
     std::array<char, 12> first{};
     Check(sceKernelGetdents(fd, first.data(), 1) == SCE_KERNEL_ERROR_EINVAL);

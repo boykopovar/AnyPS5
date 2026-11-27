@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -40,6 +41,9 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    bool navigatedBack = false;
+    bool navigatedForward = false;
+    Retained<Object> currentBackForwardListItem;
     mutable Retained<Inspector> inspector;
     bool suppressScrollbarAnimations = false;
     bool hasHorizontalScrollbar = false;
@@ -67,6 +71,7 @@ public:
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
     bool isClosed = false;
+    bool activeDOMObjectsAndAnimationsSuspended = false;
     std::optional<std::u16string> title;
     Retained<URL> activeURL;
     Retained<URL> provisionalURL;
@@ -94,7 +99,19 @@ public:
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
 };
-class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
+class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
+public:
+    bool resourceLoadStatisticsEnabled = false;
+    bool resourceLoadStatisticsDebugMode = false;
+    std::vector<std::string> debugPrevalentResources;
+    bool blockThirdPartyCookies = false;
+    std::uint32_t thirdPartyCookieBlockingPolicy = 0;
+    bool downgradeReferrer = false;
+    std::map<std::string, std::string> firstPartyHostCNAMEDomains;
+    std::vector<std::string> thirdPartyCNAMEDomains;
+    std::vector<std::string> sameSiteStrictCookiesHosts;
+    bool firstPartyWebsiteDataRemovalMode = false;
+};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
 inline std::optional<std::u16string> OptionalString(const void* ref, const char* function) {
@@ -222,6 +239,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserStyleSheet final : public ObjectOf<ObjectType::UserStyleSheet> {
@@ -233,6 +251,7 @@ public:
     std::string baseURL = "about:blank";
     std::vector<std::u16string> allowedURLPatterns;
     std::vector<std::u16string> blockedURLPatterns;
+    Retained<BundleScriptWorld> scriptWorld;
 };
 
 class UserContentController final : public ObjectOf<ObjectType::UserContentController> {
@@ -293,6 +312,7 @@ public:
     Retained<Object> preferences;
     Retained<UserContentController> userContentController;
     std::vector<Retained<Object>> userStyleSheets;
+    std::u16string userStyleSheetLocation;
 };
 
 }  // namespace NKWebKit

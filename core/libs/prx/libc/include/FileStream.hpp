@@ -21,6 +21,7 @@
 #include <type_traits>
 #ifdef _WIN32
 #include <io.h>
+#include <sys/stat.h>
 #include "prx/libc/include/FileLock.hpp"
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
@@ -38,6 +39,7 @@ extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wcha
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
 extern "C" void DuplicateDirectoryStream_nid_no_patch(int from, int to);
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #if defined(__GLIBC__)
@@ -163,6 +165,9 @@ class FileStream {
     void StoreHandleAtomic_nid_no_patch(std::FILE* value) {
         __atomic_store_n(&_handle, value, __ATOMIC_RELEASE);
     }
+    std::string bytesPushedBack;
+    bool pushbackLive = false;
+    signed char seekableCache = -1;
 #ifdef _WIN32
     char* pushbackBuffer = nullptr;
 
@@ -200,6 +205,42 @@ class FileStream {
 #endif
 
 public:
+    std::string& PushedBackBytes() { return bytesPushedBack; }
+    bool PushbackLive() const { return pushbackLive; }
+    void ClearPushback() {
+        bytesPushedBack.clear();
+        pushbackLive = false;
+    }
+
+    bool IsRegularFile() {
+        if (seekableCache < 0) {
+#ifdef _WIN32
+            struct _stat64 status{};
+            seekableCache = ::_fstat64(::_fileno(GetHandle()), &status) == 0 && (status.st_mode & _S_IFMT) == _S_IFREG ? 1 : 0;
+#else
+            struct stat status{};
+            seekableCache = ::fstat(::fileno(GetHandle()), &status) == 0 && S_ISREG(status.st_mode) ? 1 : 0;
+#endif
+        }
+        return seekableCache == 1;
+    }
+
+    std::int64_t TellSeekable() {
+        if (!IsRegularFile()) return -1;
+#ifdef _WIN32
+        return ::_ftelli64(GetHandle());
+#else
+        return ::ftello(GetHandle());
+#endif
+    }
+
+    void NotePushedBackByte(char byte, bool wasLive) {
+        if (!wasLive) bytesPushedBack.clear();
+        bytesPushedBack.push_back(byte);
+        pushbackLive = true;
+    }
+
+
     enum class Registration { Immediate, Deferred };
 
     explicit FileStream(std::FILE* handle, bool dynamic = false, Registration registration = Registration::Immediate)
@@ -284,6 +325,7 @@ public:
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void RestoreHostStandard(std::FILE* stream, int kept) {
@@ -306,6 +348,7 @@ public:
         _guest.descriptor = -1;
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     bool IsRandomDevice() const {
@@ -330,6 +373,7 @@ public:
         lowSurrogate = 0;
         pushedBack = 0;
         directory = false;
+        seekableCache = -1;
         if (!handle) {
             StoreHandleAtomic_nid_no_patch(nullptr);
             return false;
@@ -376,6 +420,7 @@ public:
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -496,12 +541,14 @@ public:
     }
 
     void SyncStatus() {
+        pushbackLive = false;
         auto* h = LoadHandleAtomic_nid_no_patch();
         if (!h) return;
         PublishStatus(std::feof(h) != 0, std::ferror(h) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
+        pushbackLive = false;
         auto* h = LoadHandleAtomic_nid_no_patch();
         if (!h) return;
 #ifdef _WIN32
@@ -657,6 +704,7 @@ public:
     void SetLowSurrogate(char16_t unit) {
         lowSurrogate = unit;
         pushedBack = 0;
+        seekableCache = -1;
     }
 
     void NotePushback() {
@@ -689,6 +737,7 @@ public:
         _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
+        seekableCache = -1;
         DetachFileStreamAliasesForNative_nid_no_patch(this, native);
         return CloseNativeReleasingExplicitLocks_nid_no_patch(native);
     }
