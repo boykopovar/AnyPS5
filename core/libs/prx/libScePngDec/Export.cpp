@@ -514,7 +514,11 @@ std::int32_t decodeImageRows(ChunkScan& scan, const Decoder::Png::Header& header
     png_structp reader = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, abortPngRead, checkImageDataWarning);
     if (!reader) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
     png_infop info = png_create_info_struct(reader);
-    if (!info || setjmp(png_jmpbuf(reader))) {
+    if (!info) {
+        png_destroy_read_struct(&reader, nullptr, nullptr);
+        return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+    }
+    if (setjmp(png_jmpbuf(reader))) {
         png_destroy_read_struct(&reader, &info, nullptr);
         return SCE_PNG_DEC_ERROR_DECODE_ERROR;
     }
