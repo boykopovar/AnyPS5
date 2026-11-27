@@ -837,6 +837,8 @@ private:
     bool flushUnscoped = true;
     std::uint64_t planesClean = 0;
     std::uint64_t mappingsClean = 0;
+    template<typename Visit>
+    void visitKeySpans(Visit&& visit) const;
     void recordFlushRanges();
     bool stalePlanesRead();
     bool imagesRemapped(std::uint64_t generation);

@@ -4800,30 +4800,39 @@ ShaderResources::ExitStamp ShaderResources::currentExitStamp() const {
     return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), textureReleases.load(std::memory_order_acquire), GuestMemory::UnwatchSerial(), imported ? HostImportSetGeneration() : 0, imported ? GuestAllocations::GuestAllocationsGeneration_nid_postfix() : 0, RetiredImportSerial(), DepthSurfacesSerial()};
 }
 
-void ShaderResources::recordFlushRanges() {
-    flushRanges.clear();
-    planesClean = 0;
-    flushUnscoped = textures.size() > validatedTextures.size();
-    for (const auto& region : directRegions) flushRanges.emplace_back(region.begin, region.end);
-    const auto imageKeys = [&](const StorageTexture& image, std::uint64_t dccAddress) {
+template<typename Visit>
+void ShaderResources::visitKeySpans(Visit&& visit) const {
+    const auto imageKeys = [&](bool storage, std::size_t index, const StorageTexture& image, std::uint64_t dccAddress) {
         for (const auto& span : image.KeySpansServing(dccAddress)) {
-            if (span.first != span.second) flushRanges.push_back(span);
+            if (span.first != span.second) visit(storage, index, span);
         }
     };
     for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
         if (textures[index] == nullptr) continue;
         const auto& surface = validatedTextures[index];
-        if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
-        flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
-        if (surface.resource.dccAddress != 0) flushRanges.emplace_back(surface.resource.dccAddress, surface.resource.dccAddress + DccKeyBytes(surface.bytes));
-        if (surface.source != nullptr) imageKeys(*surface.source, surface.resource.dccAddress);
+        if (surface.resource.dccAddress != 0) visit(false, index, std::pair<std::uint64_t, std::uint64_t>{surface.resource.dccAddress, surface.resource.dccAddress + DccKeyBytes(surface.bytes)});
+        if (surface.source != nullptr) imageKeys(false, index, *surface.source, surface.resource.dccAddress);
     }
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
-        const auto& image = storageTextures[index];
-        if (image == nullptr) continue;
-        flushRanges.emplace_back(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes());
-        imageKeys(*image, index < storageKeys.size() ? storageKeys[index] : 0);
+        if (storageTextures[index] != nullptr) imageKeys(true, index, *storageTextures[index], index < storageKeys.size() ? storageKeys[index] : 0);
     }
+}
+
+void ShaderResources::recordFlushRanges() {
+    flushRanges.clear();
+    planesClean = 0;
+    flushUnscoped = textures.size() > validatedTextures.size();
+    for (const auto& region : directRegions) flushRanges.emplace_back(region.begin, region.end);
+    for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
+        if (textures[index] == nullptr) continue;
+        const auto& surface = validatedTextures[index];
+        if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
+        flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr) flushRanges.emplace_back(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes());
+    }
+    visitKeySpans([&](bool, std::size_t, const std::pair<std::uint64_t, std::uint64_t>& span) { flushRanges.push_back(span); });
     if (writeSubscription == nullptr) return;
     for (const auto& span : GuestMemory::SubscriptionSpans(*writeSubscription)) flushRanges.push_back(span);
 }
@@ -4877,6 +4886,12 @@ std::string ShaderResources::rangeOwner(std::uint64_t address, std::uint64_t byt
             break;
         }
     }
+    std::optional<std::pair<bool, std::size_t>> keysNamed;
+    visitKeySpans([&](bool storage, std::size_t index, const std::pair<std::uint64_t, std::uint64_t>& span) {
+        if (!overlaps(span.first, span.second) || keysNamed == std::pair{storage, index}) return;
+        keysNamed = std::pair{storage, index};
+        add(std::string(storage ? "DCC keys of storage image " : "DCC keys of texture surface ") + std::to_string(index));
+    });
     if (writeSubscription != nullptr) {
         for (const auto& [begin, stop] : GuestMemory::SubscriptionSpans(*writeSubscription)) {
             if (overlaps(begin, stop)) {
