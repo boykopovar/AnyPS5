@@ -1522,7 +1522,9 @@ void TestCachedExtensions() {
     Require(ParsedFlags(CrlWithExtensions(FreshestCrlExtension())) == 0x1000);
     Require(ParsedFlags(CrlWithExtensions(DistributionPointsExtension(true))) == 0x200);
     Require(ParsedFlags(CrlWithExtensions(Join({DistributionPointsExtension(false), FreshestCrlExtension()}))) == 0x1000);
-    Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(true)}))) == 0);
+    Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(true)}))) == 0x200);
+    Require(ParsedFlags(CrlWithExtensions(Join({CrlNumberExtension(5), DeltaCrlExtension(true), DistributionPointsExtension(true)}))) == 0x200);
+    Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(false)}))) == 0);
     Require(ParsedFlags(CrlWithExtensions(Join({DistributionPointsExtension(true), FreshestCrlExtension()}))) == 0x200);
 
     RequireNotImplemented([] { Parse(CrlWithExtensions(Join({CrlNumberExtension(5), IssuingDistributionPointExtension()}))); });

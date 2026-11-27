@@ -563,8 +563,8 @@ void CacheExtensions(LibreSsl3X509Crl* crl) {
         const int nid = OBJ_obj2nid_nid_postfix(extension.object);
         if (nid == FreshestCrlNid) crl->flags |= FreshestFlag;
         if (extension.critical <= 0) continue;
-        if (nid != IssuingDistributionPointNid && nid != AuthorityKeyIdNid && nid != DeltaCrlNid)
-            crl->flags |= CriticalFlag;
+        if (nid == IssuingDistributionPointNid || nid == AuthorityKeyIdNid || nid == DeltaCrlNid) continue;
+        crl->flags |= CriticalFlag;
         break;
     }
     if (!SetEntryIssuers(crl)) crl->flags |= InvalidFlag;
