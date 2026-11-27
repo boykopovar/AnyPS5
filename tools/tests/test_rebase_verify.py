@@ -99,6 +99,7 @@ class RebaseVerifyTests(unittest.TestCase):
         (self.root / name).write_bytes(text.encode("utf-8"))
 
     def commit_tree_file(self, parent, name, content, message):
+        name = os.fsencode(name)
         blob = self.git("hash-object", "-w", "--stdin", input_bytes=content).encode("ascii")
         entries = self.git("ls-tree", "-z", parent, raw=True).split(b"\0")
         retained = [entry for entry in entries if entry and entry.split(b"\t", 1)[1] != name]
@@ -371,7 +372,7 @@ class RebaseVerifyTests(unittest.TestCase):
         self.git("commit", "-q", "-am", "docs(tools): add duplicate scale fixture")
         fixture_base = self.git("rev-parse", "HEAD")
         self.git("checkout", "-q", "-B", "old", fixture_base)
-        repeated = "repeated entry\n" * 1001
+        repeated = "repeated entry\n" * 100_001
         self.write("f.txt", "header\n" + repeated + "section B\nbranch-only\nfooter\n")
         self.git("commit", "-q", "-am", "feat(tools): add repeated and unique lines")
         self.git("checkout", "-q", "-B", "main", fixture_base)
@@ -382,6 +383,94 @@ class RebaseVerifyTests(unittest.TestCase):
         started = time.perf_counter()
         self.assertEqual(self.verify(), [])
         self.assertLess(time.perf_counter() - started, 10.0)
+
+    def prepare_reordered_block_rebase(self, preserve_branch_block):
+        base = "start\nend\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add ordered block fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "start\nlock();\nuse();\nend\n")
+        self.git("commit", "-q", "-am", "feat(tools): add ordered lock block")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        upstream = "start\nuse();\nlock();\nend\n"
+        self.write("f.txt", upstream)
+        self.git("commit", "-q", "-am", "docs(tools): add reversed block upstream")
+        resolved = (upstream if not preserve_branch_block
+                    else "start\nuse();\nlock();\nlock();\nuse();\nend\n")
+        new_commit = self.commit_tree_file("main", "f.txt", resolved.encode("utf-8"),
+                                           "feat(tools): add ordered lock block")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_reordered_upstream_block_does_not_satisfy_branch_additions(self):
+        self.prepare_reordered_block_rebase(False)
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "lock();" in problem
+                            for problem in problems), problems)
+        self.assertTrue(any("an added line is missing" in problem and "use();" in problem
+                            for problem in problems), problems)
+
+    def test_reordered_upstream_block_does_not_duplicate_a_preserved_branch_block(self):
+        self.prepare_reordered_block_rebase(True)
+        self.assertEqual(self.verify(), [])
+
+    def prepare_if_block_rebase(self, preserve_branch_block):
+        base = "start\nend\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add if-block fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        branch_block = "if (feature) {\n  lock();\n  use();\n}\n"
+        self.write("f.txt", "start\n" + branch_block + "end\n")
+        self.git("commit", "-q", "-am", "feat(tools): add branch if block")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        upstream_block = "if (feature) {\n  use();\n  lock();\n}\n"
+        upstream = "start\n" + upstream_block + "end\n"
+        self.write("f.txt", upstream)
+        self.git("commit", "-q", "-am", "docs(tools): add a different if block upstream")
+        resolved = (upstream if not preserve_branch_block
+                    else "start\n" + upstream_block + branch_block + "end\n")
+        new_commit = self.commit_tree_file("main", "f.txt", resolved.encode("utf-8"),
+                                           "feat(tools): add branch if block")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_reordered_upstream_if_block_does_not_replace_the_branch_block(self):
+        self.prepare_if_block_rebase(False)
+        problems = self.verify()
+        self.assertTrue(any("an added line is missing" in problem and "lock();" in problem
+                            for problem in problems), problems)
+        self.assertTrue(any("an added line is missing" in problem and "use();" in problem
+                            for problem in problems), problems)
+
+    def test_branch_if_block_is_preserved_beside_a_reordered_upstream_block(self):
+        self.prepare_if_block_rebase(True)
+        self.assertEqual(self.verify(), [])
+
+    def prepare_contained_block_rebase(self):
+        base = "start\nend\n"
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", base)
+        self.git("commit", "-q", "-am", "docs(tools): add contained block fixture")
+        fixture_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-B", "old", fixture_base)
+        self.write("f.txt", "start\nlock();\nuse();\nend\n")
+        self.git("commit", "-q", "-am", "feat(tools): add ordered lock block")
+        self.git("checkout", "-q", "-B", "main", fixture_base)
+        upstream = "start\nprefix();\nlock();\nuse();\nsuffix();\nend\n"
+        self.write("f.txt", upstream)
+        self.git("commit", "-q", "-am", "docs(tools): add the ordered block upstream")
+        new_commit = self.commit_tree_file("main", "f.txt", upstream.encode("utf-8"),
+                                           "feat(tools): add ordered lock block")
+        self.git("update-ref", "refs/heads/new", new_commit)
+
+    def test_a_contiguous_upstream_block_satisfies_the_branch_block(self):
+        self.prepare_contained_block_rebase()
+        self.assertEqual(self.verify(), [])
 
     def prepare_separated_shared_line_rebase(self):
         base = "section A\na1\na2\na3\nsection B\nb1\nb2\nb3\n"
@@ -421,18 +510,14 @@ class RebaseVerifyTests(unittest.TestCase):
         self.write("f.txt", "section A\nsection B\nsection C\nshared\nbranch-only\n")
         self.git("commit", "-q", "-am", "feat(tools): move shared line and remove extra")
         self.git("checkout", "-q", "-B", "main", fixture_base)
-        self.write("f.txt", "section A\nshared\nsection B\nextra\nsection C\nshared\n")
+        upstream = "section A\nshared\nsection B\nextra\nsection C\nshared\n"
+        self.write("f.txt", upstream)
         self.git("commit", "-q", "-am", "docs(tools): add the moved line upstream")
-        self.git("checkout", "-q", "-B", "new", "old")
-        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_EDITOR": "true"}
-        result = subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
-                                 "-c", "commit.gpgsign=false", "rebase", "main"], capture_output=True, text=True, env=environment)
-        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
         resolved = ("section A\nsection B\nsection C\nshared\nbranch-only\n" if keep_upstream_copy
                     else "section A\nshared\nsection B\nsection C\nbranch-only\n")
-        self.write("f.txt", resolved)
-        self.git("add", "f.txt")
-        self.git("-c", "core.editor=true", "commit", "--amend", "--no-edit")
+        new_commit = self.commit_tree_file("main", "f.txt", resolved.encode("utf-8"),
+                                           "feat(tools): move shared line and remove extra")
+        self.git("update-ref", "refs/heads/new", new_commit)
 
     def verify_with_inter_hunk_context(self):
         global_config = self.root / "empty-global-config"
@@ -578,22 +663,20 @@ class RebaseVerifyTests(unittest.TestCase):
         self.git("commit", "-q", "-am", "docs(tools): add double-credit fixture")
         fixture_base = self.git("rev-parse", "HEAD")
         self.git("checkout", "-q", "-B", "old", fixture_base)
-        topic = "line 1\nline 2\nline 3\nmatching line\nold pivot\nmatching line\nline 5\nsection B\nbranch-only\nb1\nb2\n"
+        topic = ("line 1\nline 2\nline 3\nmatching line\nold pivot\nmatching line\n"
+                 "line 5\nsection B\nbranch-only\nb1\nb2\n")
         self.write("f.txt", topic)
         self.git("commit", "-q", "-am", "feat(tools): add matching boundary lines")
         self.git("checkout", "-q", "-B", "main", fixture_base)
         upstream = "line 1\nline 2\nline 3\nmatching line\nline 5\nsection B\nb1\nb2\n"
         self.write("f.txt", upstream)
         self.git("commit", "-q", "-am", "docs(tools): replace pivot upstream")
-        self.git("checkout", "-q", "-B", "new", "old")
-        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_EDITOR": "true"}
-        result = subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
-                                 "-c", "commit.gpgsign=false", "rebase", "main"], capture_output=True, text=True, env=environment)
-        self.assertNotEqual(result.returncode, 0, (result.stdout, result.stderr))
-        resolved = "line 1\nline 2\nline 3\nmatching line\n" + ("matching line\n" if keep_branch_copy else "") + "line 5\nsection B\nbranch-only\nb1\nb2\n"
-        self.write("f.txt", resolved)
-        self.git("add", "f.txt")
-        self.git("-c", "core.editor=true", "rebase", "--continue")
+        resolved = ("line 1\nline 2\nline 3\nmatching line\nmatching line\nline 5\n"
+                    "section B\nbranch-only\nb1\nb2\n" if keep_branch_copy
+                    else "line 1\nline 2\nline 3\nmatching line\nline 5\nsection B\nbranch-only\nb1\nb2\n")
+        new_commit = self.commit_tree_file("main", "f.txt", resolved.encode("utf-8"),
+                                           "feat(tools): add matching boundary lines")
+        self.git("update-ref", "refs/heads/new", new_commit)
 
     def test_one_upstream_occurrence_cannot_satisfy_two_branch_additions_when_one_is_lost(self):
         self.prepare_double_credit_boundary_rebase(keep_branch_copy=False)

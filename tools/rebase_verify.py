@@ -145,27 +145,38 @@ def prefix_suffix_overlap(pattern, sequence):
     return matched
 
 
-def upstream_boundary_additions_at_old_range(hunks, old_range, expected):
-    matches = collections.defaultdict(set)
-    start, count = old_range
-    if count:
-        return matches
-    for upstream_range, lines in hunks.items():
-        upstream_start, upstream_count = upstream_range
-        if not upstream_count:
-            continue
-        upstream_end = upstream_start + upstream_count - 1
-        if upstream_start == start + 1:
-            overlap = prefix_suffix_overlap(lines[:len(expected)], expected)
-            branch_start = len(expected) - overlap
-            for offset in range(overlap):
-                matches[branch_start + offset].add((upstream_range, offset))
-        if upstream_end == start:
-            overlap = prefix_suffix_overlap(expected[:len(lines)], lines)
-            upstream_start_index = len(lines) - overlap
-            for offset in range(overlap):
-                matches[offset].add((upstream_range, upstream_start_index + offset))
-    return matches
+def find_subsequence(sequence, pattern):
+    if not pattern:
+        return 0
+    prefix = [0] * len(pattern)
+    for index in range(1, len(pattern)):
+        matched = prefix[index - 1]
+        while matched and pattern[index] != pattern[matched]:
+            matched = prefix[matched - 1]
+        if pattern[index] == pattern[matched]:
+            matched += 1
+        prefix[index] = matched
+
+    matched = 0
+    for index, value in enumerate(sequence):
+        while matched and pattern[matched] != value:
+            matched = prefix[matched - 1]
+        if pattern[matched] == value:
+            matched += 1
+        if matched == len(pattern):
+            return index - len(pattern) + 1
+    return None
+
+
+def contiguous_block_match(first, second):
+    if not first or not second:
+        return None
+    if len(first) <= len(second):
+        offset = find_subsequence(second, first)
+        return (0, offset, len(first)) if offset is not None else None
+    offset = find_subsequence(first, second)
+    return (offset, 0, len(second)) if offset is not None else None
+
 
 def additions_satisfied_upstream(root, old_base, old, new_base):
     if old_base == new_base:
@@ -174,117 +185,86 @@ def additions_satisfied_upstream(root, old_base, old, new_base):
     upstream, upstream_positions = added_hunks(root, old_base, new_base)
     satisfied = collections.defaultdict(collections.Counter)
     credited = collections.defaultdict(set)
+
     for path, hunks in original.items():
         upstream_hunks = upstream.get(path, {})
-        exact_occurrences = collections.defaultdict(list)
-        for upstream_range, lines in upstream_hunks.items():
-            for upstream_index, line in enumerate(lines):
-                exact_occurrences[(upstream_range, line)].append((upstream_range, upstream_index))
-
-        branch_lines = []
-        for old_range, lines in hunks.items():
-            boundary_matches = upstream_boundary_additions_at_old_range(upstream_hunks, old_range, lines)
-            for index, line in enumerate(lines):
-                exact_group = (old_range, line)
-                if exact_group not in exact_occurrences:
-                    exact_group = None
-                branch_lines.append((line, exact_group, boundary_matches.get(index, set())))
-        if not branch_lines:
+        if not upstream_hunks:
             continue
+        used_upstream = set()
 
-        exact_groups = sorted({group for _, group, _ in branch_lines if group is not None})
-        upstream_occurrences = set()
-        for group in exact_groups:
-            upstream_occurrences.update(exact_occurrences[group])
-        for _, _, boundary in branch_lines:
-            upstream_occurrences.update(boundary)
-        if not upstream_occurrences:
-            continue
+        def credit(old_range, lines, branch_start, upstream_start, length):
+            positions = upstream_positions[path][old_range]
+            for offset in range(length):
+                branch_index = branch_start + offset
+                upstream_index = upstream_start + offset
+                occurrence = (old_range, upstream_index)
+                if occurrence in used_upstream:
+                    continue
+                satisfied[path][lines[branch_index]] += 1
+                credited[path].add(positions[upstream_index])
+                used_upstream.add(occurrence)
 
-        source = 0
-        branch_start = 1
-        group_start = branch_start + len(branch_lines)
-        group_nodes = {group: group_start + index for index, group in enumerate(exact_groups)}
-        upstream_start = group_start + len(group_nodes)
-        occurrence_nodes = {occurrence: upstream_start + index
-                            for index, occurrence in enumerate(sorted(upstream_occurrences))}
-        sink = upstream_start + len(occurrence_nodes)
-        graph = [[] for _ in range(sink + 1)]
+        ordered_hunks = sorted(hunks.items())
+        for old_range, lines in ordered_hunks:
+            upstream_lines = upstream_hunks.get(old_range)
+            if upstream_lines is None:
+                continue
+            match = contiguous_block_match(lines, upstream_lines)
+            if match is None:
+                continue
+            branch_start, upstream_start, length = match
+            credit(old_range, lines, branch_start, upstream_start, length)
 
-        def add_edge(start_node, end_node):
-            forward = [end_node, len(graph[end_node]), 1]
-            reverse = [start_node, len(graph[start_node]), 0]
-            graph[start_node].append(forward)
-            graph[end_node].append(reverse)
-            return forward
+        for old_range, lines in ordered_hunks:
+            if old_range in upstream_hunks:
+                continue
+            start, count = old_range
+            if count:
+                continue
 
-        source_edges = []
-        for index, (line, exact_group, boundary) in enumerate(branch_lines):
-            branch_node = branch_start + index
-            source_edges.append(add_edge(source, branch_node))
-            if exact_group is not None:
-                add_edge(branch_node, group_nodes[exact_group])
-            for occurrence in sorted(boundary):
-                add_edge(branch_node, occurrence_nodes[occurrence])
-        for group, node in group_nodes.items():
-            for occurrence in exact_occurrences[group]:
-                add_edge(node, occurrence_nodes[occurrence])
-        occurrence_edges = {
-            occurrence: add_edge(node, sink)
-            for occurrence, node in occurrence_nodes.items()
-        }
+            preceding = []
+            following = []
+            for upstream_range, upstream_lines in upstream_hunks.items():
+                upstream_start, upstream_count = upstream_range
+                if not upstream_count:
+                    continue
+                upstream_end = upstream_start + upstream_count - 1
+                if upstream_start == start + 1:
+                    overlap = prefix_suffix_overlap(upstream_lines, lines)
+                    if overlap:
+                        following.append((upstream_range, len(lines) - overlap, 0, overlap))
+                if upstream_end == start:
+                    overlap = prefix_suffix_overlap(lines, upstream_lines)
+                    if overlap:
+                        preceding.append((upstream_range, 0, len(upstream_lines) - overlap, overlap))
 
-        while True:
-            levels = [-1] * len(graph)
-            levels[source] = 0
-            pending = collections.deque([source])
-            while pending:
-                node = pending.popleft()
-                for target, _, capacity in graph[node]:
-                    if capacity and levels[target] < 0:
-                        levels[target] = levels[node] + 1
-                        pending.append(target)
-            if levels[sink] < 0:
-                break
+            def available(candidate):
+                upstream_range, _, upstream_start, length = candidate
+                return all(
+                    (upstream_range, index) not in used_upstream
+                    for index in range(upstream_start, upstream_start + length)
+                )
 
-            current = [0] * len(graph)
-            while True:
-                nodes = [source]
-                augmenting_path = []
-                while nodes:
-                    node = nodes[-1]
-                    if node == sink:
-                        for previous, edge_index in augmenting_path:
-                            edge = graph[previous][edge_index]
-                            edge[2] -= 1
-                            graph[edge[0]][edge[1]][2] += 1
-                        nodes = [source]
-                        augmenting_path = []
-                        continue
+            preceding = [candidate for candidate in preceding if available(candidate)]
+            following = [candidate for candidate in following if available(candidate)]
+            preceding.sort(key=lambda item: (-item[3], item[0]))
+            following.sort(key=lambda item: (-item[3], item[0]))
 
-                    while current[node] < len(graph[node]):
-                        edge = graph[node][current[node]]
-                        if edge[2] and levels[edge[0]] == levels[node] + 1:
-                            break
-                        current[node] += 1
-                    if current[node] == len(graph[node]):
-                        nodes.pop()
-                        if augmenting_path:
-                            previous, _ = augmenting_path.pop()
-                            current[previous] += 1
-                    else:
-                        edge_index = current[node]
-                        augmenting_path.append((node, edge_index))
-                        nodes.append(graph[node][edge_index][0])
-                break
+            chosen = []
+            if preceding and following:
+                before = preceding[0]
+                after = following[0]
+                if before[3] + after[3] == len(lines):
+                    chosen = [before, after]
+            if not chosen:
+                candidates = preceding + following
+                if candidates:
+                    candidates.sort(key=lambda item: (-item[3], item[0]))
+                    chosen = [candidates[0]]
 
-        for index, edge in enumerate(source_edges):
-            if edge[2] == 0:
-                satisfied[path][branch_lines[index][0]] += 1
-        for occurrence, edge in occurrence_edges.items():
-            if edge[2] == 0:
-                upstream_range, upstream_index = occurrence
-                credited[path].add(upstream_positions[path][upstream_range][upstream_index])
+            for upstream_range, branch_start, upstream_start, length in chosen:
+                credit(upstream_range, lines, branch_start, upstream_start, length)
+
     return satisfied, credited
 
 def differences(old, new, deleted=False):
