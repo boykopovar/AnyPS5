@@ -2763,10 +2763,13 @@ private:
             const bool scalar = terminator.condition == BranchCondition::SccZero || terminator.condition == BranchCondition::SccNonZero || terminator.condition == BranchCondition::ScalarInstruction;
             if (terminator.kind != TerminatorKind::ConditionalBranch || !scalar || info[index].condition == nullptr || terminator.trueBlock == terminator.falseBlock) continue;
             for (const auto& [target, holds] : {std::pair{terminator.trueBlock, true}, std::pair{terminator.falseBlock, false}}) {
+                IrValue* candidate = nullptr;
+                if (!KeyBelow(info[index].condition, holds, key, candidate)) continue;
                 const auto found = byId.find(target);
                 if (found == byId.end() || found->second->Predecessors().size() != 1u || found->second->Predecessors().front() != order[index]) continue;
                 if (!BlockDominates(found->second, block)) continue;
-                if (KeyBelow(info[index].condition, holds, key, bound)) return true;
+                bound = candidate;
+                return true;
             }
         }
         return false;
@@ -2823,8 +2826,8 @@ private:
             if (LoopCarried(value)) mask = storeMask = nullptr;
             known = true;
             for (std::size_t index = 0; index < value->ArgumentCount() && known; ++index) known = LaneValues(value->Argument(index), mask, storeMask, values, visiting, depth - 1u);
-        } else if (mask == nullptr && value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
-            known = LaneValues(value->Argument(0), ReadsUnderStoreMask(value, storeMask) ? value->Argument(1)->Resolve() : nullptr, storeMask, values, visiting, depth - 1u);
+        } else if (mask == nullptr && ReadsUnderStoreMask(value, storeMask)) {
+            known = LaneValues(value->Argument(0), value->Argument(1)->Resolve(), storeMask, values, visiting, depth - 1u);
         }
         visiting.erase(value);
         return known;
@@ -2885,6 +2888,7 @@ private:
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
         const IrValue* storeMask = inst.Argument(inst.ArgumentCount() - 1u)->Resolve();
+        if (offsetValue->Resolve()->Opcode() == IrOpcode::ReadFirstLane && !ReadsUnderStoreMask(offsetValue, storeMask)) return missed(StoreTableMiss::NotAffine);
         if (!MatchAffineOffset(StoreOffsetValue(offsetValue, storeMask), key, stride, addend, false) || static_cast<std::uint64_t>(first) + addend > 0x7fffffffu) return missed(StoreTableMiss::NotAffine);
         if (addend % sizeof(std::uint32_t) != 0u) return missed(StoreTableMiss::Unaligned);
         DescriptorSource heapSource;

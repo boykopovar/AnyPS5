@@ -597,7 +597,8 @@ std::uint64_t resourcePlanBytes(const IrResourcePlan& plan) {
         if (value.Arguments().capacity() > IrOperands::InlineCapacity) total += static_cast<std::uint64_t>(value.Arguments().capacity()) * sizeof(IrValue*);
         total += bytes(value.OperandUses());
     }
-    total += bytes(plan.blockStorage) + bytes(plan.memoryInfo) + bytes(plan.descriptorSources) + bytes(plan.controlFlow) + bytes(plan.materializationSources) + bytes(plan.srtReads) + bytes(plan.guardedSrtSlots) + bytes(plan.cleanFlatSlots) + bytes(plan.pureFlatSlots);
+    total += bytes(plan.blockStorage) + bytes(plan.memoryInfo) + bytes(plan.descriptorSources) + bytes(plan.controlFlow) + bytes(plan.materializationSources) + bytes(plan.srtReads) + bytes(plan.guardedSrtSlots) + bytes(plan.cleanFlatSlots) + bytes(plan.pureFlatSlots) + bytes(plan.storeTables);
+    for (const auto& table : plan.storeTables) total += bytes(table.keyList);
     total += bytes(plan.compact.values) + bytes(plan.compact.arguments) + bytes(plan.compact.sourceDwords) + bytes(plan.compact.srtReads) + bytes(plan.compact.conditions);
     return total;
 }
@@ -2090,6 +2091,7 @@ std::uint64_t resultBytes(const RecompileResult& result) {
     const auto bytes = [](const auto& values) { return vectorBytes(values); };
     auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges) + bytes(result.storeTables.tables);
     for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
+    for (const auto& table : result.storeTables.tables) total += bytes(table.keyList);
     for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
     return total;
 }

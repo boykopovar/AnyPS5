@@ -56,12 +56,14 @@ constexpr std::uint32_t CountRecordOffset = 0x800u;
 constexpr std::uint32_t LiveCountOffset = 0x2000u;
 
 alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> SelectedCode{0x7d880090u, 0x7e040283u, 0x02020481u, 0x7e080501u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> HolderCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> AddendCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x8f0d840cu, 0x810db00du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> ScaleCode{0xf4080100u, 0xfa000000u, 0x4a040002u, 0x7e180502u, 0x930db00cu, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> UnalignedCode{0xf4080100u, 0xfa000000u, 0x36040083u, 0x7e180502u, 0x8f0d840cu, 0x810db20du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> FindBitCode{0xf4080100u, 0xfa000000u, 0x7e180500u, 0xbe8c130cu, 0x8f0d840cu, 0x810db00du, 0x34020082u, 0xf4280202u, 0x1a000000u, 0xe0701000u, 0x80020001u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> InactiveCode{0x4a040002u, 0x7d8400a8u, 0xbefe036au, 0x36040083u, 0x7e080502u, 0xbefe03c1u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 16> InactiveSelectCode{0x7d880090u, 0x7e040283u, 0x02020481u, 0x4a040002u, 0x7d8400a8u, 0xbefe036au, 0x38040280u, 0x7e080502u, 0xbefe03c1u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> FormatCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0100000u, 0x80020000u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 20> CarriedSelectCode{0x36040083u, 0xbe830380u, 0x7d860090u, 0xbefe036au, 0x7e080502u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbe94037eu, 0xbefe03c1u, 0x7e040202u, 0xbefe0314u, 0x36040083u, 0xbefe03c1u, 0x81038103u, 0xbf0a8203u, 0xbf85fff1u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 20> CarriedReadCode{0xbe960380u, 0xbe830380u, 0x7d8400a8u, 0xbefe036au, 0x9885b016u, 0xf4080200u, 0x0a000000u, 0xe0700000u, 0x80020200u, 0xbe94037eu, 0xbefe03c1u, 0x7e040202u, 0xbefe0314u, 0x7e040282u, 0x7e2c0502u, 0xbefe03c1u, 0x81038103u, 0xbf0a8203u, 0xbf85fff1u, 0xbf810000u};
@@ -78,12 +80,14 @@ struct Header {
 };
 
 alignas(8) Header StoreHeader{};
+alignas(8) Header SelectedHeader{};
 alignas(8) Header HolderHeader{};
 alignas(8) Header AddendHeader{};
 alignas(8) Header ScaleHeader{};
 alignas(8) Header UnalignedHeader{};
 alignas(8) Header FindBitHeader{};
 alignas(8) Header InactiveHeader{};
+alignas(8) Header InactiveSelectHeader{};
 alignas(8) Header FormatHeader{};
 alignas(8) Header CarriedSelectHeader{};
 alignas(8) Header CarriedReadHeader{};
@@ -295,7 +299,7 @@ Pending HeldDispatch(std::span<const std::uint32_t> program, std::initializer_li
         pending.output = recorder->PendingWriteOverlaps(output.At(0), OutputBytes);
         pending.table = recorder->PendingWriteOverlaps(table.At(0), BlockBytes);
         pending.beside = recorder->PendingWriteOverlaps(beside.At(0), BlockBytes);
-        pending.formatTail = recorder->PendingWriteOverlaps(output.At(sizeof(std::uint32_t)), FormatBytes - sizeof(std::uint32_t));
+        pending.formatTail = recorder->PendingWriteOverlaps(output.At(FormatBytes - sizeof(std::uint32_t)), sizeof(std::uint32_t));
         pending.beyondRecord = recorder->PendingWriteOverlaps(output.At(BeyondRecordOffset), sizeof(std::uint32_t));
     }
     hold.Finish();
@@ -320,6 +324,18 @@ void PointerTable(const GuestBlock& table, const GuestBlock& output, const Guest
     RequireOutputPending(pending, "the pointer-table store");
     if (whole && !pending.beside) throw std::runtime_error("store windows: with APS5_NO_STORE_WINDOWS the pointer-table store did not note the whole writable reach");
     if (!whole) RequireUnreachedUnpending(pending, "the pointer-table store");
+
+    std::memset(table.Bytes(0), 0, BlockBytes);
+    std::memset(output.Bytes(0), 0, OutputBytes);
+    std::memset(beside.Bytes(0), 0, OutputBytes);
+    for (const std::uint32_t skipped : {0u, 2u}) WriteRecord(table, TableOffset + skipped * 16u, RawDescriptor(beside.At(0), OutputBytes));
+    for (const std::uint32_t listed : {1u, 3u}) WriteRecord(table, TableOffset + listed * 16u, RawDescriptor(output.At(0), OutputBytes));
+    const auto selected = HeldDispatch(SelectedCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)}, table, output, beside);
+    RequireLanes(output);
+    if (!Untouched(beside)) throw std::runtime_error("store windows: the listed-key pointer-table store wrote through an unlisted record");
+    RequireOutputPending(selected, "the listed-key pointer-table store");
+    if (whole && !selected.beside) throw std::runtime_error("store windows: with APS5_NO_STORE_WINDOWS the listed-key pointer-table store did not note the whole writable reach");
+    if (!whole) RequireUnreachedUnpending(selected, "the listed-key pointer-table store");
 }
 
 void ResetHolder(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, std::uint32_t bytes) {
@@ -444,6 +460,12 @@ void BoundsModes(const GuestBlock& table, const GuestBlock& output, const GuestB
         if (*output.Words(BeyondRecordOffset) != IndexedValue) throw std::runtime_error(std::string("store windows: ") + name + " dropped an unbounded store beyond num_records");
         if (!unbounded.beyondRecord || !unbounded.beside) throw std::runtime_error(std::string("store windows: ") + name + " with an unbounded index did not keep the whole reach");
     }
+
+    for (const std::uint32_t mode : {0u, 1u, 2u, 3u}) {
+        const auto empty = ModeDispatch(BoundedIndexCode, 0u, ModeDescriptor(output.At(0), 16u, 0u, mode), table, output, beside);
+        if (!Untouched(output) || !Untouched(beside)) throw std::runtime_error("store windows: OOB_SELECT " + std::to_string(mode) + " wrote through a zero-record V#");
+        if (!whole && (empty.output || empty.beyondRecord || empty.beside || empty.table)) throw std::runtime_error("store windows: OOB_SELECT " + std::to_string(mode) + " noted reach for a zero-record V#");
+    }
 }
 
 }
@@ -456,12 +478,14 @@ int main(int argc, char** argv) {
             if (!device) return VulkanTestSkipped;
         }
         Register(StoreHeader, StoreCode);
+        Register(SelectedHeader, SelectedCode);
         Register(HolderHeader, HolderCode);
         Register(AddendHeader, AddendCode);
         Register(ScaleHeader, ScaleCode);
         Register(UnalignedHeader, UnalignedCode);
         Register(FindBitHeader, FindBitCode);
         Register(InactiveHeader, InactiveCode);
+        Register(InactiveSelectHeader, InactiveSelectCode);
         Register(FormatHeader, FormatCode);
         Register(CarriedSelectHeader, CarriedSelectCode);
         Register(CarriedReadHeader, CarriedReadCode);
@@ -485,6 +509,7 @@ int main(int argc, char** argv) {
         BoundsModes(table, output, beside, whole);
         EscapingRecord(FindBitCode, 0u, FindBitOffset, besideRaw, table, output, beside, "a find-bit key of a zero word");
         EscapingRecord(InactiveCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a key read under an empty mask");
+        EscapingRecord(InactiveSelectCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a selected key read under an empty mask");
         EscapingRecord(CarriedReadCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a lane read carried by a loop");
         EscapingRecord(CarriedSelectCode, InactiveKey, InactiveKey * 16u, besideRaw, table, output, beside, "a select carried by a loop");
         RereadKey(table, output, beside);

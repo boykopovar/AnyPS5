@@ -6420,6 +6420,11 @@ void verifyStoreTables() {
     const auto selectCompiled = CompileTable(request(selectCode));
     const auto& selectStores = selectCompiled.result->storeTables;
     require(selectStores.fallback == StoreTableFallback::None && selectStores.tables.size() == 1u && selectStores.tables[0].keyList == std::vector<std::uint32_t>{1u, 3u} && selectStores.tables[0].keys == 4u, "store table selected key: the dispatch did not keep the key list");
+    {
+        auto strippedSelect = *selectCompiled.result;
+        std::vector<std::uint32_t>().swap(strippedSelect.storeTables.tables[0].keyList);
+        require(MetadataBytes(*selectCompiled.result) == MetadataBytes(strippedSelect) + selectStores.tables[0].keyList.capacity() * sizeof(std::uint32_t), "store table selected key: result bytes omitted the key list");
+    }
 
     root.fill(0u);
     root[0] = 3u;
@@ -6481,6 +6486,12 @@ void verifyStoreTables() {
     const std::vector<std::uint32_t> restoredMaskCode{0x4a040001u, 0x7d8400a8u, 0xbefe036au, 0x36040083u, 0x7e080502u, 0xbefe03c1u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020200u, 0xbf810000u};
     const auto restoredMaskPlan = GetResourcePlan(request(restoredMaskCode));
     require(!restoredMaskPlan->storesBounded && restoredMaskPlan->storeMiss == StoreTableMiss::UnboundedKey, "store table restored mask: a key read under a mask that can be empty was bounded by its active lanes");
+    const std::vector<std::uint32_t> restoredSelectCode{0x7d880090u, 0x7e040283u, 0x02020481u, 0x4a040001u, 0x7d8400a8u, 0xbefe036au, 0x38040280u, 0x7e080502u, 0xbefe03c1u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020200u, 0xbf810000u};
+    const auto restoredSelectPlan = GetResourcePlan(request(restoredSelectCode));
+    require(!restoredSelectPlan->storesBounded && restoredSelectPlan->storeMiss == StoreTableMiss::UnboundedKey, "store table restored select: a selected key read under a mask that can be empty omitted the inactive lane");
+    const std::vector<std::uint32_t> restoredOffsetCode{0x36020083u, 0x34040284u, 0x4a0404b0u, 0x7d8400a8u, 0xbefe036au, 0x7e080502u, 0xbefe03c1u, 0xf4080200u, 0x08000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020200u, 0xbf810000u};
+    const auto restoredOffsetPlan = GetResourcePlan(request(restoredOffsetCode));
+    require(!restoredOffsetPlan->storesBounded && restoredOffsetPlan->storeMiss == StoreTableMiss::NotAffine, "store table restored offset: an affine offset read under a mask that can be empty was matched");
     const std::vector<std::uint32_t> sameMaskCode{0x4a040001u, 0x7d8400a8u, 0xbefe036au, 0x36040083u, 0x7e080502u, 0x9885b004u, 0xf4080200u, 0x0a000000u, 0xbf8cc07fu, 0xe0700000u, 0x80020200u, 0xbf810000u};
     const auto sameMaskPlan = GetResourcePlan(request(sameMaskCode));
     require(onlyTable(*sameMaskPlan, "store table same mask").maxKey == 3u, "store table same mask: a key read under the store's mask was not bounded by its active lanes");

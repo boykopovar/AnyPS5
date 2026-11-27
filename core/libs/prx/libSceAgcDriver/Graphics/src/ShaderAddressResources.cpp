@@ -338,10 +338,12 @@ void reportStoreWindows(std::uint64_t program, StoreWindowOutcome outcome, std::
     totals.noted += noted;
     totals.whole += whole;
     if (missed != nullptr) {
+        if (!totals.missed || missed->wantedKeys >= totals.wantedKeys) {
+            totals.miss = missed->miss;
+            totals.missPc = missed->missPc;
+            totals.wantedKeys = missed->wantedKeys;
+        }
         totals.missed = true;
-        totals.miss = missed->miss;
-        totals.missPc = missed->missPc;
-        totals.wantedKeys = std::max(totals.wantedKeys, missed->wantedKeys);
     }
     const auto now = std::chrono::steady_clock::now();
     if (now - stats.last < std::chrono::seconds(10)) return;
@@ -470,16 +472,34 @@ void ShaderResources::narrowToStoreWindows(Recorder& recorder, std::vector<std::
             const auto first = table.base + table.offset;
             const auto span = static_cast<std::uint64_t>(table.keys - 1u) * table.stride + 4u * sizeof(std::uint32_t);
             if (first < table.base || first + span < first) return keep(StoreWindowOutcome::TooWide);
-            if (recorder.PendingWriteOverlaps(first, static_cast<std::size_t>(span))) return keep(StoreWindowOutcome::PendingTable);
-            bytes.resize(static_cast<std::size_t>(span));
             const auto readable = table.address ? span : table.size > table.offset ? std::min<std::uint64_t>(span, table.size - table.offset) : 0u;
-            if (readable != 0u && GuestMemory::CopyMapped(first, std::span<std::byte>(bytes.data(), static_cast<std::size_t>(readable))) != GuestMemory::Compare::Equal) return keep(StoreWindowOutcome::Unmapped);
-            tableRanges.emplace_back(first, first + readable);
+            constexpr std::size_t RecordBytes = 4u * sizeof(std::uint32_t);
+            const bool contiguous = table.keyList.empty() && table.stride == RecordBytes;
+            if (contiguous) {
+                if (readable != 0u && recorder.PendingWriteOverlaps(first, static_cast<std::size_t>(readable))) return keep(StoreWindowOutcome::PendingTable);
+                const auto usable = (readable / RecordBytes) * RecordBytes;
+                bytes.resize(static_cast<std::size_t>(usable));
+                if (usable != 0u && GuestMemory::CopyMapped(first, std::span<std::byte>(bytes.data(), bytes.size())) != GuestMemory::Compare::Equal) return keep(StoreWindowOutcome::Unmapped);
+                if (readable != 0u) tableRanges.emplace_back(first, first + readable);
+            }
             const auto record = [&](std::uint32_t key) {
                 const auto begin = static_cast<std::uint64_t>(key) * table.stride;
                 std::array<std::uint32_t, 4> words{};
                 if (begin + sizeof(words) > readable) return true;
-                std::memcpy(words.data(), bytes.data() + static_cast<std::size_t>(begin), sizeof(words));
+                if (contiguous) {
+                    std::memcpy(words.data(), bytes.data() + static_cast<std::size_t>(begin), sizeof(words));
+                } else {
+                    const auto recordAddress = first + begin;
+                    if (recorder.PendingWriteOverlaps(recordAddress, sizeof(words))) {
+                        unbounded = StoreWindowOutcome::PendingTable;
+                        return false;
+                    }
+                    if (GuestMemory::CopyMapped(recordAddress, std::as_writable_bytes(std::span(words))) != GuestMemory::Compare::Equal) {
+                        unbounded = StoreWindowOutcome::Unmapped;
+                        return false;
+                    }
+                    tableRanges.emplace_back(recordAddress, recordAddress + sizeof(words));
+                }
                 if (const auto extent = storeExtent(words, table, unbounded)) windows.push_back(*extent);
                 return !unbounded.has_value();
             };
@@ -499,6 +519,16 @@ void ShaderResources::narrowToStoreWindows(Recorder& recorder, std::vector<std::
         if (std::ranges::any_of(tableRanges, [&](const auto& table) { return overlaps(window, table); })) return keep(StoreWindowOutcome::SelfWritten);
     }
     std::ranges::sort(windows);
+    std::size_t merged = 0;
+    for (const auto& window : windows) {
+        if (window.first >= window.second) continue;
+        if (merged != 0u && window.first <= windows[merged - 1u].second) {
+            windows[merged - 1u].second = std::max(windows[merged - 1u].second, window.second);
+        } else {
+            windows[merged++] = window;
+        }
+    }
+    windows.resize(merged);
     std::vector<std::pair<std::uint64_t, std::uint64_t>> narrowed;
     for (const auto& region : reachable) {
         for (const auto& window : windows) {
