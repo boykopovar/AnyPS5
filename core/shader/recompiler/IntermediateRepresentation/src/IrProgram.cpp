@@ -653,7 +653,7 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (addressInfo.access != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
-                if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
+                if (!IsAddressResourceKind(memory.kind)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
                 }
                 const bool scalarAddress = memory.kind == ResourceKind::ScalarAddress;
@@ -670,7 +670,7 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has a non-buffer resource kind");
                 }
-                if (bufferComponents > 1u && (memory.kind != ResourceKind::Buffer || memory.dataBits != 32u || memory.dataDwords != bufferComponents || memory.componentIndex != 0u)) {
+                if (bufferComponents > 1u && (memory.dataBits != 32u || memory.dataDwords != bufferComponents || memory.componentIndex != 0u)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent native-wide metadata");
                 }
                 if (bufferComponents == 1u && (inst->Opcode() == IrOpcode::LoadBufferU32 || inst->Opcode() == IrOpcode::StoreBufferU32) && memory.dataDwords != 1u) {
