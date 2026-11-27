@@ -452,11 +452,9 @@ int APS5_VABI sceNpMatching2JoinLobby(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2JoinRoomA(void) {
-    std::lock_guard lock(matching2Mutex);
-    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2JoinRoomA(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId) {
+    (void)requestOpt;
+    return StartRequest(__func__, ctxId, request, requestId, Leading::RoomId);
 }
 
 int APS5_VABI sceNpMatching2LeaveLobby(void) {
@@ -494,8 +492,33 @@ int APS5_VABI sceNpMatching2SendLobbyChatMessage(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2SetExtraInitParam(void) {
-    NotImplemented_nid_no_patch(__func__);
+namespace {
+constexpr std::uint64_t EXTRA_INIT_FIRST = 8000000;
+constexpr std::uint64_t EXTRA_INIT_SECOND_DEFAULT = 20000000;
+constexpr std::uint16_t EXTRA_INIT_FLAG_VALUE = 0x245b;
+
+struct ExtraInitParam {
+    std::uint8_t flags;
+    std::uint8_t reserved[7];
+    std::uint64_t value;
+};
+
+std::mutex extraInitMutex;
+std::uint64_t extraInitPair[2] = {EXTRA_INIT_FIRST, EXTRA_INIT_SECOND_DEFAULT};
+std::uint16_t extraInitFlagValue = 0;
+}
+
+int APS5_VABI sceNpMatching2SetExtraInitParam(const void* param) {
+    if (!param) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    ExtraInitParam local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(extraInitMutex);
+    if (local.flags & 1) extraInitFlagValue = EXTRA_INIT_FLAG_VALUE;
+    extraInitPair[0] = EXTRA_INIT_FIRST;
+    extraInitPair[1] = local.value != 0 ? local.value : EXTRA_INIT_SECOND_DEFAULT;
     return 0;
 }
 

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -26,6 +27,16 @@ int main() {
     sleep(&twelveMilliseconds);
     const auto elapsed = std::chrono::steady_clock::now() - before;
     Require(elapsed >= std::chrono::milliseconds(12), "sleep_for returned before its positive duration");
+    constexpr std::int64_t oneMillisecond = 1000000;
+    auto shortest = std::chrono::steady_clock::duration::max();
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        const auto start = std::chrono::steady_clock::now();
+        sleep(&oneMillisecond);
+        const auto taken = std::chrono::steady_clock::now() - start;
+        Require(taken >= std::chrono::milliseconds(1), "sleep_for returned before one millisecond");
+        shortest = std::min(shortest, taken);
+    }
+    Require(shortest < std::chrono::milliseconds(10), "a one millisecond sleep_for took a coarse timer tick every time");
     try {
         sleep(nullptr);
         Require(false, "null duration was read");

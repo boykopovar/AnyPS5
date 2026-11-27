@@ -70,11 +70,6 @@ constexpr std::int64_t NanosecondsPerMicrosecond = 1000;
 constexpr std::int64_t NanosecondsPerSecond = 1000000000;
 constexpr std::int64_t PlusInfinityMicroseconds = std::numeric_limits<std::int64_t>::max();
 
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
 void RequireServer(const WebRtcNullSocketServer* server, const char* caller) {
     if (!server)
         throw std::invalid_argument(std::string(caller) + " requires a socket server");
@@ -82,7 +77,6 @@ void RequireServer(const WebRtcNullSocketServer* server, const char* caller) {
 
 void RequireWritable(const WebRtcNullSocketServer* server, const char* caller) {
     RequireServer(server, caller);
-    ErrnoGuard guard;
     if (!GuestWritable_nid_no_patch(const_cast<WebRtcNullSocketServer*>(server), sizeof(*server)))
         throw std::invalid_argument(std::string(caller) + " requires a writable socket server");
 }

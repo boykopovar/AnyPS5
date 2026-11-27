@@ -104,8 +104,13 @@ def render_events(events, path, start, size, limit):
 
 
 def decode_trace(source):
-    bom = source.peek(2)[:2]
-    encoding = "utf-16" if bom in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE) else "utf-8-sig"
+    bom = source.peek(4)[:4]
+    if bom in (codecs.BOM_UTF32_BE, codecs.BOM_UTF32_LE):
+        encoding = "utf-32"
+    elif bom[:2] in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE):
+        encoding = "utf-16"
+    else:
+        encoding = "utf-8-sig"
     return TextIOWrapper(source, encoding=encoding, errors="replace")
 
 
@@ -125,7 +130,10 @@ def main(argv=None):
     try:
         start, size = parse_range(args.address, args.length)
         with args.trace.open("rb") as raw, decode_trace(raw) as source:
-            output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            try:
+                output = render_events(iter_events(source), args.trace, start, size, args.limit)
+            except ValueError as error:
+                raise ValueError(f"{args.trace}: {error}") from error
         sys.stdout.write(output)
     except (OSError, ValueError) as error:
         parser.error(str(error))

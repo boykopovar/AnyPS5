@@ -186,6 +186,107 @@ void RunCombinations(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     }
 }
 
+constexpr std::array<std::uint16_t, 16> SpecialHalves{
+    0x0001u, 0x8001u, 0x0200u, 0x83ffu, 0x03ffu, 0x0155u, 0x8155u, 0x7c01u,
+    0xfc01u, 0x7d55u, 0x7e00u, 0xfe00u, 0x0000u, 0x8000u, 0x7c00u, 0xfc00u,
+};
+
+std::uint16_t SpecialMant(std::uint16_t bits, bool keepDenormals, bool ieee) {
+    const std::uint32_t mag = bits & 0x7fffu;
+    const auto sign = static_cast<std::uint16_t>(bits & 0x8000u);
+    if (mag > 0x7c00u) return ieee ? static_cast<std::uint16_t>(bits | 0x0200u) : bits;
+    if (mag == 0u || mag == 0x7c00u) return bits;
+    if (mag >= 0x0400u) return ComputeExpectedMant(bits);
+    if (!keepDenormals) return sign;
+    const auto width = static_cast<std::uint32_t>(std::bit_width(mag));
+    return static_cast<std::uint16_t>(sign | 0x3800u | ((mag << (11u - width)) & 0x03ffu));
+}
+
+std::uint16_t SpecialExp(std::uint16_t bits, bool keepDenormals) {
+    const std::uint32_t mag = bits & 0x7fffu;
+    if (mag == 0u || mag >= 0x7c00u) return 0u;
+    if (mag >= 0x0400u) return ComputeExpectedExp(bits);
+    if (!keepDenormals) return 0u;
+    return static_cast<std::uint16_t>(static_cast<std::int16_t>(static_cast<int>(std::bit_width(mag)) - 24));
+}
+
+void RunSpecialInputs(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, bool keepDenormals, bool ieee) {
+    Require(SpecialMant(0x0001u, true, false) == 0x3800u && SpecialExp(0x0001u, true) == 0xffe9u && SpecialMant(0x03ffu, true, false) == 0x3bfeu &&
+        SpecialExp(0x8155u, true) == 0xfff1u && SpecialMant(0x8155u, false, false) == 0x8000u && SpecialMant(0x7c01u, true, true) == 0x7e01u &&
+        SpecialMant(0x7c01u, true, false) == 0x7c01u, "frexp special-input model anchors");
+    for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
+        Input[lane] = static_cast<std::uint32_t>(SpecialHalves[lane % SpecialHalves.size()]) |
+            (static_cast<std::uint32_t>(SpecialHalves[(lane + 5u) % SpecialHalves.size()]) << 16u);
+    }
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{0x160200ffu, 1u, 0x160400ffu, TotalResults, 0xe0302000u, 0x80000401u, 0xbf8c3f70u};
+    std::uint32_t index = 0u;
+    for (const auto opcode : {0x59u, 0x5au}) {
+        for (const auto srcSel : {4u, 5u, 6u}) {
+            for (const auto neg : {0u, 1u}) {
+                for (const auto abs : {0u, 1u}) {
+                    for (const auto dstSel : {4u, 5u}) {
+                        for (const auto dstUnused : {0u, 1u, 2u}) {
+                            words.insert(words.end(), {
+                                0x7e0a02ffu, Garbage, 0x7e0a00f9u | (opcode << 9u),
+                                4u | (dstSel << 8u) | (dstUnused << 11u) | (srcSel << 16u) | (neg << 20u) | (abs << 21u),
+                                0xe0702000u | (index * 4u), 0x80010502u,
+                            });
+                            ++index;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{keepDenormals ? 0xc0u : 0x00u, true, ieee, false};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (const auto opcode : {0x59u, 0x5au}) {
+        for (const auto srcSel : {4u, 5u, 6u}) {
+            for (const auto neg : {0u, 1u}) {
+                for (const auto abs : {0u, 1u}) {
+                    for (const auto dstSel : {4u, 5u}) {
+                        for (const auto dstUnused : {0u, 1u, 2u}) {
+                            for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
+                                auto half = static_cast<std::uint16_t>(srcSel == 5u ? Input[lane] >> 16u : Input[lane] & 0xffffu);
+                                if (abs != 0u) half = static_cast<std::uint16_t>(half & 0x7fffu);
+                                if (neg != 0u) half = static_cast<std::uint16_t>(half ^ 0x8000u);
+                                const auto res16 = opcode == 0x59u ? SpecialMant(half, keepDenormals, ieee) : SpecialExp(half, keepDenormals);
+                                const auto expected = InsertExpected(res16, dstSel, dstUnused);
+                                const auto actual = Output[lane * TotalResults + index];
+                                Require(actual == expected, "sdwa frexp special input lane " + std::to_string(lane) + " wave" + std::to_string(waveSize) +
+                                    (keepDenormals ? " f16 denormals kept" : " f16 denormals flushed") + (ieee ? " ieee" : "") + " op " + Hex(opcode) +
+                                    " input " + Hex(half) + " dstSel " + std::to_string(dstSel) + " unused " + std::to_string(dstUnused) +
+                                    ": got " + Hex(actual) + ", expected " + Hex(expected));
+                            }
+                            ++index;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 void CheckRefused(AgcDriver::VulkanDevice& device) {
     struct RefusedCase {
         std::uint32_t word0;
@@ -222,6 +323,9 @@ int main(int argc, char** argv) {
         const auto waveSize = argc == 2 ? 64u : 32u;
         FillInput(waveSize);
         RunCombinations(*device, waveSize);
+        RunSpecialInputs(*device, waveSize, true, false);
+        RunSpecialInputs(*device, waveSize, true, true);
+        RunSpecialInputs(*device, waveSize, false, false);
         CheckRefused(*device);
         std::printf("sdwa frexp f16 wave%u tests passed\n", waveSize);
         return 0;

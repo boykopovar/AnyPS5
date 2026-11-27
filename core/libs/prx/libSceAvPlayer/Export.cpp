@@ -338,6 +338,10 @@ int APS5_VABI sceAvPlayerStreamCount(AvPlayerInternal* h) {
 
 namespace AvPlayer {
 
+void SetAvPlayerBufferWaitObserverForTest_nid_no_patch(void (*observer)(std::uint64_t, std::uint64_t)) {
+    SetBufferWaitObserverForTest(observer);
+}
+
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds) {
     if (h) ToPlayer(h)->SetClockTimeForTest(milliseconds);
 }

@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <cstddef>
+#include <new>
 
 namespace LibcException {
 struct TypeInfoVtable;
@@ -61,9 +62,20 @@ bool APS5_VABI IsSameResource(const MemoryResource* self, const MemoryResource* 
     return self == other;
 }
 
+template<typename TAllocate>
+void* TranslateBadAlloc(TAllocate allocate) {
+    try {
+        return allocate();
+    } catch (const std::bad_alloc&) {
+        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    }
+}
+
 void* APS5_VABI AlignedAllocate(MemoryResource*, std::size_t bytes, std::size_t alignment) {
-    if (alignment > DefaultNewAlignment) return _ZnwmSt11align_val_t_nid_postfix(bytes, alignment);
-    return _Znwm_nid_postfix(bytes);
+    if (alignment > DefaultNewAlignment) {
+        return TranslateBadAlloc([&] { return _ZnwmSt11align_val_t_nid_postfix(bytes, alignment); });
+    }
+    return TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
 }
 
 void APS5_VABI AlignedDeallocate(MemoryResource*, void* pointer, std::size_t bytes, std::size_t alignment) {
@@ -75,7 +87,7 @@ void APS5_VABI AlignedDeallocate(MemoryResource*, void* pointer, std::size_t byt
 
 void* APS5_VABI UnalignedAllocate(MemoryResource*, std::size_t bytes, std::size_t alignment) {
     if (alignment > DefaultNewAlignment) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
-    return _Znwm_nid_postfix(bytes);
+    return TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
 }
 
 void APS5_VABI UnalignedDeallocate(MemoryResource*, void* pointer, std::size_t bytes, std::size_t) {

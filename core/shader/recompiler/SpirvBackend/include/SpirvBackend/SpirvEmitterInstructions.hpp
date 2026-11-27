@@ -16,6 +16,7 @@ std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0,
 std::uint32_t EmitFPAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitFPFma16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
+std::uint32_t EmitSplatLowU16x2(SpirvEmitterState& state, std::uint32_t value);
 std::uint32_t EmitIAdd16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitISub16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitIMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
@@ -420,6 +421,7 @@ void EmitStoreVectorWindow(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitLoadSplitState(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitStoreSplitState(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t LoadSplitStateWord(SpirvEmitterState& state, std::uint32_t element);
+std::uint32_t SplitSliceGroup(SpirvEmitterState& state);
 void EmitGetGotoVariable(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitSetGotoVariable(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitGetScc(SpirvValueEmitContext& ctx, const IrValue& inst);
