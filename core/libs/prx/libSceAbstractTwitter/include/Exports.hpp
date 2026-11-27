@@ -63,14 +63,14 @@ int APS5_VABI _ZN15AbstractStorage14TwitterStorageD0Ev();
 int APS5_VABI _ZN15AbstractStorage14TwitterStorageD1Ev();
 int APS5_VABI _ZN15AbstractStorage14TwitterStorageD2Ev();
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder10GetServiceEv();
-int APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv();
+std::uint64_t APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder7GetStatEPNS_4StatE();
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent10GetServiceEv();
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage14TwitterContent7GetStatEPNS_4StatE();
 int APS5_VABI _ZNK15AbstractStorage14TwitterService14GetServiceTypeEv();
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage10GetServiceEv();
-int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv();
+std::uint64_t APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage7GetStatEPNS_4StatE();
 
 }

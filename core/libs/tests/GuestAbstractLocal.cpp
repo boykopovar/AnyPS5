@@ -13,6 +13,8 @@ void Require(bool value) {
 int main() {
     for (int call = 0; call < 2; ++call) {
         Require(_ZNK15AbstractStorage12LocalContent13GetCapabilityEv() == 0x37C5A);
+        Require(_ZNK15AbstractStorage11LocalFolder13GetCapabilityEv() == 0x3FC000007Eull);
+        Require(_ZNK15AbstractStorage12LocalStorage13GetCapabilityEv() == 0xFC00000000001Aull);
         Require(_ZNK15AbstractStorage12LocalContent10GetServiceEv() == 0);
         Require(_ZN15AbstractStorage12LocalContent8SeekTimeElPl() == static_cast<int>(0x809E0005u));
         Require(_ZNK15AbstractStorage11LocalFolder10GetServiceEv() == 0);
