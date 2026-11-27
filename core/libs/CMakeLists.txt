@@ -686,6 +686,8 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_elf_layout COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_elf_layout.py $<TARGET_FILE:nid_patcher>)
+        add_test(NAME nid_exec_dynstr COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_exec_dynstr.py $<TARGET_FILE:nid_patcher>)
     endif()
     add_test_executable(guest_appinstutil_declarations_tests tests/GuestAppInstUtilDeclarations.cpp)
     target_include_directories(guest_appinstutil_declarations_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
