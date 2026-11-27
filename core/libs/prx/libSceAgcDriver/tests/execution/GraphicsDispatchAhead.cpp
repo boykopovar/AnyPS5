@@ -3,14 +3,12 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -22,13 +20,13 @@ void Require(bool condition, const std::string& message) {
 alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 4> Counted{};
 alignas(256) std::array<std::uint32_t, 4> CountedDescriptor{};
-alignas(256) volatile std::uint32_t Done = 0;
+alignas(256) std::uint32_t Done = 0;
 
-std::uint32_t Low(const volatile void* pointer) {
+std::uint32_t Low(const void* pointer) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer));
 }
 
-std::uint32_t High(const volatile void* pointer) {
+std::uint32_t High(const void* pointer) {
     return static_cast<std::uint32_t>(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)) >> 32u);
 }
 
@@ -48,7 +46,7 @@ void Dispatch(std::vector<std::uint32_t>& words, const void* code, std::initiali
     words.insert(words.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
 }
 
-void WriteData(std::vector<std::uint32_t>& words, const volatile std::uint32_t* target, std::uint32_t value) {
+void WriteData(std::vector<std::uint32_t>& words, const std::uint32_t* target, std::uint32_t value) {
     words.insert(words.end(), {0xc0033700u, 0x00100200u, Low(target), High(target), value});
 }
 
@@ -60,12 +58,8 @@ void Run(std::uint32_t serial) {
     WriteData(words, &Done, serial);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    while (Done != serial) {
-        Require(std::chrono::steady_clock::now() < deadline, "the graphics queue submission never finished");
-        std::this_thread::yield();
-    }
     AgcDriverWaitIdle_nid_postfix();
+    Require(Done == serial, "the graphics queue submission never finished");
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Counted.data()), sizeof(Counted));
 }
 
