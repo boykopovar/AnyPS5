@@ -992,10 +992,12 @@ struct PipelineIdentity {
 
 struct ResultKeyMemo {
     mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    mutable std::atomic<const std::vector<std::uint32_t>*> raw{nullptr};
     ResultKeyMemo() = default;
     ResultKeyMemo(const ResultKeyMemo&) {}
     ResultKeyMemo& operator=(const ResultKeyMemo&) {
         words.store(nullptr, std::memory_order_relaxed);
+        raw.store(nullptr, std::memory_order_relaxed);
         return *this;
     }
 };
