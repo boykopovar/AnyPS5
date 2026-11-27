@@ -2729,22 +2729,21 @@ std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::D
     return arguments;
 }
 
-std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable) {
+void recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable, std::shared_ptr<Buffer>& arguments) {
     const auto* args = indirect.args;
     const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw);
-    auto arguments = meshArgumentBuffer(context, restartTable);
+    arguments = meshArgumentBuffer(context, restartTable);
     if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
         const std::array<std::uint32_t, 8> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal, rules.firstIgnored};
         if (recorder->RecordMeshArguments(commands, indirect.argumentImport->address + (args->arguments - indirect.argumentImport->base), arguments->DeviceAddress(), words)) {
             countBarrier(2);
             if (recorded) recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
-            return arguments;
+            return;
         }
     }
     const auto record = !indirect.records.empty() ? indirect.records.front() : Pm4::ReadDrawArguments(*args, 0);
     const auto resolved = ResolveMeshArguments(record, rules);
     std::memcpy(arguments->Bytes().data(), &resolved, sizeof(resolved));
-    return arguments;
 }
 
 // Debug aid: APS5_CHECK_INDIRECT_ARGS=1 reads the records of a GPU-side draw back on the CPU once
@@ -3308,7 +3307,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             meshArguments = state.tessellationCapture->header;
             argumentBuffer = meshArguments->Handle();
         } else if (meshIndirect) {
-            meshArguments = recordMeshArguments(context, cb, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
+            recordMeshArguments(context, cb, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable, meshArguments);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, cb, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
@@ -3317,7 +3316,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         // layout, which a lean draw renders in: no transitions.
         if (!record.reordered.empty()) {
             RecordSampleOrder(context, rec, record.reorderPass, record.reordered, true, reorderKept);
-            for (auto& object : reorderKept) recorder->Keep(std::move(object));
+            for (const auto& object : reorderKept) recorder->Keep(object);
         }
         for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
@@ -4911,7 +4910,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         meshArguments = state.tessellationCapture->header;
         argumentBuffer = meshArguments->Handle();
     } else if (state.stages.mesh && args != nullptr) {
-        meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable);
+        recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable, meshArguments);
         argumentBuffer = meshArguments->Handle();
     } else if (!inputs.restartTable.empty()) {
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
