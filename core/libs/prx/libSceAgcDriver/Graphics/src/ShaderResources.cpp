@@ -4807,6 +4807,7 @@ void ShaderResources::recordFlushRanges() {
         if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
         flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
         if (surface.resource.dccAddress != 0) flushRanges.emplace_back(surface.resource.dccAddress, surface.resource.dccAddress + DccKeyBytes(surface.bytes));
+        if (surface.source != nullptr && surface.source->Descriptor().dccAddress != 0 && surface.source->Descriptor().dccAddress != surface.resource.dccAddress) flushRanges.emplace_back(surface.source->Descriptor().dccAddress, surface.source->Descriptor().dccAddress + DccKeyBytes(surface.source->GuestBytes()));
     }
     for (const auto& image : storageTextures) {
         if (image == nullptr) continue;

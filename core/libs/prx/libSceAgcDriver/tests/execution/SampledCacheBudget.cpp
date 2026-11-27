@@ -956,6 +956,33 @@ void remappedEpochTests(Context context) {
     Require(!keysExited, "a sampled template took the epoch exit over DCC keys whose guest allocation was replaced");
     keyed.reset();
     ClearCachedTextures(context.device);
+    if (context.hostImportAlignment != 0) {
+        constexpr std::size_t importBytes = std::max<std::size_t>(SurfaceBytes, 0x100000);
+        WatchedSurface imported(context, importBytes);
+        ClearCachedTextures(context.device);
+        if (HostImportFor(context, imported.Address(), importBytes) != nullptr && AgcDriver::GuestMemory::Watched(imported.Address(), importBytes)) {
+            const auto viewKeys = elsewhere.Surface(0);
+            std::memset(reinterpret_cast<void*>(viewKeys), 0, keyBytes);
+            const auto stored = CachedStorageSurface(context, DecodeTextureResource(Descriptor(imported.Address(), Side, Format32UInt, viewKeys)));
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const auto viewProgram = ImageProgramAt(imported.Address(), true);
+            const CompiledShader viewShader{ShaderRecompiler::ShaderStage::Compute, &viewProgram, 0};
+            auto view = std::make_shared<ShaderResources>(context, viewShader);
+            Require(stored != nullptr && view->Reusable() && view->SampledTextures().size() == 1 && view->SampledTextures().front()->StorageSource() == stored.get(), "the unkeyed sampled template does not view the keyed storage image");
+            Require(settle(*view, viewShader), "the template over a keyed storage image never took the epoch exit");
+            const auto viewBefore = exitInputs();
+            replaceRegistry(viewKeys, BlockBytes);
+            const auto viewMoved = movedInputs(viewBefore);
+            bool viewProved = false;
+            const bool viewExited = reused(*view, viewShader, viewProved);
+            std::printf("remapped allocation: an unkeyed sampled template over a storage image with DCC keys after the allocation of those keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", viewMoved.empty() ? "none" : viewMoved.c_str(), viewExited ? "took" : "did not take", viewProved ? "proved current" : "refused");
+            Require(!viewExited, "a sampled template took the epoch exit over its storage image's DCC keys whose guest allocation was replaced");
+            view.reset();
+        } else {
+            std::puts("skipped, the host import of the surface is unavailable or left the write watch: the keys of a storage image behind an unkeyed view are not tested");
+        }
+        ClearCachedTextures(context.device);
+    }
     std::puts("templates over a remapped allocation in the same collect epoch passed");
 }
 
