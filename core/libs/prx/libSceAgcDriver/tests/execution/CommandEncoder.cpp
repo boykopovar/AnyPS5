@@ -624,46 +624,50 @@ void RetirementWaitsForALookupInFlight() {
     const auto device = Handle<VkDevice>(0x5c);
     auto encoder = Attached(device, table);
     const auto commands = Handle<VkCommandBuffer>(0x1d00);
-    std::atomic<bool> held{true};
-    std::atomic<bool> pinned{false};
-    std::atomic<bool> proceed{false};
-    std::atomic<bool> released{false};
-    const auto release = [&] {
-        held.store(false, std::memory_order_release);
-        held.notify_all();
+    struct Handshake {
+        std::thread::id retiring = std::this_thread::get_id();
+        std::atomic<bool> held{true};
+        std::atomic<bool> pinned{false};
+        std::atomic<bool> proceed{false};
+        std::atomic<bool> destroying{false};
+        std::atomic<bool> waitedForTheLookup{false};
+
+        void Proceed() {
+            proceed.store(true, std::memory_order_release);
+            proceed.notify_all();
+        }
     };
-    const auto proceedNow = [&] {
-        released.store(true, std::memory_order_release);
-        proceed.store(true, std::memory_order_release);
-        proceed.notify_all();
-    };
-    CommandEncoder::SetDelayForTesting([&] { held.wait(true, std::memory_order_acquire); });
-    CommandEncoder::SetBlockedHookForTesting([&] {
-        pinned.store(true, std::memory_order_release);
-        proceed.wait(false, std::memory_order_acquire);
+    const auto handshake = std::make_shared<Handshake>();
+    CommandEncoder::SetDelayForTesting([handshake] { handshake->held.wait(true, std::memory_order_acquire); });
+    CommandEncoder::SetBlockedHookForTesting([handshake] {
+        if (std::this_thread::get_id() != handshake->retiring) {
+            handshake->pinned.store(true, std::memory_order_release);
+            handshake->proceed.wait(false, std::memory_order_acquire);
+            return;
+        }
+        if (!handshake->destroying.load(std::memory_order_acquire)) return;
+        if (!handshake->proceed.load(std::memory_order_acquire)) handshake->waitedForTheLookup.store(true, std::memory_order_release);
+        handshake->Proceed();
     });
     encoder->Open(commands, RecordingOf(commands));
     table.cmdDraw(commands, 1, 1, 0, 0);
     encoder->Close();
-    std::thread lookup([&] { AgcDriver::Graphics::BeforeCommandLookup(device); });
-    const bool inFlight = WaitFor([&] { return pinned.load(std::memory_order_acquire); });
-    release();
-    if (inFlight) {
-        WaitFor([&] { return Recorded(commands) == 1; });
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::thread lookup([device] { AgcDriver::Graphics::BeforeCommandLookup(device); });
+    const bool inFlight = WaitFor([&] { return handshake->pinned.load(std::memory_order_acquire); });
+    handshake->held.store(false, std::memory_order_release);
+    handshake->held.notify_all();
+    encoder->Quiesce();
+    handshake->destroying.store(true, std::memory_order_release);
+    if (inFlight) encoder.reset();
+    if (inFlight && !handshake->waitedForTheLookup.load(std::memory_order_acquire)) {
+        lookup.detach();
+        Require(false, "a slot was retired while a lookup that pinned it was still in flight");
     }
-    std::thread releaser([&] {
-        if (inFlight) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        proceedNow();
-    });
-    encoder.reset();
-    const bool retiredAfterTheLookup = released.load(std::memory_order_acquire);
-    releaser.join();
+    handshake->Proceed();
     lookup.join();
     CommandEncoder::SetBlockedHookForTesting({});
     CommandEncoder::SetDelayForTesting({});
     Require(inFlight, "a lookup on another thread did not wait for the queued replay");
-    Require(retiredAfterTheLookup, "a slot was retired while a lookup that pinned it was still in flight");
 }
 
 void LookupsSurviveSlotChurn() {

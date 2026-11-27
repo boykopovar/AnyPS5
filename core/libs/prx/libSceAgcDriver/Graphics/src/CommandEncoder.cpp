@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -71,7 +72,7 @@ std::mutex& slotMutex() {
 }
 
 struct TestDelay {
-    std::mutex mutex;
+    std::shared_mutex mutex;
     std::function<void()> delay;
     std::atomic<bool> set{false};
 };
@@ -91,7 +92,7 @@ TestDelay& testBlocked() {
 
 void runBlockedHook() {
     if (auto& hook = testBlocked(); hook.set.load(std::memory_order_relaxed)) [[unlikely]] {
-        std::lock_guard hookLock(hook.mutex);
+        std::shared_lock hookLock(hook.mutex);
         if (hook.delay) hook.delay();
     }
 }
@@ -522,7 +523,10 @@ CommandEncoder::~CommandEncoder() {
         slots()[slot].encoder.store(nullptr, std::memory_order_release);
     }
     auto& lookups = slots()[slot].lookups;
-    for (auto held = lookups.load(std::memory_order_acquire); held != 0; held = lookups.load(std::memory_order_acquire)) lookups.wait(held, std::memory_order_acquire);
+    for (auto held = lookups.load(std::memory_order_acquire); held != 0; held = lookups.load(std::memory_order_acquire)) {
+        runBlockedHook();
+        lookups.wait(held, std::memory_order_acquire);
+    }
     Quiesce(WaitSite{Wait::Teardown, nullptr, 0});
     stopping.store(true, std::memory_order_seq_cst);
     posted.fetch_add(1, std::memory_order_seq_cst);
