@@ -161,7 +161,7 @@ class PackageHeadersFilteringTests(unittest.TestCase):
 
     def test_sys_stat_is_a_host_header(self):
         self.api.write_bytes(b"#include <sys/stat.h>\n")
-        self.assertEqual(set(package_headers.public_headers(self.root)), {self.api, self.umbrella})
+        self.assertEqual(set(package_headers.public_headers(self.root)), {self.api.resolve(), self.umbrella.resolve()})
 
     def test_unsupported_external_include_raises_runtime_error(self):
         self.api.write_text("#include <external_third_party.h>\n", encoding="utf-8")
