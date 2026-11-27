@@ -675,7 +675,7 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
-    interval_input = options.trace.endswith(".jsonl")
+    interval_input = options.trace.lower().endswith(".jsonl")
     if options.summary and interval_input:
         parser.error("--summary requires an event trace, not interval summaries")
     if options.summary:

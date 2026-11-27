@@ -1411,6 +1411,19 @@ class IntervalDigestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), expected)
 
+    def test_uppercase_jsonl_suffix_is_read_as_interval_summaries(self):
+        expected = trace_digest.digest_intervals(trace_digest.load_intervals(self.path))
+        upper = self.path.with_name("APS5-SUMMARY.JSONL")
+        upper.write_bytes(self.path.read_bytes())
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(upper), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(upper), "--thread", "presenter"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--thread requires an event trace", result.stderr)
+
     def test_rows(self):
         result = trace_digest.digest_intervals(trace_digest.load_intervals(self.path))
         first, second, third, _ = result["intervals"]
