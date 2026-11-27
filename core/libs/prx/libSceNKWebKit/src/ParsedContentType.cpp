@@ -173,7 +173,10 @@ T ReadGuestValue(const T* pointer, const char* function) {
 }
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
-    if (size && (!pointer || !GuestReadable_nid_no_patch(pointer, size)))
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
@@ -635,6 +638,20 @@ Text LookupGuestParameter(const ParsedContentTypeParameter* table, const Text& n
     NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
+struct ParsedValueGuard {
+    ParsedContentType& value;
+    bool committed = false;
+
+    ~ParsedValueGuard() {
+        if (!committed) {
+            try {
+                Destroy(value);
+            } catch (...) {
+            }
+        }
+    }
+};
+
 }
 
 extern "C" {
@@ -648,6 +665,7 @@ OptionalParsedContentType* APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3W
     RequireWritableGuestValue(result, __func__);
     Text text = TextOfGuest(inputImpl, __func__);
     ParsedContentType value {};
+    ParsedValueGuard valueGuard{value};
     if (mode == Mode::Rfc2045) value.m_contentType = RetainGuest(inputImpl, __func__);
     else {
         const std::u16string_view stripped = StripMatched(text.units, IsHTTPSpace);
@@ -657,15 +675,8 @@ OptionalParsedContentType* APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3W
             value.m_contentType = MakeString(text.units, text.is8Bit);
         }
     }
-    bool parsed = false;
-    try {
-        parsed = Parser(value, std::move(text)).Parse(mode);
-    } catch (...) {
-        Destroy(value);
-        throw;
-    }
+    const bool parsed = Parser(value, std::move(text)).Parse(mode);
     if (!parsed) {
-        Destroy(value);
         OptionalParsedContentType output = previousResult;
         output.engaged = false;
         if (!TryPublishGuestValue(result, output, previousResult))
@@ -675,10 +686,9 @@ OptionalParsedContentType* APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3W
     OptionalParsedContentType output{};
     output.engaged = true;
     output.value = value;
-    if (!TryPublishGuestValue(result, output, previousResult)) {
-        Destroy(value);
+    if (!TryPublishGuestValue(result, output, previousResult))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    }
+    valueGuard.committed = true;
     return result;
 }
 

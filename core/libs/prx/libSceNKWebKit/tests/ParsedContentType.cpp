@@ -27,6 +27,7 @@
  */
 
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
 #include <cstdio>
@@ -475,11 +476,13 @@ void TestNullArguments() {
 
 template<typename Function>
 void RequireNotImplemented(Function function) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
     try {
         function();
     } catch (const std::invalid_argument&) {
         Require(false);
     } catch (const std::runtime_error&) {
+        Require(NotImplementedCalls_nid_no_patch() == before + 1);
         return;
     }
     Require(false);
