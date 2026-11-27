@@ -15664,7 +15664,7 @@ bool encodedSegmentTests(const Device& device) {
     DeviceFunctions table{};
     FillDeviceFunctions(context, table);
     Recorder recorder(context, false, &table, context.queueFamily);
-    if (!recorder.Encodes()) return false;
+    if (!recorder.Encodes() || RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder)) return false;
     struct Restore {
         bool adaptive = RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder);
         ~Restore() { RuntimeSwitches::Assign(RuntimeSwitch::NoAdaptiveEncoder, adaptive); }
