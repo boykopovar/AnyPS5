@@ -1763,7 +1763,7 @@ void CheckClearDispatch() {
 bool driverClearUnavailable = false;
 
 bool DriverClearNeedsImports(std::string_view failure, std::uint64_t htileAddress, std::size_t bytes) {
-    if (failure.find("sample-preserving guest publication of native multisample depth is not implemented") == std::string_view::npos) return false;
+    if (!failure.ends_with("sample-preserving guest publication of native multisample depth is not implemented for this owner")) return false;
     const auto driverDevice = AgcDriver::DriverDetail::DriverTestAccess::GetDevice();
     if (driverDevice == nullptr || HostImportFor(driverDevice->graphicsContext(), htileAddress, bytes) != nullptr) return false;
     std::puts("skipped the driver HTILE clear dispatch, host imports are unavailable: the driver cannot import the HTILE metadata, and publishing native multisample depth through a copy is not implemented");
