@@ -677,9 +677,10 @@ SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, c
     return {order, state.renderExtent, SampleLocations(state), ReordersSamples(order) && ValidateSampleLocations(context, state)};
 }
 
-SampleOrderPass DepthAnchorSourcePass(const Context& context, const State& state, VkExtent2D region) {
-    const auto source = DepthAnchorSourceState(state);
-    return {SampleOrder{}, region, SampleLocations(source), ValidateSampleLocations(context, source), HostSampleLocationsFor(context, source).grid};
+SampleOrderPass DepthAnchorSourcePass(const std::optional<RenderedSampleLocations>& rendered, std::uint32_t samples, VkExtent2D region) {
+    Require(rendered.has_value(), "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws when no draw since its last other write recorded the sample locations it was rendered with: its layout transitions must name them");
+    Require(rendered->samples == samples, "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws when its last draw rendered it at " + std::to_string(rendered->samples) + " samples instead of its " + std::to_string(samples));
+    return {SampleOrder{}, region, rendered->locations, rendered->located, rendered->grid};
 }
 
 void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept) {

@@ -1417,6 +1417,7 @@ public:
     }
 
     void NoteHostWrite() {
+        rendered.reset();
         if (samplingActive && !hostWritten->load(std::memory_order_acquire)) capturePublication();
         hostEverWritten->store(true, std::memory_order_release);
         hostWritten->store(true, std::memory_order_release);
@@ -1480,6 +1481,7 @@ public:
     std::shared_ptr<std::atomic<bool>> hostWritten = std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<std::atomic<bool>> hostEverWritten = std::make_shared<std::atomic<bool>>(false);
     bool retired = false;
+    std::optional<RenderedSampleLocations> rendered;
 
     bool Overlaps(std::uint64_t address, std::uint64_t bytes) const {
         const auto end = address + bytes;
@@ -3982,6 +3984,13 @@ void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target) {
     Require(attached, "a native multisample depth attachment was retired while its draw resolved resources");
 }
 
+void NoteDepthSurfaceRendered(const Context& context, const DepthTarget& target, const RenderedSampleLocations& rendered) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && holdsTarget(surface->target, target)) surface->rendered = rendered;
+    }
+}
+
 bool HasResidentDepthGuards_nid_no_patch() {
     return anyDepthGuard().load(std::memory_order_acquire);
 }
@@ -4364,12 +4373,13 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
     throw std::runtime_error("AGC graphics: the depth surface drawn at custom sample locations is not resident");
 }
 
-SampleOrderTarget DepthSurfaceAnchorSource(const Context& context, const DepthTarget& target) {
+SampleOrderTarget DepthSurfaceAnchorSource(const Context& context, const DepthTarget& target, std::optional<RenderedSampleLocations>& rendered) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::unique_lock lock(surfacesMutex());
     for (const auto& candidate : surfaces()) {
         if (!candidate->active->load(std::memory_order_acquire) || candidate->context.device != context.device || !holdsTarget(candidate->target, target)) continue;
         Require(candidate->target.samples == target.samples && candidate->owned != nullptr, "the depth surface expanded for a color-writing draw is not a multisampled surface of its own");
+        rendered = candidate->rendered;
         return {candidate->image, candidate->view, candidate->hostFormat, candidate->target.extent, target.samples, DepthSampleOrderMethod(context, target), candidate->owned};
     }
     throw std::runtime_error("AGC graphics: the depth surface expanded for a color-writing draw is not resident");

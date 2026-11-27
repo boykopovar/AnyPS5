@@ -3388,6 +3388,11 @@ std::optional<State> maskedState(const State& state, std::uint32_t fragmentOutpu
     return masked;
 }
 
+void noteDepthRendered(const Context& context, const State& state, const Pipeline& pipeline) {
+    if (!state.depth || state.depth->samples <= 1u || state.depthAnchorSamples != 0) return;
+    NoteDepthSurfaceRendered(context, *state.depth, {state.samples, pipeline.SampleLocationsEnabled(), pipeline.HostSampleLocationGrid(), SampleLocations(state)});
+}
+
 std::optional<DepthSampleLocations> passDepthLocations(const Context& context, const State& state, const Pipeline& pipeline) {
     if (!state.depth || state.depth->samples <= 1u || state.depthAnchorSamples != 0 || !state.customSampleLocations || !pipeline.SampleLocationsEnabled()) return std::nullopt;
     auto locations = DepthSurfaceSampleLocations(context, *state.depth);
@@ -4372,7 +4377,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     if (state.depth && state.depthAnchorSamples != 0) {
         Require(!prepared.attachmentsFromMemo && !repeatedDepth, "a depth target expanded for a color-writing draw was taken from a remembered attachment");
         auto& anchor = prepared.anchor.emplace();
-        anchor.source = DepthSurfaceAnchorSource(context, *state.depth);
+        anchor.source = DepthSurfaceAnchorSource(context, *state.depth, anchor.sourceRendered);
         anchor.twin = DepthSurfaceAnchorTwin(context, *state.depth, state.samples);
         depthView = anchor.twin.view;
     }
@@ -4658,10 +4663,11 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         auto& anchor = *prepared.anchor;
         anchor.map = pipelineState.depthAnchorMap;
         anchor.region = {std::min({pipelineState.renderExtent.width, anchor.source.extent.width, anchor.twin.extent.width}), std::min({pipelineState.renderExtent.height, anchor.source.extent.height, anchor.twin.extent.height})};
-        anchor.sourcePass = DepthAnchorSourcePass(context, pipelineState, anchor.region);
+        anchor.sourcePass = DepthAnchorSourcePass(anchor.sourceRendered, anchor.source.samples, anchor.region);
         anchor.twinPass = {SampleOrder{}, anchor.region, SampleLocations(pipelineState), pipeline->SampleLocationsEnabled()};
     }
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
+    noteDepthRendered(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
     if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
@@ -5406,6 +5412,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.pushBytes = &pushBytes;
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
+    noteDepthRendered(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
     if (passAttachments) rememberRecipeAttachments(context, state, recorder, targets.Span(), recipe.targetViews);
     if (profile) {

@@ -1418,15 +1418,6 @@ std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state) {
     return locations;
 }
 
-State DepthAnchorSourceState(const State& state) {
-    Require(state.depthAnchorSamples > 1u && state.depthAnchorSamples < state.samples, "the stored samples of a depth target expanded for a color-writing draw are not fewer than the rasterizer's");
-    auto source = state;
-    rasterizeLeadingSamples(source, state.depthAnchorSamples);
-    source.depthAnchorSamples = 0;
-    source.depthAnchorMap = {};
-    return source;
-}
-
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputBit;

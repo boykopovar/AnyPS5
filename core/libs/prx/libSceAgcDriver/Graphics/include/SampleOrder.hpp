@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -59,8 +60,16 @@ struct DepthSampleLocations {
     std::shared_ptr<void> keep;
 };
 
+struct RenderedSampleLocations {
+    std::uint32_t samples = 0;
+    bool located = false;
+    VkExtent2D grid{1, 1};
+    std::array<VkSampleLocationEXT, 32> locations{};
+};
+
 struct DepthAnchorExpand {
     SampleOrderTarget source;
+    std::optional<RenderedSampleLocations> sourceRendered;
     SampleOrderTarget twin;
     std::array<std::uint32_t, 4> map{};
     VkExtent2D region{};
@@ -76,7 +85,7 @@ VkFormat SampleOrderStorageFormat(const Context& context, VkFormat format, std::
 std::string SampleOrderRefusal(const Context& context, const State& state);
 std::vector<SampleOrderStep> PlanSampleOrder(const Context& context, const State& state, const SampleOrder& order, VkAttachmentLoadOp load = VK_ATTACHMENT_LOAD_OP_LOAD, VkAttachmentStoreOp store = VK_ATTACHMENT_STORE_OP_STORE);
 SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, const SampleOrder& order);
-SampleOrderPass DepthAnchorSourcePass(const Context& context, const State& state, VkExtent2D region);
+SampleOrderPass DepthAnchorSourcePass(const std::optional<RenderedSampleLocations>& rendered, std::uint32_t samples, VkExtent2D region);
 void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept);
 void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands, const DepthSampleLocations& depth);
 std::string DepthAnchorRefusal(const Context& context, const State& state);
