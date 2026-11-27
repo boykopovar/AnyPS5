@@ -192,19 +192,20 @@ void BufferValueWordsArePatchedInTheirBinding() {
     Driver::tagUserValueWords(*pointer, program);
     Require((pointer->valueWords >> 4u & 1u) == 0u, "a user word relocated as a pointer was also tagged as a V# value");
 
-    const auto shared = [&](std::uint32_t otherRecords) {
+    const auto shared = [&](std::uint32_t otherRecords, std::uint32_t otherHigh) {
         auto compiled = result(false);
-        compiled->bindings.push_back(GuestBuffer({Low(Buffer.data()) + 0x100u, descriptor[1], otherRecords, descriptor[3]}, false));
+        compiled->bindings.push_back(GuestBuffer({Low(Buffer.data()) + 0x100u, otherHigh, otherRecords, descriptor[3]}, false));
         compiled->bindings.back().binding = 1;
         const auto variant = Variant(compiled);
         Driver::tagUserValueWords(*variant, program);
         return variant;
     };
-    const auto sharedCount = shared(descriptor[2]);
-    Require((sharedCount->valueWords >> 4u & 1u) != 0u && (sharedCount->valueWords >> 5u & 1u) != 0u && (sharedCount->valueWords >> 6u & 1u) == 0u, "a record count that also builds a second descriptor was tagged (mask " + std::to_string(sharedCount->valueWords) + ")");
-    Require(sharedCount->valueSlots.size() == 2u && sharedCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u} && sharedCount->valueSlots[1] == std::array<std::uint32_t, 3>{5u, 0u, 1u}, "a V# whose record count builds a second descriptor recorded a record-count patch");
-    const auto ownCount = shared(descriptor[2] + 1u);
-    Require((ownCount->valueWords >> 5u & 1u) != 0u && (ownCount->valueWords >> 6u & 1u) != 0u, "a record count used by one descriptor only was not tagged next to an independent second descriptor");
+    const auto sharedCount = shared(descriptor[2], descriptor[1]);
+    Require((sharedCount->valueWords >> 4u & 1u) != 0u && (sharedCount->valueWords >> 5u & 1u) == 0u && (sharedCount->valueWords >> 6u & 1u) == 0u, "a shared high word and record count that build a second descriptor were tagged (mask " + std::to_string(sharedCount->valueWords) + ")");
+    Require(sharedCount->valueSlots.size() == 1u && sharedCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u}, "a V# whose high word and record count build a second descriptor recorded a patch");
+    const auto ownCount = shared(descriptor[2] + 1u, descriptor[1] + 1u);
+    Require((ownCount->valueWords >> 5u & 1u) != 0u && (ownCount->valueWords >> 6u & 1u) != 0u, "a high word and record count used by one descriptor only were not tagged next to an independent second descriptor");
+    Require(ownCount->valueSlots.size() == 3u && ownCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u} && ownCount->valueSlots[1] == std::array<std::uint32_t, 3>{5u, 0u, 1u} && ownCount->valueSlots[2] == std::array<std::uint32_t, 3>{6u, 0u, 2u}, "a V# with independent high word and record count did not record all patches");
 }
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{

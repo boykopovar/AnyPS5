@@ -991,6 +991,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     bool forcedBarycentrics = false;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
+    std::vector<bool> patchedPush(programs.size(), false);
     const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
     const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
     for (std::size_t i = 0; i < programs.size(); ++i) {
@@ -1048,7 +1049,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         try {
             require(result.pushConstants.size() <= pushBudget, "stage push constants exceed the pipeline push constant block");
             stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get()});
-            if (matched[i] != nullptr && UsesPatchedPushConstants(drawHit, stageReused, dataCandidate, *matched[i])) stages.back().pushConstants = matched[i]->patchedPushConstants;
+            patchedPush[i] = matched[i] != nullptr && UsesPatchedPushConstants(drawHit, stageReused, dataCandidate, *matched[i]);
+            if (patchedPush[i] && !(drawParameters.indirect && indirectCpu)) stages.back().pushConstants = matched[i]->patchedPushConstants;
             pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
         } catch (...) {
             TraceMaterializationFailure(trace.token, submission, packetOffset, "push-constant-validation", completedSubdraws, std::current_exception());
@@ -1218,6 +1220,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             if (programResults[i] == nullptr) continue;
             resultIndex[i] = results.size();
             results.push_back(ShaderRecompiler::RecompileResult(*programResults[i]));
+            if (patchedPush[i]) results.back().pushConstants = matched[i]->patchedPushConstants;
             for (auto& stage : stages) {
                 if (stage.program == programResults[i]) stage.program = &results[resultIndex[i]];
             }

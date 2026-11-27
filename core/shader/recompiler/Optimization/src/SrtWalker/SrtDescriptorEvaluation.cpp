@@ -263,6 +263,9 @@ bool interpretRuntimeSources(const IrResourcePlan& program, std::span<const std:
     const auto baseBefore = use != nullptr ? use->asBase : 0;
     const auto valueBefore = use != nullptr ? use->asValue : 0;
     const auto useReadsBefore = use != nullptr ? use->reads.size() : 0;
+    const auto useReadInstructionsBefore = use != nullptr ? use->readInstructions.size() : 0;
+    const auto useOperandReadsBefore = use != nullptr ? use->operandReads.size() : 0;
+    const auto useSourceLeadsBefore = use != nullptr ? use->sourceLeads.size() : 0;
     const auto runWithRetry = [&](auto evaluateFn) {
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             if (attempt != 0u) {
@@ -275,6 +278,9 @@ bool interpretRuntimeSources(const IrResourcePlan& program, std::span<const std:
                     use->asBase = baseBefore;
                     use->asValue = valueBefore;
                     use->reads.resize(useReadsBefore);
+                    use->readInstructions.resize(useReadInstructionsBefore);
+                    use->operandReads.resize(useOperandReadsBefore);
+                    use->sourceLeads.resize(useSourceLeadsBefore);
                 }
             }
             const SrtForceSyncScope forceSync(runtime, attempt == 2u);

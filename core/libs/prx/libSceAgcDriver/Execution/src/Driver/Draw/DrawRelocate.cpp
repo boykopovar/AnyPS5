@@ -114,7 +114,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
     }
     for (std::uint32_t index = program.hiddenUserWords; index + 2 < users; ++index) {
         const auto base = program.userData[index];
-        if (base == 0 || taken(index) || upperHalf(index) || bound(base) != 1 || elsewhere(index, base)) continue;
+        if (base == 0 || taken(index) || upperHalf(index) || bound(base) != 1 || elsewhere(index, base) || bound(program.userData[index + 1]) != 1) continue;
         std::uint32_t binding = 0, word = 0;
         for (std::size_t b = 0; b < compiled.bindings.size(); ++b) {
             const auto& descriptor = compiled.bindings[b].guestDescriptor;

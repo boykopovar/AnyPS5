@@ -133,6 +133,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             std::optional<DrawMiss> miss;
             std::vector<std::size_t> ranks(programs.size(), 0);
             std::uint64_t stageValidations = 0, stageEqual = 0, compared = 0, imagesFlushed = 0, runsSynced = 0, dataStages = 0, dataWords = 0;
+            bool bufferData = false;
             std::vector<std::pair<std::uint32_t, std::uint32_t>> liveData;
             auto* live = drawStageDataHits() ? &liveData : nullptr;
             if (entry->stages.size() != programs.size()) {
@@ -181,6 +182,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                             auto patched = patchBufferWords(*variant, liveData);
                             result = patched != nullptr ? EntryOutcome::Equal : EntryOutcome::Differing;
                             if (patched != nullptr) {
+                                bufferData = true;
                                 variant = std::move(patched);
                                 regions.clear();
                                 appendEntryRegions(*variant, regions);
@@ -261,7 +263,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     verifyHit = true;
                     drawHit = false;
                 }
-                if (dataStages != 0 && verifyDrawDataHits()) drawHit = false;
+                if ((dataStages != 0 || bufferData) && verifyDrawDataHits()) drawHit = false;
             } else {
                 ++counters.misses[static_cast<std::size_t>(*miss)];
                 if (registerKey && entry->decode != nullptr) ++counters.decodePartial;
