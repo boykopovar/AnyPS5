@@ -90,16 +90,20 @@ Outcome Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t wa
     device.WaitIdle();
     bool passed = words[TokenWord] == Tokens;
     for (std::uint32_t index = 0; index < 4u; ++index) passed = passed && words[index] == Tokens + (index << 16u);
-    bool concurrentTimeout = false;
+    bool timedOutAlone = true;
+    std::uint32_t lastToken = 0;
     for (std::uint32_t group = 0; group < 2u; ++group) {
         const auto* report = words + ReportWord + group * ReportWords;
         passed = passed && report[0] == 2u && report[2] == 0u && report[3] == Tokens + group;
-        concurrentTimeout = concurrentTimeout || (report[0] == 3u && report[4] == 1u);
+        timedOutAlone = timedOutAlone && report[0] == 3u && report[1] == SpinBudget && report[2] == 0u && report[3] % 2u == group && report[3] < Tokens && report[4] == 0u;
+        lastToken = std::max(lastToken, report[3]);
         std::printf("wave%u group %u: %s, %u spin iterations, %u stale payloads, next token %u\n", waveSize, group, report[0] == 2u ? "took every turn" : report[0] == 3u ? (report[4] == 1u ? "gave up while the other workgroup was running" : "gave up without the other workgroup running") : "?", report[1], report[2], report[3]);
     }
     std::printf("wave%u: token %u of %u, payload %08x %08x %08x %08x\n", waveSize, words[TokenWord], Tokens, words[0], words[1], words[2], words[3]);
     if (passed) return Outcome::Passed;
-    return concurrentTimeout || words[ReportWord + 2u] != 0u || words[ReportWord + ReportWords + 2u] != 0u ? Outcome::Failed : Outcome::NotConcurrent;
+    bool serial = timedOutAlone && words[TokenWord] != 0u && words[TokenWord] + 1u == lastToken;
+    for (std::uint32_t index = 0; index < 4u; ++index) serial = serial && words[index] == words[TokenWord] + (index << 16u);
+    return serial ? Outcome::NotConcurrent : Outcome::Failed;
 }
 
 }

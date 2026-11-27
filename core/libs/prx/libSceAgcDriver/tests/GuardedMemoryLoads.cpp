@@ -525,14 +525,21 @@ int main() {
         };
         struct Counts {
             unsigned atomicStores = 0, atomicLoads = 0, volatileStores = 0, volatileLoads = 0, deviceFences = 0, otherFences = 0;
+            std::string order;
         };
         const auto counts = [](const std::vector<std::uint32_t>& module) {
             std::map<std::uint32_t, std::uint32_t> constants;
             Counts found;
+            std::uint32_t entry = 0;
+            std::uint32_t function = 0;
             for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
                 const auto opcode = static_cast<spv::Op>(module[offset] & 0xffffu);
                 const auto words = module[offset] >> 16u;
                 if (opcode == spv::OpConstant && words == 4u) constants.emplace(module[offset + 2], module[offset + 3]);
+                if (opcode == spv::OpEntryPoint) entry = module[offset + 2];
+                if (opcode == spv::OpFunction) function = module[offset + 2];
+                const char access = opcode == spv::OpAtomicStore ? 'S' : opcode == spv::OpAtomicLoad ? 'L' : opcode == spv::OpAtomicCompareExchange ? 'C' : opcode == spv::OpMemoryBarrier ? 'F' : '\0';
+                if (access != '\0' && function == entry) found.order += access;
                 found.atomicStores += opcode == spv::OpAtomicStore;
                 found.atomicLoads += opcode == spv::OpAtomicLoad;
                 found.volatileStores += opcode == spv::OpStore && words >= 4u && (module[offset + 3] & spv::MemoryAccessVolatileMask) != 0u;
@@ -544,12 +551,15 @@ int main() {
                     found.otherFences += !device;
                 }
             }
+            for (auto exchange = found.order.find("LCF"); exchange != std::string::npos; exchange = found.order.find("LCF")) found.order.erase(exchange, 3u);
+            for (auto run = found.order.find("LL"); run != std::string::npos; run = found.order.find("LL")) found.order.erase(run, 1u);
             return found;
         };
         const auto fenced = counts(emitPublication(true, true));
         const auto unfenced = counts(emitPublication(true, false));
         require(fenced.atomicStores == 3u && fenced.volatileStores == 0u && fenced.volatileLoads == 0u && fenced.atomicLoads == unfenced.atomicLoads, "with the flag, coherent dword stores and loads are not all atomic");
         require(fenced.deviceFences == unfenced.deviceFences + 2u && fenced.otherFences == unfenced.otherFences, "with the flag, the guest's release and acquire did not each become one device-scope acquire-release fence on uniform memory");
+        require(fenced.order == "SFSLFLS" && unfenced.order == "SSLS", "with the flag, the entry function does not store the payload, fence, store the token, load the token, fence and load the payload in that order (atomic stores S, fences F, runs of atomic loads L, with each compare-and-swap of a misaligned store left out: " + fenced.order + ", without the fences " + unfenced.order + ")");
         require(emitPublication(false, true) == emitPublication(false, false), "without the flag, the guest's release or acquire changed the module");
         const auto plain = counts(emitPublication(false, true));
         const bool atomicWithoutFlag = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
@@ -685,6 +695,22 @@ int main() {
         };
         const auto reads = [&](const std::vector<std::uint32_t>& module) { return count(module, spv::OpFunctionCall, "read_bda_span_stop"); };
         const auto fences = [&](const std::vector<std::uint32_t>& module) { return count(module, spv::OpMemoryBarrier, {}); };
+        const auto order = [](const std::vector<std::uint32_t>& module) {
+            std::uint32_t entry = 0;
+            std::uint32_t function = 0;
+            std::uint32_t callee = 0;
+            std::string found;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                const auto opcode = module[offset] & 0xffffu;
+                if (opcode == spv::OpEntryPoint) entry = module[offset + 2];
+                if (opcode == spv::OpName && std::string_view(reinterpret_cast<const char*>(module.data() + offset + 2)) == "read_bda_span_stop") callee = module[offset + 1];
+                if (opcode == spv::OpFunction) function = module[offset + 2];
+                if (function != entry) continue;
+                if (opcode == spv::OpFunctionCall && module[offset + 3] == callee) found += 'R';
+                if (opcode == spv::OpMemoryBarrier) found += 'F';
+            }
+            return found;
+        };
         for (const bool flag : {false, true}) {
             const auto none = compile({}, flag);
             const auto wait = compile({Wait}, flag);
@@ -692,10 +718,12 @@ int main() {
             const auto dcache = compile({Dcache, 0u}, flag);
             require(reads(none) == 1u && reads(wait) == 1u && reads(dcache) == 1u && fences(none) == 0u && fences(wait) == 0u && fences(dcache) == 0u, "control: two global_load_dword 4 bytes apart, alone or with s_waitcnt or s_dcache_inv between them, were not one BDA read without a fence");
             require(reads(release) == (flag ? 2u : 1u) && fences(release) == (flag ? 1u : 0u), flag ? "with the coherent buffer atomics target, s_waitcnt_vscnt null, 0 between two global_load_dword 4 bytes apart did not make two BDA reads with a fence between them" : "without the coherent buffer atomics target, s_waitcnt_vscnt null, 0 between two global_load_dword 4 bytes apart split them or added a fence");
+            if (flag) require(order(release) == "RFR", "with the coherent buffer atomics target, the entry function does not read, fence and read around s_waitcnt_vscnt null, 0 in that order: " + order(release));
             if (!flag) require(release == wait, "without the coherent buffer atomics target, s_waitcnt_vscnt null, 0 compiled differently from s_waitcnt");
             for (const auto invalidate : {Gl0, Gl1}) {
                 const auto module = compile({invalidate, 0u}, flag);
                 require(reads(module) == (flag ? 2u : 1u) && fences(module) == (flag ? 1u : 0u), flag ? "with the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv between two global_load_dword 4 bytes apart did not make two BDA reads with a fence between them" : "without the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv between two global_load_dword 4 bytes apart split them or added a fence");
+                if (flag) require(order(module) == "RFR", "with the coherent buffer atomics target, the entry function does not read, fence and read around buffer_gl0_inv or buffer_gl1_inv in that order: " + order(module));
                 if (!flag) require(module == dcache, "without the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv compiled differently from s_dcache_inv");
             }
         }
