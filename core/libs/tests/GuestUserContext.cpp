@@ -5,15 +5,20 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 #include <xmmintrin.h>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using ContextEntry = void (APS5_VABI*)();
@@ -140,6 +145,7 @@ struct Fibre {
 
 Stack g_restoreStack;
 Stack g_contextStack;
+Stack g_signalFailureStack;
 Stack g_jobStack;
 Stack g_exitStack;
 std::uint64_t g_arguments[6] = {};
@@ -155,6 +161,77 @@ void Require(bool value, const char* what) {
         std::fprintf(stderr, "User context check failed: %s\n", what);
         std::abort();
     }
+}
+
+std::size_t SystemPageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 0;
+#endif
+}
+
+void CheckSignalcontextPartialWrite() {
+    const auto pageSize = SystemPageSize();
+    Require(pageSize > sizeof(UserUcontext) + 144, "system pages can hold the signal frame");
+    const auto base = reinterpret_cast<std::uintptr_t>(g_signalFailureStack.bytes);
+    const auto end = base + StackBytes;
+    const auto firstPage = (base + pageSize - 1) & ~(static_cast<std::uintptr_t>(pageSize) - 1);
+    const auto readOnlyPage = firstPage + pageSize;
+    const auto writablePage = readOnlyPage + pageSize;
+    Require(writablePage + 128 + sizeof(UserUcontext) + 16 < end, "signal failure stack has two interior pages");
+    std::memset(g_signalFailureStack.bytes, 0x5a, StackBytes);
+    UserUcontext context{};
+    context.mcontext.rsp = writablePage + 128 + sizeof(UserUcontext) + 16;
+    context.sigmask[0] = 0xffffffffu;
+    context.link = reinterpret_cast<UserUcontext*>(std::uintptr_t{0x12345678});
+    const UserUcontext originalContext = context;
+    std::vector<std::uint8_t> originalStack(StackBytes);
+    std::memcpy(originalStack.data(), g_signalFailureStack.bytes, StackBytes);
+#ifdef _WIN32
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(reinterpret_cast<void*>(readOnlyPage), pageSize, PAGE_READONLY, &oldProtection) != 0, "protect the signal frame page read-only");
+#else
+    Require(mprotect(reinterpret_cast<void*>(readOnlyPage), pageSize, PROT_READ) == 0, "protect the signal frame page read-only");
+#endif
+    const auto savedAddress = static_cast<std::uintptr_t>((context.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15));
+    const auto infoAddress = (savedAddress - 80) & ~static_cast<std::uintptr_t>(15);
+    const auto stackBegin = infoAddress - 3 * sizeof(std::uint64_t) - 16;
+    const auto stackEnd = savedAddress + sizeof(UserUcontext);
+    Require(GuestWritable_nid_no_patch(reinterpret_cast<void*>(savedAddress), sizeof(UserUcontext)), "saved context destination is writable");
+    Require(!GuestWritable_nid_no_patch(reinterpret_cast<void*>(stackBegin), stackEnd - stackBegin), "complete signal frame includes a read-only page");
+    *__error_nid_postfix() = 0;
+    const int result = signalcontext_nid_postfix(&context, 15, nullptr);
+    const int guestError = *__error_nid_postfix();
+#ifdef _WIN32
+    DWORD ignoredProtection = 0;
+    const bool restored = VirtualProtect(reinterpret_cast<void*>(readOnlyPage), pageSize, oldProtection, &ignoredProtection) != 0;
+#else
+    const bool restored = mprotect(reinterpret_cast<void*>(readOnlyPage), pageSize, PROT_READ | PROT_WRITE) == 0;
+#endif
+    Require(restored, "restore the signal frame page protection");
+    Require(result == -1 && guestError == GuestEfault, "signalcontext rejects a partially writable stack frame");
+    Require(std::memcmp(&context, &originalContext, sizeof(context)) == 0, "signalcontext leaves context unchanged after stack preflight failure");
+    Require(std::memcmp(g_signalFailureStack.bytes, originalStack.data(), StackBytes) == 0, "signalcontext leaves all stack bytes unchanged after stack preflight failure");
+}
+
+void CheckSignalcontextMinimumHeadroom() {
+    constexpr std::uint64_t MinimumHeadroom = 128 + sizeof(UserUcontext) + 80 + 15 + 3 * sizeof(std::uint64_t) + 16;
+    const auto base = reinterpret_cast<std::uintptr_t>(g_signalFailureStack.bytes) + 8;
+    std::memset(g_signalFailureStack.bytes, 0x6b, StackBytes);
+    UserUcontext context{};
+    context.mcontext.rsp = base + MinimumHeadroom;
+    context.sigmask[0] = 0xffffffffu;
+    const UserUcontext originalContext = context;
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(&context, 15, nullptr) == 0, "signalcontext accepts the exact checked headroom boundary");
+    const auto savedAddress = (originalContext.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15);
+    Require(context.mcontext.rsp == base, "minimum-headroom frame starts at the supplied stack boundary");
+    Require(context.link == reinterpret_cast<UserUcontext*>(savedAddress), "minimum-headroom context links to its saved copy");
+    Require(std::memcmp(reinterpret_cast<const void*>(savedAddress), &originalContext, sizeof(originalContext)) == 0, "minimum-headroom frame preserves the original context");
 }
 
 std::uint16_t ControlWord() {
@@ -295,6 +372,8 @@ void CheckErrors() {
     Require(signalContext.link != nullptr && signalContext.mcontext.len == sizeof(UserMcontext), "signalcontext links the saved context and initializes mcontext");
     Require((signalContext.sigmask[0] & (1u << 14)) == 0, "signalcontext unmasks the delivered signal");
     Require(signalContext.mcontext.rdi == reinterpret_cast<std::uint64_t>(&signalContext), "signalcontext passes the context pointer as rdi");
+    CheckSignalcontextPartialWrite();
+    CheckSignalcontextMinimumHeadroom();
 }
 
 void CheckCapture() {
