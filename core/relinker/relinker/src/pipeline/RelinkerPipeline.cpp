@@ -1,5 +1,6 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
@@ -29,6 +30,20 @@ constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
 constexpr std::uint16_t kEtSceDynExec = 0xfe10;
 constexpr std::uint16_t kEtSceDynamic = 0xfe18;
+
+const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs) {
+    const NidReference* candidate = nullptr;
+    for (const auto& ref : nidRefs) {
+        if (ref.Addend != 0 || !IsPathconfImportLibrary(ref.Library) || !IsPathconfImportSymbolType(ref.SymbolType) || !IsPathconfImportName(ref.Nid))
+            continue;
+        const unsigned rank = PathconfRelocationRank(ref.RelocationTypeValue);
+        if (rank == 0)
+            continue;
+        if (!candidate || rank > PathconfRelocationRank(candidate->RelocationTypeValue))
+            candidate = &ref;
+    }
+    return candidate;
+}
 
 }
 
@@ -521,10 +536,12 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
+        std::vector<RoutedSyscallStub> segmentRoutedStubs;
         std::vector<std::size_t> syscallTraps;
         try {
-            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index]);
+            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs);
         } catch (const RelinkerException& error) {
+            if (!error.HasFailureOffset) throw;
             const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
             if (cause.empty()) throw;
             RelinkerException explained(error.what() + cause, error.FailureOffset);
@@ -537,6 +554,49 @@ RelinkResult RelinkerPipeline::Relink() {
             segment[offset] = scanSegment[offset] = 0x0F;
             segment[offset + 1] = scanSegment[offset + 1] = 0x0B;
             syscallPatches.push_back({segmentFileOffset + offset, {0x0F, 0x0B}});
+        }
+
+        for (const auto& routed : segmentRoutedStubs) {
+            if (routed.SyscallNumber == 191) {
+                const auto* pathconfRef = FindPathconfImport(nidRefs);
+                if (pathconfRef != nullptr) {
+                    const VirtualAddress stubVAddr = segmentVAddr + routed.StubOffset;
+                    if (routed.StubOffset + routed.StubLength > segment.size())
+                        throw RelinkerException("Syscall route patch exceeds executable segment", stubVAddr);
+                    const VirtualAddress targetAddr = pathconfRef->RelocationAddress;
+                    const VirtualAddress ripAfterDisp = stubVAddr + 6;
+                    const std::int64_t disp = static_cast<std::int64_t>(targetAddr) - static_cast<std::int64_t>(ripAfterDisp);
+                    if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                        throw RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+                    const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+                    std::vector<std::uint8_t> patchBytes = {
+                        0xFF, 0x25,
+                        static_cast<std::uint8_t>(disp32 & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 8) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 16) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 24) & 0xFF),
+                        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                    };
+                    std::copy(patchBytes.begin(), patchBytes.end(), segment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    std::copy(patchBytes.begin(), patchBytes.end(), scanSegment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    if (index == 0 && !textSection.empty() && routed.StubOffset + patchBytes.size() <= textSection.size())
+                        std::copy(patchBytes.begin(), patchBytes.end(), textSection.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    syscallPatches.push_back({segmentFileOffset + routed.StubOffset, std::move(patchBytes)});
+                } else if (syscallScanner->TrapsSdkStubs()) {
+                    const std::size_t opcodeOffset = routed.StubOffset + 10u;
+                    if (opcodeOffset > segment.size() || segment.size() - opcodeOffset < 2u)
+                        throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + opcodeOffset);
+                    segment[opcodeOffset] = scanSegment[opcodeOffset] = 0x0F;
+                    segment[opcodeOffset + 1] = scanSegment[opcodeOffset + 1] = 0x0B;
+                    if (index == 0 && !textSection.empty() && opcodeOffset + 2u <= textSection.size()) {
+                        textSection[opcodeOffset] = 0x0F;
+                        textSection[opcodeOffset + 1] = 0x0B;
+                    }
+                    syscallPatches.push_back({segmentFileOffset + opcodeOffset, {0x0F, 0x0B}});
+                } else {
+                    throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import", segmentVAddr + routed.StubOffset);
+                }
+            }
         }
     }
 

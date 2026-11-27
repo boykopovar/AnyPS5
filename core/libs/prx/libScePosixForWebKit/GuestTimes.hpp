@@ -10,3 +10,9 @@ struct PosixForWebKitTms {
 };
 
 static_assert(sizeof(PosixForWebKitTms) == 16);
+
+constexpr std::int64_t PosixForWebKitClockTicksPerSecond = 128;
+
+constexpr std::int32_t PosixForWebKitClockTicks(std::int64_t seconds, std::int64_t micros) {
+    return static_cast<std::int32_t>(seconds * PosixForWebKitClockTicksPerSecond + micros / (1000000 / PosixForWebKitClockTicksPerSecond));
+}
