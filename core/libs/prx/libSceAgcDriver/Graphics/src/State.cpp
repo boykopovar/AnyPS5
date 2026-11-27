@@ -1177,8 +1177,8 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if ((swap != 0 && swap != 2) || number != unorm) return fail();
             return {VK_FORMAT_R5G6B5_UNORM_PACK16, 2, static_cast<std::uint8_t>(swap == 2 ? 0xe4u : 0xc6u)};
         case 17:
-            if (swap != 0 || number != unorm) return fail();
-            return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, 0xc6u};
+            if (swap > 1 || number != unorm) return fail();
+            return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, static_cast<std::uint8_t>(alternate ? 0xe4u : 0xc6u)};
         case 19:
             if (swap != 2 || number != unorm) return fail();
             return {VK_FORMAT_R16_UINT, 2, 0x1bu, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
