@@ -161,6 +161,13 @@ int main() {
     Require(*__error_nid_postfix() == 22);
     Require(allocated == nullptr);
 
+    *__error_nid_postfix() = 0;
+    auto* inaccessibleDestination = reinterpret_cast<char**>(0x10);
+    const auto allocationsBeforeBadDestination = allocations;
+    Require(CallVasprintf(inaccessibleDestination, "value=%d", 42) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(allocations == allocationsBeforeBadDestination);
+
     InitializeHeap();
 
     *__error_nid_postfix() = 0;

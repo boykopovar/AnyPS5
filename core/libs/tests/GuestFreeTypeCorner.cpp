@@ -150,6 +150,15 @@ void CheckVectorTransformScaled() {
     Require(Throws([&] { FT_Vector_Transform_Scaled_nid_postfix(&target, nullptr, INT64_MIN); }) &&
             Throws([&] { FT_Vector_Transform_Scaled_nid_postfix(nullptr, &identity, INT64_MAX); }) && SameVector(target, vector),
         "FT_Vector_Transform_Scaled checks 0x10000 * scaling before the null test");
+    static const FreeType::GuestVector readOnlyVector{100, -200};
+    static const FreeType::GuestMatrix readOnlyMatrix{0x18000, 0x8000, -0x10000, 0x20000};
+    errno = 71;
+    FT_Vector_Transform_Scaled_nid_postfix(reinterpret_cast<FreeType::GuestVector*>(0x10), &identity, 1);
+    Require(errno == 71, "FT_Vector_Transform_Scaled preserves errno on an unreadable vector");
+    FT_Vector_Transform_Scaled_nid_postfix(&target, reinterpret_cast<const FreeType::GuestMatrix*>(0x10), 1);
+    Require(errno == 71 && SameVector(target, vector), "FT_Vector_Transform_Scaled leaves target unchanged on an unreadable matrix");
+    FT_Vector_Transform_Scaled_nid_postfix(const_cast<FreeType::GuestVector*>(&readOnlyVector), &readOnlyMatrix, 1);
+    Require(errno == 71 && SameVector(readOnlyVector, {100, -200}), "FT_Vector_Transform_Scaled ignores a read-only vector without changing errno");
 }
 
 void CheckSqrtFixed() {
@@ -215,6 +224,13 @@ void CheckSynthesizeVerticalMetrics() {
         "ft_synthesize_vertical_metrics keeps a non-zero advance");
     ft_synthesize_vertical_metrics_nid_postfix(nullptr, 0);
     ft_synthesize_vertical_metrics_nid_postfix(nullptr, 300);
+    static const FreeType::GuestGlyphMetrics readOnlyMetrics{100, 200, 10, 50, 80, 0, 0, 0};
+    errno = 71;
+    ft_synthesize_vertical_metrics_nid_postfix(reinterpret_cast<FreeType::GuestGlyphMetrics*>(0x10), 0);
+    Require(errno == 71, "ft_synthesize_vertical_metrics preserves errno on an unreadable metrics pointer");
+    ft_synthesize_vertical_metrics_nid_postfix(const_cast<FreeType::GuestGlyphMetrics*>(&readOnlyMetrics), 0);
+    Require(errno == 71 && readOnlyMetrics.vertBearingX == 0 && readOnlyMetrics.vertBearingY == 0 && readOnlyMetrics.vertAdvance == 0,
+        "ft_synthesize_vertical_metrics ignores a read-only metrics pointer without changing errno");
 }
 
 void CheckServiceListLookup() {
@@ -239,13 +255,13 @@ struct GuardedRegion {
         SYSTEM_INFO info{};
         GetSystemInfo(&info);
         pageSize = info.dwPageSize != 0 ? static_cast<std::size_t>(info.dwPageSize) : static_cast<std::size_t>(4096);
-        data = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        data = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         Require(data != nullptr, "allocate guarded pages");
 #else
         const long size = sysconf(_SC_PAGESIZE);
         Require(size > 0, "query page size");
         pageSize = static_cast<std::size_t>(size);
-        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED, "allocate guarded pages");
         data = static_cast<char*>(mapped);
 #endif
@@ -256,16 +272,7 @@ struct GuardedRegion {
 #ifdef _WIN32
         VirtualFree(data, 0, MEM_RELEASE);
 #else
-        munmap(data, pageSize * 3);
-#endif
-    }
-
-    void ProtectReadOnly(std::size_t pageIndex) {
-#ifdef _WIN32
-        DWORD previous = 0;
-        Require(VirtualProtect(data + pageIndex * pageSize, pageSize, PAGE_READONLY, &previous) != 0, "protect read-only page");
-#else
-        Require(mprotect(data + pageIndex * pageSize, pageSize, PROT_READ) == 0, "protect read-only page");
+        munmap(data, pageSize * 2);
 #endif
     }
 
@@ -283,33 +290,8 @@ void CheckExportGuestPointers() {
     GuardedRegion region;
     char* rwPage = region.data;
     char* noAccessPage = region.data + region.pageSize;
-    char* roPage = region.data + region.pageSize * 2;
 
-    const FreeType::GuestMatrix identity{0x10000, 0, 0, 0x10000};
-    const FreeType::GuestVector initialVector{3 << 16, -(7 << 16)};
-    const FreeType::GuestGlyphMetrics initialMetrics{100, 200, 10, 50, 80, 0, 0, 0};
-    std::memcpy(roPage, &initialVector, sizeof(initialVector));
-    std::memcpy(roPage + 64, &initialMetrics, sizeof(initialMetrics));
     region.ProtectNoAccess(1);
-    region.ProtectReadOnly(2);
-
-    FreeType::GuestVector target = initialVector;
-    errno = 71;
-    Require(ThrowsInvalidArgument([&] { FT_Vector_Transform_Scaled_nid_postfix(reinterpret_cast<FreeType::GuestVector*>(0x10), &identity, 1); }) &&
-            errno == 71, "FT_Vector_Transform_Scaled rejects an inaccessible vector without changing errno");
-    errno = 71;
-    Require(ThrowsInvalidArgument([&] { FT_Vector_Transform_Scaled_nid_postfix(reinterpret_cast<FreeType::GuestVector*>(roPage), &identity, 1); }) &&
-            errno == 71, "FT_Vector_Transform_Scaled rejects a read-only vector without changing errno");
-    errno = 71;
-    Require(ThrowsInvalidArgument([&] { FT_Vector_Transform_Scaled_nid_postfix(&target, reinterpret_cast<const FreeType::GuestMatrix*>(0x10), 1); }) &&
-            errno == 71 && SameVector(target, initialVector), "FT_Vector_Transform_Scaled rejects an inaccessible matrix without changing the vector");
-
-    errno = 71;
-    Require(ThrowsInvalidArgument([&] { ft_synthesize_vertical_metrics_nid_postfix(reinterpret_cast<FreeType::GuestGlyphMetrics*>(0x10), 0); }) &&
-            errno == 71, "ft_synthesize_vertical_metrics rejects an inaccessible metrics pointer without changing errno");
-    errno = 71;
-    Require(ThrowsInvalidArgument([&] { ft_synthesize_vertical_metrics_nid_postfix(reinterpret_cast<FreeType::GuestGlyphMetrics*>(roPage + 64), 0); }) &&
-            errno == 71, "ft_synthesize_vertical_metrics rejects a read-only metrics pointer without changing errno");
 
     int dataA = 1;
     const GuestServiceDesc validDescriptors[]{{"svc", &dataA}, {nullptr, nullptr}};

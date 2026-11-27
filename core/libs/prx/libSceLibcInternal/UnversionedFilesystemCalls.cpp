@@ -44,6 +44,10 @@ int APS5_VABI _ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE_nid_postfix(const 
     return _ZNSt8__sce_v210filesystem8_StatvfsEPKcRNS0_10space_infoE_nid_postfix(path, space);
 }
 
+bool APS5_VABI _ZNSt10filesystem12_Current_setEPKc_nid_postfix(const char* path) {
+    return _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(path) == 0;
+}
+
 int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path) {
     return _ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(path);
 }

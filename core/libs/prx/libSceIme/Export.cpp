@@ -1,13 +1,16 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
+#include "prx/libSceIme/include/ImeClipboard.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -21,6 +24,7 @@
 #include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);
@@ -59,6 +63,11 @@ constexpr uint32_t ValidOptions = 0x00007bff;
 constexpr uint32_t OptionMultiline = 0x00000001;
 constexpr uint32_t OptionUseOver2K = 0x00004000;
 constexpr uint32_t EnterLabelLast = 3;
+constexpr uint32_t ExtendedSetPriority = 0x00000002;
+constexpr uint32_t ExtendedPriorityShift = 0x00000004;
+constexpr uint32_t PrioritySymbol = 2;
+constexpr uint32_t PriorityAccent = 3;
+constexpr uint32_t DisableController = 0x00000001;
 constexpr uint32_t AlignmentLast = 2;
 constexpr uint32_t PanelPriorityLast = 3;
 constexpr uint32_t MaxTextLength = 2048;
@@ -69,12 +78,19 @@ constexpr uint32_t EventUpdateText = 1;
 constexpr uint32_t EventUpdateCaret = 2;
 constexpr uint32_t EventPressClose = 4;
 constexpr uint32_t EventPressEnter = 5;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
 struct PendingInput {
     ImeHostInput input;
     std::u16string paste;
+    bool pad = false;
+    bool clear = false;
 };
 
 struct Session {
@@ -85,6 +101,7 @@ struct Session {
     std::deque<ImeEvent> events;
     std::deque<PendingInput> hostInputs;
     ImeComposition composition;
+    ImeDialog::PadKeyboardState keyboard;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -100,6 +117,7 @@ std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
 std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeHostClipboardSink> g_clipboardSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
@@ -125,10 +143,29 @@ bool ValidText(const char16_t* text, std::size_t length, bool multiline) {
     return true;
 }
 
-std::size_t TextLength(const char16_t* text, std::size_t limit) {
-    std::size_t length = 0;
-    while (length < limit && text[length] != u'\0') ++length;
-    return length;
+bool ReadGuestText(const char16_t* source, std::size_t limit, std::u16string* outText) {
+    outText->clear();
+    if (limit == 0) return true;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    if (base == 0) return false;
+    const std::uintptr_t maxAddress = std::numeric_limits<std::uintptr_t>::max();
+    const int savedErrno = errno;
+    for (std::size_t i = 0; i < limit; ++i) {
+        if (i > (maxAddress - base) / sizeof(char16_t)) {
+            errno = savedErrno;
+            return false;
+        }
+        char16_t unit = u'\0';
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const char16_t*>(base + i * sizeof(char16_t)), sizeof(unit));
+        if (!copied) {
+            errno = savedErrno;
+            return false;
+        }
+        if (unit == u'\0') break;
+        outText->push_back(unit);
+    }
+    errno = savedErrno;
+    return true;
 }
 
 std::u16string DecodeUtf8(const char* text, std::size_t size) {
@@ -262,12 +299,20 @@ std::size_t UnitsAfter(const Session& session) {
 std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
     const ImeHostInput& input = pending.input;
     if (input.kind == ImeHostInputKind::Preedit) {
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        session.composition.Set(pending.paste, input.start, input.length);
         return std::nullopt;
     }
-    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) {
+        if (pending.pad) ImeDialog::PadKeyboardNoteInsert(session.keyboard, false);
+        return std::nullopt;
+    }
+    if (pending.clear) {
+        if (session.text.empty()) return std::nullopt;
+        const std::u16string oldText = session.text;
+        session.text.clear();
+        session.caret = 0;
+        return CommitEdit(session, oldText, 0, -static_cast<int32_t>(oldText.size()));
+    }
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -302,40 +347,160 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             return std::nullopt;
         }
         case ImeHostInputKind::Home: {
-            const std::size_t units = session.caret;
-            session.caret = 0;
+            std::size_t target = 0;
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0 && session.caret > 0) {
+                const std::size_t previous = session.text.find_last_of(u"\r\n", session.caret - 1);
+                if (previous != std::u16string::npos) target = previous + 1;
+            }
+            const std::size_t units = session.caret - target;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveLeft, units);
             return std::nullopt;
         }
         case ImeHostInputKind::End: {
-            const std::size_t units = session.text.size() - session.caret;
-            session.caret = static_cast<uint32_t>(session.text.size());
+            std::size_t target = session.text.size();
+            if (input.moveToLineBoundary && (session.param.option & OptionMultiline) != 0) {
+                const std::size_t next = session.text.find_first_of(u"\r\n", session.caret);
+                if (next != std::u16string::npos) target = next;
+            }
+            const std::size_t units = target - session.caret;
+            session.caret = static_cast<uint32_t>(target);
             QueueCaretSteps(session, CaretMoveRight, units);
             return std::nullopt;
         }
         case ImeHostInputKind::Enter:
-            if ((session.param.option & OptionMultiline) != 0) {
+            if (!pending.pad && (session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
+            }
+            if (const ImeHostClipboardSink clipboardSink = g_clipboardSink.load(); clipboardSink && ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) {
+                const std::string utf8 = ImeClipboard::Utf8(session.text);
+                clipboardSink(utf8.c_str(), utf8.size());
             }
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
-        case ImeHostInputKind::Paste:
-            return Insert(session, pending.paste);
+        case ImeHostInputKind::Paste: {
+            const std::size_t before = session.text.size();
+            std::optional<DeferredFilter> deferred = Insert(session, pending.paste);
+            if (pending.pad) ImeDialog::PadKeyboardNoteInsert(session.keyboard, session.text.size() != before);
+            return deferred;
+        }
         case ImeHostInputKind::Preedit:
             return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
 }
 
+void QueuePad(Session& session, ImeHostInputKind kind, std::u16string text = {}, bool clear = false) {
+    PendingInput pending;
+    pending.input.kind = kind;
+    pending.paste = std::move(text);
+    pending.pad = true;
+    pending.clear = clear;
+    session.hostInputs.push_back(std::move(pending));
+}
+
+void ReceivePad(const ImeHostPad& pad) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return;
+    Session& session = *g_session;
+    ImeDialog::PadKeyboardResult result = ImeDialog::PadKeyboardStep(session.keyboard, {pad.buttons, pad.leftX, pad.leftY, pad.l2}, ImeDialog::PadKeyboardState::Clock::now());
+    switch (result.edit) {
+        case ImeDialog::PadEdit::None:
+            break;
+        case ImeDialog::PadEdit::Insert:
+            QueuePad(session, ImeHostInputKind::Paste, std::move(result.text));
+            break;
+        case ImeDialog::PadEdit::Backspace:
+            QueuePad(session, ImeHostInputKind::Backspace);
+            break;
+        case ImeDialog::PadEdit::Clear:
+            QueuePad(session, ImeHostInputKind::Backspace, {}, true);
+            break;
+        case ImeDialog::PadEdit::CaretLeft:
+            QueuePad(session, ImeHostInputKind::Left);
+            break;
+        case ImeDialog::PadEdit::CaretRight:
+            QueuePad(session, ImeHostInputKind::Right);
+            break;
+        case ImeDialog::PadEdit::CaretHome:
+            QueuePad(session, ImeHostInputKind::Home);
+            break;
+        case ImeDialog::PadEdit::CaretEnd:
+            QueuePad(session, ImeHostInputKind::End);
+            break;
+    }
+    if (result.finish == ImeDialog::PadFinish::Done) QueuePad(session, ImeHostInputKind::Enter);
+    else if (result.finish == ImeDialog::PadFinish::Cancel) QueuePad(session, ImeHostInputKind::Escape);
+}
+
+ImeKeySymbol KeySymbol(const ImeDialog::PadKeyboardState& keyboard, ImeDialog::PadKeyGlyph glyph) {
+    switch (glyph) {
+        case ImeDialog::PadKeyGlyph::Shift:
+            return keyboard.caseState == ImeDialog::PadKeyboardCase::Upper ? ImeKeySymbol::ShiftFilled : keyboard.caseState == ImeDialog::PadKeyboardCase::CapsLock ? ImeKeySymbol::CapsLock : ImeKeySymbol::ShiftOutline;
+        case ImeDialog::PadKeyGlyph::Backspace: return ImeKeySymbol::Backspace;
+        case ImeDialog::PadKeyGlyph::ArrowLeft: return ImeKeySymbol::ArrowLeft;
+        case ImeDialog::PadKeyGlyph::ArrowRight: return ImeKeySymbol::ArrowRight;
+        case ImeDialog::PadKeyGlyph::ArrowUp: return ImeKeySymbol::ArrowUp;
+        case ImeDialog::PadKeyGlyph::ArrowDown: return ImeKeySymbol::ArrowDown;
+        case ImeDialog::PadKeyGlyph::None: break;
+    }
+    return ImeKeySymbol::None;
+}
+
+bool ProvideView(ImeKeyboardView& view) {
+    std::lock_guard lock(g_imeMutex);
+    if (!g_session) return false;
+    const Session& session = *g_session;
+    view.text = session.text;
+    view.caret = session.caret;
+    view.preedit = session.composition.text;
+    view.preeditCursor = session.composition.cursor;
+    view.preeditSelection = session.composition.selection;
+    view.rows = ImeDialog::PadKeyboardRows(session.keyboard);
+    view.columns = ImeDialog::PadKeyboardColumns();
+    view.keys.clear();
+    const ImeDialog::PadKey* selected = ImeDialog::PadKeyboardSelected(session.keyboard);
+    for (const auto& key : ImeDialog::PadKeyboardKeys(session.keyboard)) {
+        view.keys.push_back({key.row, key.column, key.columnSpan, key.rowSpan, ImeDialog::PadKeyboardLabel(session.keyboard, key), KeySymbol(session.keyboard, key.glyph), key.badge != nullptr ? std::u16string(key.badge) : std::u16string(), &key == selected});
+    }
+    return true;
+}
+
+ImeDialog::PadKeyboardOptions KeyboardOptions(const Param& param, const ExtendedParam* extended) {
+    ImeDialog::PadKeyboardOptions options;
+    options.multiline = (param.option & OptionMultiline) != 0;
+    options.currency = ImeDialog::PadKeyboardCurrencyFor(param.supported_languages);
+    options.enterLabel = param.enter_label;
+    if (extended != nullptr && (extended->option & ExtendedSetPriority) != 0) {
+        options.family = extended->priority == PrioritySymbol ? ImeDialog::PadKeyboardFamily::Symbols : extended->priority == PriorityAccent ? ImeDialog::PadKeyboardFamily::Specials : ImeDialog::PadKeyboardFamily::Latin;
+        if ((extended->option & ExtendedPriorityShift) != 0 && options.family != ImeDialog::PadKeyboardFamily::Symbols) options.caseState = ImeDialog::PadKeyboardCase::CapsLock;
+    }
+    return options;
+}
+
+void ClaimPanel() {
+    ImeHostPadSink noSink = nullptr;
+    if (!g_padSink.compare_exchange_strong(noSink, &ReceivePad)) return;
+    ImeKeyboardViewProvider noProvider = nullptr;
+    if (g_viewProvider.compare_exchange_strong(noProvider, &ProvideView)) return;
+    ImeHostPadSink sink = &ReceivePad;
+    g_padSink.compare_exchange_strong(sink, nullptr);
+}
+
+void ReleasePanel() {
+    ImeHostPadSink sink = &ReceivePad;
+    g_padSink.compare_exchange_strong(sink, nullptr);
+    ImeKeyboardViewProvider provider = &ProvideView;
+    g_viewProvider.compare_exchange_strong(provider, nullptr);
+}
+
 int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outParam = nullptr, ExtendedParam* outExt = nullptr, std::u16string* outText = nullptr) {
     if (!param) return ErrorInvalidAddress;
     Param localParam{};
-    const int savedErrno = errno;
     const bool copiedParam = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
-    errno = savedErrno;
     if (!copiedParam) return ErrorInvalidAddress;
     if (localParam.user_id == UserIdInvalid) return ErrorInvalidUserId;
     if (localParam.type > TypeNumber) return ErrorInvalidType;
@@ -352,9 +517,7 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
     if (localParam.vertical_alignment > AlignmentLast) return ErrorInvalidVerticalAlignment;
     ExtendedParam localExt{};
     if (extended) {
-        const int extErrno = errno;
         const bool copiedExt = GuestCopyIn_nid_no_patch(&localExt, extended, sizeof(localExt));
-        errno = extErrno;
         if (!copiedExt) return ErrorInvalidAddress;
         if (localExt.priority > PanelPriorityLast) return ErrorInvalidExtended;
         for (const std::int8_t byte : localExt.reserved) {
@@ -367,15 +530,7 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
         if (byte != 0) return ErrorInvalidReserved;
     }
     std::u16string localText;
-    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
-        char16_t unit = u'\0';
-        const int textErrno = errno;
-        const bool copiedUnit = GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit));
-        errno = textErrno;
-        if (!copiedUnit) return ErrorInvalidAddress;
-        if (unit == u'\0') break;
-        localText.push_back(unit);
-    }
+    if (!ReadGuestText(localParam.input_text_buffer, localParam.max_text_length, &localText)) return ErrorInvalidAddress;
     if (!ValidText(localText.data(), localText.size(), (localParam.option & OptionMultiline) != 0)) return ErrorInvalidText;
     if (outParam) *outParam = localParam;
     if (outExt) *outExt = localExt;
@@ -395,9 +550,7 @@ bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
         const auto offset = static_cast<std::uintptr_t>(index) * sizeof(char16_t);
         if (base > UINTPTR_MAX - offset) return false;
         char16_t unit = u'\0';
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const void*>(base + offset), sizeof(unit));
-        errno = savedErrno;
         if (!copied) return false;
         if (unit == u'\0') {
             length = index;
@@ -411,9 +564,7 @@ bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
 int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* function) {
     if (info == nullptr) NotImplemented_nid_no_patch(function);
     ImeEditText localInfo{};
-    const int savedErrno = errno;
     const bool copiedInfo = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
-    errno = savedErrno;
     if (!copiedInfo) NotImplemented_nid_no_patch(function);
 
     std::uint32_t textLength = 0;
@@ -463,21 +614,18 @@ int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* 
 extern "C" {
 
 void ImePublishInput_nid_postfix(const ImeHostInput& input) {
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        ImePublishPreedit_nid_postfix(input.text, size, input.start, input.length);
+        return;
+    }
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
             g_session->hostInputs.push_back({input, {}});
             return;
         }
-    }
-    if (input.kind == ImeHostInputKind::Preedit) {
-        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
-        if (preeditSink == nullptr) return;
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
-        preeditSink(units.data(), units.size(), input.start, input.length);
-        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -488,6 +636,24 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
         units = DecodeUtf8(input.text, size);
     }
     sink(input.kind, units.data(), units.size());
+}
+
+void ImePublishPreedit_nid_postfix(const char* text, std::size_t size, std::int32_t start, std::int32_t length) {
+    if (text == nullptr) return;
+    std::u16string units = ImeHostText::PreeditUnits(text, size);
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Preedit;
+            input.start = start;
+            input.length = length;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostPreeditSink sink = g_preeditSink.load();
+    if (sink != nullptr) sink(units.data(), units.size(), start, length);
 }
 
 void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
@@ -535,6 +701,10 @@ void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
     g_padSink = sink;
 }
 
+void ImeSetHostClipboardSink_nid_no_patch(ImeHostClipboardSink sink) {
+    g_clipboardSink = sink;
+}
+
 void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {
     g_viewProvider = provider;
 }
@@ -557,6 +727,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     session.extKeyboardFilter = extended ? localExt.ext_keyboard_filter : nullptr;
     session.text = std::move(localText);
     session.caret = static_cast<uint32_t>(session.text.size());
+    session.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended ? &localExt : nullptr));
     SyncBuffers(session);
     ImeEvent open{};
     open.id = EventOpen;
@@ -565,6 +736,7 @@ int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* ex
     PanelSize(localParam, &open.param.rect.width, &open.param.rect.height);
     session.events.push_back(open);
     g_session = std::move(session);
+    if (!extended || (localExt.disable_device & DisableController) == 0) ClaimPanel();
     return 0;
 }
 
@@ -572,6 +744,7 @@ int APS5_VABI sceImeClose_nid_postfix(void) {
     std::lock_guard lock(g_imeMutex);
     if (!g_session) return ErrorNotOpened;
     g_session.reset();
+    ReleasePanel();
     return 0;
 }
 
@@ -663,9 +836,7 @@ int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair) {
     }
     if (!repair) return -2;
     constexpr char16_t terminator = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(text + maxLength, &terminator, sizeof(terminator));
-    errno = savedErrno;
     if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return 0;
 }
@@ -682,9 +853,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     if (!g_session) return ErrorNotOpened;
     if (!caret) return ErrorInvalidAddress;
     Caret localCaret{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localCaret, caret, sizeof(localCaret));
-    errno = savedErrno;
     if (!copied) return ErrorInvalidAddress;
     if (localCaret.index > g_session->text.size()) return ErrorInvalidParam;
     g_session->caret = localCaret.index;
@@ -703,9 +872,14 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!g_session) return ErrorNotOpened;
     if (!text) return ErrorInvalidAddress;
     Session& session = *g_session;
-    const std::size_t count = TextLength(text, std::min(length, session.param.max_text_length));
-    if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
-    session.text.assign(text, count);
+    std::u16string localText;
+    if (!ReadGuestText(text, std::min<std::size_t>(length, session.param.max_text_length), &localText)) {
+        return ErrorInvalidAddress;
+    }
+    if (!ValidText(localText.data(), localText.size(), (session.param.option & OptionMultiline) != 0)) {
+        return ErrorInvalidText;
+    }
+    session.text = std::move(localText);
     ++session.revision;
     NormalizeCaret(session);
     SyncBuffers(session);
@@ -900,9 +1074,7 @@ int APS5_VABI sceImeCheckUpdateTextInfo(ImeEditText* info, std::uint8_t repair) 
 int APS5_VABI sceImeCheckRemoteEventParam(ImeEvent* event, std::uint8_t repair) {
     if (event == nullptr) NotImplemented_nid_no_patch(__func__);
     std::uint32_t eventId = 0;
-    const int savedErrno = errno;
     const bool copiedId = GuestCopyIn_nid_no_patch(&eventId, event, sizeof(eventId));
-    errno = savedErrno;
     if (!copiedId) NotImplemented_nid_no_patch(__func__);
     if (eventId != EventUpdateText) return 0;
     const auto address = reinterpret_cast<std::uintptr_t>(event);

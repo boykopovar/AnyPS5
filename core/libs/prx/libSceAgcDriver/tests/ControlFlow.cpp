@@ -682,6 +682,43 @@ void VerifyConstantHighTail() {
     require(!FindUserDataTail(decoder.Decode(accepted.front()), 0u, 4u), "tail low half outside user data was accepted");
 }
 
+void VerifyCopiedLowTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::uint32_t> code{0xbe800303u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u};
+    const auto program = decoder.Decode(code);
+    const auto tail = FindUserDataTail(program, 2u, 4u);
+    require(tail && tail->programCounter == 8u && tail->userDataRegister == 3u && tail->constantHigh == 2u, "a tail through a copied user-data low half was not recognized");
+    const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(std::vector<std::uint32_t>{0xbf810000u}));
+    require(linked == std::vector<std::uint32_t>({0xbe800303u, 0xbe810382u, 0xbf820000u, 0xbf810000u}), "linking a copied low half changed the preceding code");
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbe800303u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe800308u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe830380u, 0xbe800303u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0xbe800303u, 0xbe800304u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+        {0x80008003u, 0xbe810382u, 0xbe802000u, 0xbf9f0000u},
+    };
+    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 2u, 4u), "an unproven, overwritten or computed low half was accepted");
+}
+
+void VerifyBranchingBodyTail() {
+    const RdnaInstructionDecoder decoder;
+    const std::vector<std::uint32_t> code{0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf810000u};
+    const auto program = decoder.Decode(code);
+    const auto tail = FindUserDataTail(program, 4u, 2u);
+    require(tail && tail->programCounter == 8u && tail->userDataRegister == 4u && tail->constantHigh == 2u, "a tail whose body branches to its own exit was not recognized");
+    const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(std::vector<std::uint32_t>{0xbf800000u, 0xbf810000u}));
+    require(linked == std::vector<std::uint32_t>({0xbf880002u, 0xbe850382u, 0xbf820001u, 0xbf810000u, 0xbf800000u, 0xbf810000u}), "linking did not keep the exit the body branches to");
+    static_cast<void>(GraphBuilder{}.Build(decoder.Decode(linked)));
+    const std::vector<std::vector<std::uint32_t>> refused{
+        {0xbf880000u, 0xbe850382u, 0xbe802004u, 0xbf810000u},
+        {0xbf880003u, 0xbe850382u, 0xbe802004u, 0xbf810000u, 0xbf9f0000u},
+        {0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf820000u, 0xbf810000u},
+        {0xbf880002u, 0xbe850382u, 0xbe802004u, 0xbf800000u, 0xbf9f0000u},
+        {0xbe850382u, 0xbe802004u, 0xbf800000u, 0xbf810000u},
+    };
+    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 4u, 2u), "a branch outside the tail's exit or an unended exit was accepted");
+}
+
 int main(int argc, char** argv) {
     try {
         verifyLoopMergeDoesNotEnterNestedSelection();
@@ -1497,6 +1534,8 @@ done:
         verifyScheduledJumpTable();
         VerifyUserDataTail();
         VerifyConstantHighTail();
+        VerifyCopiedLowTail();
+        VerifyBranchingBodyTail();
         verifyCallLinkOverwrittenByWave64Compare();
         verifyCallLinkMaskReadByScalarInstruction();
         verifyLargeLoopExitFallback();

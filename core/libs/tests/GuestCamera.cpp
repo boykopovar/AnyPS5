@@ -194,14 +194,15 @@ void CheckClose() {
 
 int main() {
     Require(sceCameraIsAttached(0) == 0, "camera 0 must be reported as not attached");
-    Require(sceCameraIsAttached(1) == ErrorParam, "camera index 1 must be rejected");
+    Require(sceCameraIsAttached(1) == 0, "camera 1 must be reported as not attached");
+    Require(sceCameraIsAttached(2) == ErrorParam, "camera index 2 must be rejected");
     Require(sceCameraIsAttached(-1) == ErrorParam, "a negative camera index must be rejected");
     CheckClosed();
     CheckOpen();
     CheckStart();
     CheckFrames();
     CheckClose();
-    RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
+    Require(sceCameraSetVideoSync() == ErrorParam, "set video sync before open must report PARAM");
     RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
     return 0;
 }
