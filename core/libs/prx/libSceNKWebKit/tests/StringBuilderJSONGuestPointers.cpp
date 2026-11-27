@@ -153,6 +153,14 @@ int main() {
     Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&guardBuffer, valid); }));
     Require(guardBuffer.length == 0);
 
+    StringImpl sharedShortBuffer{4, 4, pages.Guard() - 4, 4};
+    StringBuilder overlongShared = NewBuilder();
+    overlongShared.buffer = &sharedShortBuffer;
+    overlongShared.characters8 = pages.Guard() - 4;
+    overlongShared.length = 8;
+    Require(ThrowsNotImplemented([&] { _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&overlongShared, valid); }));
+    Require(overlongShared.length == 8 && sharedShortBuffer.refCount == 4);
+
     _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(&builder, valid);
     Require(builder.is8Bit && builder.length == 5 && builder.buffer != nullptr);
     Require(std::memcmp(builder.characters8, "\"abc\"", 5) == 0);

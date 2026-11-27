@@ -39,6 +39,9 @@ static_assert(sizeof(bool) == 1);
 
 constexpr unsigned MaxLength = 0x7FFFFFFF;
 constexpr unsigned kStringImplFlag8Bit = 4u;
+constexpr unsigned kStringImplBufferOwnershipMask = 3u;
+constexpr unsigned kStringImplBufferSubstring = 1u;
+constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
 
 void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
     if (!size) return;
@@ -61,6 +64,20 @@ StringImpl ReadGuestStringImpl(const StringImpl* pointer, const char* function) 
     if (!GuestCopyIn_nid_no_patch(&header, pointer, sizeof(header)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return header;
+}
+
+void ValidateReleasableString(StringImpl* impl, const char* function, unsigned depth = 0) {
+    if (!impl) return;
+    if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const StringImpl header = ReadGuestStringImpl(impl, function);
+    RequireWritableGuestBytes(impl, sizeof(StringImpl), function);
+    if ((header.refCount & ~1u) == 2u && (header.hashAndFlags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+        RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
+        StringImpl* owner = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&owner, reinterpret_cast<const unsigned char*>(impl) + 24, sizeof(owner)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (owner) ValidateReleasableString(owner, function, depth + 1u);
+    }
 }
 
 void UnpackStringBuilder(const unsigned char* raw, StringBuilder& builder) {
@@ -271,31 +288,22 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
 
     if (upConvert) {
         if (currentLength && builder.characters8) RequireReadableGuestBytes(builder.characters8, currentLength, __func__);
-        if (builder.buffer) {
-            RequireReadableGuestBytes(builder.buffer, sizeof(StringImpl), __func__);
-            RequireWritableGuestBytes(builder.buffer, sizeof(StringImpl), __func__);
-        }
-        if (builder.string.impl) {
-            RequireReadableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
-            RequireWritableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
-        }
+        if (builder.buffer) ValidateReleasableString(builder.buffer, __func__);
+        if (builder.string.impl) ValidateReleasableString(builder.string.impl, __func__);
         NKWebKit::WtfAbi::AllocateBufferUpConvert(builder, builder.characters8, allocationSize);
     } else if (builder.buffer) {
         const StringImpl bufferHeader = ReadGuestStringImpl(builder.buffer, __func__);
         if (allocationSize > bufferHeader.length) {
-            RequireWritableGuestBytes(builder.buffer, sizeof(StringImpl), __func__);
+            ValidateReleasableString(builder.buffer, __func__);
             const bool bufferIs8Bit = (bufferHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
             const std::size_t bufferUnitSize = bufferIs8Bit ? 1u : sizeof(char16_t);
-            const std::size_t copyUnits = std::min<std::size_t>(bufferHeader.length, allocationSize);
+            const std::size_t copyUnits = std::max<std::size_t>(bufferHeader.length, currentLength);
             if (copyUnits) {
                 if (copyUnits > std::numeric_limits<std::size_t>::max() / bufferUnitSize)
                     NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
                 RequireReadableGuestBytes(bufferHeader.data, copyUnits * bufferUnitSize, __func__);
             }
-            if (builder.string.impl) {
-                RequireReadableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
-                RequireWritableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
-            }
+            if (builder.string.impl) ValidateReleasableString(builder.string.impl, __func__);
             NKWebKit::WtfAbi::ReserveCapacity(builder, allocationSize);
         } else {
             const std::size_t elemSize = finalIs8Bit ? 1u : sizeof(char16_t);
@@ -319,15 +327,14 @@ void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(Stri
         if (currentLength) {
             if (!builder.string.impl) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             const StringImpl existingHeader = ReadGuestStringImpl(builder.string.impl, __func__);
-            RequireWritableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
+            ValidateReleasableString(builder.string.impl, __func__);
             const bool existingIs8Bit = (existingHeader.hashAndFlags & kStringImplFlag8Bit) != 0;
             const std::size_t existingUnitSize = existingIs8Bit ? 1u : sizeof(char16_t);
             if (currentLength > std::numeric_limits<std::size_t>::max() / existingUnitSize)
                 NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
             RequireReadableGuestBytes(existingHeader.data, static_cast<std::size_t>(currentLength) * existingUnitSize, __func__);
         } else if (builder.string.impl) {
-            RequireReadableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
-            RequireWritableGuestBytes(builder.string.impl, sizeof(StringImpl), __func__);
+            ValidateReleasableString(builder.string.impl, __func__);
         }
         NKWebKit::WtfAbi::ReserveCapacity(builder, allocationSize);
     }
