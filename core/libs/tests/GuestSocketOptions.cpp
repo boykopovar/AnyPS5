@@ -618,6 +618,17 @@ void UnknownLevelsFollowFreeBsd() {
         size = 2;
         Require(getsockopt_nid_postfix(pair[1], 0, option, &value, &size) == 0 && size == 2 && (value & 0xffff) == 0 && (value >> 16) == -1, "a short LOCAL_CREDS or LOCAL_CONNWAIT read must copy only the bytes asked for, as sooptcopyout does");
     }
+    for (const int enable : {1, 7, 0}) {
+        Require(setsockopt_nid_postfix(pair[0], 0, 4, &enable, sizeof(enable)) == 0, "setting LOCAL_CONNWAIT on a socketpair socket must succeed, as uipc_ctloutput sets UNP_CONNWAIT");
+        value = -1;
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(pair[0], 0, 4, &value, &size) == 0 && value == (enable != 0 ? 1 : 0) && size == sizeof(value), "LOCAL_CONNWAIT must read back 1 or 0 after it is set");
+        value = -1;
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(pair[1], 0, 4, &value, &size) == 0 && value == 0, "LOCAL_CONNWAIT belongs to the socket it was set on");
+    }
+    Require(SetFails(pair[0], 0, 4, &one, 2, ErrorInvalid), "a LOCAL_CONNWAIT value shorter than an int must fail with EINVAL (22), as sooptcopyin requires its minimum length");
+    Require(setsockopt_nid_postfix(pair[0], 0, 4, reinterpret_cast<const void*>(std::uintptr_t{0x10}), sizeof(int)) == -1 && *__error_nid_postfix() == 14, "an unreadable LOCAL_CONNWAIT value must fail with EFAULT (14)");
     int datagramPair[2]{-1, -1};
     Require(socketpair_nid_postfix(1, Datagram, 0, datagramPair) == 0, "socketpair failed");
     size = sizeof(credentials);

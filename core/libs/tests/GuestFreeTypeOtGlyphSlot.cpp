@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -206,6 +207,70 @@ void OwnershipErrors() {
     fixture.slot.bitmap.rows = 0;
     Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0, "Own_Bitmap of an empty bitmap succeeds");
     Require(!fixture.slot.bitmap.buffer && fixture.internal.flags == FreeType::GlyphOwnBitmap, "Own_Bitmap of an empty bitmap stores null and marks it owned");
+}
+
+void OwnershipGuestPointerErrors() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 71, "Own_Bitmap rejects bad guest pointer and preserves errno");
+    };
+
+    rejectsRuntime([] {
+        sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(reinterpret_cast<GuestGlyphSlotRec*>(std::uintptr_t{0x10}));
+    });
+
+    {
+        Fixture fixture;
+        fixture.slot.format = FreeType::GlyphFormatBitmap;
+        fixture.slot.internal = reinterpret_cast<void*>(std::uintptr_t{0x10});
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+
+        fixture.slot.internal = &fixture.internal;
+        fixture.slot.library = reinterpret_cast<void*>(std::uintptr_t{0x10});
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+
+        fixture.slot.library = &fixture.library;
+        auto* badPixels = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        fixture.slot.bitmap = {2, 4, 4, badPixels, 256, 2, 0, nullptr};
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+        Require(fixture.recorder.allocs == 1 && fixture.recorder.frees == 1, "Own_Bitmap frees allocation when pixel copy-in fails");
+        Require(fixture.slot.bitmap.buffer == badPixels && fixture.internal.flags == 0, "Own_Bitmap leaves slot unchanged when pixel copy-in fails");
+    }
+
+    {
+        static Recorder roRecorder{{nullptr, RecordAlloc, RecordFree, RecordRealloc}};
+        static GuestBitmapLibrary roLibrary{&roRecorder.memory};
+        static GuestSlotInternalRec roInternal{};
+        static unsigned char roPixels[8]{1, 2, 3, 4, 5, 6, 7, 8};
+        static const GuestGlyphSlotRec readOnlySlot{
+            .library = &roLibrary,
+            .format = FreeType::GlyphFormatBitmap,
+            .bitmap = {2, 4, 4, roPixels, 256, 2, 0, nullptr},
+            .internal = &roInternal,
+        };
+        roRecorder.memory.user = &roRecorder;
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(const_cast<GuestGlyphSlotRec*>(&readOnlySlot)); });
+        Require(roRecorder.allocs == 1 && roRecorder.frees == 1, "Own_Bitmap frees allocation when slot write-back fails");
+        Require(roInternal.flags == 0, "Own_Bitmap does not mark read-only slot internal flags owned");
+    }
+
+    {
+        static const GuestSlotInternalRec readOnlyInternal{};
+        Fixture fixture;
+        unsigned char pixels[8]{1, 2, 3, 4, 5, 6, 7, 8};
+        fixture.slot.format = FreeType::GlyphFormatBitmap;
+        fixture.slot.internal = const_cast<GuestSlotInternalRec*>(&readOnlyInternal);
+        fixture.slot.bitmap = {2, 4, 4, pixels, 256, 2, 0, nullptr};
+        rejectsRuntime([&] { sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot); });
+        Require(fixture.recorder.allocs == 1 && fixture.recorder.frees == 1, "Own_Bitmap frees allocation when internal flags write-back fails");
+        Require(fixture.slot.bitmap.buffer == pixels, "Own_Bitmap restores slot bitmap when internal flags write-back fails");
+    }
 }
 
 struct SlotCalls {
@@ -462,6 +527,7 @@ int main() {
     Ownership();
     OwnershipSkips();
     OwnershipErrors();
+    OwnershipGuestPointerErrors();
     NewSlot();
     NewSlotWithoutOutlines();
     NewSlotArguments();

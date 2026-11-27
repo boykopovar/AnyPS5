@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(libc_atomic_shared_ptr_tests tests/AtomicSharedPtr.cpp)
+    target_include_directories(libc_atomic_shared_ptr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(libc_atomic_shared_ptr_tests PRIVATE libc)
+    configure_windows_unwind(libc_atomic_shared_ptr_tests)
+    add_test(NAME libc_atomic_shared_ptr COMMAND libc_atomic_shared_ptr_tests)
+    set_tests_properties(libc_atomic_shared_ptr PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(libc_atomic_shared_ptr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

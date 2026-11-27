@@ -435,6 +435,11 @@ std::uint32_t Ngs2ReadSamplerVag(Ngs2Voice& voice, float* dest, std::uint32_t st
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 int Ngs2ApplyCustomGainParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
+int Ngs2CheckMasteringParamId(const Ngs2Rack& rack, std::uint32_t id);
+void Ngs2CheckMasteringModuleParam(const Ngs2VoiceParamHeader& param);
+bool Ngs2IsMasteringModuleParam(const Ngs2Voice& voice, std::uint32_t id);
+bool Ngs2HasCustomModule(const Ngs2Rack& rack, std::uint32_t moduleId);
+bool Ngs2MasteringOutputUnbound(const Ngs2Voice& voice, std::uint32_t numBuffers);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params);
 void Ngs2SetupReverb(Ngs2Voice& voice);
