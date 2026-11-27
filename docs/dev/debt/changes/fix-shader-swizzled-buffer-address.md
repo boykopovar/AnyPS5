@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Swizzled buffer bounds](../../../core/shader/recompiler/SpirvBackend/src/SpirvRuntimeBuffer.cpp) (shader recompiler) - 38 of 256 measured cases (`NUM_RECORDS` 4 or 16, stride 16, OOB_SELECT 0 to 3, swizzled and linear V#s) read data on RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) and zero on the recompiler although its range test passes: the bound storage buffer ends at `NUM_RECORDS` times the stride, before the address the hardware reads (a linear V# in OOB_SELECT 2 or 3 does not compare the index with `NUM_RECORDS`; a swizzled index group spans `8 << INDEX_STRIDE` times its size). [BufferSwizzledAddress](../../../core/libs/prx/libSceAgcDriver/tests/execution/BufferSwizzledAddress.cpp) pins the addresses; gfx1013, `tbuffer_*`, typed stores, graphics stages, SOFFSET, atomics and stores without IDXEN are not measured. Closes when: the bound buffer extent follows the hardware address ([#21924](https://github.com/boykopovar/AnyPS5/pull/21924) has the structured stride rule).
