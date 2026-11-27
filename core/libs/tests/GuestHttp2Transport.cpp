@@ -1082,6 +1082,7 @@ void Http1Transport(int ssl) {
         char* raw = nullptr;
         std::size_t size = 0;
         Require(sceHttp2GetAllResponseHeaders(client.request, &raw, &size) == 0 && raw && size > 0, "HTTP1 received headers");
+        Require(raw[size - 1] == '\0' && std::strlen(raw) == size - 1, "HTTP1 header size counts the terminating NUL");
         Require(std::string_view(raw, size).starts_with(version == 1 ? "HTTP/1.0 200" : "HTTP/1.1 200"), "HTTP1 status line retained");
         Response(client, 200);
         server.Join();
@@ -1415,7 +1416,11 @@ std::string StripScenario(int ssl, int version, Mode mode, int inflate, int stri
     std::size_t againSize = 0;
     Require(sceHttp2GetAllResponseHeaders(client.request, &again, &againSize) == 0 && again == raw && againSize == size,
         "strip scenario headers are returned from the same block");
-    const std::string block(raw, size);
+    Require(sceHttp2SetStripGZIPHeadersEnabled(client.request, strip ? 0 : 1) == 0, "strip option on a request after a send");
+    Require(sceHttp2GetAllResponseHeaders(client.request, &again, &againSize) == 0 && again == raw && againSize == size,
+        "strip option after a send changes nothing");
+    if (version < 3) Require(raw[size - 1] == '\0' && std::strlen(raw) == size - 1, "HTTP1 strip scenario size counts the terminating NUL");
+    const std::string block(raw, version < 3 ? size - 1 : size);
     std::string body;
     std::array<char, 64> buffer;
     for (;;) {
@@ -1462,6 +1467,15 @@ void StripGzipHeaders(int ssl) {
             "strip option takes any value");
         Require(sceHttp2DeleteTemplate(client.tmpl) == 0, "strip option template delete");
         Require(sceHttp2SetStripGZIPHeadersEnabled(client.tmpl, 1) == static_cast<int>(0x817b1100), "strip option on a deleted template");
+    }
+    {
+        Client client(ssl);
+        client.Create("https://127.0.0.1:1/unsent");
+        char* header = nullptr;
+        std::size_t size = 0;
+        Require(sceHttp2GetAllResponseHeaders(client.request, &header, &size) == static_cast<int>(0x817b1065), "response headers before a send");
+        Require(sceHttp2GetAllResponseHeaders(0x7fffffff, &header, &size) == static_cast<int>(0x817b1100), "response headers on an unknown id");
+        Require(sceHttp2SetStripGZIPHeadersEnabled(client.request, 1) == 0, "strip option on a request before a send");
     }
     for (const int version : {1, 2, 3}) {
         const auto modes = version == 3 ? std::vector<Mode>{Mode::Gzip, Mode::Normal} : std::vector<Mode>{Mode::Http11Gzip, Mode::Http11GzipChunked, Mode::Http11};

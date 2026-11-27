@@ -1275,12 +1275,11 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
 }
 
 void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*)) {
+    if (count <= 1 || (size == 0 && count < 7)) return;
     if (!compare) throw std::invalid_argument("qsort_r: null comparator");
     if (size == 0) throw std::invalid_argument("qsort_r: zero element size");
-    if (count == 0) return;
     if (!base) throw std::invalid_argument("qsort_r: null base");
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort_r: array size overflow");
-    if (count == 1) return;
 
     ReentrantSortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
 }

@@ -176,6 +176,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringSearch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxToStringFloat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
@@ -194,14 +195,17 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxWeakCount.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxThreadState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Fmtmsg.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Getwd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxIntegerToString.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HashSearch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/SearchTree.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
@@ -250,6 +254,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/LibcxxRuntimeErrorString.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSto.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxStringErase.cpp

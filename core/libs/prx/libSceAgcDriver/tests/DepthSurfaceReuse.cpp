@@ -21,6 +21,9 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#ifdef APS5_AGC_ALLOCATION_COUNT
+#include "AllocationCounter.hpp"
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -743,7 +746,13 @@ void TestUntrackedHtileDriverStore(const Context& context) {
 }
 
 void TestRepeatedDepthViewAllocations(const Context& context) {
-#ifdef __GLIBC__
+#if defined(__GLIBC__) || defined(APS5_AGC_ALLOCATION_COUNT)
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    BeginAllocationCount_nid_no_patch();
+    AllocateForCount_nid_no_patch(2048);
+    const auto controlAllocations = EndAllocationCount_nid_no_patch();
+    Require(controlAllocations == 1, "the AGC allocation counter must observe a known allocation inside the driver");
+#endif
     ClearDepthSurfaces(context.device);
     constexpr VkExtent2D extent{256, 256};
     DepthTarget target{0xa4000000, 0xa5000000, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
@@ -753,11 +762,19 @@ void TestRepeatedDepthViewAllocations(const Context& context) {
     Require(view != VK_NULL_HANDLE, "a mirrorable depth and stencil surface must render");
     draw();
     const auto images = createdImages.size();
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    BeginAllocationCount_nid_no_patch();
+#else
     countedAllocations = 0;
     countingAllocations = true;
+#endif
     VkImageView repeated = VK_NULL_HANDLE;
     for (int index = 0; index < 16; ++index) repeated = draw();
+#ifdef APS5_AGC_ALLOCATION_COUNT
+    const auto countedAllocations = EndAllocationCount_nid_no_patch();
+#else
     countingAllocations = false;
+#endif
     Require(repeated == view && createdImages.size() == images, "a repeated draw into a resident depth surface must reuse its image and view");
     Require(countedAllocations == 0, "a repeated draw into a resident depth surface allocated " + std::to_string(countedAllocations) + " times over 16 draws: its view resolution must not rebuild per-surface geometry");
     ClearDepthSurfaces(context.device);
