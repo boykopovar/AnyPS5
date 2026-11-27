@@ -10,6 +10,7 @@
 #include <optional>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -42,6 +43,8 @@ void PatchBranchTarget(std::uint32_t* cmd, std::uint32_t field, std::optional<st
     if (cachePolicy.has_value()) {
         words[2] = (words[2] & ~(3u << 28u)) | (static_cast<std::uint32_t>(*cachePolicy) << 28u);
     }
+    const GuestArena::HostWrite write(cmd + field, sizeof(words));
+    Agc::Command::Require(write.Open() && GuestWritable_nid_no_patch(cmd + field, sizeof(words)), function, "packet is not writable");
     Agc::Command::Require(GuestCopyOut_nid_no_patch(cmd + field, words.data(), sizeof(words)), function, "packet is not writable");
 }
 
@@ -50,6 +53,7 @@ void PatchBranchTarget(std::uint32_t* cmd, std::uint32_t field, std::optional<st
 extern "C" {
 
 int APS5_VABI sceAgcBranchPatchSetCompareAddress(std::uint32_t* cmd, const volatile std::uint64_t* compareAddress) {
+    ErrnoGuard errnoGuard;
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, __func__);
     std::uint32_t header = 0;
     Agc::Command::Require(GuestCopyIn_nid_no_patch(&header, cmd, sizeof(header)), __func__, "packet is not readable");
@@ -57,6 +61,8 @@ int APS5_VABI sceAgcBranchPatchSetCompareAddress(std::uint32_t* cmd, const volat
     const auto address = reinterpret_cast<std::uintptr_t>(compareAddress);
     Agc::Command::CheckAddress(address, 8, __func__);
     const std::array<std::uint32_t, 2> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const GuestArena::HostWrite write(cmd + 2, sizeof(words));
+    Agc::Command::Require(write.Open() && GuestWritable_nid_no_patch(cmd + 2, sizeof(words)), __func__, "packet is not writable");
     Agc::Command::Require(GuestCopyOut_nid_no_patch(cmd + 2, words.data(), sizeof(words)), __func__, "packet is not writable");
     return 0;
 }
