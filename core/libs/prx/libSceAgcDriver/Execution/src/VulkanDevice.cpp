@@ -6465,7 +6465,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             }
         }
     }
-    recorder.EndGpuTiming(gpuTiming);
+    if (overlapCapable) recorder.EndGpuTiming(gpuTiming);
     if (faultToken != 0 && state->bufferMarker != nullptr) state->bufferMarker(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, state->markerBuffer, sizeof(std::uint32_t), faultToken);
     if (overlapCapable) {
         recorder.DeferDispatchBarrier(overlapQueue, runOwners, runAccesses);
@@ -6475,6 +6475,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
         Graphics::Recorder::CountBarriers(CommandClass::DispatchTrailing);
+        recorder.EndGpuTiming(gpuTiming);
         recorder.EndGpuTiming(trailingTiming);
         recorder.MarkCovered(dispatchedAccess);
     }
