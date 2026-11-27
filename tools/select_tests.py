@@ -499,8 +499,9 @@ def main(argv=None):
             parser.error(f"ctest -R {args.regex}: {diagnostic}")
         if not listed:
             parser.error(f"no test matches {args.regex}")
-        wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
-        for target in build.outputs(sorted(wanted)):
+        wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])}
+        wanted.update(build.target(test) for test in listed)
+        for target in build.outputs(sorted(wanted - {None})):
             print(target)
         return 0
     if args.command == "dump":

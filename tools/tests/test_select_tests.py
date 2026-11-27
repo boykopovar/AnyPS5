@@ -308,6 +308,22 @@ class TargetsTests(SelectFixture):
         self.assertEqual([Path(target).stem for target in self.targets("^beta$")], ["beta_tests", "fixture_prepare_tests"])
         self.assertEqual(self.targets("^script$"), [])
 
+    def test_targets_resolve_a_relative_executable_in_an_env_wrapper(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        configure = ["cmake", "-S", str(self.source), "-B", str(self.build)]
+        try:
+            cmake.write_text(original + 'add_executable(relative_tool EXCLUDE_FROM_ALL main.c)\n'
+                             'add_test(NAME alpha_env_target COMMAND ${CMAKE_COMMAND} -E env '
+                             '"./$<TARGET_FILE_NAME:relative_tool>" WORKING_DIRECTORY "$<TARGET_FILE_DIR:relative_tool>")\n',
+                             encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+            executable = "relative_tool.exe" if os.name == "nt" else "relative_tool"
+            self.assertEqual(self.targets("^alpha_env_target$"), [f"alpha/{executable}"])
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(configure, check=True, capture_output=True)
+
     def test_building_the_targets_builds_only_those_executables(self):
         subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
         try:
