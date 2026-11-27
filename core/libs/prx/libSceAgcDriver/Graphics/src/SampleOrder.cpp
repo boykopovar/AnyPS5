@@ -242,7 +242,8 @@ private:
         region3d.extent = {region.width, region.height, 1};
         const auto& locations = order.locations;
         const bool located = order.located;
-        const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(target.samples), {1, 1}, target.samples, locations.data()};
+        const auto grid = order.grid;
+        const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(target.samples), grid, target.samples * grid.width * grid.height, locations.data()};
         constexpr VkPipelineStageFlags fragmentStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         constexpr VkAccessFlags depthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, anyWrite, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -674,6 +675,11 @@ std::vector<SampleOrderStep> PlanSampleOrder(const Context& context, const State
 
 SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, const SampleOrder& order) {
     return {order, state.renderExtent, SampleLocations(state), ReordersSamples(order) && ValidateSampleLocations(context, state)};
+}
+
+SampleOrderPass DepthAnchorSourcePass(const Context& context, const State& state, VkExtent2D region) {
+    const auto source = DepthAnchorSourceState(state);
+    return {SampleOrder{}, region, SampleLocations(source), ValidateSampleLocations(context, source), HostSampleLocationsFor(context, source).grid};
 }
 
 void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept) {

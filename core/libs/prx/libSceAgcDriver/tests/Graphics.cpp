@@ -4692,6 +4692,18 @@ void multisampleTests() {
         auto stored = located;
         stored.depthAnchorSamples = 0;
         expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(anchorContext, stored); }, "compatible depth format and sample count");
+        auto swapped = anchored;
+        swapped.context[0x302] = 0x22ee6aa6u;
+        auto swappedState = DecodeState(swapped);
+        Require(swappedState.depthAnchorSamples == 2 && swappedState.sampleLocationGrid, "stored sample locations swapped in one pixel of a color-writing draw over a two-sample depth target did not decode as a grid");
+        swappedState.depth->format = VK_FORMAT_D32_SFLOAT;
+        depthSampleCounts = VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT;
+        auto gridContext = anchorContext;
+        gridContext.sampleLocationGridSampleCounts = VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT;
+        const auto sourcePass = AgcDriver::Graphics::DepthAnchorSourcePass(gridContext, swappedState, {64, 64});
+        Require(sourcePass.located && sourcePass.grid.width == 2 && sourcePass.grid.height == 2 && sourcePass.locations[0].x == 0.125f && sourcePass.locations[1].x == 0.875f && sourcePass.locations[2].x == 0.875f && sourcePass.locations[2].y == 0.125f && sourcePass.locations[3].x == 0.125f && sourcePass.locations[3].y == 0.875f && sourcePass.locations[4].x == 0.125f && sourcePass.locations[6].x == 0.125f, "the stored samples of a depth target expanded for a color-writing draw were not described by their own 2x2 grid of leading sample locations");
+        const auto collapsedPass = AgcDriver::Graphics::DepthAnchorSourcePass(anchorContext, swappedState, {64, 64});
+        Require(collapsedPass.located && collapsedPass.grid.width == 1 && collapsedPass.grid.height == 1 && collapsedPass.locations[0].x == 0.125f && collapsedPass.locations[1].x == 0.875f, "the stored samples of a depth target expanded for a color-writing draw on a device without a sample location grid were not described by pixel (0,0)'s leading locations");
         depthSampleCounts = savedCounts;
         depthSampleResult = savedResult;
     }

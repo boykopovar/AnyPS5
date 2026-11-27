@@ -4656,10 +4656,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     if (prepared.anchor) {
         Require(!pipeline->ReordersSamples(), "a depth target with fewer samples than the rasterizer is unsupported for color-writing draws on a device that puts the guest's samples in order");
         auto& anchor = *prepared.anchor;
-        const auto source = DepthAnchorSourceState(pipelineState);
         anchor.map = pipelineState.depthAnchorMap;
         anchor.region = {std::min({pipelineState.renderExtent.width, anchor.source.extent.width, anchor.twin.extent.width}), std::min({pipelineState.renderExtent.height, anchor.source.extent.height, anchor.twin.extent.height})};
-        anchor.sourcePass = {SampleOrder{}, anchor.region, SampleLocations(source), ValidateSampleLocations(context, source)};
+        anchor.sourcePass = DepthAnchorSourcePass(context, pipelineState, anchor.region);
         anchor.twinPass = {SampleOrder{}, anchor.region, SampleLocations(pipelineState), pipeline->SampleLocationsEnabled()};
     }
     prepared.depthLocations = passDepthLocations(context, pipelineState, *pipeline);
