@@ -173,7 +173,7 @@ bool TranslationContext::float16Unary(const RdnaInstruction& inst, IrOpcode opco
     const IrF16 rounded(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&clampF16Overflow(result, {&argument.Value()}).Value()}));
     IrU32 bits(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&rounded.Value()})}));
     if (opcode == IrOpcode::FPFract32) {
-        if (directedF16Rounding()) bits = convertF32ToF16Bits(applyF16ResultModifiers(inst.destination, result, {&argument.Value()}), {&argument.Value()});
+        if (directedF16Rounding()) bits = convertF32ToF16Bits(result, {&argument.Value()});
         bits = IrU32(ir.Select(ir.IEqual(bits.Value(), ir.Constant(0x3c00u)), ir.Constant(0x3bffu), bits.Value()));
     }
     bits = flushF16Result(bits);
