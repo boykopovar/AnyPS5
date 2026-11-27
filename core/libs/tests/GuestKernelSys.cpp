@@ -2105,6 +2105,8 @@ int main() {
     Require(openat_nid_postfix(base, "missing.bin", SCE_KERNEL_O_RDONLY) == -1 && Error() == 2);
     Require(openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
+    Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 2);
+    Require(!std::filesystem::exists(root / "absent.bin"));
     Require(openat_nid_postfix(base, nullptr, SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(9999, "", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
@@ -2468,6 +2470,7 @@ int main() {
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "missing.bin", nullptr, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);

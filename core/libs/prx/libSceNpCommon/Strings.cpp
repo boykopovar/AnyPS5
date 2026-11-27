@@ -466,6 +466,53 @@ bool IsUrlSafe(unsigned char c) {
         || c == '*';
 }
 
+struct GuestTextReader {
+    static constexpr std::uintptr_t Page = 4096;
+    std::array<char, Page> chunk {};
+    std::uintptr_t chunkStart = 0;
+    std::size_t chunkSize = 0;
+
+    bool ReadByte(const char* guestAddress, unsigned char& value) {
+        const auto address = reinterpret_cast<std::uintptr_t>(guestAddress);
+        if (chunkSize == 0 || address < chunkStart || address - chunkStart >= chunkSize) {
+            const std::size_t size = Page - address % Page;
+            const int saved = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), size);
+            errno = saved;
+            if (!copied) {
+                chunkSize = 0;
+                return false;
+            }
+            chunkStart = address;
+            chunkSize = size;
+        }
+        value = static_cast<unsigned char>(chunk[address - chunkStart]);
+        return true;
+    }
+};
+
+int MeasureGuestTextChar(GuestTextReader& reader, const char* position, std::size_t& length) {
+    unsigned char lead = 0;
+    if (!reader.ReadByte(position, lead)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (lead == '\0') {
+        length = 0;
+        return 0;
+    }
+    if (lead < 0x80) {
+        if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        length = 1;
+        return 0;
+    }
+    length = Utf8SequenceLength(lead);
+    if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    for (std::size_t offset = 1; offset < length; ++offset) {
+        unsigned char next = 0;
+        if (!reader.ReadByte(position + offset, next)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (!IsContinuation(static_cast<char>(next))) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    }
+    return 0;
+}
+
 } // namespace
 
 extern "C" {
@@ -897,19 +944,20 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
     if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    GuestTextReader reader;
     const char* position = text;
-    for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
-        const auto lead = static_cast<unsigned char>(*position);
-        std::size_t length = 1;
-        if (lead < 0x80) {
-            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        } else {
-            length = Utf8SequenceLength(lead);
-            if (length == 0 || !IsValidSequence(position, length)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        }
+    for (std::size_t i = 0; i < index; ++i) {
+        std::size_t length = 0;
+        const int error = MeasureGuestTextChar(reader, position, length);
+        if (error != 0) return error;
+        if (length == 0) break;
         position += length;
     }
-    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const int saved = errno;
+    const bool written = GuestWritable_nid_no_patch(character, sizeof(position))
+        && GuestCopyOut_nid_no_patch(character, &position, sizeof(position));
+    errno = saved;
+    if (!written) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1028,6 +1076,64 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
     }
     const std::size_t needed = count + 1;
     if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    return 0;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(const char* text, std::size_t size) {
+    const char* const end = text + size;
+    for (const char* p = text; p < end;) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead >= 0x80) {
+            length = Utf8SequenceLength(lead);
+            if (length == 0 || p + length > end) return false;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (!IsContinuation(p[i])) return false;
+            }
+        }
+        p += length;
+    }
+    return true;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8String(const char* text) {
+    return _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(text, std::strlen(text));
+}
+
+int APS5_VABI sceNpUtilNumChars(const char* text) {
+    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::size_t count = 0;
+    for (const char* p = text; *p != '\0';) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        } else {
+            length = Utf8SequenceLength(lead);
+            if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (p[i] == '\0' || !IsContinuation(p[i])) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            }
+        }
+        p += length;
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNpJwsHs256GetEncodeSize(std::uint32_t payloadSize, std::uint32_t* encodeSize) {
+    if (encodeSize == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    *encodeSize = ((payloadSize + 2) / 3) * 4 + 0x5E;
+    return 0;
+}
+
+int APS5_VABI sceNpXmlParseInit(void* context, void* arg2, void* arg3, void* arg4) {
+    if (context == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    auto* parser = static_cast<char*>(context);
+    std::memset(parser + 8, 0, 0x248);
+    *reinterpret_cast<void**>(parser) = arg2;
+    *reinterpret_cast<void**>(parser + 0x250) = arg3;
+    *reinterpret_cast<void**>(parser + 0x258) = arg4;
     return 0;
 }
 

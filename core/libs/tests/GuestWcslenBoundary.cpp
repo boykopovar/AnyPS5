@@ -16,13 +16,6 @@ static void Require(bool condition) {
     }
 }
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
-
 int main() {
     GuardedBuffer input;
     const std::array<char16_t, 6> values{0x100, 1, 0x8000, 0xd800, 0xdc00, 0xffff};

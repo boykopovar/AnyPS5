@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
@@ -273,6 +274,29 @@ struct ViewportArguments {
     bool widthWasExplicit{false};
 };
 
+enum ViewportErrorCode : int {
+    UnrecognizedViewportArgumentKeyError,
+    UnrecognizedViewportArgumentValueError,
+    TruncatedViewportArgumentValueError,
+    MaximumScaleTooLargeError
+};
+
+struct ViewportErrorCallableWrapper;
+
+struct ViewportErrorCallableWrapperVtable {
+    void (APS5_VABI* completeDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* deletingDestructor)(ViewportErrorCallableWrapper* self);
+    void (APS5_VABI* call)(ViewportErrorCallableWrapper* self, ViewportErrorCode errorCode, const NKWebKit::WtfAbi::String& message);
+};
+
+struct ViewportErrorCallableWrapper {
+    const ViewportErrorCallableWrapperVtable* vtable;
+};
+
+struct ViewportErrorHandler {
+    ViewportErrorCallableWrapper* callableWrapper;
+};
+
 struct ProtectionSpaceBase {
     NKWebKit::WtfAbi::StringImpl* m_host;
     NKWebKit::WtfAbi::StringImpl* m_realm;
@@ -421,6 +445,9 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ViewportErrorCode) == 4);
+static_assert(offsetof(ViewportErrorCallableWrapperVtable, call) == 16);
+static_assert(sizeof(ViewportErrorHandler) == 8);
 static_assert(sizeof(ProtectionSpaceBase) == 24);
 static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
 static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);

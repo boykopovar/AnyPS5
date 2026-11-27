@@ -848,6 +848,11 @@ class TraceDigestTests(unittest.TestCase):
     def test_summary_is_the_line_of_this_trace(self):
         self.assertEqual(self.result()["summary"]["trace"], "aps5-trace-abc-7.json.gz")
 
+    def test_uppercase_gzip_suffix_still_loads_a_trace(self):
+        uppercase = self.trace.with_suffix(".GZ")
+        self.trace.rename(uppercase)
+        self.assertTrue(trace_digest.load_trace(uppercase).presents)
+
     def test_decompressing_trace_preserves_the_complete_command_line_digest(self):
         uncompressed = self.trace.with_suffix("")
         uncompressed.write_bytes(gzip.decompress(self.trace.read_bytes()))
@@ -1316,7 +1321,7 @@ class TraceDigestTests(unittest.TestCase):
 
     def test_interval_input_rejects_capture_summary(self):
         path = Path(self.directory.name) / "intervals.jsonl"
-        path.write_text("", encoding="utf-8")
+        path.write_text("invalid interval input", encoding="utf-8")
         summary = Path(self.directory.name) / "capture.jsonl"
         summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
         for output in ([], ["--json"]):

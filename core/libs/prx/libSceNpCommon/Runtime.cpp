@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <stdexcept>
@@ -749,7 +750,24 @@ int APS5_VABI sceNpGetProcessId(void) {
 }
 
 int APS5_VABI sceNpDbgDumpText(const char* text, int length) {
-    return std::printf("%.*s", length, text);
+    if (text == nullptr) return 0;
+    const std::size_t maximum = length < 0 ? std::numeric_limits<std::size_t>::max() : static_cast<std::size_t>(length);
+    char chunk[4096];
+    std::size_t printed = 0;
+    while (printed < maximum) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + printed;
+        const std::size_t count = std::min(sizeof(chunk) - address % sizeof(chunk), maximum - printed);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, text + printed, count);
+        errno = savedErrno;
+        if (!copied) break;
+        const void* end = std::memchr(chunk, 0, count);
+        const std::size_t used = end != nullptr ? static_cast<std::size_t>(static_cast<const char*>(end) - chunk) : count;
+        if (std::fwrite(chunk, 1, used, stdout) != used) return -1;
+        printed += used;
+        if (end != nullptr) break;
+    }
+    return static_cast<int>(printed);
 }
 
 int APS5_VABI sceNpIpc2ClientInit(void) {
@@ -796,7 +814,8 @@ void APS5_VABI sceNpHeapDestroy(NpHeap* heap) {
 }
 
 void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
-    *allocator = {HeapAllocate, HeapReallocate, HeapRelease, heap};
+    const NpAllocator value{HeapAllocate, HeapReallocate, HeapRelease, heap};
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
@@ -838,19 +857,27 @@ void APS5_VABI sceNpMemoryHeapDestroy(NpMemoryHeap* heap) {
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocator(NpMemoryHeap* heap, NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(heap);
+    const NpAllocator value = MemoryHeapAllocator(heap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpMemoryHeapGetAllocatorEx(NpMemoryHeap* heap, int outOfMemoryError, NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(heap), outOfMemoryError};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(heap);
+    value.outOfMemoryError = outOfMemoryError;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator) {
-    *allocator = MemoryHeapAllocator(&g_globalHeap);
+    const NpAllocator value = MemoryHeapAllocator(&g_globalHeap);
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator) {
-    *allocator = {MemoryHeapAllocator(&g_globalHeap), NP_ERROR_OUT_OF_MEMORY};
+    NpAllocatorEx value{};
+    value.allocator = MemoryHeapAllocator(&g_globalHeap);
+    value.outOfMemoryError = NP_ERROR_OUT_OF_MEMORY;
+    GuestCopyOut_nid_no_patch(allocator, &value, sizeof(value));
 }
 
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void) {
@@ -889,6 +916,76 @@ char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* t
     std::size_t length = 0;
     if (!GuestTextLength(text, std::min(maxLength, SIZE_MAX - 1), length)) return nullptr;
     return DuplicateGuestText(allocator, text, length);
+}
+
+void* APS5_VABI _sceNpHeapMalloc(NpHeap* heap, std::size_t size) {
+    return heap->mspace != nullptr ? sceLibcMspaceMalloc_nid_postfix(heap->mspace, size) : nullptr;
+}
+
+void* APS5_VABI _sceNpHeapRealloc(NpHeap* heap, void* pointer, std::size_t size) {
+    return heap->mspace != nullptr ? sceLibcMspaceRealloc_nid_postfix(heap->mspace, pointer, size) : nullptr;
+}
+
+void APS5_VABI _sceNpHeapFree(NpHeap* heap, void* pointer) {
+    if (pointer != nullptr && heap->mspace != nullptr) sceLibcMspaceFree_nid_postfix(heap->mspace, pointer);
+}
+
+char* APS5_VABI _sceNpHeapStrdup(NpHeap* heap, const char* text) {
+    if (heap->mspace == nullptr) return nullptr;
+    const std::size_t size = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(sceLibcMspaceMalloc_nid_postfix(heap->mspace, size));
+    if (copy != nullptr) std::memcpy(copy, text, size);
+    return copy;
+}
+
+char* APS5_VABI _sceNpHeapStrndup(NpHeap* heap, const char* text, std::size_t maxLength) {
+    if (heap->mspace == nullptr) return nullptr;
+    const std::size_t length = strnlen(text, maxLength);
+    auto* copy = static_cast<char*>(sceLibcMspaceMalloc_nid_postfix(heap->mspace, length + 1));
+    if (copy == nullptr) return nullptr;
+    std::memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+void* APS5_VABI _sceNpAllocatorMalloc(NpAllocator* allocator, std::size_t size) {
+    return allocator->allocate(size, allocator->context);
+}
+
+void* APS5_VABI _sceNpAllocatorRealloc(NpAllocator* allocator, void* pointer, std::size_t size) {
+    return allocator->reallocate(pointer, size, allocator->context);
+}
+
+void APS5_VABI _sceNpAllocatorFree(NpAllocator* allocator, void* pointer) {
+    allocator->release(pointer, allocator->context);
+}
+
+char* APS5_VABI _sceNpAllocatorStrdup(NpAllocator* allocator, const char* text) {
+    const std::size_t size = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(allocator->allocate(size, allocator->context));
+    if (copy != nullptr) std::memcpy(copy, text, size);
+    return copy;
+}
+
+char* APS5_VABI _sceNpAllocatorStrndup(NpAllocator* allocator, const char* text, std::size_t maxLength) {
+    const std::size_t length = strnlen(text, maxLength);
+    auto* copy = static_cast<char*>(allocator->allocate(length + 1, allocator->context));
+    if (copy == nullptr) return nullptr;
+    std::memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+void* APS5_VABI _sceNpMalloc(std::size_t size) {
+    return _sceNpHeapMalloc(&g_globalHeap.heap, size);
+}
+
+void* APS5_VABI _sceNpRealloc(void* pointer, std::size_t size) {
+    return _sceNpHeapRealloc(&g_globalHeap.heap, pointer, size);
+}
+
+void APS5_VABI _sceNpFree(void* pointer) {
+    _sceNpHeapFree(&g_globalHeap.heap, pointer);
 }
 
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
@@ -1254,7 +1351,8 @@ void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
 int APS5_VABI sceNpCalloutStartOnCtx64(NpCalloutContext* context, NpCallout* callout, std::uint64_t usec,
     void (APS5_VABI *handler)(void* arg), void* arg) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
-    const std::uint64_t deadline = ClockUsec() + usec;
+    const std::uint64_t now = ClockUsec();
+    const std::uint64_t deadline = usec > UINT64_MAX - now ? UINT64_MAX : now + usec;
     sceNpMutexLock(&context->mutex);
 
     for (NpCallout* entry = context->pending; entry != nullptr; entry = entry->next) {

@@ -412,15 +412,16 @@ void PadInput::applyOutput() {
     }
 }
 
-void PadInput::applyMappingSnapshot() {
+bool PadInput::applyMappingSnapshot() {
     auto snapshot = mappings.Snapshot();
-    if (snapshot == appliedMapping) return;
+    if (snapshot == appliedMapping) return false;
     appliedMapping = snapshot;
     keyboardMouse.Replace(*snapshot);
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) slots[slot].state = sampleController(slot);
     }
     static_cast<void>(keyboardMouse.PadChordRequests(slots[0].state.buttons));
+    return true;
 }
 
 void PadInput::reloadInputMapping() {
@@ -454,6 +455,17 @@ void PadInput::setMouseMode(bool enabled) {
     SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0");
     if (SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE) != 0) throw std::runtime_error(std::string("Pad: relative mouse mode failed: ") + SDL_GetError());
     keyboardMouse.SetMouseMode(enabled);
+}
+
+void PadInput::pauseMouseMode() {
+    setMouseMode(false);
+    mouseModePaused = true;
+    AgcDriverPadStatusMouseMode_nid_postfix(nullptr, false);
+}
+
+void PadInput::showMouseModeStatus() const {
+    const auto* shortcut = keyboardMouse.MouseModeShortcut(MouseIsOpen_nid_no_patch());
+    AgcDriverPadStatusMouseMode_nid_postfix(shortcut, keyboardMouse.MouseMode());
 }
 
 PadInputState PadInput::sampleController(int slot) const {
@@ -523,7 +535,7 @@ PadInputState PadInput::sampleController(int slot) const {
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
-    applyMappingSnapshot();
+    if (applyMappingSnapshot()) publish(window.FrameNumber(), 0);
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -557,7 +569,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         return;
     }
     if (event.type == SDL_WINDOWEVENT) {
-        if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) setMouseMode(false);
+        if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) pauseMouseMode();
         HostVolume volume;
         if (window.Handle() != nullptr && ApplyHostFocusEvent(event, SDL_GetWindowID(window.Handle()), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
         publish(window.FrameNumber(), 0);
@@ -583,13 +595,17 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     const bool targetsWindow = window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
     applyRequests(requests, targetsWindow, window);
-    if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
+    if (requests.toggleMouse) {
+        setMouseMode(!keyboardMouse.MouseMode());
+        mouseModePaused = false;
+        showMouseModeStatus();
+    }
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::dispatchPadChords(DisplayWindow& window) {
-    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const auto requests = keyboardMouse.PadChordRequests(slots[0].state.buttons);
+    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
     const bool focused = window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle();
     applyRequests(requests, focused, window);
 }
@@ -597,6 +613,7 @@ void PadInput::dispatchPadChords(DisplayWindow& window) {
 void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
     if (requests.reloadInputMapping) reloadInputMapping();
     if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
+    if (requests.toggleBorderless && windowFocused) window.ToggleBorderless();
     if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
     if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
     if (requests.showPadStatus && windowFocused) {
@@ -610,7 +627,7 @@ void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocu
 }
 
 void PadInput::Update(const DisplayWindow& window) {
-    applyMappingSnapshot();
+    const bool mappingChanged = applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;
@@ -635,16 +652,23 @@ void PadInput::Update(const DisplayWindow& window) {
             slots[slot].state = sampleController(slot);
         }
     }
-    if (keyboardMouse.MouseMode() && SDL_GetKeyboardFocus() == nullptr) {
-        keyboardMouse.Release();
-        setMouseMode(false);
-        publish(window.FrameNumber(), 0);
-        return;
+    if (keyboardMouse.MouseMode() || mouseModePaused) {
+        auto* const focused = SDL_GetKeyboardFocus();
+        if (keyboardMouse.MouseMode() && focused == nullptr) {
+            keyboardMouse.Release();
+            pauseMouseMode();
+            publish(window.FrameNumber(), 0);
+            return;
+        }
+        if (mouseModePaused && focused != nullptr && focused == window.Handle()) {
+            mouseModePaused = false;
+            showMouseModeStatus();
+        }
     }
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
     const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
     const bool captureChanged = std::exchange(padCaptured, captured) != captured;
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged || mappingChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {
