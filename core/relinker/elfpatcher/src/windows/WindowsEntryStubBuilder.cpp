@@ -75,7 +75,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const WindowsTlsLayout& tlsLayout) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -725,6 +725,18 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Rip({0x4c, 0x8d, 0x05}, traceLibraries.at(import.Library));
         code.Rip({0xff, 0x15}, traceFunction);
     };
+    const auto writeImport = [&](const PeImport& import) {
+        guestStartup.WriteImport(code, import, handles);
+        if (!import.TlsOffset) return;
+        if (tlsLayout.TemplateRva == 0 || tlsLayout.IndexRva == 0)
+            throw Domain::RelinkerException("Runtime-bound executable TLS template import has no TLS block: " + import.Name);
+        code.Rip({0x48, 0x89, 0x05}, CheckedRva(static_cast<std::uint64_t>(tlsLayout.TemplateRva) + *import.TlsOffset));
+        code.Rip({0x8b, 0x0d}, tlsLayout.IndexRva);
+        code.Emit({0x65, 0x48, 0x8b, 0x14, 0x25, 0x58, 0, 0, 0});
+        code.Emit({0x48, 0x8b, 0x14, 0xca});
+        code.Emit({0x48, 0x89, 0x82});
+        code.U32(*import.TlsOffset);
+    };
 
     std::vector<std::size_t> unresolvedBranches;
     bool anyUnresolvable = false;
@@ -734,7 +746,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         if (!guestModules.empty() && platformTlsResolvers[index] && imports[index].Name == "vNe1w4diLCs") {
             if (imports[index].Addend != 0) throw Domain::RelinkerException("TLS resolver import has an addend");
             tlsResolverAddresses.push_back(code.Branch({0x48, 0x8d, 0x05}));
-            guestStartup.WriteImport(code, imports[index], handles);
+            writeImport(imports[index]);
             continue;
         }
         code.Rip({0x48, 0x8d, 0x1d}, handles);
@@ -771,14 +783,14 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
                 code.U64(imports[index].Addend);
                 code.Emit({0x48, 0x01, 0xd0});
             }
-            guestStartup.WriteImport(code, imports[index], handles);
+            writeImport(imports[index]);
             const auto weakDone = code.Branch({0xe9});
             patchResolved();
             code.Rip({0xe9}, writeWeak);
             code.PatchBranch(weakDone, code.GetRva());
             continue;
         }
-        if (lazyBinding && imports[index].Lazy) {
+        if (lazyBinding && imports[index].Lazy && !imports[index].TlsOffset) {
             lazyUnresolvedImports.push_back(index);
             const auto skipGotWrite = code.Branch({0xe9});
             patchResolved();
@@ -787,7 +799,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
                 code.U64(imports[index].Addend);
                 code.Emit({0x48, 0x01, 0xd0});
             }
-            guestStartup.WriteImport(code, imports[index], handles);
+            writeImport(imports[index]);
             code.PatchBranch(skipGotWrite, code.GetRva());
             continue;
         }
@@ -804,7 +816,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             code.Emit({0x48, 0x01, 0xd0});
         }
         trace(imports[index], symbolNames[index]);
-        guestStartup.WriteImport(code, imports[index], handles);
+        writeImport(imports[index]);
         code.PatchBranch(nextImport, code.GetRva());
         anyUnresolvable = true;
     }

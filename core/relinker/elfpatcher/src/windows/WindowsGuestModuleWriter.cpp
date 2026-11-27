@@ -73,20 +73,20 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     auto sections = image.BuildSections();
     auto nextRva = image.GetEndRva();
     std::array<PeDirectory, 16> directories{};
-    std::uint32_t tlsIndex = 0;
+    WindowsTlsLayout tlsLayout;
     try {
-        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message, guest.FunctionSymbolRoots);
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsLayout, {}, message, guest.FunctionSymbolRoots);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
     }
     WindowsTrampolineBuilder().Build(guest.Trampolines, image, sections, nextRva);
     for (const auto& [target, rva] : tlsModules) {
-        if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS relocation has no TLS block", target);
+        if (tlsLayout.IndexRva == 0) throw Domain::RelinkerException("Guest TLS relocation has no TLS block", target);
         bool written = false;
         for (auto& section : sections) {
             if (!section.Writable(rva, 8)) continue;
-            Io::WriteU64(section.Data, rva - section.Rva, ImageBase + tlsIndex);
+            Io::WriteU64(section.Data, rva - section.Rva, ImageBase + tlsLayout.IndexRva);
             written = true;
             break;
         }
@@ -125,9 +125,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         if (symbol.Section == Relinker::AbsoluteSection) continue;
         std::uint32_t rva = 0;
         if ((symbol.Info & 15) == 6) {
-            if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + symbol.Name);
+            if (tlsLayout.IndexRva == 0) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + symbol.Name);
             rva = CheckedRva(tlsExports.Rva + tlsExports.Data.size());
-            Io::AppendU64(tlsExports.Data, ImageBase + tlsIndex);
+            Io::AppendU64(tlsExports.Data, ImageBase + tlsLayout.IndexRva);
             Io::AppendU64(tlsExports.Data, symbol.Value);
             relocations.push_back(rva);
         } else rva = image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1));
@@ -164,7 +164,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     }
     if (exports.size() > 65535) throw Domain::RelinkerException("Too many guest PE exports");
     directories[0] = WindowsExportBuilder().Build(exports, guest.OutputName, sections, nextRva);
-    if (tlsIndex != 0) {
+    if (tlsLayout.IndexRva != 0) {
         auto imports = WindowsImportBuilder().Build(nextRva);
         directories[1] = imports.Directory;
         directories[12] = imports.AddressTable;

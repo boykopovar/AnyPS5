@@ -113,7 +113,7 @@ void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, 
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, WindowsTlsLayout* tlsLayout, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) const {
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
@@ -268,10 +268,10 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + tls->FileSize), CheckedRva(templateOffset + blockSize + threadControlBlockSize)};
 
     const auto indexRva = nextRva + 40;
-    if (tlsIndexRva != nullptr) *tlsIndexRva = indexRva;
     const auto callbackTableRva = nextRva + 48;
     const auto templateRva = nextRva + templateOffset;
     const auto codeRva = AlignRva(nextRva + data.MemorySize());
+    if (tlsLayout != nullptr) *tlsLayout = {templateRva, indexRva};
 
     WindowsStubEmitter code(codeRva);
     const auto loadPointer = [&] {

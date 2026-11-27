@@ -49,9 +49,13 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     for (const auto& header : originalHeaders) {
         if (header.Type != 7 || header.FileSize == 0) continue;
         const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
-        for (const auto& import : relocations.Imports)
-            if (import.TargetRva < static_cast<std::uint64_t>(templateRva) + header.FileSize && static_cast<std::uint64_t>(import.TargetRva) + 8 > templateRva)
+        const auto templateEnd = static_cast<std::uint64_t>(templateRva) + header.FileSize;
+        for (auto& import : relocations.Imports) {
+            if (import.TargetRva >= templateEnd || static_cast<std::uint64_t>(import.TargetRva) + 8 <= templateRva) continue;
+            if (import.TargetRva < templateRva || static_cast<std::uint64_t>(import.TargetRva) + 8 > templateEnd)
                 throw Domain::RelinkerException("Runtime-bound executable TLS template relocation is not supported", header.MappedAddress + import.TargetRva - templateRva);
+            import.TlsOffset = CheckedRva(import.TargetRva - templateRva);
+        }
     }
     report(1000);
     auto sections = image.BuildSections();
@@ -80,9 +84,9 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    std::uint32_t tlsIndex = 0;
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
-    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
+    WindowsTlsLayout tlsLayout;
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsLayout, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsLayout.IndexRva, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
@@ -105,7 +109,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports, tlsLayout);
     report(9000);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;

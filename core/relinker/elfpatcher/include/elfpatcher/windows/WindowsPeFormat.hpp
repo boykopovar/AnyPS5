@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,12 @@ struct PeImport {
     bool Weak = false;
     bool Function = false;
     bool Lazy = false;
+    std::optional<std::uint32_t> TlsOffset;
+};
+
+struct WindowsTlsLayout {
+    std::uint32_t TemplateRva = 0;
+    std::uint32_t IndexRva = 0;
 };
 
 struct PeRelocations {

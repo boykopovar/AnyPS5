@@ -1,0 +1,5 @@
+# relinker
+
+## change an executable relocation against a named import whose 8 bytes overlap the `PT_TLS` initialization image
+
+- In Windows output, an executable relocation against a named import whose 8 bytes lie inside the `PT_TLS` initialization image is bound by the [entry stub](../../../core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp): it writes the resolved value into the `.gtls` template, so every thread created later copies the bound address, and into the main thread's block through `_tls_index` and `gs:[0x58]`, which the loader allocated before the stub ran. An import the executable marks lazy binds at startup. A thread that another module's initializer creates before the stub runs still copies the unbound template. A guest module's own TLS template import is still refused ([module writer](../../../core/relinker/elfpatcher/src/windows/WindowsGuestModuleWriter.cpp)), as is an executable relocation that only partly overlaps the image ([PE patcher](../../../core/relinker/elfpatcher/src/windows/WindowsPePatcher.cpp)). No title with such a relocation is known.

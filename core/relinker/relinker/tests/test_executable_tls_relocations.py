@@ -202,18 +202,28 @@ def main():
             assert result.returncode == 0 and output.exists(), (kind, result.returncode, result.stderr)
 
         bound = "Runtime-bound executable TLS template relocation is not supported"
-        for target, kind in ((0x1800, 1), (0x1800, 6), (0x1804, 1), (0x17fc, 6)):
+        for target, kind in ((0x17fc, 6), (0x1802, 1), (0x1804, 1)):
             data = needing(image([(target, kind, FUNCTION, 0)], symbol_bytes=120))
             for flags in (("--windows",), ("--windows", "--lazy-binding")):
-                name = f"template-import-{target:x}-{kind}-{len(flags)}"
+                name = f"straddling-template-import-{target:x}-{kind}-{len(flags)}"
                 result, output = relink(relinker, directory, name, data, *flags)
                 assert result.returncode == 2 and f"FAIL: {bound} (offset {target:#x})" in result.stderr, (
                     name, result.returncode, result.stderr)
                 assert not output.exists(), name
-            for flags, label in (((), "linux"), (("--lazy-binding",), "lazy"), (("--macos",), "macos")):
-                name = f"template-import-{target:x}-{kind}-{label}"
+        tlsWrite = bytes.fromhex("65488b142558000000488b14ca488982")
+        for kind in (1, 6):
+            data = needing(image([(0x1800, kind, FUNCTION, 0)], symbol_bytes=120))
+            for flags in (("--windows",), ("--windows", "--lazy-binding")):
+                name = f"template-import-{kind}-{len(flags)}"
                 result, output = relink(relinker, directory, name, data, *flags)
                 assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+                pe = output.read_bytes()
+                assert pe.count(tlsWrite) == 1, (name, pe.count(tlsWrite))
+        data = needing(image([(0x1800, 1, FUNCTION, 0)], symbol_bytes=120))
+        for flags, label in (((), "linux"), (("--lazy-binding",), "lazy"), (("--macos",), "macos")):
+            name = f"template-import-{label}"
+            result, output = relink(relinker, directory, name, data, *flags)
+            assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
         for target in (0x1100, 0x17f8, 0x1808):
             data = needing(image([(target, 1, FUNCTION, 0)], symbol_bytes=120))
             for flags in (("--windows",), ("--windows", "--lazy-binding")):

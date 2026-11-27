@@ -881,6 +881,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_address_space.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_thread_pointer COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_tls_thread_pointer.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_tls_named_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_tls_named_imports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_tls_named_imports PROPERTIES TIMEOUT 30)
         add_test(NAME windows_bss COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_bss.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_lazy_imports COMMAND ${Python3_EXECUTABLE}
