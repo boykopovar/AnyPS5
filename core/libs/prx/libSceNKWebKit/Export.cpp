@@ -18148,14 +18148,6 @@ int APS5_VABI _ZN7WebCore23TextureMapperFPSCounter19updateFPSAndDisplayERNS_13Te
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore23TextureMapperFPSCounterC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore23TextureMapperFPSCounterC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore23atBoundaryOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE() {
     NotImplemented_nid_no_patch(__func__);
 }

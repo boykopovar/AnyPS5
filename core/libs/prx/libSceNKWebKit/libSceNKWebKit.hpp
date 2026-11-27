@@ -89,6 +89,7 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/TextureMapperFPSCounterExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfThreadFlagsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfMediaTimeRangeExports.hpp"
