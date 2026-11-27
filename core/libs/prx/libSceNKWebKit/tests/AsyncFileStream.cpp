@@ -18,6 +18,13 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using NKWebKit::WebCoreAbi::AsyncFileStream;
 using NKWebKit::WebCoreAbi::FileStreamClient;
 using NKWebKit::WebCoreAbi::FileStreamClientCallable;
@@ -533,6 +540,119 @@ static void TestNullArguments() {
     Drain();
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+static void RequireNotImplemented(TFunction&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    auto* guardStream = reinterpret_cast<AsyncFileStream*>(pages.Guard());
+    auto* roStream = reinterpret_cast<AsyncFileStream*>(pages.ReadOnly());
+    auto* guardClient = reinterpret_cast<FileStreamClient*>(pages.Guard());
+    const auto* guardPath = reinterpret_cast<const String*>(pages.Guard());
+    auto* guardOp = reinterpret_cast<FileStreamOperationFunction*>(pages.Guard());
+    auto* roOp = reinterpret_cast<FileStreamOperationFunction*>(pages.ReadOnly());
+    const auto* guardTime = reinterpret_cast<const OptionalWallTime*>(pages.Guard());
+
+    Client client{{&clientVtable}, {}, true};
+    AsyncFileStream stream{};
+    RequireNotImplemented([&] { construct(guardStream, &client.base); });
+    RequireNotImplemented([&] { construct(roStream, &client.base); });
+    RequireNotImplemented([&] { construct(&stream, guardClient); });
+    Require(stream.internals == nullptr);
+
+    FileStreamClient badClient{reinterpret_cast<const FileStreamClientVtable*>(pages.Guard())};
+    RequireNotImplemented([&] { construct(&stream, &badClient); });
+    Require(stream.internals == nullptr);
+
+    construct(&stream, &client.base);
+    const String path = Guest(kDataPath);
+    const OptionalWallTime none;
+    char buffer[8] = {};
+
+    RequireNotImplemented([&] { destroy(guardStream); });
+    RequireNotImplemented([&] { destroy(roStream); });
+    RequireNotImplemented([&] { openForRead(guardStream, &path, 0, 4); });
+    RequireNotImplemented([&] { openForRead(&stream, guardPath, 0, 4); });
+    RequireNotImplemented([&] { closeStream(guardStream); });
+    RequireNotImplemented([&] { readStream(guardStream, buffer, 4); });
+    RequireNotImplemented([&] { readStream(&stream, reinterpret_cast<char*>(pages.Guard()), 4); });
+    RequireNotImplemented([&] { readStream(&stream, reinterpret_cast<char*>(pages.ReadOnly()), 4); });
+    RequireNotImplemented([&] { getSize(guardStream, &path, &none); });
+    RequireNotImplemented([&] { getSize(&stream, guardPath, &none); });
+    RequireNotImplemented([&] { getSize(&stream, &path, guardTime); });
+    RequireNotImplemented([&] { perform(guardStream, roOp); });
+    RequireNotImplemented([&] { perform(&stream, guardOp); });
+    RequireNotImplemented([&] { perform(&stream, roOp); });
+
+    FileStreamOperationFunction badCallable{reinterpret_cast<FileStreamOperationCallable*>(pages.Guard())};
+    RequireNotImplemented([&] { perform(&stream, &badCallable); });
+    Require(badCallable.callable == reinterpret_cast<FileStreamOperationCallable*>(pages.Guard()));
+
+    NKWebKit::WtfAbi::StringImpl badPathImpl{2, 8, pages.Guard(), 4};
+    String badPathStr;
+    badPathStr.impl = &badPathImpl;
+    RequireNotImplemented([&] { openForRead(&stream, &badPathStr, 0, 4); });
+    RequireNotImplemented([&] { getSize(&stream, &badPathStr, &none); });
+    badPathStr.impl = nullptr;
+
+    Drain();
+    Require(client.events.empty());
+    destroy(&stream);
+    Drain();
+}
+
 int main() {
     std::thread([] {
         std::this_thread::sleep_for(std::chrono::seconds(60));
@@ -559,6 +679,7 @@ int main() {
     TestPerform();
     TestDestruction();
     TestNullArguments();
+    TestGuestPointers();
     Require(barrierClient.events.empty());
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
