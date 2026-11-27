@@ -6,7 +6,7 @@
 
 ## add Functional
 
-- [_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv](../../../core/libs/prx/libSceJpegParser/Export.cpp) returns 0, following a [reading of firmware 13.42's libSceJpegParser.sprx](https://github.com/boykopovar/AnyPS5/issues/21873#issuecomment-6946580685), not measured on a console: it reads no argument and always returns 0. With no context it does nothing else. The module's Initialize (`v3aOHSEXfjo`) is not bound here, so no context exists; binding it needs Finalize's teardown of the context and the allocator table it copies.
+- [_ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv](../../../core/libs/prx/libSceJpegParser/Thumbnail.cpp) returns 0, following a [reading of firmware 13.42's libSceJpegParser.sprx](https://github.com/boykopovar/AnyPS5/issues/21873#issuecomment-6946580685), not measured on a console: it reads no argument and always returns 0. With no context it does nothing else. With one, from Initialize (`v3aOHSEXfjo`), it clears the module state and frees the context through the free slot of the allocator table that Initialize copied.
 
 # libSceGvMp4Parser
 
@@ -16,4 +16,4 @@
 
 ## add Functional
 
-- [_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv](../../../core/libs/prx/libSceGvMp4Parser/Export.cpp) returns 0, following a [reading of firmware 13.42's libSceGvMp4Parser.sprx](https://github.com/boykopovar/AnyPS5/issues/21873#issuecomment-6946580685), not measured on a console: it reads no argument and always returns 0. With no context it only zeroes its 0x58-byte allocator table. The module's Initialize (`sSswLa3vxMA`) is not bound here, so no context exists; binding it needs Finalize's teardown of the context and the allocator table it copies.
+- [_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv](../../../core/libs/prx/libSceGvMp4Parser/Export.cpp) returns 0, following a [reading of firmware 13.42's libSceGvMp4Parser.sprx](https://github.com/boykopovar/AnyPS5/issues/21873#issuecomment-6946580685), not measured on a console: it reads no argument and always returns 0. It zeroes its 0x58-byte allocator table, and frees the parser and helper objects that Initialize (`sSswLa3vxMA`) created through that table's free slot.

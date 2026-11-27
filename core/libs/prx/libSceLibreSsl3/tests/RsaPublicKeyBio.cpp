@@ -306,8 +306,8 @@ void TestOutputReplacement() {
     Require(ReadOne({}, &output) == nullptr);
     ExpectErrors({Asn1RHeaderTooLong});
     Require(output == old && live.contains(old) && old->references == 1);
-    Require(ReadOne(Hex("3081050201050201"), &output) == nullptr);
-    ExpectErrors({Asn1RBadObjectHeader});
+    Require(ReadOne(Hex("308700000000000006020105020103"), &output) == nullptr);
+    ExpectErrors({Asn1RHeaderTooLong});
     Require(output == old && live.contains(old));
     RSA_free_nid_disambig1_nid_postfix(old);
     Require(live.size() == baseline);
@@ -358,6 +358,11 @@ void TestBerHeaders() {
     ExpectModulus("30080282000105020103", {0x05}, false);
     ExpectModulus("30071f020105020103", {0x05}, false);
     ExpectModulus("30081f80020105020103", {0x05}, false);
+    ExpectModulus("308106020105020103", {0x05}, false);
+    ExpectModulus("30820006020105020103", {0x05}, false);
+    ExpectModulus("3086000000000006020105020103", {0x05}, false);
+    ExpectRejected("308700000000000006020105020103", {Asn1RHeaderTooLong});
+    ExpectRejected("30880000000000000006020105020103", {Asn1RHeaderTooLong});
 }
 
 

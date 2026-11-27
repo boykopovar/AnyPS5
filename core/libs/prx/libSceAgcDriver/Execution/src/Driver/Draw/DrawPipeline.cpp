@@ -19,6 +19,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -39,6 +43,14 @@ std::uint64_t elapsedNs(std::chrono::steady_clock::time_point since) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count());
 }
 
+ProfileCounter commitClockReads;
+
+std::chrono::steady_clock::time_point commitClock(bool timed) {
+    if (!timed) return {};
+    commitClockReads.Add();
+    return std::chrono::steady_clock::now();
+}
+
 ProfileCounter heldReadRanges;
 ProfileCounter heldReadQueries;
 ProfileCounter heldReadHits;
@@ -55,6 +67,14 @@ namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
 thread_local DrawPipeline* committerPipeline = nullptr;
+
+std::uint64_t CurrentThreadId() {
+#if defined(__linux__)
+    return static_cast<std::uint64_t>(::syscall(SYS_gettid));
+#else
+    return 0;
+#endif
+}
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -76,6 +96,10 @@ ProfileCounter pipelinedMetadataPasses;
 
 std::uint64_t DrawPipeline::PipelinedMetadataPasses() {
     return pipelinedMetadataPasses.Sum();
+}
+
+std::uint64_t DrawPipeline::CommitClockReads() {
+    return commitClockReads.Sum();
 }
 
 void DrawPipeline::CountPipelinedMetadataPass() {
@@ -269,7 +293,7 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{32};
+        if (text == nullptr) return std::size_t{128};
         const auto value = std::strtoull(text, nullptr, 10);
         return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
@@ -467,6 +491,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    committerThread.store(CurrentThreadId(), std::memory_order_release);
     NameDriverThread("draw-commit");
     struct CommitterScope {
         explicit CommitterScope(DrawPipeline* self) { committerPipeline = self; }
@@ -475,6 +500,7 @@ void DrawPipeline::run() {
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
     StartCommitterSampler();
+    static const bool timed = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
     for (;;) {
         Commit* commit = nullptr;
         bool isDraw = false;
@@ -488,7 +514,7 @@ void DrawPipeline::run() {
             commit = stopped ? nullptr : &items.front().commit;
             isDraw = items.front().draw;
         }
-        const auto start = std::chrono::steady_clock::now();
+        const auto start = commitClock(timed);
         std::exception_ptr fatal;
         bool failed = false;
         bool shutdown = false;
@@ -504,7 +530,7 @@ void DrawPipeline::run() {
         } catch (...) {
             fatal = std::current_exception();
         }
-        const auto spent = elapsedNs(start);
+        const auto spent = timed ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(commitClock(timed) - start).count()) : 0u;
         if (fatal != nullptr && !stopped) {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);

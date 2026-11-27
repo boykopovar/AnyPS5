@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -47,7 +48,7 @@ void Check(Search search, const char* text) {
 int main(int argc, char** argv) {
     Require(argc == 2, "expected the library path");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "could not load libc");
     const auto search = reinterpret_cast<Search>(GetProcAddress(library, "index_nid_postfix"));
     SYSTEM_INFO info{};

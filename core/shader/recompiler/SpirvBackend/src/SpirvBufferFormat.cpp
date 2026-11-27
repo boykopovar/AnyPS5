@@ -1,4 +1,7 @@
 #include "SpirvBackend/SpirvBufferFormat.hpp"
+#include <algorithm>
+#include <bit>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -228,6 +231,18 @@ SpirvBufferFormatInfo GetImageFormatInfo(IrBufferFormat format) {
         return {format, SpirvFormatComponentType::Unorm, 4u, 2u, {1u, 5u, 5u, 5u}, {0u, 1u, 6u, 11u}, true};
     }
     return GetFormatInfo(format);
+}
+
+std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> StoreQuantizeValues(std::uint32_t code) {
+    const auto format = code >= 1u && code <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) ? GetFormatInfo(static_cast<IrBufferFormat>(code)) : SpirvBufferFormatInfo{};
+    const bool snorm = format.type == SpirvFormatComponentType::Snorm;
+    const auto bits = format.componentBits[0];
+    const bool uniform = format.componentCount != 0u && !format.packedBitfield && bits >= 2u && bits <= 16u && std::all_of(format.componentBits, format.componentBits + format.componentCount, [&](std::uint32_t width) { return width == bits; });
+    const bool quantized = uniform && (format.type == SpirvFormatComponentType::Unorm || snorm);
+    const auto scale = quantized ? static_cast<float>((1u << (snorm ? bits - 1u : bits)) - 1u) : 1.0f;
+    auto reciprocal = 1.0f / scale;
+    while (static_cast<double>(reciprocal) * static_cast<double>(scale) < 1.0) reciprocal = std::nextafter(reciprocal, 2.0f);
+    return {quantized ? 1u : 0u, std::bit_cast<std::uint32_t>(scale), std::bit_cast<std::uint32_t>(reciprocal), quantized && snorm ? 1u : 0u};
 }
 
 SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, std::uint32_t selector) {
