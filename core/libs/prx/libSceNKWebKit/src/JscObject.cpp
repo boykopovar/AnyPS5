@@ -1,13 +1,68 @@
 #include "Jsc.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
 namespace NKWebKit {
 
 namespace {
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, bytes);
+    if (!GuestReadable_nid_no_patch(pointer, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyInGuest(void* destination, const void* source, std::size_t bytes, const char* function) {
+    if (!bytes) return;
+    RequireReadableGuestBytes(source, bytes, function);
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+std::string CopyGuestCString(const char* source, const char* function) {
+    std::string result;
+    auto address = reinterpret_cast<std::uintptr_t>(source);
+    for (;;) {
+        char ch = 0;
+        const auto* ptr = reinterpret_cast<const void*>(address);
+        CopyInGuest(&ch, ptr, sizeof(ch), function);
+        if (ch == '\0') return result;
+        result.push_back(ch);
+        if (address == std::numeric_limits<std::uintptr_t>::max())
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        ++address;
+    }
+}
+
+template<typename T>
+void StoreGuestPointer(T* destination, T value, const char* function) {
+    if (!destination) return;
+    const GuestArena::HostWrite writeAccess(destination, sizeof(T));
+    if (!writeAccess.Open() || !GuestWritable_nid_no_patch(destination, sizeof(T)) ||
+        !GuestCopyOut_nid_no_patch(destination, &value, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CaptureGuestException(OpaqueJSContext* ctx, JSValueRef* exception, const char* function) {
+    JSValueRef localExc = nullptr;
+    CapturePendingException(ctx, exception ? &localExc : nullptr);
+    if (exception && localExc) StoreGuestPointer(exception, localExc, function);
+}
+
+void SetGuestExceptionValue(OpaqueJSContext* ctx, JSValueRef* exception, JSValue excVal, const char* function) {
+    JSValueRef localExc = nullptr;
+    SetExceptionValue(ctx, exception ? &localExc : nullptr, excVal);
+    if (exception && localExc) StoreGuestPointer(exception, localExc, function);
+}
 
 int ToQuickJsPropFlags(JSPropertyAttributes attributes) {
     int flags = 0;
@@ -22,8 +77,38 @@ JSValueConst StoredValue(const OpaqueJSValue* value) {
     return value->alive ? value->qval : JS_UNDEFINED;
 }
 
-JSValueConst ArgumentValue(const JSValueRef arguments[], std::size_t index) {
-    return arguments ? StoredValue(arguments[index]) : JS_UNDEFINED;
+std::vector<JSValueConst> CopyGuestArguments(const JSValueRef arguments[], std::size_t argumentCount, const char* function) {
+    if (argumentCount == 0) return {};
+    if (!arguments) return std::vector<JSValueConst>(argumentCount, JS_UNDEFINED);
+    if (argumentCount > std::numeric_limits<std::size_t>::max() / sizeof(JSValueRef))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t bytes = argumentCount * sizeof(JSValueRef);
+    RequireReadableGuestBytes(arguments, bytes, function);
+    std::vector<JSValueRef> guestArgs(argumentCount);
+    if (!GuestCopyIn_nid_no_patch(guestArgs.data(), arguments, bytes))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    std::vector<JSValueConst> result(argumentCount);
+    for (std::size_t i = 0; i < argumentCount; ++i) {
+        result[i] = StoredValue(guestArgs[i]);
+    }
+    return result;
+}
+
+struct ScopedJSClassDeleter {
+    void operator()(OpaqueJSClass* cls) const {
+        if (!cls) return;
+        cls->DestroyInPlace();
+        delete cls;
+    }
+};
+
+void DestroyJSClass(OpaqueJSClass* self, const char* function) {
+    if (!self) return;
+    RequireReadableGuestBytes(self, sizeof(OpaqueJSClass), function);
+    const GuestArena::HostWrite writeAccess(self, sizeof(OpaqueJSClass));
+    if (!writeAccess.Open() || !GuestWritable_nid_no_patch(self, sizeof(OpaqueJSClass)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    self->DestroyInPlace();
 }
 
 enum class SetRefusal {
@@ -1301,22 +1386,23 @@ using namespace NKWebKit;
 
 JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
     if (!definition) return nullptr;
-    auto* cls = new OpaqueJSClass();
-    cls->attributes = definition->attributes;
-    if (definition->className) {
-        cls->className = definition->className;
+    JSClassDefinition def{};
+    CopyInGuest(&def, definition, sizeof(def), __func__);
+    std::unique_ptr<OpaqueJSClass, ScopedJSClassDeleter> cls(new OpaqueJSClass());
+    cls->attributes = def.attributes;
+    if (def.className) {
+        cls->className = CopyGuestCString(def.className, __func__);
     }
-    if (definition->parentClass) {
-        definition->parentClass->refCount.fetch_add(1, std::memory_order_relaxed);
-        cls->parentClass = definition->parentClass;
-    }
-    if (definition->staticValues) {
-        for (const JSStaticValue* sv = definition->staticValues; sv->name != nullptr; ++sv) {
+    if (def.staticValues) {
+        for (const JSStaticValue* cursor = def.staticValues;; ++cursor) {
+            JSStaticValue sv{};
+            CopyInGuest(&sv, cursor, sizeof(sv), __func__);
+            if (sv.name == nullptr) break;
             StaticValueEntry entry;
-            entry.name = sv->name;
-            entry.getProperty = sv->getProperty;
-            entry.setProperty = sv->setProperty;
-            entry.attributes = sv->attributes;
+            entry.name = CopyGuestCString(sv.name, __func__);
+            entry.getProperty = sv.getProperty;
+            entry.setProperty = sv.setProperty;
+            entry.attributes = sv.attributes;
             entry.propertyNameRef = Utf8ToJsString(entry.name);
             auto existingValue = std::find_if(cls->staticValues.begin(), cls->staticValues.end(), [&entry](const StaticValueEntry& other) { return other.name == entry.name; });
             if (existingValue == cls->staticValues.end()) {
@@ -1328,12 +1414,15 @@ JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
         }
     }
     std::vector<StaticFunctionEntry> functions;
-    if (definition->staticFunctions) {
-        for (const JSStaticFunction* sf = definition->staticFunctions; sf->name != nullptr; ++sf) {
+    if (def.staticFunctions) {
+        for (const JSStaticFunction* cursor = def.staticFunctions;; ++cursor) {
+            JSStaticFunction sf{};
+            CopyInGuest(&sf, cursor, sizeof(sf), __func__);
+            if (sf.name == nullptr) break;
             StaticFunctionEntry entry;
-            entry.name = sf->name;
-            entry.callAsFunction = sf->callAsFunction;
-            entry.attributes = sf->attributes;
+            entry.name = CopyGuestCString(sf.name, __func__);
+            entry.callAsFunction = sf.callAsFunction;
+            entry.attributes = sf.attributes;
             auto existingFunction = std::find_if(functions.begin(), functions.end(), [&entry](const StaticFunctionEntry& other) { return other.name == entry.name; });
             if (existingFunction == functions.end()) {
                 functions.push_back(std::move(entry));
@@ -1342,6 +1431,14 @@ JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
             }
         }
     }
+    if (def.parentClass) {
+        RequireReadableGuestBytes(def.parentClass, sizeof(OpaqueJSClass), __func__);
+        const GuestArena::HostWrite parentWrite(def.parentClass, sizeof(OpaqueJSClass));
+        if (!parentWrite.Open() || !GuestWritable_nid_no_patch(def.parentClass, sizeof(OpaqueJSClass)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        def.parentClass->refCount.fetch_add(1, std::memory_order_relaxed);
+        cls->parentClass = def.parentClass;
+    }
     if (cls->attributes & kJSClassAttributeNoAutomaticPrototype) {
         cls->staticFunctions = std::move(functions);
     } else {
@@ -1349,18 +1446,18 @@ JSClassRef APS5_VABI JSClassCreate(const JSClassDefinition* definition) {
         protoCls->staticFunctions = std::move(functions);
         cls->prototypeClass = std::move(protoCls);
     }
-    cls->initialize = definition->initialize;
-    cls->finalize = definition->finalize;
-    cls->hasProperty = definition->hasProperty;
-    cls->getProperty = definition->getProperty;
-    cls->setProperty = definition->setProperty;
-    cls->deleteProperty = definition->deleteProperty;
-    cls->getPropertyNames = definition->getPropertyNames;
-    cls->callAsFunction = definition->callAsFunction;
-    cls->callAsConstructor = definition->callAsConstructor;
-    cls->hasInstance = definition->hasInstance;
-    cls->convertToType = definition->convertToType;
-    return cls;
+    cls->initialize = def.initialize;
+    cls->finalize = def.finalize;
+    cls->hasProperty = def.hasProperty;
+    cls->getProperty = def.getProperty;
+    cls->setProperty = def.setProperty;
+    cls->deleteProperty = def.deleteProperty;
+    cls->getPropertyNames = def.getPropertyNames;
+    cls->callAsFunction = def.callAsFunction;
+    cls->callAsConstructor = def.callAsConstructor;
+    cls->hasInstance = def.hasInstance;
+    cls->convertToType = def.convertToType;
+    return cls.release();
 }
 
 JSClassRef APS5_VABI JSClassRetain(JSClassRef jsClass) {
@@ -1378,13 +1475,11 @@ void APS5_VABI JSClassRelease(JSClassRef jsClass) {
 }
 
 void APS5_VABI _ZN13OpaqueJSClassD1Ev(OpaqueJSClass* self) {
-    if (!self) return;
-    self->DestroyInPlace();
+    DestroyJSClass(self, __func__);
 }
 
 void APS5_VABI _ZN13OpaqueJSClassD2Ev(OpaqueJSClass* self) {
-    if (!self) return;
-    self->DestroyInPlace();
+    DestroyJSClass(self, __func__);
 }
 
 JSObjectRef APS5_VABI JSObjectMake(JSContextRef ctx, JSClassRef jsClass, void* data) {
@@ -1456,15 +1551,25 @@ JSObjectRef APS5_VABI JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, u
 
     const std::string fnName = (name && !name->nullString) ? JsStringToUtf8(name) : "anonymous";
     std::string parameters;
-    for (unsigned i = 0; i < parameterCount; ++i) {
-        if (!parameterNames[i]) return nullptr;
-        if (i > 0) parameters += ", ";
-        parameters += JsStringToUtf8(parameterNames[i]);
+    if (parameterCount > 0) {
+        const std::size_t count = static_cast<std::size_t>(parameterCount);
+        if (count > std::numeric_limits<std::size_t>::max() / sizeof(JSStringRef))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        const std::size_t bytes = count * sizeof(JSStringRef);
+        RequireReadableGuestBytes(parameterNames, bytes, __func__);
+        std::vector<JSStringRef> names(count);
+        if (!GuestCopyIn_nid_no_patch(names.data(), parameterNames, bytes))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        for (std::size_t i = 0; i < count; ++i) {
+            if (!names[i]) return nullptr;
+            if (i > 0) parameters += ", ";
+            parameters += JsStringToUtf8(names[i]);
+        }
     }
     const std::string bodyText = JsStringToUtf8(body);
     if (const char* message = SingleFunctionError(mutCtx->qctx, fnName, parameters, bodyText)) {
         JS_ThrowSyntaxError(mutCtx->qctx, "%s", message);
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
 
@@ -1480,7 +1585,7 @@ JSObjectRef APS5_VABI JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, u
 
     JSValue fnVal = JS_Eval2(mutCtx->qctx, code.c_str(), code.size(), &options);
     if (JS_IsException(fnVal)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, fnVal);
@@ -1489,16 +1594,17 @@ JSObjectRef APS5_VABI JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, u
 JSObjectRef APS5_VABI JSObjectMakeArray(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     JSValue arr = JS_NewArray(mutCtx->qctx);
     if (JS_IsException(arr)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     for (std::size_t i = 0; i < argumentCount; ++i) {
-        JSValue elem = JS_DupValue(mutCtx->qctx, ArgumentValue(arguments, i));
+        JSValue elem = JS_DupValue(mutCtx->qctx, args[i]);
         if (JS_DefinePropertyValueUint32(mutCtx->qctx, arr, static_cast<std::uint32_t>(i), elem, JS_PROP_C_W_E) < 0) {
             JS_FreeValue(mutCtx->qctx, arr);
-            CapturePendingException(mutCtx, exception);
+            CaptureGuestException(mutCtx, exception, __func__);
             return nullptr;
         }
     }
@@ -1508,14 +1614,11 @@ JSObjectRef APS5_VABI JSObjectMakeArray(JSContextRef ctx, std::size_t argumentCo
 JSObjectRef APS5_VABI JSObjectMakeDate(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::vector<JSValueConst> args(argumentCount);
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     VmEntryScope vmScope(mutCtx->group);
-    for (std::size_t i = 0; i < argumentCount; ++i) {
-        args[i] = ArgumentValue(arguments, i);
-    }
     JSValue dateObj = JS_CallConstructor(mutCtx->qctx, mutCtx->dateConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(dateObj)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, dateObj);
@@ -1524,14 +1627,11 @@ JSObjectRef APS5_VABI JSObjectMakeDate(JSContextRef ctx, std::size_t argumentCou
 JSObjectRef APS5_VABI JSObjectMakeError(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::vector<JSValueConst> args(argumentCount);
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     VmEntryScope vmScope(mutCtx->group);
-    for (std::size_t i = 0; i < argumentCount; ++i) {
-        args[i] = ArgumentValue(arguments, i);
-    }
     JSValue errObj = JS_CallConstructor(mutCtx->qctx, mutCtx->errorConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(errObj)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, errObj);
@@ -1540,14 +1640,11 @@ JSObjectRef APS5_VABI JSObjectMakeError(JSContextRef ctx, std::size_t argumentCo
 JSObjectRef APS5_VABI JSObjectMakeRegExp(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::vector<JSValueConst> args(argumentCount);
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     VmEntryScope vmScope(mutCtx->group);
-    for (std::size_t i = 0; i < argumentCount; ++i) {
-        args[i] = ArgumentValue(arguments, i);
-    }
     JSValue regExpObj = JS_CallConstructor(mutCtx->qctx, mutCtx->regExpConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(regExpObj)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, regExpObj);
@@ -1555,22 +1652,36 @@ JSObjectRef APS5_VABI JSObjectMakeRegExp(JSContextRef ctx, std::size_t argumentC
 
 JSObjectRef APS5_VABI JSObjectMakeDeferredPromise(JSContextRef ctx, JSObjectRef* resolve, JSObjectRef* reject, JSValueRef* exception) {
     if (!ctx) return nullptr;
+    std::optional<GuestArena::HostWrite> resolveWrite;
+    std::optional<GuestArena::HostWrite> rejectWrite;
+    if (resolve) {
+        resolveWrite.emplace(resolve, sizeof(JSObjectRef));
+        if (!resolveWrite->Open() || !GuestWritable_nid_no_patch(resolve, sizeof(JSObjectRef)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    if (reject) {
+        rejectWrite.emplace(reject, sizeof(JSObjectRef));
+        if (!rejectWrite->Open() || !GuestWritable_nid_no_patch(reject, sizeof(JSObjectRef)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     JSValue funcs[2] = {JS_UNDEFINED, JS_UNDEFINED};
     JSValue promise = JS_NewPromiseCapability(mutCtx->qctx, funcs);
     if (JS_IsException(promise)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
-    if (resolve) {
-        *resolve = mutCtx->group->ToHandle(mutCtx, funcs[0]);
-    } else {
-        JS_FreeValue(mutCtx->qctx, funcs[0]);
+    JSObjectRef resolveHandle = resolve ? mutCtx->group->ToHandle(mutCtx, funcs[0]) : nullptr;
+    if (!resolve) JS_FreeValue(mutCtx->qctx, funcs[0]);
+    JSObjectRef rejectHandle = reject ? mutCtx->group->ToHandle(mutCtx, funcs[1]) : nullptr;
+    if (!reject) JS_FreeValue(mutCtx->qctx, funcs[1]);
+    if (resolve && !GuestCopyOut_nid_no_patch(resolve, &resolveHandle, sizeof(resolveHandle))) {
+        JS_FreeValue(mutCtx->qctx, promise);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
-    if (reject) {
-        *reject = mutCtx->group->ToHandle(mutCtx, funcs[1]);
-    } else {
-        JS_FreeValue(mutCtx->qctx, funcs[1]);
+    if (reject && !GuestCopyOut_nid_no_patch(reject, &rejectHandle, sizeof(rejectHandle))) {
+        JS_FreeValue(mutCtx->qctx, promise);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     return mutCtx->group->ToHandle(mutCtx, promise);
 }
@@ -1630,13 +1741,13 @@ JSValueRef APS5_VABI JSObjectGetProperty(JSContextRef ctx, JSObjectRef object, J
     VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     JSValue val = JS_GetProperty(mutCtx->qctx, object->qval, atom);
     JS_FreeAtom(mutCtx->qctx, atom);
     if (JS_IsException(val)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, val);
@@ -1648,7 +1759,7 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
     VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return;
     }
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
@@ -1656,7 +1767,7 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
     if (present < 0) {
         JS_FreeValue(mutCtx->qctx, val);
         JS_FreeAtom(mutCtx->qctx, atom);
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return;
     }
     if (!present) {
@@ -1666,7 +1777,7 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
         const int res = JS_DefinePropertyValue(mutCtx->qctx, target, atom, val, flags);
         JS_FreeAtom(mutCtx->qctx, atom);
         if (res < 0) {
-            CapturePendingException(mutCtx, exception);
+            CaptureGuestException(mutCtx, exception, __func__);
         }
         return;
     }
@@ -1675,7 +1786,7 @@ void APS5_VABI JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStrin
     JS_FreeAtom(mutCtx->qctx, atom);
     const int res = JS_SetPropertyValue(mutCtx->qctx, object->qval, propVal, val, 0);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
     }
 }
 
@@ -1685,13 +1796,13 @@ bool APS5_VABI JSObjectDeleteProperty(JSContextRef ctx, JSObjectRef object, JSSt
     VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JsStringToAtom(mutCtx->qctx, propertyName);
     if (atom == JS_ATOM_NULL) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return false;
     }
     const int res = JS_DeleteProperty(mutCtx->qctx, object->qval, atom, 0);
     JS_FreeAtom(mutCtx->qctx, atom);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return false;
     }
     return res != 0;
@@ -1703,7 +1814,7 @@ JSValueRef APS5_VABI JSObjectGetPropertyAtIndex(JSContextRef ctx, JSObjectRef ob
     VmEntryScope vmScope(mutCtx->group);
     JSValue val = JS_GetPropertyUint32(mutCtx->qctx, object->qval, propertyIndex);
     if (JS_IsException(val)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, val);
@@ -1716,7 +1827,7 @@ void APS5_VABI JSObjectSetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, 
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
     const int res = JS_SetPropertyValue(mutCtx->qctx, object->qval, JS_NewUint32(mutCtx->qctx, propertyIndex), val, 0);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
     }
 }
 
@@ -1726,7 +1837,7 @@ JSValueRef APS5_VABI JSObjectGetPropertyForKey(JSContextRef ctx, JSObjectRef obj
     VmEntryScope vmScope(mutCtx->group);
     JSValue val = JS_GetPropertyValue(mutCtx->qctx, object->qval, JS_DupValue(mutCtx->qctx, ValueOrNull(propertyKey)));
     if (JS_IsException(val)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, val);
@@ -1738,7 +1849,7 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
     VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JS_ValueToAtom(mutCtx->qctx, ValueOrNull(propertyKey));
     if (atom == JS_ATOM_NULL) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return;
     }
     JSValue val = JS_DupValue(mutCtx->qctx, StoredValue(value));
@@ -1746,7 +1857,7 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
     if (present < 0) {
         JS_FreeValue(mutCtx->qctx, val);
         JS_FreeAtom(mutCtx->qctx, atom);
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return;
     }
     if (!present) {
@@ -1756,7 +1867,7 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
         const int res = JS_DefinePropertyValue(mutCtx->qctx, target, atom, val, flags);
         JS_FreeAtom(mutCtx->qctx, atom);
         if (res < 0) {
-            CapturePendingException(mutCtx, exception);
+            CaptureGuestException(mutCtx, exception, __func__);
         }
         return;
     }
@@ -1764,7 +1875,7 @@ void APS5_VABI JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, J
     JS_FreeAtom(mutCtx->qctx, atom);
     const int res = JS_SetPropertyValue(mutCtx->qctx, object->qval, propVal, val, 0);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
     }
 }
 
@@ -1774,13 +1885,13 @@ bool APS5_VABI JSObjectDeletePropertyForKey(JSContextRef ctx, JSObjectRef object
     VmEntryScope vmScope(mutCtx->group);
     JSAtom atom = JS_ValueToAtom(mutCtx->qctx, ValueOrNull(propertyKey));
     if (atom == JS_ATOM_NULL) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return false;
     }
     const int res = JS_DeleteProperty(mutCtx->qctx, object->qval, atom, 0);
     JS_FreeAtom(mutCtx->qctx, atom);
     if (res < 0) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return false;
     }
     return res != 0;
@@ -1856,14 +1967,11 @@ JSValueRef APS5_VABI JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object
     if (!JSObjectIsFunction(ctx, object)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     JSValueConst thisVal = (thisObject && thisObject->alive) ? thisObject->qval : mutCtx->globalObject->qval;
-    std::vector<JSValueConst> args(argumentCount);
-    for (std::size_t i = 0; i < argumentCount; ++i) {
-        args[i] = ArgumentValue(arguments, i);
-    }
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_Call(mutCtx->qctx, object->qval, thisVal, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     OpaqueJSValue* handle = mutCtx->group->ToHandle(mutCtx, res);
@@ -1884,14 +1992,11 @@ JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef ob
     if (!ctx || !object || !object->alive) return nullptr;
     if (!JSObjectIsConstructor(ctx, object)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    std::vector<JSValueConst> args(argumentCount);
-    for (std::size_t i = 0; i < argumentCount; ++i) {
-        args[i] = ArgumentValue(arguments, i);
-    }
+    std::vector<JSValueConst> args = CopyGuestArguments(arguments, argumentCount, __func__);
     VmEntryScope vmScope(mutCtx->group);
     JSValue res = JS_CallConstructor(mutCtx->qctx, object->qval, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     OpaqueJSValue* handle = mutCtx->group->ToHandle(mutCtx, res);
@@ -2025,7 +2130,7 @@ JSObjectRef APS5_VABI JSObjectMakeArrayBufferWithBytesNoCopy(JSContextRef ctx, v
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     if (!bytes && byteLength > 0) {
-        SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "Bytes pointer is null but byte length is non-zero"));
+        SetGuestExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "Bytes pointer is null but byte length is non-zero"), __func__);
         return nullptr;
     }
     auto* record = new NoCopyBufferRecord{bytesDeallocator, deallocatorContext, bytes};
@@ -2033,7 +2138,7 @@ JSObjectRef APS5_VABI JSObjectMakeArrayBufferWithBytesNoCopy(JSContextRef ctx, v
     JSValue abuf = JS_NewArrayBuffer(mutCtx->qctx, rawBuf, byteLength, 0, &ArrayBufferNoCopyRealloc, record, false);
     if (JS_IsException(abuf)) {
         delete record;
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, abuf);
@@ -2076,7 +2181,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArray(JSContextRef ctx, JSTypedArrayType 
     JSValue ta = JS_NewTypedArray(mutCtx->qctx, 1, &arg, qtype);
     JS_FreeValue(mutCtx->qctx, lenVal);
     if (JS_IsException(ta)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, ta);
@@ -2089,12 +2194,12 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBuffer(JSContextRef ctx, JS
     std::size_t elemSize = 0;
     if (!ToQuickJsTypedArrayEnum(arrayType, &qtype, &elemSize)) return nullptr;
     if (!buffer || !buffer->alive || !JS_IsArrayBuffer(buffer->qval)) {
-        SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"));
+        SetGuestExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"), __func__);
         return nullptr;
     }
     JSValue resizable = CallIntrinsicGetter(mutCtx->group, mutCtx->qctx, buffer->qval, "ArrayBuffer", false, "resizable");
     if (JS_IsException(resizable)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     const bool isResizable = JS_ToBool(mutCtx->qctx, resizable) > 0;
@@ -2102,7 +2207,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBuffer(JSContextRef ctx, JS
     if (isResizable) throw std::invalid_argument("JSObjectMakeTypedArrayWithArrayBuffer: resizable buffer");
     std::size_t byteLength = 0;
     if (!JS_GetArrayBuffer(mutCtx->qctx, &byteLength, buffer->qval) && JS_HasException(mutCtx->qctx)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx, arrayType, buffer, 0, byteLength / elemSize, exception);
@@ -2115,7 +2220,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBufferAndOffset(JSContextRe
     std::size_t elemSize = 0;
     if (!ToQuickJsTypedArrayEnum(arrayType, &qtype, &elemSize)) return nullptr;
     if (!buffer || !buffer->alive || !JS_IsArrayBuffer(buffer->qval)) {
-        SetExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"));
+        SetGuestExceptionValue(mutCtx, exception, JS_NewTypeError(mutCtx->qctx, "JSObjectMakeTypedArrayWithArrayBuffer expects buffer to be an Array Buffer object"), __func__);
         return nullptr;
     }
     JSValue offsetVal = JS_NewUint64(mutCtx->qctx, byteOffset);
@@ -2125,7 +2230,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithArrayBufferAndOffset(JSContextRe
     JS_FreeValue(mutCtx->qctx, offsetVal);
     JS_FreeValue(mutCtx->qctx, lenVal);
     if (JS_IsException(ta)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     return mutCtx->group->ToHandle(mutCtx, ta);
@@ -2139,7 +2244,7 @@ JSObjectRef APS5_VABI JSObjectMakeTypedArrayWithBytesNoCopy(JSContextRef ctx, JS
     JSValueRef localExc = nullptr;
     JSObjectRef abuf = JSObjectMakeArrayBufferWithBytesNoCopy(ctx, bytes, byteLength, bytesDeallocator, deallocatorContext, &localExc);
     if (!abuf) {
-        if (exception) *exception = localExc;
+        if (exception && localExc) StoreGuestPointer(exception, localExc, __func__);
         return nullptr;
     }
     return JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx, arrayType, abuf, 0, byteLength / elemSize, exception);
@@ -2150,7 +2255,7 @@ void* APS5_VABI JSObjectGetTypedArrayBytesPtr(JSContextRef ctx, JSObjectRef obje
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     JSValue abuf = BufferOfView(mutCtx->group, mutCtx->qctx, object->qval);
     if (JS_IsException(abuf)) {
-        CapturePendingException(mutCtx, exception);
+        CaptureGuestException(mutCtx, exception, __func__);
         return nullptr;
     }
     std::size_t bufSize = 0;
