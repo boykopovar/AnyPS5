@@ -11058,6 +11058,13 @@ void writeBackBlockTests(const Device& device, Recorder& recorder) {
         }
         ClearHostImports(base.device);
         recorder.Sync();
+        recorder.FlushDeferredReleases();
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> released{{{address, address + surfaceBytes}}};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (StorageTexture::AnyLiveOverlaps(released)) {
+            Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": the image is still in the live registry when its memory is released");
+            std::this_thread::yield();
+        }
 #ifdef _WIN32
         VirtualFree(reserved, 0, MEM_RELEASE);
 #else
