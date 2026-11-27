@@ -158,7 +158,7 @@ bool BarycentricPatches(const State& state, std::span<const CompiledShader> shad
 }
 
 bool ForwardsVertexLayer(const State& state, std::span<const CompiledShader> shaders) {
-    return state.rectList || BarycentricPatches(state, shaders) || (state.stages.path == ShaderPath::Vertex && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; }));
+    return state.rectList || BarycentricPatches(state, shaders);
 }
 
 bool FragmentInterlock(std::span<const CompiledShader> shaders) {
@@ -246,6 +246,11 @@ bool LastVertexPatches(const State& state, std::span<const CompiledShader> shade
     if (shaders.size() != 2u || shaders[0].stage != ShaderRecompiler::ShaderStage::Vertex || shaders[1].stage != ShaderRecompiler::ShaderStage::Fragment || shaders[0].program == nullptr || shaders[1].program == nullptr) return false;
     if (!ReadsProvokingVertex(*shaders[1].program) || WritesProvokingVertexBuiltIn(*shaders[0].program)) return false;
     return (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !primitiveListRestart)) || (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!state.primitiveRestart || !indexed));
+}
+
+bool BarycentricGeometryRoute(const ShaderRecompiler::RecompileResult& vertex, bool lastVertexPatches, bool geometryShaders, bool tessellation) {
+    if (lastVertexPatches || (!geometryShaders && tessellation)) return false;
+    return !tessellation || !ShaderRecompiler::FindVertexLayerOutput(vertex.spirv.Words());
 }
 
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders) {

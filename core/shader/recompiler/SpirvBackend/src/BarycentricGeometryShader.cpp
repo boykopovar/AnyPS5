@@ -54,7 +54,7 @@ public:
         perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
     }
 
-    std::vector<std::uint32_t> Emit(const std::vector<std::uint32_t>& passed, const std::vector<PerVertexParameter>& perVertex, const BarycentricEmulationLayout& layout, std::optional<std::uint32_t> layerLocation, std::uint32_t provokingVertex) {
+    std::vector<std::uint32_t> Emit(const std::vector<std::uint32_t>& passed, const std::vector<PerVertexParameter>& perVertex, const BarycentricEmulationLayout& layout) {
         builder.EmitCapability(spv::CapabilityShader);
         builder.EmitCapability(spv::CapabilityGeometry);
         main = result(spv::OpFunction, voidType, spv::FunctionControlMaskNone, functionType);
@@ -93,14 +93,6 @@ public:
             perVertexOutputs.push_back(addInterface(spv::StorageClassOutput, vertexArrayType));
             decorate(perVertexOutputs.back(), spv::DecorationLocation, parameter.location);
         }
-        std::uint32_t layerIn = 0u;
-        std::uint32_t layerOut = 0u;
-        if (layerLocation) {
-            layerIn = addInterface(spv::StorageClassInput, builder.Type(spv::OpTypeArray, uintType, constant(uintType, 3u)));
-            decorate(layerIn, spv::DecorationLocation, *layerLocation);
-            layerOut = addInterface(spv::StorageClassOutput, uintType);
-            decorate(layerOut, spv::DecorationBuiltIn, spv::BuiltInLayer);
-        }
         builder.EmitEntryPoint(spv::ExecutionModelGeometry, main, "main", interfaces);
         builder.AddFunction(spv::OpLabel, builder.AllocateId());
 
@@ -112,7 +104,6 @@ public:
         for (const auto location : sources) {
             for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) values[location][vertex] = load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[location], constant(intType, vertex)));
         }
-        const auto layer = layerLocation ? load(uintType, result(spv::OpAccessChain, builder.Type(spv::OpTypePointer, spv::StorageClassInput, uintType), layerIn, constant(intType, provokingVertex))) : 0u;
         for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) {
             const auto clipPosition = load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, constant(intType, vertex), constant(intType, 0u)));
             store(position, clipPosition);
@@ -129,7 +120,6 @@ public:
             for (std::size_t i = 0; i < perVertex.size(); ++i) {
                 for (std::uint32_t source = 0; source < 3u; ++source) store(result(spv::OpAccessChain, ptrOutputVec4, perVertexOutputs[i], constant(intType, source)), values[perVertex[i].sourceLocation][source]);
             }
-            if (layerLocation) store(layerOut, layer);
             builder.AddFunction(spv::OpEmitVertex);
         }
         builder.AddFunction(spv::OpEndPrimitive);
@@ -468,9 +458,9 @@ EmulatedInterface DescribeEmulatedInterface(std::span<const FragmentParameter> p
     return emulated;
 }
 
-RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits, std::uint32_t provokingVertex) {
+RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits) {
     require(fragment.barycentricEmulation.active, "the fragment shader does not emulate barycentrics");
-    require(provokingVertex == 0u || provokingVertex == 2u, "the provoking vertex must be the first or the last of the triangle");
+    require(!FindVertexLayerOutput(vertex.spirv.Words()), "a vertex gl_Layer cannot be forwarded through the emulated-barycentric geometry stage, whose input vertex order Vulkan does not fix relative to the provoking vertex");
     require(limits.has_value(), "geometry shaders are unavailable");
     require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010500u, "unsupported SPIR-V target version");
     require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityGeometry) != target.supportedCapabilities.end(), "geometry capability is unavailable");
@@ -478,13 +468,12 @@ RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, co
     const auto passed = static_cast<std::uint32_t>(emulated.passed.size());
     const auto perVertex = static_cast<std::uint32_t>(emulated.perVertex.size());
     const auto outputComponents = 4u + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
-    const auto layer = FindVertexLayerOutput(vertex.spirv.Words());
-    const auto inputComponents = 4u + 4u * emulated.sources + (layer ? 4u : 0u);
+    const auto inputComponents = 4u + 4u * emulated.sources;
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
-    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && 4u * InputLocationExtent(emulated, layer) <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
+    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && 4u * InputLocationExtent(emulated, std::nullopt) <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     BarycentricGeometryEmitter emitter(target.spirvVersion);
     RecompileResult result;
-    result.spirv = emitter.Emit(emulated.passed, emulated.perVertex, emulated.layout, layer ? std::optional<std::uint32_t>(layer->location) : std::nullopt, provokingVertex);
+    result.spirv = emitter.Emit(emulated.passed, emulated.perVertex, emulated.layout);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     result.spirv = ValidateAndOptimizeSpirv(result.spirv, target.vulkanVersion, target.spirvVersion);
 #endif
@@ -506,7 +495,7 @@ BarycentricTessellationShaders BuildBarycentricTessellationShaders(const Recompi
     require(!layer || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityShaderViewportIndexLayerEXT) != target.supportedCapabilities.end(), "forwarding the vertex gl_Layer needs VK_EXT_shader_viewport_index_layer");
     const std::optional<std::uint32_t> layerLocation = layer ? std::optional<std::uint32_t>(layer->location) : std::nullopt;
     const auto controlComponents = 4u + clipDistances + 4u * emulated.sources + (layer ? 4u : 0u);
-    const auto evaluationOutputComponents = 4u + clipDistances + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
+    const auto evaluationOutputComponents = 4u + clipDistances + (layer ? 1u : 0u) + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
     const auto& limits = *target.tessellation;
     require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && 4u * InputLocationExtent(emulated, layer) <= std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents}) && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");

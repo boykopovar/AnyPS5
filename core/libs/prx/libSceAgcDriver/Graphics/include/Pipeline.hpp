@@ -167,6 +167,7 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
 bool ForwardsVertexLayer(const State& state, std::span<const CompiledShader> shaders);
 bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed);
+bool BarycentricGeometryRoute(const ShaderRecompiler::RecompileResult& vertex, bool lastVertexPatches, bool geometryShaders, bool tessellation);
 bool ValidateSampleLocations(const Context& context, const State& state);
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);

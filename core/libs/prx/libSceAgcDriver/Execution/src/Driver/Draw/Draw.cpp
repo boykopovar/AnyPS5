@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
@@ -1145,10 +1146,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         require(graphics.stages.path == Graphics::ShaderPath::Vertex && programs.size() == 2 && programResults[0] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs a vertex shader before it");
         const auto geometryLimits = localDevice->GeometryLimits();
         results.reserve(programs.size() + 2u);
-        if (!lastVertexPatches && (geometryLimits || !localDevice->Target().tessellation)) {
-            results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), geometryLimits, graphics.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2u : 0u));
+        if (Graphics::BarycentricGeometryRoute(*programResults[0], lastVertexPatches, geometryLimits.has_value(), localDevice->Target().tessellation.has_value())) {
+            results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), geometryLimits));
             stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
         } else {
+            require(!ShaderRecompiler::FindVertexLayerOutput(programResults[0]->spirv.Words()) || (graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!graphics.primitiveRestart || !localDevice->PrimitiveListRestart())) || (graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!graphics.primitiveRestart || !drawParameters.indexed)), "a vertex gl_Layer with emulated barycentrics goes through tessellation patches, which need a triangle list, with primitive restart only on a device without VK_EXT_primitive_topology_list_restart, or a triangle strip, with primitive restart only in a non-indexed draw; the geometry stage cannot forward it, as Vulkan does not fix its input vertex order relative to the provoking vertex");
             require((graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!graphics.primitiveRestart || !localDevice->PrimitiveListRestart())) || (graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!graphics.primitiveRestart || !drawParameters.indexed)), "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric or geometry shaders needs a triangle list, with primitive restart only on a device without VK_EXT_primitive_topology_list_restart, or a triangle strip, with primitive restart only in a non-indexed draw");
             auto patches = ShaderRecompiler::BuildBarycentricTessellationShaders(*programResults[0], *programResults[1], localDevice->Target(), localDevice->MaxFragmentInputComponents(), graphics.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2u : 0u);
             const auto first = results.size();

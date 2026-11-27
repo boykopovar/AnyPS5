@@ -53,8 +53,6 @@ struct Module {
     std::uint32_t primitiveIndices = 0;
     bool fragmentBarycentric = false;
     bool layerOutput = false;
-    bool generatedLayerStage = false;
-    bool layer = false;
     bool meshCapability = false;
     std::uint32_t primitiveInputs = 0;
     bool pointSizeOutput = false;
@@ -120,10 +118,6 @@ struct Module {
             return;
         }
         if (stage == Stage::Geometry) {
-            if (!input && value == spv::BuiltInLayer && generatedLayerStage && Signature(type) == "u32" && !layer) {
-                layer = true;
-                return;
-            }
             Require(value == spv::BuiltInPosition && Signature(type) == "f32x4" && (input || !position), "unsupported geometry built-in");
             if (!input) position = true;
             return;
@@ -208,7 +202,6 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     Require(words[4] == 0, "unsupported SPIR-V schema: " + std::to_string(words[4]));
 
     Module module;
-    module.generatedLayerStage = (evaluation && state.stages.path == ShaderPath::Vertex && !state.stages.tessellation) || (geometry && state.stages.path == ShaderPath::Vertex);
     module.pointSizeOutput = (state.vertexPoints && stage == Stage::Vertex) || (mesh && state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u);
     module.viewportOutput = !state.extraViewports.empty();
     std::uint32_t entries = 0;

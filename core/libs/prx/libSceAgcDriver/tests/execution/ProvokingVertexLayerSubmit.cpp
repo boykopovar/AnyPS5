@@ -22,8 +22,10 @@
 #include <array>
 #include <bit>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -48,7 +50,9 @@ constexpr std::uint32_t SetContextReg = 0x69u;
 constexpr std::uint32_t SetShReg = 0x76u;
 constexpr std::uint32_t SetUconfigReg = 0x79u;
 constexpr std::uint32_t DrawIndexAuto = 0x2du;
+constexpr std::uint32_t TriangleFan = 5u;
 constexpr std::uint32_t TriangleList = 4u;
+constexpr std::uint32_t TriangleStrip = 6u;
 constexpr std::uint32_t RectList = 17u;
 constexpr float Unwritten = -7.0f;
 
@@ -73,15 +77,21 @@ struct Vertex {
 };
 
 constexpr std::array<std::array<float, 2>, 3> Corners{{{-0.8f, -0.8f}, {0.7f, -0.8f}, {-0.8f, 0.6f}}};
+constexpr std::array<std::array<float, 2>, 4> StripCorners{{{-0.8f, -0.8f}, {-0.8f, -0.8f}, {0.7f, -0.8f}, {-0.8f, 0.6f}}};
 
-constexpr std::array<Vertex, 3> VerticesFor(std::array<std::uint32_t, 3> layers) {
-    std::array<Vertex, 3> vertices{};
-    for (std::size_t i = 0; i < vertices.size(); ++i) vertices[i] = {{Corners[i][0], Corners[i][1], 0.5f, 1.0f}, {}, layers[i]};
+template <std::size_t Count>
+constexpr std::array<Vertex, Count> VerticesFor(const std::array<std::array<float, 2>, Count>& corners, std::array<std::uint32_t, Count> layers) {
+    std::array<Vertex, Count> vertices{};
+    for (std::size_t i = 0; i < vertices.size(); ++i) vertices[i] = {{corners[i][0], corners[i][1], 0.5f, 1.0f}, {}, layers[i]};
     return vertices;
 }
 
-alignas(256) constexpr std::array<Vertex, 3> ThirdVertexLayer = VerticesFor({0u, 0u, 1u});
-alignas(256) constexpr std::array<Vertex, 3> FirstVertexLayer = VerticesFor({1u, 0u, 0u});
+alignas(256) constexpr std::array<Vertex, 3> ThirdVertexLayer = VerticesFor(Corners, {0u, 0u, 1u});
+alignas(256) constexpr std::array<Vertex, 3> FirstVertexLayer = VerticesFor(Corners, {1u, 0u, 0u});
+alignas(256) constexpr std::array<Vertex, 4> OddStripSecondVertexLayer = VerticesFor(StripCorners, {0u, 1u, 0u, 0u});
+alignas(256) constexpr std::array<Vertex, 4> OddStripOtherVertexLayers = VerticesFor(StripCorners, {1u, 0u, 1u, 1u});
+alignas(256) constexpr std::array<Vertex, 4> OddStripFourthVertexLayer = VerticesFor(StripCorners, {0u, 0u, 0u, 1u});
+alignas(256) constexpr std::array<Vertex, 4> OddStripFirstThreeLayers = VerticesFor(StripCorners, {1u, 1u, 1u, 0u});
 
 struct RegisteredShader {
     Shader shader;
@@ -169,7 +179,9 @@ struct Case {
     std::uint32_t primitive;
     const RegisteredShader* pixel;
     bool last;
-    const std::array<Vertex, 3>* vertices;
+    std::span<const Vertex> vertices;
+    std::uint32_t provoking;
+    const char* refusal;
 };
 
 std::vector<std::uint32_t> Frame(const std::uint8_t* surface, const Case& item) {
@@ -203,9 +215,9 @@ std::vector<std::uint32_t> Frame(const std::uint8_t* surface, const Case& item) 
     SetRegister(words, SetShReg, 0x0c8, static_cast<std::uint32_t>(vertexAddress >> 8u));
     SetRegister(words, SetShReg, 0x0c9, static_cast<std::uint32_t>(vertexAddress >> 40u));
     SetRegister(words, SetShReg, 0x08b, 4u << 1u);
-    const auto descriptor = BufferDescriptor(item.vertices->data(), sizeof(Vertex), static_cast<std::uint32_t>(item.vertices->size()));
+    const auto descriptor = BufferDescriptor(item.vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(item.vertices.size()));
     for (std::uint32_t i = 0; i < descriptor.size(); ++i) SetRegister(words, SetShReg, 0x08c + i, descriptor[i]);
-    words.insert(words.end(), {0xc0000000u | (1u << 16u) | (DrawIndexAuto << 8u), static_cast<std::uint32_t>(item.vertices->size()), 2u});
+    words.insert(words.end(), {0xc0000000u | (1u << 16u) | (DrawIndexAuto << 8u), static_cast<std::uint32_t>(item.vertices.size()), 2u});
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&EndOfPipe);
     words.insert(words.end(), {0xc0064900u, 0x514u, (1u << 29u) | (2u << 24u), static_cast<std::uint32_t>(labelAddress), static_cast<std::uint32_t>(static_cast<std::uint64_t>(labelAddress) >> 32u), 1u, 0u, 0u});
     return words;
@@ -223,10 +235,15 @@ std::array<std::size_t, Slices> WrittenTexels(const std::vector<std::byte>& stor
     return written;
 }
 
+std::string Describe(const Case& item) {
+    std::string what = std::string(item.route) + ", " + (item.last ? "last" : "first") + " provoking vertex, vertex layers";
+    for (std::size_t i = 0; i < item.vertices.size(); ++i) what += (i == 0 ? " " : i + 1 == item.vertices.size() ? " and " : ", ") + std::to_string(item.vertices[i].layer);
+    return what;
+}
+
 std::string Run(const Case& item) {
-    const auto& layers = *item.vertices;
-    const auto expected = item.last ? layers[2].layer : layers[0].layer;
-    const std::string what = std::string(item.route) + ", " + (item.last ? "last" : "first") + " provoking vertex, vertex layers " + std::to_string(layers[0].layer) + ", " + std::to_string(layers[1].layer) + " and " + std::to_string(layers[2].layer);
+    const auto expected = item.vertices[item.provoking].layer;
+    const auto what = Describe(item);
     auto* surface = AllocateWatched();
     CheckColorTarget(reinterpret_cast<std::uint64_t>(surface));
     std::fill_n(reinterpret_cast<float*>(surface), SurfaceBytes / sizeof(float), Unwritten);
@@ -237,8 +254,10 @@ std::string Run(const Case& item) {
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "the DCB submission failed");
         AgcDriverWaitIdle_nid_postfix();
     } catch (const std::exception& error) {
+        if (item.refusal != nullptr && std::string(error.what()).find(item.refusal) != std::string::npos) return {};
         return what + ": " + error.what();
     }
+    if (item.refusal != nullptr) return what + ": the draw was not refused with \"" + item.refusal + "\"";
     if (EndOfPipe != 1u) return what + ": the end-of-pipe label was not written";
     std::vector<std::byte> stored(SurfaceBytes);
     AgcDriver::GuestMemory::Read(reinterpret_cast<std::uint64_t>(surface), stored);
@@ -251,10 +270,15 @@ std::string Run(const Case& item) {
 }
 
 int main() {
+#ifdef _WIN32
+    if (_putenv_s("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1") != 0) return 1;
+#else
+    if (setenv("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1", 1) != 0) return 1;
+#endif
     try {
         bool rectLists = false;
         bool emulatedBarycentrics = false;
-        bool geometryStage = false;
+        bool patches = false;
         bool provokingVertexLast = false;
         {
             const auto device = OpenVulkanTestDevice();
@@ -266,24 +290,34 @@ int main() {
             }
             rectLists = target.tessellation.has_value();
             emulatedBarycentrics = !target.fragmentShaderBarycentricEnabled;
-            geometryStage = device->GeometryLimits().has_value() || !target.tessellation.has_value();
+            patches = target.tessellation.has_value();
             provokingVertexLast = device->ProvokingVertexLast();
         }
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(ConstantPixelShader, ConstantPixelCode.data(), sizeof(ConstantPixelCode), 1);
         Register(VertexValuePixelShader, VertexValuePixelCode.data(), sizeof(VertexValuePixelCode), 1);
-        const char* barycentricRoute = geometryStage ? "a triangle list whose pixel shader reads emulated barycentrics (geometry stage)" : "a triangle list whose pixel shader reads emulated barycentrics (tessellation stages)";
+        constexpr auto GeometryRefusal = "a vertex gl_Layer cannot be forwarded through the emulated-barycentric geometry stage";
+        constexpr auto FanRefusal = "a vertex gl_Layer with emulated barycentrics goes through tessellation patches";
+        const char* barycentricRefusal = patches ? nullptr : GeometryRefusal;
+        const char* listRoute = patches ? "a triangle list whose pixel shader reads emulated barycentrics (tessellation patches)" : "a triangle list whose pixel shader reads emulated barycentrics (refused by the geometry stage)";
+        const char* stripRoute = patches ? "a triangle strip whose odd triangle feeds a pixel shader that reads emulated barycentrics (tessellation patches)" : "a triangle strip whose odd triangle feeds a pixel shader that reads emulated barycentrics (refused by the geometry stage)";
         std::vector<Case> cases;
         for (const auto* vertices : {&ThirdVertexLayer, &FirstVertexLayer}) {
             for (const bool last : {false, true}) {
-                if (last && !provokingVertexLast) continue;
-                if (rectLists) cases.push_back({"a rect list", RectList, &ConstantPixelShader, last, vertices});
-                if (emulatedBarycentrics) cases.push_back({barycentricRoute, TriangleList, &VertexValuePixelShader, last, vertices});
+                if (rectLists && (!last || provokingVertexLast)) cases.push_back({"a rect list", RectList, &ConstantPixelShader, last, *vertices, last ? 2u : 0u, nullptr});
+                if (emulatedBarycentrics && (!last || provokingVertexLast || patches)) cases.push_back({listRoute, TriangleList, &VertexValuePixelShader, last, *vertices, last ? 2u : 0u, barycentricRefusal});
             }
+        }
+        if (emulatedBarycentrics) {
+            for (const auto* vertices : {&OddStripSecondVertexLayer, &OddStripOtherVertexLayers}) cases.push_back({stripRoute, TriangleStrip, &VertexValuePixelShader, false, *vertices, 1u, barycentricRefusal});
+            if (provokingVertexLast || patches) {
+                for (const auto* vertices : {&OddStripFourthVertexLayer, &OddStripFirstThreeLayers}) cases.push_back({stripRoute, TriangleStrip, &VertexValuePixelShader, true, *vertices, 3u, barycentricRefusal});
+            }
+            cases.push_back({patches ? "a triangle fan whose pixel shader reads emulated barycentrics (refused by the tessellation patches)" : "a triangle fan whose pixel shader reads emulated barycentrics (refused by the geometry stage)", TriangleFan, &VertexValuePixelShader, false, FirstVertexLayer, 0u, patches ? FanRefusal : GeometryRefusal});
         }
         if (!rectLists) std::puts("rect lists are not checked, the device lacks tessellationShader");
         if (!emulatedBarycentrics) std::puts("emulated barycentrics are not checked, the device has VK_KHR_fragment_shader_barycentric");
-        if (!provokingVertexLast) std::puts("the last provoking vertex mode is not checked, the device lacks it");
+        if (!provokingVertexLast) std::puts(patches ? "the last provoking vertex mode is checked only through the tessellation patches, the device lacks it" : "the last provoking vertex mode is not checked, the device lacks it");
         if (cases.empty()) {
             std::puts("skipped, the device takes neither generated-stage route");
             AgcDriverShutdown_nid_postfix();
@@ -293,13 +327,18 @@ int main() {
         for (const auto& item : cases) {
             const auto error = Run(item);
             if (error.empty()) {
-                std::printf("passed: %s, %s provoking vertex, vertex layers %u, %u and %u\n", item.route, item.last ? "last" : "first", (*item.vertices)[0].layer, (*item.vertices)[1].layer, (*item.vertices)[2].layer);
+                std::printf("passed: %s%s\n", Describe(item).c_str(), item.refusal != nullptr ? ", refused by name" : "");
                 continue;
             }
             std::cerr << error << '\n';
             ++failures;
         }
-        AgcDriverShutdown_nid_postfix();
+        const char* refused = cases.back().refusal;
+        try {
+            AgcDriverShutdown_nid_postfix();
+        } catch (const std::exception& error) {
+            if (refused == nullptr || std::string(error.what()).find(refused) == std::string::npos) throw;
+        }
         if (failures != 0u) {
             std::cerr << failures << " provoking vertex layer draws through the driver failed\n";
             return 1;
