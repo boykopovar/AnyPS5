@@ -67,14 +67,34 @@ void CheckInput() {
     Require(fgetc_nid_postfix(&file.stream) == 'a', "read one buffered byte");
     const auto position = Position(file.native);
     Require(position > 1, "input has read-ahead data");
-    Require(ungetc_nid_postfix('X', &file.stream) == 'X', "push back a different byte");
-    Require(fpurge_nid_postfix(&file.stream) == 0, "purge input and pushback");
-    Require(Position(file.native) == position, "purging input does not reposition the descriptor");
-    Require(fgetc_nid_postfix(&file.stream) == EOF, "read-ahead and pushback have been discarded");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge buffered input");
+    Require(std::ftell(file.native) == 1, "purging input leaves the stream at the logical position");
+    Require(fgetc_nid_postfix(&file.stream) == 'b', "the next read continues after the byte already read");
+    Require(ungetc_nid_postfix('Z', &file.stream) == 'Z', "push back a different byte");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge input with a pushed-back byte");
+    Require(fgetc_nid_postfix(&file.stream) == 'Z', "the pushed-back byte survives the purge");
+    Require(fgetc_nid_postfix(&file.stream) == 'c', "the read after the pushed-back byte continues in order");
+    Require(ungetc_nid_postfix('Y', &file.stream) == 'Y' && fgetc_nid_postfix(&file.stream) == 'Y', "a consumed pushback");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after the pushed-back byte was read");
+    Require(fgetc_nid_postfix(&file.stream) == 'd', "a consumed pushback does not come back");
+    for (const char expected : {'e', 'f'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read the rest of the file");
+    Require(fgetc_nid_postfix(&file.stream) == EOF, "read to the end");
     Require((file.stream.GuestState().flags & 0x20) != 0, "publish EOF");
     Require(fpurge_nid_postfix(&file.stream) == 0 && (file.stream.GuestState().flags & 0x20) != 0, "purge preserves EOF");
     file.stream.SetError();
     Require(fpurge_nid_postfix(&file.stream) == 0 && (file.stream.GuestState().flags & 0x60) == 0x60, "purge preserves EOF and error");
+}
+
+void CheckPushbackReadByFread() {
+    BufferedStream file;
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind input");
+    Require(fgetc_nid_postfix(&file.stream) == 'a', "read one byte");
+    Require(ungetc_nid_postfix('Q', &file.stream) == 'Q', "push back a different byte");
+    char byte = 0;
+    Require(fread_nid_postfix(&byte, 1, 1, &file.stream) == 1 && byte == 'Q', "read the pushed-back byte with fread");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after fread consumed the pushback");
+    Require(fgetc_nid_postfix(&file.stream) == 'b', "a pushback read by fread does not come back");
 }
 
 void CheckUnbuffered() {
@@ -86,8 +106,9 @@ void CheckUnbuffered() {
     const auto position = Position(file.native);
     Require(position >= 1 && position <= 2, "unbuffered descriptor position");
     Require(ungetc_nid_postfix('X', &file.stream) == 'X', "push back on an unbuffered stream");
-    Require(fpurge_nid_postfix(&file.stream) == 0 && Position(file.native) == position, "purge unbuffered pushback without seeking");
-    Require(fgetc_nid_postfix(&file.stream) == (position == 1 ? 'b' : EOF), "resume at the actual descriptor position");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && std::ftell(file.native) == 0, "purge unbuffered pushback at the logical position");
+    Require(fgetc_nid_postfix(&file.stream) == 'X', "the pushed-back byte survives an unbuffered purge");
+    Require(fgetc_nid_postfix(&file.stream) == 'b', "resume after the byte already read");
 }
 
 void CheckLineBuffered() {
@@ -142,6 +163,7 @@ void CheckInvalid() {
 int main() {
     CheckOutput();
     CheckInput();
+    CheckPushbackReadByFread();
     CheckUnbuffered();
     CheckLineBuffered();
     CheckPipe();

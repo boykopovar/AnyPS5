@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Guarded single-source descriptors](../../../core/shader/recompiler/Optimization/src/ResourceTracker.cpp) are not measured on hardware. A T#, an S# or the V# of a pointer-record image table column whose dwords are Phi webs holding one rebuildable SRT read (consecutive words of one read) beside values the tracker cannot rebuild, such as a load in a linked callee or a `v_readlane` restore, is planned from that read. Each image instruction it feeds compares all live words with the planned ones and records an `InvalidDescriptor` fault on a mismatch, where the console reads the other descriptor, also when only unused words differ. Two or more SRT reads, no SRT read, or more than 512 leaves still throw; `APS5_STRICT_DESCRIPTOR_WEBS` makes every such descriptor throw. PPSA01317 (Gran Turismo 7) compute shader 0x120aed7f00 needs this for its table V# and one T#. Closes when: a title run shows whether the guarded instructions fault, and the ones that do are planned per leaf.

@@ -21,6 +21,7 @@ struct GuestOption {
 };
 
 struct GuestDirectoryEntry;
+struct GuestLocaleFacade;
 
 struct LibcUtimbuf {
     std::int64_t actime;
@@ -44,6 +45,7 @@ void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
 GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip);
 void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location);
+void APS5_VABI _reclaim_telldir_nid_postfix(void* handle);
 int APS5_VABI __fflush_nid_postfix(FileStream* stream);
 int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
@@ -370,6 +372,9 @@ LibcUnexpectedHandler APS5_VABI _ZSt14get_unexpectedv_nid_postfix();
 void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
+GuestLocaleFacade* APS5_VABI _ZNSt6locale6globalERKS__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix(GuestLocale::Implementation* self, bool transparent);
+void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* self, int category, const char* localeName);
 
 
 }
