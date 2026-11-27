@@ -48,6 +48,9 @@ constexpr std::uint32_t SubtractS16One = 0x80908110u;
 constexpr std::uint32_t CompareS16NotZero = 0xbf078010u;
 constexpr std::uint32_t BranchBackFourOnScc = 0xbf85fffcu;
 constexpr std::uint32_t BranchBackFiveOnScc = 0xbf85fffbu;
+constexpr std::uint32_t MovreldV4V4 = 0x7e088504u;
+constexpr std::uint32_t MovreldV6V4 = 0x7e0c8504u;
+constexpr std::uint32_t MoveV2V6 = 0x7e040306u;
 
 struct Shape {
     std::size_t functionArrays = 0;
@@ -485,6 +488,58 @@ int main(int argc, char** argv) {
         const auto unbounded = DynamicFunctionAccesses(RecompileNarrowing(2));
         if (bounded != 0u || unbounded == 0u) std::fprintf(stderr, "  dynamic window accesses: %zu with only a masked index, %zu with two unproven reads\n", bounded, unbounded);
         return bounded == 0u && unbounded != 0u;
+    });
+
+    passed &= run("an indexed write above the window base keeps direct accesses to lower registers in SSA values", [] {
+        const std::vector<std::uint32_t> code{MoveM0GroupX, MoveV4One, MoveV5Two, MoveV6Four, MovrelsV1V4, MovreldV6V4, MoveV1V5, MoveV2V6,
+            0xe0700000u, 0x80000100u, 0xe0700004u, 0x80000200u, EndProgram};
+        const auto program = TranslateCompute(code);
+        const auto& metadata = program.Metadata();
+        std::size_t directReads = 0;
+        std::size_t routedReads = 0;
+        std::size_t windowWrites = 0;
+        for (const auto& block : program.Blocks()) {
+            for (const auto* instruction : block->Instructions()) {
+                if (instruction->Opcode() == IrOpcode::GetVectorRegister && instruction->Argument(0)->Register().index == 5u) ++directReads;
+                if (instruction->Opcode() == IrOpcode::LoadVectorWindow && instruction->Argument(0)->Resolve()->HasImmediate() && instruction->Argument(0)->Resolve()->ImmediateU32() == 2u) ++routedReads;
+                if (instruction->Opcode() == IrOpcode::StoreVectorWindow && instruction->Argument(0)->Resolve()->HasImmediate() && instruction->Argument(0)->Resolve()->ImmediateU32() == 1u) ++windowWrites;
+            }
+        }
+        if (!metadata.vectorWindowIndexedWrites || metadata.vectorWindowBase != 4u || metadata.vectorWindowIndexedWriteSlot != 2u || directReads == 0u || routedReads == 0u || windowWrites == 0u)
+            std::fprintf(stderr, "  window base %u indexed write slot %u, direct v5 reads %zu, windowed v6 reads %zu, windowed v5 writes %zu\n", metadata.vectorWindowBase, metadata.vectorWindowIndexedWriteSlot, directReads, routedReads, windowWrites);
+        return metadata.vectorWindowIndexedWrites && metadata.vectorWindowBase == 4u && metadata.vectorWindowIndexedWriteSlot == 2u && directReads != 0u && routedReads != 0u && windowWrites != 0u;
+    });
+
+    passed &= run("direct accesses below a window's lowest relative write shrink its SPIR-V against one whose relative write spans the window", [] {
+        const std::array<std::uint32_t, 13> highWrite{MoveM0GroupX, MoveV4One, MoveV5Two, MoveV6Four, MovrelsV1V4, MovreldV6V4, MoveV1V5, MoveV2V6,
+            0xe0700000u, 0x80000100u, 0xe0700004u, 0x80000200u, EndProgram};
+        std::array<std::uint32_t, 13> lowWrite = highWrite;
+        lowWrite[5] = MovreldV4V4;
+        const auto high = RecompileProgram(highWrite);
+        const auto low = RecompileProgram(lowWrite);
+        const auto highShape = Scan(high);
+        const auto lowShape = Scan(low);
+        if (highShape.functionArrays != 1u || lowShape.functionArrays != 1u || highShape.accessChains >= lowShape.accessChains || high.size() >= low.size())
+            std::fprintf(stderr, "  relative write at v6: %zu arrays, %zu access chains, %zu words; at v4: %zu arrays, %zu access chains, %zu words\n", highShape.functionArrays, highShape.accessChains, high.size(), lowShape.functionArrays, lowShape.accessChains, low.size());
+        return highShape.functionArrays == 1u && lowShape.functionArrays == 1u && highShape.accessChains < lowShape.accessChains && high.size() < low.size();
+    });
+
+    passed &= run("a direct access under a relative write's base register stays in SSA inside the write's loop", [] {
+        const std::vector<std::uint32_t> code{MoveV4One, MoveV5Two, MoveV6Four, MoveM0GroupX, MoveS16Two, MovrelsV1V4, MovreldV6V4, MoveV1V5, SubtractS16One, CompareS16NotZero, BranchBackFiveOnScc, 0xe0700000u, 0x80000100u, EndProgram};
+        const auto program = TranslateCompute(code);
+        const auto& metadata = program.Metadata();
+        bool loopSsaRead = false;
+        for (const auto& block : program.Blocks()) {
+            const bool relative = std::any_of(block->Instructions().begin(), block->Instructions().end(), [](const IrValue* instruction) {
+                return instruction->Opcode() == IrOpcode::LoadVectorWindow && !instruction->Argument(0)->Resolve()->HasImmediate();
+            });
+            if (!relative) continue;
+            for (const auto* instruction : block->Instructions())
+                if (instruction->Opcode() == IrOpcode::GetVectorRegister && instruction->Argument(0)->Register().index == 5u) loopSsaRead = true;
+        }
+        if (!metadata.vectorWindowIndexedWrites || metadata.vectorWindowIndexedWriteSlot != 2u || !loopSsaRead)
+            std::fprintf(stderr, "  indexed write slot %u, ssa read of v5 in the relative block: %d\n", metadata.vectorWindowIndexedWriteSlot, loopSsaRead);
+        return metadata.vectorWindowIndexedWrites && metadata.vectorWindowIndexedWriteSlot == 2u && loopSsaRead;
     });
 
     if (passed) std::puts("Vector window shape and SSA control tests passed");
