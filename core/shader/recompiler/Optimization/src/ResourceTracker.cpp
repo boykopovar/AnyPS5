@@ -2735,7 +2735,7 @@ private:
         image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore || cubeFaceGather) && !memory.imagePacked && memory.imageByElements == 0u;
         image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
         const bool flatVolumeLoad = op == IrOpcode::ImageRead && memory.imageSampleFlags == 0u;
-        const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
+        const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags & ~(RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagLod | RdnaImageSampleFlagBias | RdnaImageSampleFlagOffset)) == 0u;
         const bool flatVolumeQuery = op == IrOpcode::ImageQueryDimensions;
         image.volumeGather = image.volumeGather || (op == IrOpcode::ImageGatherRaw && image.dimension == RdnaImageDimension::Dim3D);
         image.flatVolumeCompatible = image.flatVolumeCompatible && (flatVolumeLoad || flatVolumeSample || flatVolumeQuery) && !memory.imagePacked && memory.imageByElements == 0u;
