@@ -2,6 +2,8 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -151,6 +153,29 @@ int main() {
             GuestFormNode("child", "child contents", nullptr, nullptr));
         curl_formfree_nid_postfix(form);
         curl_formfree_nid_postfix(nullptr);
+
+        auto rejectsInvalid = [](auto&& call) {
+            errno = 71;
+            bool threw = false;
+            try {
+                call();
+            } catch (const std::invalid_argument&) {
+                threw = true;
+            }
+            Require(threw && errno == 71);
+        };
+        auto* const badNode = reinterpret_cast<guest_curl_httppost*>(std::uintptr_t{0x10});
+        rejectsInvalid([&] { curl_formfree_nid_postfix(badNode); });
+
+        auto* badMore = GuestFormNode("more-root", "root-contents", nullptr, badNode,
+            CURL_HTTPPOST_PTRNAME | CURL_HTTPPOST_PTRCONTENTS);
+        rejectsInvalid([&] { curl_formfree_nid_postfix(badMore); });
+        badMore->more = nullptr;
+        FreeGuestForms(badMore);
+
+        auto* badNext = GuestFormNode("next-root", "root-contents", badNode, nullptr,
+            CURL_HTTPPOST_PTRNAME | CURL_HTTPPOST_PTRCONTENTS);
+        rejectsInvalid([&] { curl_formfree_nid_postfix(badNext); });
     }
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
