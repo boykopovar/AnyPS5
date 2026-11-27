@@ -540,7 +540,8 @@ byId('file').addEventListener('change', async event => {
             return;
         }
         const titleId = inputTitleId(file.name);
-        if (!await confirmReplacement(isDirty(titleId !== undefined)) || request !== replacementRequest) return;
+        const replacesTitleId = titleId !== undefined && titleId !== byId('profile-title-id').value;
+        if (!await confirmReplacement(isDirty(replacesTitleId)) || request !== replacementRequest) return;
         importReport = result;
         saveRequest++;
         renderImportReport();

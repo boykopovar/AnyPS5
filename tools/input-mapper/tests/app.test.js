@@ -335,6 +335,22 @@ test('copying the mapping leaves an edited profile destination unsaved', async t
     assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
 });
 
+test('importing the destination already entered applies without a discard prompt', async t => {
+    const app = await setup(t, 'import-matches-edited-profile-destination');
+    await app.importFile('anyps5-input.PPSA00001.ini', 'Cross = KEY:F\n');
+    const titleId = app.get('profile-title-id');
+    titleId.value = 'PPSA00002';
+    titleId.dispatchEvent(new Event('input'));
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), false);
+
+    const replacement = 'Square = KEY:J\n';
+    await app.importFile('anyps5-input.PPSA00002.ini', replacement);
+    assert.equal(app.dialogOpens(), 0);
+    assert.equal(titleId.value, 'PPSA00002');
+    assert.equal(app.get('preview').value, replacement);
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+});
+
 test('importing a custom filename preserves the dirty profile destination', async t => {
     const app = await setup(t, 'import-keeps-dirty-profile-destination');
     await app.importFile('anyps5-input.PPSA00001.ini', 'Cross = KEY:F\n');
