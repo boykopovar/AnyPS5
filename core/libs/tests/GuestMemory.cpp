@@ -1718,6 +1718,48 @@ static void CheckFixedReservationOverPartlyMappedRange() {
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
 }
 
+static GuestAllocations::Lease reservationPin;
+static unsigned char* reservationGap = nullptr;
+static bool reservationGapClaimed = false;
+
+static bool ClaimGapWhileTheReservationWaits(std::uintptr_t, std::size_t) {
+    if (!reservationGapClaimed) {
+        GuestArena::GuestArenaMarkUsed_nid_postfix(reservationGap, 0x4000);
+        reservationGapClaimed = true;
+    }
+    reservationPin.clear();
+    return true;
+}
+
+static void CheckFixedReservationChecksAfterTheLeaseWait() {
+    constexpr std::size_t page = 0x4000;
+    void* range = nullptr;
+    Require(sceKernelReserveVirtualRange(&range, page * 2, 0, 0) == 0);
+    auto* base = static_cast<unsigned char*>(range);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 2) == 0);
+    void* flexible = base;
+    Require(sceKernelMapFlexibleMemory(&flexible, page, 3, 0x10) == 0 && flexible == base);
+    base[0] = 0x39;
+    reservationGap = base + page;
+    reservationPin = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&ClaimGapWhileTheReservationWaits);
+    int result = 0;
+    bool threw = false;
+    void* fixed = base;
+    try {
+        result = sceKernelReserveVirtualRange(&fixed, page * 2, 0x10, 0);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(nullptr);
+    reservationPin.clear();
+    Require(reservationGapClaimed && !threw && result == SCE_KERNEL_ERROR_ENOMEM);
+    VirtualQueryInfo kept{};
+    Require(sceKernelVirtualQuery(base, 0, &kept, sizeof(kept)) == 0 && kept.is_flexible && base[0] == 0x39);
+    GuestArena::GuestArenaRelease_nid_postfix(reservationGap, page);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page) == 0);
+}
+
 static void CheckHintInsideReservation() {
     constexpr std::size_t page = 0x4000;
     void* reserved = nullptr;
@@ -4994,6 +5036,7 @@ int main(int argc, char** argv) {
     CheckReservationHintWithoutRoomAbove();
     CheckFixedVirtualReservation();
     CheckFixedReservationOverPartlyMappedRange();
+    CheckFixedReservationChecksAfterTheLeaseWait();
     CheckReservedRangeIsNotCommitted();
     CheckHintInsideReservation();
     CheckNoOverwriteRefusesLiveMapping();

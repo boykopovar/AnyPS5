@@ -1872,6 +1872,8 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
             }
         }
         if (!RegisteredPiecesReleasable(mutation, *addr, len)) mutation.RequireAvailable(*addr, len);
+        RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(*addr), len);
+        mutation.RequireUnpinned(*addr, len);
         if (ArenaUsedOutsideRegistered(mutation, *addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
         try {
             ValidateRange(*addr, len, ValidateAlignment(alignment));
