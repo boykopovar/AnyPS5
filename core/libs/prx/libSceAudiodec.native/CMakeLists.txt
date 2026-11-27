@@ -6,24 +6,24 @@ target_sources(libSceAudiodec.native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Export.
 if(BUILD_TESTING)
     add_test_executable(guest_audiodec_ajm_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudiodecAjmContext.cpp)
     target_include_directories(guest_audiodec_ajm_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_audiodec_ajm_context_tests PRIVATE libSceAudiodec.native libc ${CMAKE_DL_LIBS})
+    target_link_libraries(guest_audiodec_ajm_context_tests PRIVATE libSceAudiodec.native libSceAjm.native libSceAjmi libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_audiodec_ajm_context_tests)
     add_test(NAME guest_audiodec_ajm_context COMMAND guest_audiodec_ajm_context_tests)
     if(WIN32)
         set_tests_properties(guest_audiodec_ajm_context PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjmi>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_audiodec_ajm_context_pointer_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudiodecAjmContextPointers.cpp)
     target_include_directories(guest_audiodec_ajm_context_pointer_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_audiodec_ajm_context_pointer_tests PRIVATE libSceAudiodec.native libc ${CMAKE_DL_LIBS})
+    target_link_libraries(guest_audiodec_ajm_context_pointer_tests PRIVATE libSceAudiodec.native libSceAjm.native libSceAjmi libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_audiodec_ajm_context_pointer_tests)
     add_test(NAME guest_audiodec_ajm_context_pointer COMMAND guest_audiodec_ajm_context_pointer_tests)
     if(WIN32)
         set_tests_properties(guest_audiodec_ajm_context_pointer PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjmi>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
