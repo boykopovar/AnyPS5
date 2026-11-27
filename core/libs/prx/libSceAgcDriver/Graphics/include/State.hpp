@@ -252,6 +252,9 @@ inline std::uint32_t ViewportCount(const State& state) { return 1u + static_cast
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
+inline constexpr std::uint32_t GraphicsBorderColorBase = 0x20;
+inline constexpr std::uint32_t ComputeBorderColorBase = 0x380;
+std::optional<std::uint64_t> BorderColorTableBase(const Registers& registers, std::uint32_t low);
 std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap);

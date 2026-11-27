@@ -19,6 +19,7 @@ namespace AgcDriver::Graphics {
         const auto mirrorsOnce = [](VkSamplerAddressMode mode) { return mode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; };
         Require(context.samplerMirrorClampToEdge || !(mirrorsOnce(descriptor.addressModeU) || mirrorsOnce(descriptor.addressModeV) || mirrorsOnce(descriptor.addressModeW)), "guest sampler descriptor uses a mirror-once clamp mode which the device does not support");
         Require(!(descriptor.unnormalizedCoordinates && descriptor.compareEnable), "guest sampler descriptor with unnormalized coordinates enables depth comparison, which is not implemented");
+        Require(descriptor.borderColor != VK_BORDER_COLOR_FLOAT_CUSTOM_EXT || context.customBorderColor, "guest sampler descriptor reads a border color table entry, which needs VK_EXT_custom_border_color with customBorderColorWithoutFormat");
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             Require(context.samplerFilterMinmax, "guest sampler descriptor uses a min or max reduction which the device does not support");
             Require(!descriptor.compareEnable, "guest sampler descriptor combines a min or max reduction with depth comparison, which is not implemented");
@@ -56,7 +57,25 @@ namespace AgcDriver::Graphics {
             if (context.nonSeamlessCubeMap) info.flags |= VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT;
             else requiresNonSeamlessCube = true;
         }
-        Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &info, nullptr, &sampler), "vkCreateSampler");
+        VkSamplerCustomBorderColorCreateInfoEXT custom{VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT};
+        if (descriptor.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT) {
+            Require(context.customBorderColorSamplers != nullptr, "custom border color samplers are not counted on this device");
+            if (context.customBorderColorSamplers->fetch_add(1) >= context.maxCustomBorderColorSamplers) {
+                context.customBorderColorSamplers->fetch_sub(1);
+                Require(false, "border color table samplers exceed the device's maxCustomBorderColorSamplers of " + std::to_string(context.maxCustomBorderColorSamplers));
+            }
+            customBorder = true;
+            for (std::size_t component = 0; component < 4; ++component) custom.customBorderColor.float32[component] = std::bit_cast<float>(descriptor.customBorderColor[component]);
+            custom.format = VK_FORMAT_UNDEFINED;
+            custom.pNext = info.pNext;
+            info.pNext = &custom;
+        }
+        const auto created = context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &info, nullptr, &sampler);
+        if (created != VK_SUCCESS && customBorder) {
+            context.customBorderColorSamplers->fetch_sub(1);
+            customBorder = false;
+        }
+        Check(created, "vkCreateSampler");
     }
 
     Sampler::~Sampler() {
@@ -65,6 +84,7 @@ namespace AgcDriver::Graphics {
 
     void Sampler::release() noexcept {
         if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
+        if (customBorder) context.customBorderColorSamplers->fetch_sub(1);
     }
 
     VkSampler Sampler::Handle() const {
@@ -86,9 +106,10 @@ namespace AgcDriver::Graphics {
 
     SamplerCache::SamplerCache(std::size_t capacity) : capacity(std::max<std::size_t>(capacity, 1)) {}
 
-    std::shared_ptr<Sampler> SamplerCache::Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder) {
+    std::shared_ptr<Sampler> SamplerCache::Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder, const BorderColor* tableColor) {
         Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
-        const std::array<std::uint32_t, 5> key{words[0], words[1], words[2], words[3], (compareEnable ? 1u : 0u) | (unnormalizedProven ? 2u : 0u) | (integerBorder ? 4u : 0u)};
+        const auto color = tableColor != nullptr ? *tableColor : BorderColor{};
+        const std::array<std::uint32_t, 9> key{words[0], words[1], words[2], words[3], (compareEnable ? 1u : 0u) | (unnormalizedProven ? 2u : 0u) | (integerBorder ? 4u : 0u) | (tableColor != nullptr ? 8u : 0u), color[0], color[1], color[2], color[3]};
         std::lock_guard lock(mutex);
         ++clock;
         if (const auto found = entries.find(key); found != entries.end()) {
@@ -98,8 +119,20 @@ namespace AgcDriver::Graphics {
             return found->second.sampler;
         }
         ++misses;
-        auto resource = DecodeSamplerResource(words, unnormalizedProven, forceDegammaPaired, integerBorder);
+        auto resource = DecodeSamplerResource(words, unnormalizedProven, forceDegammaPaired, integerBorder, tableColor);
         resource.compareEnable = compareEnable;
+        if (resource.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT && context.customBorderColorSamplers != nullptr &&
+            context.customBorderColorSamplers->load() >= context.maxCustomBorderColorSamplers) {
+            auto oldest = entries.end();
+            for (auto entry = entries.begin(); entry != entries.end(); ++entry) {
+                const auto& cached = entry->second.sampler;
+                if (cached->customBorder && cached.use_count() == 1 &&
+                    (oldest == entries.end() || entry->second.lastUse < oldest->second.lastUse)) {
+                    oldest = entry;
+                }
+            }
+            if (oldest != entries.end()) entries.erase(oldest);
+        }
         auto sampler = std::make_shared<Sampler>(context, resource);
         // The cap keeps live samplers well below the device's limit (NVIDIA: ~4000); a set in flight
         // still holds the evicted sampler through its own shared_ptr.

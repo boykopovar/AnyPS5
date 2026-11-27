@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -177,6 +178,7 @@ struct DrawTail {
     std::uint32_t packetOpcode = 0;
     std::uint32_t reg207 = 0;
     std::uint64_t epoch = 0;
+    std::optional<std::uint64_t> borderColorTable;
     QueueState* queue = nullptr;
     std::span<const std::uint32_t> packet;
     std::string* rejected = nullptr;
@@ -336,6 +338,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto tailHolder = std::make_shared<DrawTail>();
     auto& tail = *tailHolder;
+    tail.borderColorTable = Graphics::BorderColorTableBase(queue.context, Graphics::GraphicsBorderColorBase);
     auto& phaseMs = tail.phaseMs;
     auto& captures = tail.captures;
     auto& phaseLap = tail.phaseLap;
@@ -809,6 +812,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
 }
 
 DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
+    const auto borderColorTable = tail.borderColorTable;
     using Stage = ShaderRecompiler::ShaderStage;
     using Role = ShaderRecompiler::ProgramRole;
     const bool profile = tail.profile;
@@ -1344,10 +1348,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 const auto commitQueue = submission.queue;
                 const auto commitPacket = tail.packetOpcode;
                 const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
-                auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), direct, stages = std::move(stages), snapshots = std::move(snapshots), commitQueue, commitPacket, epoch, writablePrograms = std::move(writablePrograms), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)] {
+                auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), direct, stages = std::move(stages), snapshots = std::move(snapshots), commitQueue, commitPacket, epoch, borderColorTable, writablePrograms = std::move(writablePrograms), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)] {
                     DrawPipeline::FollowEpoch(epoch);
                     GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
-                    commitDraw(localDevice, commitQueue, decode->state, direct, stages, snapshots, nullptr, {}, 0, nullptr);
+                    commitDraw(localDevice, commitQueue, decode->state, direct, stages, snapshots, nullptr, {}, 0, nullptr, {}, 0, nullptr, borderColorTable);
                 };
                 auto held = std::make_shared<decltype(commit)>(std::move(commit));
                 DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::IndirectDraw, [held] { (*held)(); }, std::move(writes));
@@ -1369,7 +1373,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             recordedOne = true;
             noteDrawWriters(stages, submission.queue);
             phaseTiming.Phase(DrawRowVectors);
-            localDevice->Draw(graphics, direct, stages, snapshots, nullptr, tracePtr);
+            localDevice->Draw(graphics, direct, stages, snapshots, nullptr, tracePtr, 0, nullptr, borderColorTable);
             phaseTiming.Phase(DrawRowGraphics);
         }
         countRecordWords();
@@ -1419,10 +1423,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto epoch = DrawFinisher::OnFinisherThread() ? tail.epoch : DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         auto reads = QueuedDrawReadRanges(drawParameters, stages);
         auto contentKey = recipe == nullptr && DrawFinisher::OnFinisherThread() ? localDevice->DrawContentKey(decode->state, drawParameters, stages) : std::vector<std::uint32_t>{};
-        auto commit = [this, contentKey = std::move(contentKey), localDevice = std::move(localDevice), decode = std::move(decode), drawParameters, stages = std::move(stages), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), drawKey, recipeDonor, shape = tail.shapeKey, commitQueue, commitPacket, epoch, trace = trace, writablePrograms = std::move(writablePrograms), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)]() mutable {
+        auto commit = [this, contentKey = std::move(contentKey), localDevice = std::move(localDevice), decode = std::move(decode), drawParameters, stages = std::move(stages), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), drawKey, recipeDonor, shape = tail.shapeKey, commitQueue, commitPacket, epoch, borderColorTable, trace = trace, writablePrograms = std::move(writablePrograms), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)]() mutable {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
-            commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey, recipeDonor, trace, shape, contentKey.empty() ? nullptr : &contentKey);
+            commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey, recipeDonor, trace, shape, contentKey.empty() ? nullptr : &contentKey, borderColorTable);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
         DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Draw, [held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads), true);
@@ -1450,7 +1454,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, tail.shapeKey);
+    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, tail.shapeKey, nullptr, borderColorTable);
     phaseTiming.Phase(DrawRowGraphics);
     if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built), recipeDonor);
     timing.Mark("draw_and_resource_release");
@@ -1530,7 +1534,7 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
     tail.shaderMemory = std::make_unique<ShaderMemory>(tail.memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
 }
 
-void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey, std::optional<std::uint64_t> borderColorTable) {
     const auto* tracePtr = trace.token != 0 ? &trace : nullptr;
     if (localDevice != nullptr) localDevice->PrebuildGraphicsLibrariesOnFirstVisit(graphics.stages, stages);
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
@@ -1550,7 +1554,7 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, contentKey);
+    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, contentKey, borderColorTable);
     if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built), recipeDonor);
 }
 

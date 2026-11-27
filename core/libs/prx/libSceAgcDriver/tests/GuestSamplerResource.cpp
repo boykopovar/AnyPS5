@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include <array>
+#include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -325,6 +327,53 @@ void RunMirrorOnceTests(const Fields& base) {
     Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "a sampler without mirror-once modes needs VK_KHR_sampler_mirror_clamp_to_edge");
 }
 
+void RunCustomBorderCacheLimitTests(const Fields& base) {
+    constexpr std::uint32_t limit = 32;
+    std::atomic<std::uint32_t> live{0};
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.customBorderColor = true;
+    context.maxCustomBorderColorSamplers = limit;
+    context.customBorderColorSamplers = &live;
+
+    Fields custom = base;
+    custom.clampX = 6;
+    custom.borderColorType = 3;
+    const auto words = pack(custom);
+    const auto get = [&](SamplerCache& cache, std::uint32_t index) {
+        const BorderColor color{std::bit_cast<std::uint32_t>(static_cast<float>(index) / limit), 0, 0, 0};
+        return cache.Get(context, words, false, false, false, false, &color);
+    };
+
+    {
+        SamplerCache cache;
+        const std::weak_ptr<Sampler> ordinary = cache.Get(context, pack(base), false);
+        const auto retained = get(cache, 0);
+        const std::weak_ptr<Sampler> oldestUnused = get(cache, 1);
+        for (std::uint32_t index = 2; index < limit; ++index) get(cache, index);
+
+        Require(live.load() == limit, "custom border sampler test did not reach the device limit");
+        get(cache, limit);
+        Require(live.load() == limit && oldestUnused.expired(), "a new color must reuse the oldest cache-only custom sampler slot");
+        Require(get(cache, 0) == retained && !ordinary.expired(), "custom border eviction removed a retained or ordinary sampler");
+    }
+    Require(live.load() == 0, "custom border cache teardown leaked samplers");
+
+    {
+        SamplerCache cache;
+        std::array<std::shared_ptr<Sampler>, limit> retained;
+        for (std::uint32_t index = 0; index < limit; ++index) retained[index] = get(cache, index);
+
+        reject([&] { get(cache, limit); }, "maxCustomBorderColorSamplers");
+        Require(live.load() == limit, "failed custom border creation changed the live sampler count");
+        retained.front().reset();
+        get(cache, limit);
+        Require(live.load() == limit, "releasing a retained sampler did not make its cache slot reusable");
+    }
+    Require(live.load() == 0, "custom border cache leaked samplers after a capacity rejection");
+}
+
 void RunSamplerCacheDegammaTests(const Fields& base) {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
@@ -521,6 +570,7 @@ void RunGuestSamplerResourceTests() {
     Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
     Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
     RunSamplerCacheDegammaTests(base);
+    RunCustomBorderCacheLimitTests(base);
 
     Fields truncated = base;
     truncated.truncCoord = true;
@@ -597,14 +647,32 @@ void RunGuestSamplerResourceTests() {
         unreadMode.clampX = mode;
         DecodeSamplerResource(pack(unreadMode));
     }
+    Require(!BorderColorTableIndex(pack(unusedTable)).has_value(), "a table border colour that no axis reads must not name a table entry");
+    const BorderColor tableColor{0x3e19999au, 0x3f000000u, 0x3d4ccccdu, 0u};
     for (std::uint32_t mode : {4u, 5u, 6u, 7u}) {
         for (int axis = 0; axis < 3; ++axis) {
             Fields readTable = base;
             readTable.borderColorType = 3;
             (axis == 0 ? readTable.clampX : axis == 1 ? readTable.clampY : readTable.clampZ) = mode;
-            rejectFields(readTable, "border color table");
+            auto words = pack(readTable);
+            words[3] |= 0x5a3u;
+            Require(BorderColorTableIndex(words) == 0x5a3u, "a sampler that reads the border colour table must name BORDER_COLOR_PTR");
+            reject([&] { DecodeSamplerResource(words); }, "border color table entry 1443");
+            const auto decoded = DecodeSamplerResource(words, false, false, false, &tableColor);
+            Require(decoded.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT && decoded.customBorderColor == tableColor, "a table border colour must decode to the entry as a custom float colour");
         }
     }
+    for (std::uint32_t type = 0; type < 3u; ++type) {
+        Fields fixed = base;
+        fixed.clampX = 6;
+        fixed.borderColorType = type;
+        auto words = pack(fixed);
+        words[3] |= 0x5a3u;
+        Require(!BorderColorTableIndex(words).has_value(), "a fixed border colour must not name a table entry");
+        Require(DecodeSamplerResource(words, false, false, false, &tableColor).borderColor != VK_BORDER_COLOR_FLOAT_CUSTOM_EXT, "a fixed border colour must ignore a table colour");
+    }
+    Require(BorderColorTableEntry(0x5059a0600ull, 0) == 0x5059a0600ull && BorderColorTableEntry(0x5059a0600ull, 0xfffu) == 0x5059a0600ull + 0xfffull * 16u, "border colour table entries are 16 bytes apart");
+    reject([] { BorderColorTableEntry(0x5059a0600ull, 0x1000u); }, "BORDER_COLOR_PTR");
     const std::array<std::uint32_t, 4> capturedTable{0x00007092u, 0x00fff000u, 0x05000000u, 0xc0000000u};
     const auto capturedUnread = DecodeSamplerResource(capturedTable);
     Require(capturedUnread.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && capturedUnread.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured table-border sampler decoded incorrectly");

@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
@@ -210,6 +211,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
     if (!cpuRounds && rangeWords > listWords && (rangeWords - listWords) / sliceGroups > VulkanDevice::SplitSelectMaxTargets) base.listTargets = VulkanDevice::SplitSelectMaxTargets;
     base.lanesPerGroup = lanesPerGroup;
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : totalGroups * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    const auto borderColorTable = Graphics::BorderColorTableBase(queue.userConfig, Graphics::ComputeBorderColorBase);
     using GroupRuns = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
     std::map<std::uint64_t, GroupRuns> targetRuns;
     GroupRuns callingRuns;
@@ -221,7 +223,7 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
         const auto& compiled = *parts[part].result;
         const auto* views = &parts[part].capture->snapshot.registeredImages;
         try {
-            auto prepared = localDevice->PrepareDispatch(compiled, partSnapshots[part], dispatchThreads, address, std::nullopt, views);
+            auto prepared = localDevice->PrepareDispatch(compiled, partSnapshots[part], dispatchThreads, address, std::nullopt, views, borderColorTable);
             GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             recordLabelsForPacket(localDevice.get(), submission.queue);
@@ -236,10 +238,10 @@ void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint
             localDevice->SetSplitSlice(current);
             try {
                 if (indirectArguments != 0) {
-                    const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, partSnapshots[part], address, std::move(prepared), nullptr, threadGroup, views);
+                    const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, partSnapshots[part], address, std::move(prepared), nullptr, threadGroup, views, borderColorTable);
                     countIndirect(outcome.cpuReason, outcome.argumentReadMs);
                 } else {
-                    localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], partSnapshots[part], address, std::move(prepared), nullptr, std::nullopt, views);
+                    localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], partSnapshots[part], address, std::move(prepared), nullptr, std::nullopt, views, borderColorTable);
                 }
             } catch (...) {
                 localDevice->SetSplitSlice(std::nullopt);
@@ -810,6 +812,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             groups[axis] = ThreadDimensionGroups(groups[axis], threads);
         }
     }
+    const auto borderColorTable = Graphics::BorderColorTableBase(queue.userConfig, Graphics::ComputeBorderColorBase);
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     std::optional<ShaderRecompiler::ImageOverwriteDispatch> overwriteDispatch;
     if (indirectArguments == 0 && readUserData(queue.shader, computeStartX) == 0 && readUserData(queue.shader, computeStartY) == 0 && readUserData(queue.shader, computeStartZ) == 0) {
@@ -893,7 +896,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, borderColorTable, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             const auto& compiledCommit = *result;
@@ -904,7 +907,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 bool writersNoted = false;
                 for (;;) {
                     std::shared_ptr<PreparedDispatch> prepared;
-                    if (recipeHit == nullptr || VulkanDevice::VerifyRecipes() || htileClearCompletion.has_value()) prepared = localDevice->PrepareDispatch(compiledCommit, snapshots, prepareThreads, address, htileClearCompletion, registeredViews);
+                    if (recipeHit == nullptr || VulkanDevice::VerifyRecipes() || htileClearCompletion.has_value()) prepared = localDevice->PrepareDispatch(compiledCommit, snapshots, prepareThreads, address, htileClearCompletion, registeredViews, borderColorTable);
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Dispatch);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
                     recordLabelsForPacket(localDevice.get(), queueId);
@@ -922,7 +925,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                             continue;
                         }
                     } else {
-                        localDevice->Dispatch(compiledCommit, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), htileClearCompletion.has_value() || attach == nullptr ? nullptr : &builtRecipe, htileClearCompletion, registeredViews);
+                        localDevice->Dispatch(compiledCommit, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), htileClearCompletion.has_value() || attach == nullptr ? nullptr : &builtRecipe, htileClearCompletion, registeredViews, borderColorTable);
                     }
                     if (htileMask.bytes != 0u) localDevice->NoteHtileMask(htileMask);
                     break;
@@ -980,7 +983,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::shared_ptr<PreparedDispatch> prepared;
         if (recipeHit == nullptr || VulkanDevice::VerifyRecipes()) {
             try {
-                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads, address, htileClearCompletion, registeredViews);
+                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads, address, htileClearCompletion, registeredViews, borderColorTable);
             } catch (const std::exception& error) {
                 if (rethrow(error)) return;
             }
@@ -1036,10 +1039,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 }
                 if (indirectArguments != 0) countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else if (indirectArguments != 0) {
-                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr, threadGroup, registeredViews);
+                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr, threadGroup, registeredViews, borderColorTable);
                 countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else {
-                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), htileClearCompletion.has_value() ? nullptr : (attachTo != nullptr ? &builtRecipe : nullptr), htileClearCompletion, registeredViews);
+                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), htileClearCompletion.has_value() ? nullptr : (attachTo != nullptr ? &builtRecipe : nullptr), htileClearCompletion, registeredViews, borderColorTable);
             }
         } catch (const std::exception& error) {
             if (rethrow(error)) return;

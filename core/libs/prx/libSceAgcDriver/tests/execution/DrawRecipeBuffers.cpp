@@ -6,8 +6,10 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "RuntimeAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #include "Cover_vert_spv.h"
+#include "DrawRecipeBorderColor_spv.h"
 #include "DrawRecipeBuffers_spv.h"
 #include "DrawRecipeData_spv.h"
 #ifdef _WIN32
@@ -206,6 +208,31 @@ bool CheckBindings(AgcDriver::VulkanDevice& device, const Block& block, bool dat
             Draw(context, state, triangle, shaders);
         }
         CheckPixels(state.color, {0, 0, 0, 0});
+    }
+    if (!dataWords && context.customBorderColor) {
+        select(false);
+        auto fixedColor = program(DRAW_RECIPE_BORDERCOLOR_SPV, 4);
+        fixedColor.bindings.push_back(fragment.bindings.front());
+        auto& sampler = fixedColor.bindings.emplace_back();
+        sampler.kind = ShaderRecompiler::DescriptorKind::Sampler;
+        sampler.role = ShaderRecompiler::DescriptorRole::GuestSamplers;
+        sampler.descriptorSet = 0;
+        sampler.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
+        sampler.count = 1;
+        sampler.guestDescriptor = {0x000000b6u, 0u, 0u, 0u};
+        sampler.samplerDepthCompare = {false};
+        auto tableColor = fixedColor;
+        tableColor.bindings.back().guestDescriptor[3] = 3u << 30u;
+        const auto drawWithSampler = [&](const ShaderRecompiler::RecompileResult& fragmentProgram) {
+            const std::array samplerShaders{shaders.front(), CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragmentProgram, 0}};
+            std::shared_ptr<const AgcDriver::DrawRecipe> samplerRecipe;
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Draw(WithBorderColorTable(context, block.Address(Unit)), state, triangle, samplerShaders, {}, &samplerRecipe);
+            return samplerRecipe;
+        };
+        Require(drawWithSampler(fixedColor) != nullptr, "a fixed border colour did not produce a draw recipe");
+        Require(drawWithSampler(tableColor) == nullptr, "a table-backed sampler produced a draw recipe");
+        std::cout << "table-backed samplers bypass draw recipe caching\n";
     }
     device.WaitIdle();
     return true;
