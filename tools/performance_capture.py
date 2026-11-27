@@ -23,8 +23,10 @@ INSTRUMENTATION_PREFIXES = (
 )
 INSTRUMENTATION_NAMES = {
     "APS5_PIPELINE_STATS", "APS5_LOG_STATS", "APS5_SHARED_PROFILE_COUNTERS",
+    "APS5_LOG_SYNC", "APS5_LOG_TIMESTAMPS", "APS5_SAVEDATA_TRACE",
     "APS5_WRITE_EVIDENCE_SAMPLE", "APS5_HANG_DUMP_SECS", "APS5_PIPELINE_DRAIN_DUMPS",
     "APS5_PIPELINE_DRAIN_SAMPLE_DUMPS", "APS5_SYNC_SAMPLE_DUMPS",
+    "APS5_VIDEOOUT_TELEMETRY_DIR", "APS5_VIDEOOUT_FLIP_TIMING",
     "ANYPS5_LOG_FILE",
 }
 
@@ -64,7 +66,7 @@ def clean_environment(base_env, extra_env, trace_dir, window_kind, window):
             if (not isinstance(name, str) or not name or "=" in name or "\x00" in name or
                     not isinstance(value, str) or "\x00" in value):
                 raise ValueError("environment must contain valid string names and values")
-            if instrumentation_name(name):
+            if instrumentation_name(name) or name.upper() == "APS5_PAD_RECORD":
                 removed.add(name)
                 continue
             if os.name == "nt":

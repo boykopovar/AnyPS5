@@ -131,6 +131,8 @@ public:
     DispatchCacheFootprint DispatchCacheSize();
     DispatchCacheFootprint DrawCacheSize();
     static std::uint64_t DispatchCacheBytes();
+    static std::size_t DrawCacheEntries();
+    static std::size_t DrawKeySightingKeys();
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
@@ -217,7 +219,6 @@ private:
     static bool verifyDrawEntries();
     static bool registerKeyEnabled();
     static bool verifyDrawRecipe();
-    static std::size_t drawCacheEntries();
     static bool drawCacheIndirect();
     static bool drawCachePushWord();
     static bool verifyDrawPushWord();
@@ -457,14 +458,29 @@ private:
         std::atomic<std::uint64_t> reference{0};
         std::atomic<std::uint64_t> mask{0};
         std::atomic<std::uint64_t> shape{0};
+        std::atomic<std::uint64_t> generation{0};
     };
+    struct AwaitedFields {
+        std::uint64_t address;
+        std::uint64_t reference;
+        std::uint64_t mask;
+        std::uint64_t shape;
+        std::uint64_t generation;
+    };
+    static std::optional<AwaitedFields> readAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    static bool awaitedUnchanged(const AwaitedSlot& slot, const AwaitedFields& fields);
+    static bool awaitedSatisfied(const AwaitedFields& fields);
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
     std::atomic<bool> tracksTails{false};
     std::mutex tailsMutex;
     std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
     void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
+    static std::optional<AwaitedFields> blockedOn(const AwaitedSlot& slot, std::uint64_t awaited);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
+    using HeldSlot = std::pair<const AwaitedSlot*, AwaitedFields>;
+    bool slotsHeldStill(std::span<const HeldSlot> held) const;
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
+    void noteRewindWaitFields(std::uint32_t queue);
     std::atomic<bool> captureHold{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
@@ -492,6 +508,7 @@ private:
     std::unordered_map<std::uint64_t, std::deque<std::uint64_t>> priorValueSets;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<DrawEntry>> drawCache;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, std::size_t> drawCacheResultReferences;
     std::unordered_map<std::uint64_t, std::uint64_t> drawShapes;
     std::unordered_set<std::uint64_t> traceShapes, traceKeysSeen, traceKeysEvicted;
     std::list<std::uint64_t> drawOrder;

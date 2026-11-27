@@ -20,6 +20,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #ifndef __EMSCRIPTEN__
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceVideoOut/include/HostDisplayMode.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
 #endif
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
@@ -80,6 +81,7 @@ static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED = 0;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED = 1;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE = 0;
 static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY = 8;
+static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR = 7;
 static constexpr std::uint32_t VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT = 0x10026c;
 
 static constexpr int VIDEO_OUT_EVENT_FLIP = 0;
@@ -270,6 +272,7 @@ private:
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
     std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};
+    std::optional<HostDisplayMode> knownDisplayMode;
 
     std::jthread presentThread;
     std::jthread vblankThread;
