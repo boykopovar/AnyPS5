@@ -248,6 +248,21 @@ int main() {
 #ifdef EOWNERDEAD
         {"EOWNERDEAD", EOWNERDEAD, 96},
 #endif
+#ifdef ENODATA
+        {"ENODATA", ENODATA, 1040},
+#endif
+#ifdef ENOSR
+        {"ENOSR", ENOSR, 1050},
+#endif
+#ifdef ENOSTR
+        {"ENOSTR", ENOSTR, 1051},
+#endif
+#ifdef EOTHER
+        {"EOTHER", EOTHER, 1062},
+#endif
+#ifdef ETIME
+        {"ETIME", ETIME, 1074},
+#endif
         {"ENOENT", ENOENT, 2},
         {"ERANGE", ERANGE, 34},
         {"zero", 0, 5},
