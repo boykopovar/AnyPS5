@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -111,6 +113,19 @@ public:
     std::vector<std::string> thirdPartyCNAMEDomains;
     std::vector<std::string> sameSiteStrictCookiesHosts;
     bool firstPartyWebsiteDataRemovalMode = false;
+    double minimumTimeBetweenDataRecordsRemoval = 0.0;
+    bool notifyPagesWhenDataRecordsWereScanned = false;
+    std::unordered_set<std::string> prevalentResourceHosts;
+    unsigned pruneEntriesDownTo = 0;
+    bool shouldClassifyResourcesBeforeDataRecordsRemoval = false;
+    std::set<std::pair<std::string, std::string>> subframeUnderTopFrameOriginPairs;
+    std::set<std::pair<std::string, std::string>> subresourceUnderTopFrameOriginPairs;
+    std::set<std::pair<std::string, std::string>> subresourceUniqueRedirectFromPairs;
+    std::set<std::pair<std::string, std::string>> subresourceUniqueRedirectToPairs;
+    double timeToLiveUserInteraction = 0.0;
+    std::set<std::pair<std::string, std::string>> topFrameUniqueRedirectFromPairs;
+    std::set<std::pair<std::string, std::string>> topFrameUniqueRedirectToPairs;
+    std::unordered_set<std::string> veryPrevalentResourceHosts;
 };
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
