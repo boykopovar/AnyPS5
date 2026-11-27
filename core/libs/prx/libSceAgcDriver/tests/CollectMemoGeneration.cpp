@@ -683,10 +683,49 @@ void CheckStoreAfterSubmit() {
     }
 }
 
+bool WaitForPrefetch(std::uint64_t before) {
+    const auto until = std::chrono::steady_clock::now() + Patience;
+    while (CollectPrefetchWalks() <= before) {
+        if (std::chrono::steady_clock::now() >= until) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+void CheckPrefetchAnswersNextPeriod() {
+    const auto first = Base + 100 * Block;
+    const auto second = Base + 104 * Block;
+    for (int round = 0; round < 8; ++round) {
+        BumpCollectEpoch();
+        Require(CollectWrites(first, Block) != 0, "the first range's collect failed");
+        BumpCollectEpoch();
+        Require(CollectWrites(second, Block) != 0, "the second range's collect failed");
+    }
+    SetCollectPrefetch(true);
+    const auto probe = first + 3 * Page;
+    const auto before = TrackerGeneration();
+    Store(probe);
+    const auto prefetched = CollectPrefetchWalks();
+    BumpCollectEpoch();
+    Require(WaitForPrefetch(prefetched), "the prefetch did not walk the range of the previous period");
+    const auto walks = OsWalks();
+    Require(CollectWrites(first, Block) != 0, "the collect after the prefetch failed");
+    Require(OsWalks() == walks, "a range prefetched after the ordering point was walked again");
+    Require(!UnchangedSince(probe & ~(Page - 1), Page, before), "a store made before the ordering point was hidden by the prefetched walk");
+    const auto next = CollectPrefetchWalks();
+    const auto unrelated = Base + 108 * Block;
+    BumpCollectEpoch();
+    Require(WaitForPrefetch(next), "the prefetch did not walk the second range");
+    const auto unrelatedWalks = OsWalks();
+    Require(CollectWrites(unrelated, Block) != 0 && OsWalks() == unrelatedWalks + 1, "a range no earlier period walked was not walked by its collect");
+    SetCollectPrefetch(false);
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
+        SetCollectPrefetch(false);
         SetObservationHookForTest(&Hook);
 #ifdef _WIN32
         if (!WriteWatched()) {
@@ -731,6 +770,7 @@ int main(int argc, char** argv) {
         CheckFailedRequestPublishesNothing();
         CheckSharedWalks();
         CheckStoreAfterSubmit();
+        CheckPrefetchAnswersNextPeriod();
     } catch (const std::exception& error) {
         std::cerr << "collect memo generation test failed: " << error.what() << "\n";
         return 1;

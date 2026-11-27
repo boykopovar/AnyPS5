@@ -118,9 +118,11 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle
 }
 
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target) {
-    target[0] = '/';
-    target[1] = '\0';
-    return true;
+    constexpr char root[] = "/";
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(target, root, sizeof(root));
+    errno = savedErrno;
+    return written;
 }
 
 }

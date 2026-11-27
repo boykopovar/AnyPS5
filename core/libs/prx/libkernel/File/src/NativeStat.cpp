@@ -63,6 +63,11 @@ static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     st->hasIdentity = GetFileInformationByHandle(handle, &st->identity) != 0;
     return 0;
 }
+static void ApplyWindowsModeAttributes(NativeStat* st, DWORD attributes) {
+    st->st_mode = static_cast<decltype(st->st_mode)>(
+        ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? (_S_IFDIR | 0111) : _S_IFREG) |
+        ((attributes & FILE_ATTRIBUTE_READONLY) != 0 ? 0444 : 0666));
+}
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     std::filesystem::path prepared;
     if (!NativeStatPath(p, prepared)) return -1;
@@ -83,7 +88,9 @@ static int DoFstat(int fd, NativeStat* st) {
         return -1;
     }
     if (_fstat64(fd, st) != 0) return -1;
-    return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
+    if (ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st) != 0) return -1;
+    if (st->hasTimes) ApplyWindowsModeAttributes(st, st->times.FileAttributes);
+    return 0;
 }
 static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     std::filesystem::path prepared;
@@ -100,8 +107,7 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     CloseHandle(handle);
     if (result != 0) return result;
     if (!link) {
-        st->st_mode = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? (_S_IFDIR | 0111) : _S_IFREG;
-        st->st_mode |= (attributes & FILE_ATTRIBUTE_READONLY) != 0 ? 0444 : 0666;
+        ApplyWindowsModeAttributes(st, attributes);
         return 0;
     }
     st->st_mode = SymbolicLinkMode;

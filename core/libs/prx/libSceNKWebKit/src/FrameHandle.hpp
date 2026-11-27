@@ -18,4 +18,12 @@ public:
     std::uint64_t frameID = 0;
 };
 
+class FrameInfo final : public ObjectOf<ObjectType::FrameInfo> {
+public:
+    FrameInfo() = default;
+    explicit FrameInfo(std::uint64_t frameID) : frameID(frameID) {}
+
+    std::uint64_t frameID = 0;
+};
+
 }  // namespace NKWebKit

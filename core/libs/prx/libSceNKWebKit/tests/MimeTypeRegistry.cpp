@@ -465,6 +465,57 @@ void RequireThrowsNotImplemented(const std::function<void()>& fn) {
     Require(threw);
 }
 
+void TestLettersComparison() {
+    auto& textTrack = _ZN7WebCore16MIMETypeRegistry28isSupportedTextTrackMIMETypeERKN3WTF6StringE;
+    Require(textTrack(MakeString("text\x0Fvtt")));
+    Require(textTrack(MakeString("TEXT\x0FVTT")));
+    Require(!textTrack(MakeString("text\x1Fvtt")));
+    Require(!textTrack(MakeString("text\x2Evtt")));
+    Require(!textTrack(MakeString("tex\x14\x0Fvtt")));
+    auto& text = _ZN7WebCore16MIMETypeRegistry14isTextMIMETypeERKN3WTF6StringE;
+    Require(text(MakeString("text\x0Fplain")));
+    Require(text(MakeString("text\x0Fjavascript")));
+    Require(text(MakeString("application\x0Fjson")));
+    Require(text(MakeString("text\x0Fjson")));
+    Require(!text(MakeString("text\x0Fhtml")));
+    Require(!text(MakeString("text\x0Fxml")));
+    Require(!text(MakeString("text\x0Fxsl")));
+    Require(_ZN7WebCore16MIMETypeRegistry29isSupportedJavaScriptMIMETypeERKN3WTF6StringE(MakeString("text\x0Fjavascript")));
+    Require(_ZN7WebCore16MIMETypeRegistry29isSupportedJavaScriptMIMETypeERKN3WTF6StringE(MakeString("application/x\x0D" "ecmascript")));
+    Require(_ZN7WebCore16MIMETypeRegistry23isSupportedJSONMIMETypeERKN3WTF6StringE(MakeString("application\x0Fjson")));
+    auto& xml = _ZN7WebCore16MIMETypeRegistry13isXMLMIMETypeERKN3WTF6StringE;
+    Require(xml(MakeString("text\x0Fxml")));
+    Require(xml(MakeString("application\x0Fxml")));
+    auto& entity = _ZN7WebCore16MIMETypeRegistry19isXMLEntityMIMETypeEN3WTF10StringViewE;
+    Require(entity(MakeView("text\x0Fxml-external-parsed-entity")));
+    Require(entity(MakeView("application/xml\x0D" "external\x0Dparsed\x0D" "entity")));
+    Require(!entity(MakeView("text/xml\x1D" "external-parsed-entity")));
+    auto& pdf = _ZN7WebCore16MIMETypeRegistry25isPDFOrPostScriptMIMETypeERKN3WTF6StringE;
+    Require(pdf(MakeString("application\x0Fpdf")));
+    Require(pdf(MakeString("text\x0Fpdf")));
+    Require(pdf(MakeString("application\x0Fpostscript")));
+    auto& svg = _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMETypeERKN3WTF6StringE;
+    Require(svg(MakeString("image\x0Fsvg+xml")));
+    Require(svg(MakeString("image/svg\x0Bxml")));
+    Require(!svg(MakeString("image\x0Fpng")));
+    auto& preview = _ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE;
+    Require(preview(MakeString("model\x0Fusd")));
+    Require(preview(MakeString("model/vnd\x0Ereality")));
+    Require(preview(MakeString("model/vnd\x0Epixar\x0Eusd")));
+    Require(preview(MakeString("model/vnd.usdz\x0Bzip")));
+    Require(!preview(MakeString("model/vnd\x1Ereality")));
+    auto& canShow = _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE;
+    Require(canShow(MakeString("text\x0Fplain")));
+    Require(canShow(MakeString("text\x0Funknown")));
+    Require(!canShow(MakeString("text\x0F" "calendar")));
+    Require(!canShow(MakeString("text/x\x0D" "vcard")));
+    Require(canShow(MakeString("application\x0Fjavascript")));
+    auto& nonImage = _ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE;
+    Require(nonImage(MakeString("TEXT/JavaScript")));
+    Require(!nonImage(MakeString("text\x0Fjavascript")));
+    Require(!nonImage(MakeString("text\x0Fhtml")));
+}
+
 void TestCanShowMIMEType() {
     auto& canShow = _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE;
     Require(canShow(MakeString("image/png")));
@@ -582,6 +633,7 @@ int main() {
     TestExtensionsForMIMEType();
     TestAllowedFileExtensions();
     TestIsSupportedMediaMIMEType();
+    TestLettersComparison();
     std::printf("All libSceNKWebKit MimeTypeRegistry tests passed!\n");
     return 0;
 }

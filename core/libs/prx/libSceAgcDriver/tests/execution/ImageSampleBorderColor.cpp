@@ -23,6 +23,9 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Unorm8_8_8_8 = 56;
 constexpr std::uint32_t Uint8_8_8_8 = 60;
 constexpr std::uint32_t SwizzleXYZW = 0xfacu;
+constexpr std::uint32_t SwizzleWZYX = 0x977u;
+constexpr std::uint32_t SwizzleXXXX = 0x924u;
+constexpr std::uint32_t SwizzleZYXW = 0xf2eu;
 constexpr std::uint32_t One = 0x3f800000u;
 constexpr std::uint32_t ClampBorder = 0x1b6u;
 constexpr std::uint32_t AnisoOverride = (1u << 29u) | (2u << 22u) | (2u << 20u);
@@ -41,13 +44,13 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, std::uint32_t swizzle) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Width - 1u) & 3u) << 30u),
         (Width - 1u) >> 2u,
-        SwizzleXYZW | (Type2D << 28u),
+        swizzle | (Type2D << 28u),
         0u,
         0u,
         0u,
@@ -55,13 +58,13 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t borderType, std::uint32_t filters) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t borderType, std::uint32_t filters, std::uint32_t swizzle) {
     Output.fill(0xdeadbeefu);
     Texels.fill(0u);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto outputAddress = reinterpret_cast<std::uintptr_t>(Output.data());
     const std::array<std::uint32_t, 4> output{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(Output.size() * 4u), 0x31016facu};
-    const auto texture = TextureDescriptor(format);
+    const auto texture = TextureDescriptor(format, swizzle);
     const std::array<std::uint32_t, 4> sampler{ClampBorder, 0x00fff000u, filters, borderType << 30u};
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
@@ -81,8 +84,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t bo
     device.WaitIdle();
 }
 
-void Check(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t borderType, const std::array<std::uint32_t, 4>& expected, const std::string& what, std::uint32_t filters = 0u) {
-    Run(device, format, borderType, filters);
+void Check(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t borderType, const std::array<std::uint32_t, 4>& expected, const std::string& what, std::uint32_t filters = 0u, std::uint32_t swizzle = SwizzleXYZW) {
+    Run(device, format, borderType, filters, swizzle);
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
             const auto actual = Output[thread * 4u + component];
@@ -105,6 +108,21 @@ int main() {
         Check(*device, Uint8_8_8_8, 2u, {1u, 1u, 1u, 1u}, "8_8_8_8_UINT opaque white border");
         Check(*device, Unorm8_8_8_8, 2u, {One, One, One, One}, "8_8_8_8_UNORM opaque white border under ANISO_OVERRIDE", AnisoOverride);
         Check(*device, Uint8_8_8_8, 2u, {1u, 1u, 1u, 1u}, "8_8_8_8_UINT opaque white border under ANISO_OVERRIDE", AnisoOverride);
+        Check(*device, Unorm8_8_8_8, 1u, {0u, 0u, 0u, One}, "8_8_8_8_UNORM opaque black border under DST_SEL Z,Y,X,W", 0u, SwizzleZYXW);
+        Check(*device, Unorm8_8_8_8, 0u, {0u, 0u, 0u, 0u}, "8_8_8_8_UNORM transparent black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
+        Check(*device, Unorm8_8_8_8, 2u, {One, One, One, One}, "8_8_8_8_UNORM opaque white border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
+        if (!device->BorderColorSwizzle()) {
+            Run(*device, Unorm8_8_8_8, 1u, 0u, SwizzleWZYX);
+            Run(*device, Uint8_8_8_8, 1u, 0u, SwizzleWZYX);
+            Run(*device, Unorm8_8_8_8, 1u, 0u, SwizzleXXXX);
+            Run(*device, Uint8_8_8_8, 1u, 0u, SwizzleXXXX);
+            std::puts("skipped, the device lacks VK_EXT_border_color_swizzle, so an opaque black border that the texture's swizzle moves keeps the host's border, which Vulkan leaves undefined");
+            return VulkanTestSkipped;
+        }
+        Check(*device, Unorm8_8_8_8, 1u, {One, 0u, 0u, 0u}, "8_8_8_8_UNORM opaque black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
+        Check(*device, Uint8_8_8_8, 1u, {1u, 0u, 0u, 0u}, "8_8_8_8_UINT opaque black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
+        Check(*device, Unorm8_8_8_8, 1u, {0u, 0u, 0u, 0u}, "8_8_8_8_UNORM opaque black border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
+        Check(*device, Uint8_8_8_8, 1u, {0u, 0u, 0u, 0u}, "8_8_8_8_UINT opaque black border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
         std::puts("image sample border color tests passed");
         return 0;
     } catch (const std::exception& error) {

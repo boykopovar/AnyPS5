@@ -103,37 +103,39 @@ int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t ve
 
 int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!iface) {
-        memory->mem_kind = 0;
-        if (!regionAddress || regionSize == 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!iface && (!regionAddress || regionSize == 0)) {
+        CopyOutGuest(&memory->mem_kind, std::uint16_t{0});
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    memory->mem_kind = MEMORY_MAGIC;
-    memory->attr_bits = 0;
-    memory->region_size = regionSize;
-    memory->region_base = regionAddress;
-    memory->mspace_handle = mspaceObject;
-    memory->iface = iface;
-    memory->on_destroy = destroyCallback;
-    memory->destroy_ctx = destroyObject;
-    memory->some_ctx1 = nullptr;
-    memory->some_ctx2 = mspaceObject;
+    FontMemory initialized{};
+    initialized.mem_kind = MEMORY_MAGIC;
+    initialized.region_size = regionSize;
+    initialized.region_base = regionAddress;
+    initialized.mspace_handle = mspaceObject;
+    initialized.iface = iface;
+    initialized.on_destroy = destroyCallback;
+    initialized.destroy_ctx = destroyObject;
+    initialized.some_ctx2 = mspaceObject;
+    if (!CopyOutGuest(memory, initialized)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (memory->mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_MEMORY;
-    if (static_cast<std::int8_t>(memory->attr_bits & 0xFF) < 0) {
-        if (memory->iface && memory->iface->mspace_destroy) memory->iface->mspace_destroy(memory->some_ctx2, memory->mspace_handle);
-        std::memset(memory, 0, sizeof(*memory));
+    FontMemory record;
+    if (!CopyInGuest(record, memory) || !OutputWritable(memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (record.mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_MEMORY;
+    if (static_cast<std::int8_t>(record.attr_bits & 0xFF) < 0) {
+        if (record.iface && record.iface->mspace_destroy) record.iface->mspace_destroy(record.some_ctx2, record.mspace_handle);
+        CopyOutGuest(memory, FontMemory{});
         return SCE_FONT_OK;
     }
-    if (memory->on_destroy) {
-        memory->mem_kind = 0;
-        memory->on_destroy(memory, memory->mspace_handle, memory->destroy_ctx);
+    if (record.on_destroy) {
+        CopyOutGuest(&memory->mem_kind, std::uint16_t{0});
+        record.on_destroy(memory, record.mspace_handle, record.destroy_ctx);
         return SCE_FONT_OK;
     }
-    std::memset(memory, 0, sizeof(*memory));
+    CopyOutGuest(memory, FontMemory{});
     return SCE_FONT_OK;
 }
 
@@ -199,7 +201,9 @@ int APS5_VABI sceFontCreateLibrary(const FontMemory* memory, const void* createP
 
 int APS5_VABI sceFontDestroyLibrary(FontLibrary* pLibrary) {
     if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* lib = static_cast<FontLibNative*>(*pLibrary);
+    FontLibrary handle = nullptr;
+    if (!CopyInGuest(handle, pLibrary) || !OutputWritable(pLibrary)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* lib = static_cast<FontLibNative*>(handle);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
     if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
     const auto freeFn = lib->iface->dealloc;
@@ -210,7 +214,7 @@ int APS5_VABI sceFontDestroyLibrary(FontLibrary* pLibrary) {
     if (lib->workspace) freeFn(allocCtx, lib->workspace);
     lib->magic = 0;
     freeFn(allocCtx, lib);
-    *pLibrary = nullptr;
+    CopyOutGuest(pLibrary, FontLibrary{});
     return SCE_FONT_OK;
 }
 
@@ -270,7 +274,9 @@ int APS5_VABI sceFontCreateRenderer(const FontMemory* memory, const void* create
 
 int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
     if (!pRenderer) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* renderer = static_cast<RendererNative*>(*pRenderer);
+    FontRenderer handle = nullptr;
+    if (!CopyInGuest(handle, pRenderer) || !OutputWritable(pRenderer)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* renderer = static_cast<RendererNative*>(handle);
     if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
     const auto* selection = static_cast<const RendererSelection*>(AcquireRendererSelection(renderer));
     int rc = SCE_FONT_ERROR_FATAL;
@@ -280,7 +286,7 @@ int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
     void* allocCtx = renderer->alloc_ctx;
     if (renderer->workspace) freeFn(allocCtx, renderer->workspace);
     freeFn(allocCtx, renderer);
-    *pRenderer = nullptr;
+    CopyOutGuest(pRenderer, FontRenderer{});
     return rc;
 }
 

@@ -328,9 +328,18 @@ def gained(points, days):
     return points[-1]["libraries"]["done"] - start["libraries"]["done"]
 
 
+def measured_days(points):
+    return (date.fromisoformat(points[-1]["date"]) - date.fromisoformat(points[0]["date"])).days
+
+
+def day_count_text(days):
+    return f"{days} {'day' if days == 1 else 'days'}"
+
+
 def weekly_badge(points):
-    value = f"{gained(points, 7):+,} functions"
-    return progress.badge("implemented in 7 days", points[-1]["libraries"], value, "#2f81f7")
+    days = min(7, measured_days(points))
+    value = f"{gained(points, days):+,} functions" if days else "unavailable"
+    return progress.badge(f"implemented in {day_count_text(days or 7)}", points[-1]["libraries"], value, "#2f81f7")
 
 
 def daily(points):
@@ -358,15 +367,18 @@ def daily(points):
         label = labelled(date.fromisoformat(day), len(bars))
         if label:
             out.append(f'<text x="{x + slot / 2:.1f}" y="{top + 168}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>')
-    week = gained(points, 7)
-    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last 7 days {week:+,}</text>'
-               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">Last day {bars[-1][1]:+,}</text>')
+    days = min(7, measured_days(points))
+    gain = gained(points, days)
+    last_days = measured_days(points[-2:])
+    last_label = "Last day" if last_days == 1 else f"Last {last_days}-day interval"
+    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last {day_count_text(days)} {gain:+,}</text>'
+               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">{last_label} {bars[-1][1]:+,}</text>')
     out.append(SVG_STYLE)
     out.append("</svg>")
     return "\n".join(out)
 
 
-def page(points):
+def page(points, ref="HEAD"):
     metrics = used_shader_metrics(points)
     labels = {metric: title for metric, title, _ in SHADER_SERIES}
     changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
@@ -401,7 +413,7 @@ def page(points):
         '"Legacy shader opcode names" counts the archived decoder opcode table against the current AMD RDNA 1 + RDNA 2 '
         f'instruction list (<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>) and is used only when '
         'the current scanner cannot read the archived source. Their totals differ, so compare points only within the same '
-        'shader panel. One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point '
+        f'shader panel. One point per UTC day with commits on <code>{escape(ref)}</code>, taken at the last commit of the day. Every point '
         f'is measured with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
         f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
         'so points within each series are comparable across days. The bars and the Functions implemented column show the net change '
@@ -453,7 +465,7 @@ def main(argv=None):
         args.output.mkdir(parents=True, exist_ok=True)
         (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
         (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
-        (args.output / "history.html").write_text(page(points), encoding="utf-8")
+        (args.output / "history.html").write_text(page(points, args.ref), encoding="utf-8")
         (args.output / "badge-week.svg").write_text(weekly_badge(points), encoding="utf-8")
         if args.csv:
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:

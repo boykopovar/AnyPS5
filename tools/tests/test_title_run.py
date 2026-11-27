@@ -57,6 +57,18 @@ class TitlesTests(unittest.TestCase):
         path.write_text(json.dumps({"PPSA00001": {"seconds": 30}}), encoding="utf-8-sig")
         self.assertEqual(title_run.load_titles(path)["PPSA00001"]["seconds"], 30)
 
+    def test_catalog_must_be_an_object(self):
+        for value in (None, True, 1, 1.5, "PPSA00001", [], ["PPSA00001"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "title catalog must be an object"):
+                title_run.load_titles(self.write(value))
+        self.assertEqual(title_run.load_titles(self.write({})), {})
+
+    def test_title_entries_must_be_objects(self):
+        for value in (None, True, 1, 1.5, "title", [], ["--registry"]):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "PPSA00001: title entry must be an object"):
+                title_run.load_titles(self.write({"PPSA00001": value}))
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {}})), {"PPSA00001": {}})
+
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))
@@ -87,6 +99,16 @@ class TitlesTests(unittest.TestCase):
                     {"events": events, "after_s": 3601}, {"events": events, "repeat": 0}):
             with self.assertRaises(ValueError):
                 title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
+
+    def test_pad_timeline_size_accounts_for_full_command_header(self):
+        events = [{"at_ms": 0, "hold_ms": 1, "buttons": ["cross"],
+                   "left_stick": [255, 255], "right_stick": [255, 255]}]
+        pad = {"events": events, "repeat": 2296, "gap_ms": 0}
+        catalog = {"PPSA00001": {"pad": pad}}
+        self.assertEqual(title_run.load_titles(self.write(catalog)), catalog)
+        pad["repeat"] = 2297
+        with self.assertRaisesRegex(ValueError, "PPSA00001: timeline command file .*runtime reads at most 65536"):
+            title_run.load_titles(self.write(catalog))
 
     def test_files_are_checked(self):
         files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "data/x/y.mp4": {"content": "media/y.mp4"}}
@@ -185,6 +207,54 @@ class AnalysisTests(unittest.TestCase):
     def test_first_error_reports_a_module_that_did_not_load(self):
         text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
         self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
+
+    def test_input_audit_skips_invalid_telemetry_lines(self):
+        path = self.root / "aps5-summary.jsonl"
+        good = '{"presents":10,"window":{"ms":1000},"gpu":"Good"}'
+        cases = {
+            "duplicate frames": '{"presents":20,"presents":30,"window":{"ms":1000}}',
+            "non-object window": '{"presents":20,"window":[]}',
+            "negative frame count": '{"presents":-20,"window":{"ms":1000}}',
+            "negative duration": '{"presents":20,"window":{"ms":-1000}}',
+            "numeric overflow": '{"presents":' + str(10**309) + ',"window":{"ms":1000}}',
+            "non-finite duration": '{"presents":20,"window":{"ms":1e999}}',
+            "oversized integer duration": '{"presents":20,"window":{"ms":' + str(10**400) + '}}',
+            "missing duration with presents": '{"presents":20,"window":{}}',
+            "zero duration with presents": '{"presents":20,"window":{"ms":0}}',
+            "deep nesting": "[" * 20000 + "0" + "]" * 20000,
+        }
+        for label, invalid in cases.items():
+            with self.subTest(label=label):
+                path.write_text(good + "\n" + invalid, encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path),
+                                 {"presents": 10, "fps": 10.0, "gpu": "Good", "driver": "", "os": ""})
+
+    def test_input_audit_ignores_non_text_telemetry_identity(self):
+        path = self.root / "aps5-summary.jsonl"
+        path.write_text(json.dumps({"presents": 10, "window": {"ms": 1000},
+                                    "gpu": ["GPU"], "driver": "Driver", "os": {"name": "OS"}}), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path),
+                         {"presents": 10, "fps": 10.0, "gpu": "", "driver": "Driver", "os": ""})
+
+    def test_input_audit_telemetry_bom_keeps_the_first_measurement(self):
+        path = self.root / "aps5-summary.jsonl"
+        path.write_text('{"presents":10,"window":{"ms":1000}}', encoding="utf-8-sig")
+        self.assertEqual(title_run.read_summary(path)["fps"], 10.0)
+
+    def test_input_audit_run_report_handles_malformed_or_bom_json(self):
+        path = self.root / "anyps5-report.json"
+        cases = {
+            "duplicate report fields": '{"format":"anyps5-report","run":{},"run":{"averageFps":90}}',
+            "nested report overflow": "[" * 20000 + "0" + "]" * 20000,
+            "non-finite report measurement": '{"format":"anyps5-report","run":{"averageFps":1e999}}',
+        }
+        for label, payload in cases.items():
+            with self.subTest(label=label):
+                path.write_text(payload, encoding="utf-8")
+                self.assertIsNone(title_run.read_report(path))
+        with self.subTest(label="BOM report"):
+            path.write_text('{"format":"anyps5-report","run":{"averageFps":60}}', encoding="utf-8-sig")
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
 
     def test_read_summary(self):
         path = self.root / "aps5-summary.jsonl"
@@ -361,6 +431,14 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("Before", title_run.render_markdown(now))
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
+
+    def test_render_markdown_keeps_literal_pipes_in_table_cells(self):
+        now = summary({"PPSA85300": {"name": "Game | Deluxe", "version": "1 | preview",
+                                     "runs": [run("crashed", error="shader | unavailable")]}})
+        report = title_run.render_markdown(now, now)
+        self.assertIn(r"| Game \| Deluxe | PPSA85300 | 1 \| preview |", report)
+        self.assertIn(r"| shader \| unavailable | crashed |", report)
+        self.assertIn(r"| Game \| Deluxe | PPSA85300 | FPS |", report)
 
     def test_render_markdown_states_the_run_length_of_the_titles(self):
         for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
@@ -750,8 +828,14 @@ class PreparationTests(unittest.TestCase):
         unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
         invalid = self.root / "invalid.json"
         invalid.write_text("not json", encoding="utf-8")
+        array_catalog = self.root / "array.json"
+        array_catalog.write_text("[]", encoding="utf-8")
+        null_entry = self.root / "null-entry.json"
+        null_entry.write_text('{"PPSA00001": null}', encoding="utf-8")
         for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
                                       ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--titles", array_catalog, "title catalog must be an object"),
+                                      ("--titles", null_entry, "PPSA00001: title entry must be an object"),
                                       ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
             with self.subTest(option=option, path=path.name):
                 errors = io.StringIO()
@@ -793,6 +877,81 @@ class PreparationTests(unittest.TestCase):
             title_run.main(["--games", str(games), "--out", str(self.root / "out")])
         self.assertFalse((self.root / "out").exists())
 
+    def test_input_audit_comparison_refuses_bad_structure_before_discovery(self):
+        import contextlib
+        import io
+        path = self.root / "comparison.json"
+        cases = (
+            ("[]", "must be an object with a titles object"),
+            ('{"titles":[]}', "must be an object with a titles object"),
+            ('{"titles":{"PPSA00001":false}}', "comparison title PPSA00001 must be an object with a name"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[]}}}', "comparison title PPSA00001 needs recorded runs"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"unknown"}]}}}', "unrecognized outcome"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","fps":NaN}]}}}', "JSON numbers must be finite"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":[1]}]}}}', "report must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"shaders":[1]}}]}}}', "shaders must be an object"),
+            ('{"titles":{"PPSA00001":{"name":"Test","runs":[{"outcome":"rendering","report":{"missing":[1]}}]}}}', "missing must be a list of objects"),
+        )
+        for text, message in cases:
+            with self.subTest(message=message):
+                path.write_text(text, encoding="utf-8")
+                errors = io.StringIO()
+                with unittest.mock.patch.object(title_run, "discover", return_value={}) as discover, \
+                        contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root), "--compare", str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, errors.getvalue())
+                discover.assert_not_called()
+
+    def test_input_audit_title_catalog_checks_each_object(self):
+        path = self.root / "titles.json"
+        for text, message in (
+            ("[]", "title catalog must be an object"),
+            ('{"PPSA00001":null}', "PPSA00001: title entry must be an object"),
+            ("[" * 20000 + "0" + "]" * 20000, "nested too deeply|title catalog must be an object"),
+        ):
+            with self.subTest(message=message):
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    title_run.load_titles(path)
+
+    def test_input_audit_discovery_rejects_malformed_package_metadata(self):
+        base = self.root / "pkg"
+        package(base, "PPSA00001")
+        param = base / "sce_sys/param.json"
+        cases = (
+            ("[]", "package metadata must be an object"),
+            ('{"titleId":"PPSA00001","titleId":"PPSA00002"}', "duplicate field"),
+            ('{"titleId":"PPSA00001","localizedParameters":[]}', "localizedParameters must be an object"),
+            ('{"titleId":"PPSA00001","localizedParameters":{"defaultLanguage":[]}}', "defaultLanguage must be a string"),
+            ('{"titleId":"PPSA00001","localizedParameters":{"en-US":null}}', "localized entry must be an object"),
+            ('{"titleId":"PPSA00001","contentVersion":4}', "contentVersion must be a string"),
+        )
+        for text, message in cases:
+            with self.subTest(message=message):
+                param.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    title_run.discover([self.root])
+
+    def test_input_audit_cli_reports_malformed_game_metadata_without_a_traceback(self):
+        base = self.root / "games" / "pkg"
+        package(base, "PPSA00001")
+        (base / "sce_sys/param.json").write_text("[]", encoding="utf-8")
+        result = subprocess.run([sys.executable, title_run.__file__, "--games", str(self.root / "games")],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("error: --games:", result.stderr)
+        self.assertIn("param.json", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_input_audit_discovery_uses_title_id_for_empty_name(self):
+        base = self.root / "pkg"
+        package(base, "PPSA00001")
+        param = base / "sce_sys/param.json"
+        param.write_text('{"titleId":"PPSA00001","localizedParameters":{"en-US":{"titleName":null}}}',
+                         encoding="utf-8")
+        self.assertEqual(title_run.discover([self.root])["PPSA00001"]["name"], "PPSA00001")
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -825,6 +984,16 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(title_run.source_root(build), title_run.ROOT)
         (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/src/AnyPS5\n", encoding="utf-8")
         self.assertEqual(title_run.source_root(build), Path("C:/src/AnyPS5"))
+
+    def test_source_root_preserves_unicode_in_cmake_cache_paths(self):
+        build = self.root / "build"
+        build.mkdir()
+        cache = build / "CMakeCache.txt"
+        for encoding in ("utf-8", "utf-8-sig"):
+            with self.subTest(encoding=encoding):
+                source = "C:/src/Any\u2028PS5=checkout"
+                cache.write_bytes(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\r\n".encode(encoding))
+                self.assertEqual(title_run.source_root(build), Path(source))
 
     def test_discover_refuses_duplicates(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
@@ -880,10 +1049,25 @@ class PreparationTests(unittest.TestCase):
             (source / name).parent.mkdir(parents=True, exist_ok=True)
             (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
         expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
-        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+        entries = ({}, {"relink": ["--module-dir", "prx"]}, {"relink": ["--rpath", "--skip-sce-module"]})
+        for index, entry in enumerate(entries):
             target = self.root / f"input{index}"
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
+    def test_skip_sce_module_stages_only_the_main_executable(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        (source / "eboot.bin").write_bytes(elf)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/libc.prx").write_bytes(elf)
+        staged = self.root / "input"
+        entry = {"relink": ["--skip-sce-module"]}
+
+        title_run.stage_inputs(source, entry, staged)
+
+        self.assertEqual((staged / "eboot.elf").read_bytes(), elf)
+        self.assertEqual(list(staged.iterdir()), [staged / "eboot.elf"])
 
     def test_plural_module_dir_is_staged_without_singular_fallback(self):
         package_root = package(self.root / "pkg", "PPSA00001")
@@ -992,6 +1176,49 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue(alias.is_symlink())
         self.assertFalse(staged.is_symlink())
 
+    def make_directory_link(self, link, target):
+        if os.name == "nt":
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.addCleanup(link.unlink)
+
+    def test_staged_linked_directories_get_independent_asset_copies(self):
+        source = self.root / "pkg"
+        shared = self.root / "shared"
+        source.mkdir()
+        (shared / "nested").mkdir(parents=True)
+        original = shared / "nested/data.bin"
+        original.write_bytes(b"source bytes")
+        for name in ("voices", "subtitles", "sce_module"):
+            self.make_directory_link(source / name, shared)
+        staged = self.root / "app0"
+
+        title_run.link_tree(source, staged, {"sce_module"})
+
+        voice = staged / "voices/nested/data.bin"
+        self.assertEqual(voice.read_bytes(), b"source bytes")
+        voice.write_bytes(b"changed")
+        self.assertEqual((staged / "subtitles/nested/data.bin").read_bytes(), b"source bytes")
+        self.assertEqual(original.read_bytes(), b"source bytes")
+        self.assertFalse(title_run.linked_path(staged / "voices"))
+        self.assertFalse((staged / "sce_module").exists())
+
+    def test_staging_rejects_an_asset_directory_cycle(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "assets").mkdir()
+        self.make_directory_link(source / "assets/back", source)
+
+        packages = []
+        found = title_run.discover([self.root], packages=packages)
+        self.assertEqual(found["PPSA00001"]["package"], source)
+        self.assertEqual(packages, [source])
+        with self.assertRaisesRegex(ValueError, "asset directory cycle"):
+            title_run.link_tree(source, self.root / "app0", set())
+
     def test_prepare_isolates_assets_and_keeps_module_inputs(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -1045,6 +1272,28 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
         self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
+
+    def test_files_override_read_only_bundled_assets(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        content = self.root / "content"
+        content.mkdir()
+        (content / "replacement.bin").write_bytes(b"external")
+        files = {"app0/config.ini": {"text": "override"}, "app0/asset.bin": {"content": "replacement.bin"}}
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            original.write_bytes(b"bundled")
+            original.chmod(stat.S_IREAD)
+        work = self.root / "work"
+        title_run.link_tree(source, work / "app0", {"sce_module"})
+
+        self.assertEqual(title_run.stage_files(files, work, content), [])
+
+        self.assertEqual((work / "app0/config.ini").read_bytes(), b"override")
+        self.assertEqual((work / "app0/asset.bin").read_bytes(), b"external")
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            self.assertEqual(original.read_bytes(), b"bundled")
+            self.assertFalse(original.stat().st_mode & stat.S_IWRITE)
 
     def test_missing_external_content_preserves_the_staged_package_file(self):
         source = package(self.root / "pkg", "PPSA00001")
@@ -1243,15 +1492,34 @@ class PadTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.work = Path(directory.name) / "work"
         self.work.mkdir()
+        self.run_index = 0
+        environment = unittest.mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("APS5_PAD_RECORD", None)
 
-    def run_with(self, pad, seconds=1):
+    def run_with(self, pad, seconds=1, ready_after=0, recording="APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", extra_env=None):
         seen = {}
+        clock = [0.0]
+        self.run_index += 1
+        run_dir = self.work.parent / f"run{self.run_index}"
+
+        def sleep(seconds):
+            clock[0] += seconds
 
         class FakeSession:
             def __init__(self, command, cwd, env, stdout, stderr, owned=None):
                 seen["env"] = env
+                self.recorded = False
+                self.record = Path(env.get("APS5_PAD_RECORD") or run_dir / "pad-record.txt")
+                if not self.record.is_absolute():
+                    self.record = cwd / self.record
 
             def alive(self):
+                if pad and not self.recorded and ready_after is not None and clock[0] >= ready_after:
+                    self.record.parent.mkdir(parents=True, exist_ok=True)
+                    self.record.write_text(recording, encoding="utf-8")
+                    self.recorded = True
                 return True
 
             def send_new_windows_to_back(self):
@@ -1266,8 +1534,10 @@ class PadTests(unittest.TestCase):
             def kill(self):
                 pass
 
-        with unittest.mock.patch.object(title_run, "Session", FakeSession), unittest.mock.patch.object(title_run, "CLOSE_SECONDS", 0):
-            result = title_run.run_title(self.work / "eboot.exe", self.work, self.work.parent / "run1", seconds, {}, pad)
+        with unittest.mock.patch.object(title_run, "Session", FakeSession), unittest.mock.patch.object(title_run, "CLOSE_SECONDS", 0), \
+                unittest.mock.patch.object(title_run.time, "monotonic", side_effect=lambda: clock[0]), \
+                unittest.mock.patch.object(title_run.time, "sleep", side_effect=sleep):
+            result = title_run.run_title(self.work / "eboot.exe", self.work, run_dir, seconds, extra_env or {}, pad)
         return result, seen["env"]
 
     def test_timeline_is_queued_after_the_delay(self):
@@ -1290,6 +1560,53 @@ class PadTests(unittest.TestCase):
         result, _ = self.run_with({"after_s": 30, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("minimum input delay not reached", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
+
+    def test_delayed_first_read_does_not_lose_the_timeline(self):
+        result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=0.5)
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_ready_input_still_waits_for_the_requested_delay(self):
+        result, _ = self.run_with({"after_s": 0.5, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_no_first_read_queues_nothing(self):
+        result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=None)
+        self.assertIsNone(result["pad_queued_s"])
+        self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("no fresh controller sample observed", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
+
+    def test_incomplete_and_malformed_recordings_do_not_signal_readiness(self):
+        for record in ["APS5_PAD_RECORDING 1\n", "APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0",
+                       "wrong header\n0 0 128 128 128 128 0 0\n", "APS5_PAD_RECORDING 1\n0 zz 128 128 128 128 0 0\n",
+                       "APS5_PAD_RECORDING 1\n0 0 256 128 128 128 0 0\n", "APS5_PAD_RECORDING 1\n-1 0 128 128 128 128 0 0\n"]:
+            with self.subTest(record=record):
+                result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, recording=record)
+                self.assertIsNone(result["pad_queued_s"])
+                self.assertFalse((self.work / "pad-input.txt").exists())
+
+    def test_unchanged_recording_from_a_previous_run_is_not_readiness(self):
+        previous = self.work / "previous.txt"
+        previous.write_text("APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0\n", encoding="utf-8")
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    ready_after=None, extra_env={"APS5_PAD_RECORD": "previous.txt"})
+        self.assertEqual(env["APS5_PAD_RECORD"], "previous.txt")
+        self.assertIsNone(result["pad_queued_s"])
+
+    def test_relative_recording_override_observes_the_new_first_read(self):
+        previous = self.work / "previous.txt"
+        previous.write_text("APS5_PAD_RECORDING 1\n0 0 0 0 0 0 0 0\n", encoding="utf-8")
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    ready_after=0.5, extra_env={"APS5_PAD_RECORD": "previous.txt"})
+        self.assertEqual(env["APS5_PAD_RECORD"], "previous.txt")
+        self.assertGreaterEqual(result["pad_queued_s"], 0.5)
+
+    def test_empty_recording_override_gets_a_fresh_default(self):
+        result, env = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]},
+                                    extra_env={"APS5_PAD_RECORD": ""})
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_absolute())
+        self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_file())
+        self.assertIsNotNone(result["pad_queued_s"])
 
     def test_default_audio_driver_is_dummy(self):
         with unittest.mock.patch.dict(os.environ, {}, clear=False):
@@ -1554,6 +1871,64 @@ class CompareTests(unittest.TestCase):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
+
+
+class SavedSmokeComparisonTests(unittest.TestCase):
+    def compare(self, baseline, candidate, *arguments):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("baseline summary.json", "candidate summary.json")]
+            for path, document in zip(paths, (baseline, candidate)):
+                path.write_text(json.dumps(document), encoding="utf-8-sig")
+            before = [path.read_bytes() for path in paths]
+            result = subprocess.run([sys.executable, str(title_run.ROOT / "tools/title_run.py"), "compare",
+                                     *paths, *arguments], cwd=directory, capture_output=True, encoding="utf-8")
+            self.assertEqual(sorted(Path(directory).iterdir()), paths)
+            self.assertEqual([path.read_bytes() for path in paths], before)
+            return result
+
+    def test_all_outcomes_are_counted_and_only_rendering_fps_is_sampled(self):
+        baseline = {"titles": {"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [
+            {"cache": "cold", "outcome": "rendering", "fps": 8.0},
+            {"cache": "warm", "outcome": "rendering", "fps": 10.0},
+            {"cache": "warm", "outcome": "stalled", "fps": 0.0},
+            {"cache": "warm", "outcome": "rendering", "fps": 30.0},
+            {"cache": "warm", "outcome": "rendering"},
+        ]}}}
+        candidate = {"titles": {"PPSA00001": {"name": "Game", "runs": [
+            {"cache": "cold", "outcome": "relink-failed", "fps": 0.0},
+            {"outcome": "rendering", "fps": 21.0},
+        ]}}}
+        result = self.compare(baseline, candidate, "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        title = json.loads(result.stdout)["titles"]["PPSA00001"]
+        warm = title["baseline"]["groups"]["warm"]
+        self.assertEqual(warm["outcomes"], ["rendering", "stalled", "rendering", "rendering"])
+        self.assertEqual(warm["fps"], {"count": 2, "min": 10.0, "median": 20.0, "max": 30.0})
+        self.assertEqual(title["baseline"]["groups"]["cold"]["fps"]["median"], 8.0)
+        self.assertEqual(title["candidate"]["groups"]["cold"]["fps"],
+                         {"count": 0, "min": None, "median": None, "max": None})
+        self.assertEqual(title["candidate"]["groups"]["unknown"]["fps"]["median"], 21.0)
+
+    def test_markdown_displays_titles_missing_from_one_side(self):
+        baseline = {"titles": {"PPSA00001": {"name": "Old | Title", "version": "01.000.000", "runs": [
+            {"cache": "cold", "outcome": "rendering", "fps": 7.5},
+        ]}}}
+        candidate = {"titles": {"PPSA00002": {"name": "Nouveau cinéma", "runs": [
+            {"cache": "warm", "outcome": "crashed", "fps": 0.0},
+        ]}}}
+        result = self.compare(baseline, candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Old \\| Title | PPSA00001 | Baseline | 01.000.000 | cold", result.stdout)
+        self.assertIn("Old \\| Title | PPSA00001 | Candidate | - | - | not recorded", result.stdout)
+        self.assertIn("Nouveau cinéma | PPSA00002 | Baseline | - | - | not recorded", result.stdout)
+        self.assertIn("Nouveau cinéma | PPSA00002 | Candidate | - | warm | crashed 1 | 0/1", result.stdout)
+
+    def test_performance_capture_is_rejected_as_a_smoke_summary(self):
+        result = self.compare({"titles": {}}, {"format": "anyps5-performance-capture/1", "titles": {}}, "--json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("candidate summary.json", result.stderr)
+        self.assertIn("expected a smoke-run summary", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 class DiagnosticComparisonTests(unittest.TestCase):

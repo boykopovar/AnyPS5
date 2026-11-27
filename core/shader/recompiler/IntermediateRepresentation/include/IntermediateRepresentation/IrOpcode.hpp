@@ -154,6 +154,7 @@ enum class IrOpcode : std::uint16_t {
     FPAdd16x2,
     FPMul16x2,
     FPFma16x2,
+    SplatLowU16x2,
     IAdd16x2,
     ISub16x2,
     IMul16x2,
