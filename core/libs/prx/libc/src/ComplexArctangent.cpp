@@ -68,7 +68,7 @@ long double RealPartReciprocal(long double x, long double y) {
     const int iy = Exponent(y);
     if (ix - iy >= Cutoff || std::isinf(x)) return 1 / x;
     if (iy - ix >= Cutoff) return x / y / y;
-    if (ix <= LDBL_MAX_EXP / 2 - Cutoff) return x / (x * x + y * y);
+    if (ix <= LDBL_MAX_EXP / 2 - Cutoff && iy <= LDBL_MAX_EXP / 2 - Cutoff) return x / (x * x + y * y);
     const long double scale = std::ldexp(1.0L, 1 - ix);
     x *= scale;
     y *= scale;

@@ -119,7 +119,10 @@ int main() {
         long double y;
         long double real;
     };
+    const long double belowSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2 - LDBL_MANT_DIG / 2);
+    const long double nearSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2);
     for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L},
+                               Large{belowSquareLimit, nearSquareLimit, belowSquareLimit / nearSquareLimit / nearSquareLimit},
                                Large{std::ldexp(1.0L, LDBL_MAX_EXP * 3 / 4), 1.0L, std::ldexp(1.0L, -LDBL_MAX_EXP * 3 / 4)},
                                Large{1.0L, std::ldexp(1.0L, LDBL_MAX_EXP / 2 - 100), std::ldexp(1.0L, 200 - LDBL_MAX_EXP)},
                                Large{std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, 99 - LDBL_MAX_EXP)}}) {
