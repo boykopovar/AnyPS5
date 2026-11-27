@@ -1675,6 +1675,7 @@ void CommandState::SetViewports(const Context& context, std::span<const VkViewpo
 }
 
 void CommandState::ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers) {
+    Invalidate();
     context.tracked(&DeviceFunctions::cmdExecuteCommands, "vkCmdExecuteCommands")(commands, count, buffers);
 }
 

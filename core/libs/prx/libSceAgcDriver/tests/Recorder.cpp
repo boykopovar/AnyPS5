@@ -14979,6 +14979,18 @@ void graphicsStateTests(const Device& device) {
         recorder.Submit();
         recorder.Sync();
     }
+    {
+        Recorder recorder(context);
+        const auto secondary = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0x5b000));
+        drawn(recorder, first);
+        expectStateLog(full, "the draw before executing a secondary command buffer");
+        recorder.GraphicsState().ExecuteCommands(context, 1, &secondary);
+        expectStateLog({stateLine("execute", 1u)}, "executing a secondary command buffer");
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after executing a secondary command buffer");
+        recorder.Submit();
+        recorder.Sync();
+    }
     statePipelines.clear();
     stateLog.clear();
     std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";
