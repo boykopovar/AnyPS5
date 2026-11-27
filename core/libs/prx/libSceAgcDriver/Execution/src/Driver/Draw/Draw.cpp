@@ -639,7 +639,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto decodeVertexInfo = [&](std::size_t i) {
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i])) return;
-        vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], 8u - program.firstUserSgpr);
+        vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], program.hiddenUserWords);
         if (vertexInfos[i]) {
             const auto& exporter = PositionExportProgram(programs, roles, i);
             vertexInfos[i]->paClVsOutCntl = PositionExportLayout(exporter.snapshot.get(), exporter.codeOffset, exporter.binary.code, readRegister(queue.context, 0x207), exporter.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
@@ -903,7 +903,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i])) return;
         decodeReads[i].clear();
-        vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
+        vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, program.hiddenUserWords);
         if (vertexInfos[i]) {
             const auto& exporter = PositionExportProgram(programs, roles, i);
             vertexInfos[i]->paClVsOutCntl = PositionExportLayout(exporter.snapshot.get(), exporter.codeOffset, exporter.binary.code, tail.reg207, exporter.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
@@ -1532,7 +1532,7 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
         tail.vertexInfos[i].reset();
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i])) continue;
-        tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], 8u - program.firstUserSgpr);
+        tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], program.hiddenUserWords);
         if (!tail.vertexInfos[i]) continue;
         const auto& exporter = PositionExportProgram(programs, roles, i);
         tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(exporter.snapshot.get(), exporter.codeOffset, exporter.binary.code, tail.reg207, exporter.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
