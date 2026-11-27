@@ -4161,6 +4161,10 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter
     return self->object;
 }
 
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEptEv(const IntrusivePtr* self) {
     return self->object;
 }
