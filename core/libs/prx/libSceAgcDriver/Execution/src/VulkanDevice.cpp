@@ -2517,7 +2517,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         APS5_LOG_OUT("Wave32 programs run on subgroups of %u: compute %d, mesh %d, pixel %d", 32u, state->computeWave32, state->meshWave32, state->pixelWave32);
     }
     state->spannedWaves = state->computeFullSubgroups && std::getenv("APS5_NO_SPANNED_WAVE") == nullptr;
-    state->spannedAnySubgroup = state->spannedWaves && state->minComputeSubgroupSize < 32u;
+    state->spannedAnySubgroup = state->spannedWaves && state->minComputeSubgroupSize < 32u && state->driverId != VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
     APS5_LOG_OUT("single-wave wave64 compute spans full subgroups: %d, of any size: %d", state->spannedWaves, state->spannedAnySubgroup);
     timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
     timelineFeatures.timelineSemaphore = VK_TRUE;
