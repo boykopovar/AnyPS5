@@ -1922,7 +1922,13 @@ int APS5_VABI _ZN6icu_687UVector4sortEPFa8UElementS1_ER10UErrorCode_nid_postfix(
 int APS5_VABI sceIcuLegacyUnknown_sj9YiLphihc_nid_no_patch();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EE8copyFromERKS1_R10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorC2ERKNS_13UnicodeStringER11UParseErrorR10UErrorCode_nid_postfix();
-int APS5_VABI uloc_getDisplayKeywordValue_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayKeywordValue_nid_postfix(
+    const char* locale,
+    const char* keyword,
+    const char* displayLocale,
+    char16_t* dest,
+    std::int32_t destCapacity,
+    std::int32_t* status);
 int APS5_VABI ures_countArrayItems_nid_postfix();
 int APS5_VABI _ZN6icu_6811ReplaceableD2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSetC1ERKNS_13UnicodeStringER10UErrorCode_nid_postfix();

@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Functional
+
+- [Locale keyword display values](../../../core/libs/prx/libSceIcu/DisplayKeywordValue.cpp) have no console ABI or behavior verification, and `icu_common` ships no locale display resource bundles, so `uloc_getDisplayKeywordValue` falls back to copying the extracted keyword value with `U_USING_DEFAULT_WARNING` instead of localized display names. It compiles pinned ICU 78.1 [locdispnames.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/locdispnames.cpp) and [locresdata.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/locresdata.cpp), resolves a null `displayLocale` through `uloc_getDefault`, and rejects unreadable or unwritable guest pointers with `std::invalid_argument` while preserving `errno`. ICU 68.2 vs 78.1 edge-case differences for null `locale` or empty `keyword` are unverified on a console. Closes when: compared with the console and locale display resources are available.
