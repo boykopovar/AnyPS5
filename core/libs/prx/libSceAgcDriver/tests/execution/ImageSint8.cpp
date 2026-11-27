@@ -50,7 +50,6 @@ constexpr std::array<std::uint32_t, 11> SamplerCode(std::uint32_t word0, std::ui
 
 alignas(256) constexpr auto LoadX = TexelCode(0xf0001108u);
 alignas(256) constexpr auto LoadXyzw = TexelCode(0xf0001f08u);
-alignas(256) constexpr auto StoreX = TexelCode(0xf0201108u);
 alignas(256) constexpr auto SampleLz = SamplerCode(0xf09c0f08u, 0x3ce00000u, 0x3d300000u);
 alignas(256) constexpr auto Gather4Lz = SamplerCode(0xf11c0108u, 0x3c000000u, 0x3c000000u);
 
@@ -172,16 +171,6 @@ void CheckGatherConstant(AgcDriver::VulkanDevice& device, std::uint32_t integer,
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, const std::array<std::uint32_t, 4>& sampler, const std::string& reason, const std::string& what) {
-    std::string refusal;
-    try {
-        Run(device, code, format, sampler, 1);
-    } catch (const std::exception& error) {
-        refusal = error.what();
-    }
-    Require(refusal.find(reason) != std::string::npos, what + " was not refused: " + refusal);
-}
-
 struct alignas(4096) GuestTables {
     std::array<std::array<std::uint32_t, 8>, 2> heap{};
     std::array<std::array<std::uint32_t, 4>, 3> materials{};
@@ -252,7 +241,6 @@ int main(int argc, char** argv) {
             CheckLoads(*device);
             CheckSamples(*device);
             CheckTable(*device);
-            RequireRefused(*device, StoreX, Sint8, PointSampler, "storage image descriptor uses an unsupported format", "8_SINT image_store");
         }
         std::puts("image 8_SINT tests passed");
         return 0;

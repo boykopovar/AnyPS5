@@ -1709,6 +1709,7 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
 
 VkFormat UintStorageViewFormat(VkFormat format) {
     switch (format) {
+        case VK_FORMAT_R8_SINT: return VK_FORMAT_R8_UINT;
         case VK_FORMAT_R8G8_SINT: return VK_FORMAT_R8G8_UINT;
         case VK_FORMAT_R8G8B8A8_SINT: return VK_FORMAT_R8G8B8A8_UINT;
         case VK_FORMAT_R16_SINT: return VK_FORMAT_R16_UINT;

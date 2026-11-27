@@ -110,7 +110,7 @@ struct Format {
     std::uint32_t bits;
 };
 
-constexpr std::array<Format, 8> Formats{{
+constexpr std::array<Format, 9> Formats{{
     {"16_SINT", 12u, 1u, 16u},
     {"8_8_SINT", 19u, 2u, 8u},
     {"32_SINT", 21u, 1u, 32u},
@@ -119,6 +119,7 @@ constexpr std::array<Format, 8> Formats{{
     {"32_32_SINT", 63u, 2u, 32u},
     {"16_16_16_16_SINT", 70u, 4u, 16u},
     {"32_32_32_32_SINT", 76u, 4u, 32u},
+    {"8_SINT", 6u, 1u, 8u},
 }};
 
 struct Write {
