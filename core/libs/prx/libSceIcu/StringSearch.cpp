@@ -119,6 +119,13 @@ std::shared_ptr<SearchState> Find(const UStringSearch* search, const char* calle
     return found->second;
 }
 
+std::shared_ptr<SearchState> FindRegistered(const UStringSearch* search) {
+    auto& registry = Searches();
+    const std::lock_guard lock(registry.mutex);
+    const auto found = registry.searches.find(search);
+    return found == registry.searches.end() ? nullptr : found->second;
+}
+
 bool Succeeded(const std::int32_t* status, const char* caller) {
     Icu::RequireStatus(status);
     return CopyIn<std::int32_t>(status, caller) <= 0;
@@ -207,7 +214,16 @@ void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int3
     Icu::RequireStatus(status);
     const auto incoming = CopyIn<std::int32_t>(status, __func__);
     if (value == AttributeValueCount) {
-        WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);
+        if (incoming <= 0 && search && attribute >= 0 && attribute < AttributeCount) {
+            if (const auto state = FindRegistered(search)) {
+                const std::lock_guard lock(state->mutex);
+                auto outgoing = incoming;
+                Icu::StringSearchHost::SetAttribute(state->search, attribute, value, outgoing);
+                CopyOut(status, outgoing, __func__);
+                return;
+            }
+        }
+        CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
     if (incoming > 0) return;
@@ -219,7 +235,8 @@ void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int3
     const auto state = Find(search, __func__);
     const std::lock_guard lock(state->mutex);
     auto outgoing = incoming;
-    Icu::StringSearchHost::SetAttribute(state->search, attribute, value, outgoing);
+    const auto normalized = value < -1 || value >= AttributeValueCount ? 0 : value;
+    Icu::StringSearchHost::SetAttribute(state->search, attribute, normalized, outgoing);
     WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 

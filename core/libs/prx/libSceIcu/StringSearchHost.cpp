@@ -30,6 +30,10 @@ std::int32_t GetMatchedLength(const void* search) {
     return usearch_getMatchedLength(static_cast<const UStringSearch*>(search));
 }
 
+std::int32_t GetAttribute(const void* search, std::int32_t attribute) {
+    return usearch_getAttribute(static_cast<const UStringSearch*>(search), static_cast<USearchAttribute>(attribute));
+}
+
 void Reset(void* search) {
     usearch_reset(static_cast<UStringSearch*>(search));
 }

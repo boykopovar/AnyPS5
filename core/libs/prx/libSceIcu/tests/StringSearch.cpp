@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
 #include <cerrno>
@@ -346,7 +347,7 @@ void GuestPointers(UStringSearch* search, const char16_t* words) {
         usearch_setAttribute_nid_postfix(search, 0, 1, roFailing);
         usearch_setPattern_nid_postfix(nullptr, nullptr, 0, roFailing);
         usearch_setText_nid_postfix(nullptr, nullptr, 0, roFailing);
-        usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing);
+        Rejects([&] { usearch_setAttribute_nid_postfix(search, 0, AttributeValueCount, roFailing); });
         Require(errno == EINVAL);
         Require(*roFailing == IllegalArgument);
     }
@@ -409,6 +410,14 @@ void Run() {
         usearch_setAttribute_nid_postfix(opened, 0, value, &status);
         Require(status == 0);
     }
+    status = 0;
+    usearch_setAttribute_nid_postfix(opened, 0, 1, &status);
+    Require(status == 0);
+    Require(Icu::StringSearchHost::GetAttribute(opened, 0) == 1);
+    usearch_setAttribute_nid_postfix(opened, 0, AttributeValueCount, &status);
+    Require(status == IllegalArgument);
+    Require(Icu::StringSearchHost::GetAttribute(opened, 0) == 0);
+    status = 0;
     usearch_setAttribute_nid_postfix(opened, 3, 1, &status);
     Require(status == IllegalArgument);
 }
