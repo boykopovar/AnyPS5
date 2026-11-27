@@ -197,11 +197,11 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     submission.indirectSegments.clear();
     if (words != 0) {
         const auto bytes = words * sizeof(std::uint32_t);
-        GuestMemory::CheckRange(guest, bytes, alignof(std::uint32_t));
         // The root command buffer is read directly by copySegment. Unlike GuestMemory::Read,
         // that copy does not pass through the host-read hook; land any earlier GPU writes
         // (notably labels) before snapshotting the words the guest just submitted.
         GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest), bytes);
+        GuestMemory::CheckRange(guest, bytes, alignof(std::uint32_t));
     }
     std::size_t budget = std::size_t{1} << 26u;
     copySegment(submission, guest, words, budget, 0);
