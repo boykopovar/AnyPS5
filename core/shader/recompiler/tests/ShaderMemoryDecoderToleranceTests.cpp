@@ -398,6 +398,19 @@ void TestGfx1013OnlyFormsTranslate() {
         EXPECT_EQ(writtenBack, true);
     }
     {
+        const std::array<std::uint32_t, 2> words = {smemWord(0xa1u, 4u, true), 0x10u};
+        const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
+        IrProgram program;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        TranslationContext context(program, block, 256);
+        context.TranslateInstruction(atomic);
+        std::uint32_t written = 0u;
+        for (const auto* value : block.Instructions())
+            if (value->Opcode() == IrOpcode::SetScalarRegister) written++;
+        EXPECT_EQ(written, 2u);
+    }
+    {
         const std::array<std::uint32_t, 2> words = {smemWord(0x62u, 4u, false), 0x8u};
         const RdnaInstruction atomic = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(words), 0u);
         IrProgram program;
@@ -467,11 +480,39 @@ std::vector<std::uint32_t> EmitCompute(const RdnaInstruction& inst) {
     return SpirvEmitter().Emit(program, inputs, bindings, target);
 }
 
-bool ContainsOpcode(const std::vector<std::uint32_t>& spirv, std::uint32_t opcode) {
-    for (const auto word : spirv) {
-        if ((word & 0xffffu) == opcode) return true;
+std::uint32_t EntryFunctionId(const std::vector<std::uint32_t>& spirv) {
+    std::size_t index = 5u;
+    while (index < spirv.size()) {
+        const auto count = spirv[index] >> 16u;
+        const auto opcode = spirv[index] & 0xffffu;
+        if (count == 0u) return 0u;
+        if (opcode == spv::OpEntryPoint) return spirv[index + 2u];
+        index += count;
     }
-    return false;
+    return 0u;
+}
+
+std::vector<std::uint32_t> EntryOpcodes(const std::vector<std::uint32_t>& spirv) {
+    const auto entry = EntryFunctionId(spirv);
+    std::vector<std::uint32_t> opcodes;
+    std::size_t index = 5u;
+    bool inside = false;
+    while (index < spirv.size()) {
+        const auto count = spirv[index] >> 16u;
+        const auto opcode = spirv[index] & 0xffffu;
+        if (count == 0u) break;
+        if (opcode == spv::OpFunction && spirv[index + 2u] == entry) inside = true;
+        if (inside) opcodes.push_back(opcode);
+        if (opcode == spv::OpFunctionEnd) inside = false;
+        index += count;
+    }
+    return opcodes;
+}
+
+std::size_t CountOpcode(const std::vector<std::uint32_t>& opcodes, std::uint32_t opcode) {
+    std::size_t count = 0u;
+    for (const auto value : opcodes) count += value == opcode ? 1u : 0u;
+    return count;
 }
 
 void TestGfx1013FormsEmit() {
@@ -482,20 +523,24 @@ void TestGfx1013FormsEmit() {
         const char* name;
         std::array<std::uint32_t, 2> words;
         std::uint32_t opcode;
-        std::uint32_t alternative;
+        std::size_t minimum;
+        std::size_t maximum;
     };
-    const std::array<EmitCase, 11> cases{{
-        {"S_ATOMIC_ADD", {smem(0x82u, 3u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
-        {"S_ATOMIC_CMPSWAP", {smem(0x81u, 3u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 0u},
-        {"S_ATOMIC_ADD_X2", {smem(0xa2u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
-        {"S_STORE_DWORD", {smem(0x10u, 3u, 1u), 0x10u}, spv::OpStore, 0u},
-        {"S_STORE_DWORDX4", {smem(0x12u, 4u, 1u), 0x10u}, spv::OpStore, 0u},
-        {"S_BUFFER_STORE_DWORD", {smem(0x18u, 2u, 1u), 0x10u}, spv::OpStore, 0u},
-        {"S_BUFFER_STORE_DWORDX2", {smem(0x19u, 2u, 1u), 0x10u}, spv::OpStore, 0u},
-        {"S_BUFFER_ATOMIC_ADD", {smem(0x42u, 2u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
-        {"S_BUFFER_ATOMIC_ADD_X2", {smem(0x62u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
-        {"S_BUFFER_ATOMIC_CMPSWAP_X2", {smem(0x61u, 4u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 0u},
-        {"S_BUFFER_ATOMIC_ADD with GLC", {smem(0x42u, 2u, 1u) | (1u << 16u), 0x10u}, spv::OpAtomicIAdd, spv::OpAtomicCompareExchange},
+    const std::array<EmitCase, 14> cases{{
+        {"S_ATOMIC_ADD", {smem(0x82u, 3u, 1u), 0x10u}, spv::OpAtomicIAdd, 1u, 1u},
+        {"S_ATOMIC_CMPSWAP", {smem(0x81u, 3u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 1u, 1u},
+        {"S_ATOMIC_ADD_X2", {smem(0xa2u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, 1u, 1u},
+        {"S_ATOMIC_CMPSWAP_X2", {smem(0xa1u, 4u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 1u, 1u},
+        {"S_ATOMIC_INC_X2", {smem(0xabu, 4u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 1u, 0u},
+        {"S_STORE_DWORD", {smem(0x10u, 3u, 1u), 0x10u}, spv::OpStore, 1u, 0u},
+        {"S_STORE_DWORDX4", {smem(0x12u, 4u, 1u), 0x10u}, spv::OpStore, 1u, 0u},
+        {"S_BUFFER_STORE_DWORD", {smem(0x18u, 2u, 1u), 0x10u}, spv::OpStore, 1u, 0u},
+        {"S_BUFFER_STORE_DWORDX2", {smem(0x19u, 2u, 1u), 0x10u}, spv::OpStore, 1u, 0u},
+        {"S_BUFFER_ATOMIC_ADD", {smem(0x42u, 2u, 1u), 0x10u}, spv::OpAtomicIAdd, 1u, 1u},
+        {"S_BUFFER_ATOMIC_ADD_X2", {smem(0x62u, 4u, 1u), 0x10u}, spv::OpAtomicIAdd, 1u, 1u},
+        {"S_BUFFER_ATOMIC_CMPSWAP_X2", {smem(0x61u, 4u, 1u), 0x10u}, spv::OpAtomicCompareExchange, 1u, 1u},
+        {"S_BUFFER_ATOMIC_ADD with GLC", {smem(0x42u, 2u, 1u) | (1u << 16u), 0x10u}, spv::OpAtomicIAdd, 1u, 1u},
+        {"DS_ADD_SRC2_U64", {(0x36u << 26u) | (0xC0u << 18u) | 2u, (4u << 24u) | (6u << 16u) | (5u << 8u) | 7u}, spv::OpAtomicCompareExchange, 1u, 0u},
     }};
     for (const auto& test : cases) {
         const RdnaInstruction inst = DecodeRdnaMemoryOp(std::span<const std::uint32_t>(test.words), 0u);
@@ -505,8 +550,10 @@ void TestGfx1013FormsEmit() {
                 std::fprintf(stderr, "EmitCompute produced no words for %s\n", test.name);
                 std::abort();
             }
-            if (!ContainsOpcode(spirv, test.opcode) && (test.alternative == 0u || !ContainsOpcode(spirv, test.alternative))) {
-                std::fprintf(stderr, "%s emitted no expected instruction\n", test.name);
+            const auto opcodes = EntryOpcodes(spirv);
+            const auto found = CountOpcode(opcodes, test.opcode);
+            if (found < test.minimum || (test.maximum != 0u && found > test.maximum)) {
+                std::fprintf(stderr, "%s emits %zu of opcode %u in the entry function\n", test.name, found, test.opcode);
                 std::abort();
             }
         } catch (const std::exception& error) {
