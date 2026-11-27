@@ -114,7 +114,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
     }
     for (std::uint32_t index = program.hiddenUserWords; index + 2 < users; ++index) {
         const auto base = program.userData[index];
-        if (base == 0 || taken(index) || upperHalf(index) || bound(base) != 1 || elsewhere(index, base) || bound(program.userData[index + 1]) != 1) continue;
+        if (base == 0 || taken(index) || upperHalf(index) || bound(base) != 1 || elsewhere(index, base)) continue;
         std::uint32_t binding = 0, word = 0;
         for (std::size_t b = 0; b < compiled.bindings.size(); ++b) {
             const auto& descriptor = compiled.bindings[b].guestDescriptor;
@@ -129,9 +129,11 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         if (!readOnly || target.guestDescriptor[word + 1] != program.userData[index + 1] || target.guestDescriptor[word + 2] != program.userData[index + 2] || readThrough(target.guestDescriptor.data() + word)) continue;
         variant.valueWords |= std::uint64_t {1} << index;
         variant.valueSlots.push_back({index, binding, word});
-        variant.valueWords |= std::uint64_t {1} << (index + 1);
-        variant.valueHalfWords |= std::uint64_t {1} << (index + 1);
-        variant.valueSlots.push_back({index + 1, binding, word + 1});
+        if (!taken(index + 1) && bound(program.userData[index + 1]) == 1 && !elsewhere(index + 1, program.userData[index + 1])) {
+            variant.valueWords |= std::uint64_t {1} << (index + 1);
+            variant.valueHalfWords |= std::uint64_t {1} << (index + 1);
+            variant.valueSlots.push_back({index + 1, binding, word + 1});
+        }
         const auto records = program.userData[index + 2];
         if (records != 0 && !taken(index + 2) && !upperHalf(index + 2) && bound(records) == 1 && !elsewhere(index + 2, records)) {
             variant.valueWords |= std::uint64_t {1} << (index + 2);
