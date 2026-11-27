@@ -284,6 +284,56 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertIn(nid("sceA").encode() + b"\0", strings)
         self.assertIn(nid("sceB").encode() + b"\0", strings)
 
+    def test_sce_dynamic_string_tags_extend_dynlib_segment_when_dynamic_is_separate(self):
+        original = bytearray(executable("sce"))
+        original_headers = program_headers(original)
+        original_dynlib = next(
+            header for header in original_headers if header[0] == PT_SCE_DYNLIBDATA
+        )
+        original_dynamic = next(header for header in original_headers if header[0] == 2)
+        dynamic_offset = 0xA00
+        dynamic_size = original_dynamic[5]
+        original[dynamic_offset:dynamic_offset + dynamic_size] = original[
+            original_dynamic[2]:original_dynamic[2] + dynamic_size
+        ]
+        original[original_dynamic[2]:original_dynamic[2] + dynamic_size] = bytes(dynamic_size)
+
+        phoff = struct.unpack_from("<Q", original, 32)[0]
+        phentsize, _ = struct.unpack_from("<HH", original, 54)
+        dynamic_index = next(index for index, header in enumerate(original_headers) if header[0] == 2)
+        dynamic_header_offset = phoff + dynamic_index * phentsize
+        dynamic_address = 0x400000 + dynamic_offset
+        struct.pack_into(
+            "<QQQ", original, dynamic_header_offset + 8,
+            dynamic_offset, dynamic_address, dynamic_address,
+        )
+        struct.pack_into(
+            "<QQ", original, SHOFF + 4 * 64 + 16,
+            dynamic_address, dynamic_offset,
+        )
+
+        result, after = patch(bytes(original))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        headers = program_headers(after)
+        dynamic = next(header for header in headers if header[0] == 2)
+        dynlib = next(header for header in headers if header[0] == PT_SCE_DYNLIBDATA)
+        dynstr = symbols.sections(after)[2]
+        tags = {}
+        for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+            tag, value = struct.unpack_from("<qQ", after, offset)
+            if tag == 0:
+                break
+            tags[tag] = value
+
+        self.assertEqual(dynamic[2], dynamic_offset)
+        self.assertEqual(dynamic[3], dynamic_address)
+        self.assertGreaterEqual(dynlib[2], len(original))
+        self.assertEqual(dynlib[5], original_dynlib[5] + dynstr[5])
+        self.assertEqual(tags[DT_OS_STRTAB], original_dynlib[5])
+        self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
+        self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
+        self.assertLessEqual(tags[DT_OS_STRTAB] + tags[DT_OS_STRSZ], dynlib[5])
+
     def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_stale(self):
         original = bytearray(executable("sce"))
         stale_offset = 0x780
