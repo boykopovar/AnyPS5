@@ -122,6 +122,31 @@ void Run() {
     Require(std::memcmp(booleanBuffer.data(), expectedBoolean.data(), expectedBoolean.size()) == 0,
             "the omitted boolean changes the DER");
     algor.parameter = &parameter;
+    unsigned char alignedValue[] = {0x01, 0x02, 0x03};
+    Asn1String aligned{3, 3, alignedValue, 0x08};
+    LibreSslX509Pubkey alignedKey{&algor, &aligned, nullptr};
+    threw = false;
+    try {
+        i2d_X509_PUBKEY_nid_postfix(&alignedKey, nullptr);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw, "the unused-bit flag without unused bits throws");
+    unsigned char discardedValue[] = {0x01, 0x02, 0x03};
+    Asn1String discarded{3, 3, discardedValue, 0x08 | 1};
+    LibreSslX509Pubkey discardedKey{&algor, &discarded, nullptr};
+    threw = false;
+    try {
+        i2d_X509_PUBKEY_nid_postfix(&discardedKey, nullptr);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw, "a bit string that discards nonzero bits throws");
+    unsigned char paddedValue[] = {0x01, 0x02, 0xfc};
+    Asn1String padded{3, 3, paddedValue, 0x08 | 2};
+    LibreSslX509Pubkey paddedKey{&algor, &padded, nullptr};
+    Require(i2d_X509_PUBKEY_nid_postfix(&paddedKey, nullptr) == static_cast<int>(Expected.size()),
+            "zeroed discarded bits keep the DER length");
     Require(allocations == baseline, "the heap returns to its baseline");
 }
 

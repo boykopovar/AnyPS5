@@ -83,6 +83,9 @@ std::vector<unsigned char> BitStringContent(const Asn1String& bitsGuest, const c
     int unused = 0;
     if (bits.length > 0 && (bits.flags & BitsLeftFlag) != 0) {
         unused = static_cast<int>(bits.flags & 0x07);
+        if (unused == 0) throw std::invalid_argument(std::string(function) + ": a bit string with the unused-bit flag set cannot be octet aligned");
+        if ((data.back() & static_cast<unsigned char>((1U << unused) - 1U)) != 0)
+            throw std::invalid_argument(std::string(function) + ": a bit string discards nonzero bits");
     } else {
         while (used > 0 && data[used - 1] == 0) --used;
         if (used > 0) {
