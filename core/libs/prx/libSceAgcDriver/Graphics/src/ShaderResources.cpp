@@ -4818,10 +4818,11 @@ void ShaderResources::recordFlushRanges() {
         if (surface.resource.dccAddress != 0) flushRanges.emplace_back(surface.resource.dccAddress, surface.resource.dccAddress + DccKeyBytes(surface.bytes));
         if (surface.source != nullptr) imageKeys(*surface.source, surface.resource.dccAddress);
     }
-    for (const auto& image : storageTextures) {
+    for (std::size_t index = 0; index < storageTextures.size(); ++index) {
+        const auto& image = storageTextures[index];
         if (image == nullptr) continue;
         flushRanges.emplace_back(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes());
-        if (image->Descriptor().dccAddress != 0) flushRanges.emplace_back(image->Descriptor().dccAddress, image->Descriptor().dccAddress + DccKeyBytes(image->GuestBytes()));
+        imageKeys(*image, index < storageKeys.size() ? storageKeys[index] : 0);
     }
     if (writeSubscription == nullptr) return;
     for (const auto& span : GuestMemory::SubscriptionSpans(*writeSubscription)) flushRanges.push_back(span);

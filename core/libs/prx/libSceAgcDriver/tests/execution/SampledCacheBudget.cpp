@@ -1054,6 +1054,32 @@ void remappedEpochTests(Context context) {
         view.reset();
         stored->Flush();
     }
+    {
+        ClearCachedTextures(context.device);
+        WatchedSurface image(context);
+        WatchedSurface own(context, keyHalf);
+        WatchedSurface named(context, 2 * keyHalf);
+        uncompressedKeys(own, keyHalf);
+        uncompressedKeys(named, 2 * keyHalf);
+        SplitAllocation split(named.Address(), 2 * keyHalf, keyHalf);
+        ClearHostImports(context.device);
+        const auto stored = CachedStorageSurface(context, DecodeTextureResource(Descriptor(image.Address(), Side, Format32UInt, own.Address())));
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto program = ImageProgramAt(image.Address(), false, named.Address() + keyHalf);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        auto resources = std::make_shared<ShaderResources>(context, shader);
+        Require(stored != nullptr && resources->Reusable() && resources->StorageImages().size() == 1 && resources->StorageImages().front().first == stored->Image(), "a storage binding naming other keys does not use the cached image that serves them");
+        Require(settle(*resources, shader), "a storage template naming other keys never took the epoch exit");
+        const auto before = exitInputs();
+        split.ReplaceTail();
+        const auto moved = movedInputs(before);
+        bool proved = false;
+        const bool exited = reused(*resources, shader, proved);
+        std::printf("remapped allocation: a storage template whose binding names keys other than its image's after the allocation of the named keys was replaced in the same collect epoch (exit inputs moved: %s): the next proof %s the exit and %s\n", moved.empty() ? "none" : moved.c_str(), exited ? "took" : "did not take", proved ? "proved current" : "refused");
+        Require(moved.empty(), "replacing the allocation of a storage binding's named keys moved another epoch exit input, so the case tests nothing");
+        Require(!exited, "a storage template took the epoch exit over its binding's named keys whose guest allocation was replaced");
+        resources.reset();
+    }
     ClearCachedTextures(context.device);
     std::puts("templates over a remapped allocation in the same collect epoch passed");
 }
