@@ -1,0 +1,5 @@
+# relinker
+
+## change [wide-store decoder]
+
+- `--to-rosetta` lowers an unaligned 256-bit VMOVUPS, VMOVUPD or VMOVDQU store whose effective address uses 32-bit addressing through a base or index ([wide-store decoder](../../../core/relinker/codegen/src/x86/WideStoreOperands.cpp)): it materializes the effective address once into RAX with a 32-bit-addressed LEA inside the spill scaffold it shares with the masked-store lowering, then stores the two 128-bit halves from that register at offsets 0 and 16 with 64-bit addressing, so an effective address near 4 GiB keeps its upper half above 4 GiB instead of wrapping. A 32-bit stack operand whose 32 bytes overlap the spill slots throws, while aliases through an index register into them are not detected. EIP-relative and 32-bit absolute addressing keep the split, and a 32-bit absolute store whose upper-half address crosses the address boundary still throws. No affected title and no Rosetta execution of this case has been verified.

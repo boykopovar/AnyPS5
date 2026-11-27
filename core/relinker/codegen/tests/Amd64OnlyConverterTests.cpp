@@ -2684,6 +2684,257 @@ void scannerUnwindRanges() {
     require(Codegen::MakeInstructionScanner()->ScanCodeSection(crossing, 0, crossing.size()).front().Length == 5, "Without unwind ranges the crossing instruction must decode whole");
 }
 
+constexpr std::array<std::uint8_t, 8> kWideStoreScaffoldHead{0x48, 0x8D, 0x64, 0x24, 0x80, 0x9C, 0x50, 0x51};
+constexpr std::array<std::uint8_t, 11> kWideStoreScaffoldTail{0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00};
+
+Bytes wideStoreSlice(const Bytes& bytes, const std::size_t begin, const std::size_t end) {
+    return Bytes(bytes.begin() + static_cast<std::ptrdiff_t>(begin), bytes.begin() + static_cast<std::ptrdiff_t>(end));
+}
+
+Bytes wideStoreExtractHeader(const std::uint8_t source) {
+    return {0xC4, static_cast<std::uint8_t>((source & 8) != 0 ? 0x63 : 0xE3), 0x7D};
+}
+
+Bytes wideStoreLowHalf(const std::uint8_t source) {
+    auto bytes = wideStoreExtractHeader(source);
+    bytes.insert(bytes.end(), {0x19, 0x00, 0x00});
+    return bytes;
+}
+
+Bytes wideStoreHighHalf(const std::uint8_t source) {
+    auto bytes = wideStoreExtractHeader(source);
+    bytes.insert(bytes.end(), {0x19, 0x40, 0x10, 0x01});
+    return bytes;
+}
+
+Codegen::Amd64OnlyMatch wideStoreLoweredStub(const Bytes& site) {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->InstructionName == "256-bit store" && !match->Optional,
+        "A 32-bit addressed wide store did not lower through a required stub");
+    require(match->Relocations.empty(), "A materialized wide store stub carries a relocation");
+    return *match;
+}
+
+Bytes wideStoreStubBody(const Bytes& site) {
+    const auto match = wideStoreLoweredStub(site);
+    const auto body = wideStoreSlice(match.StubBody, 0, match.ReturnBranchOffset);
+    require(body.size() > kWideStoreScaffoldHead.size() + kWideStoreScaffoldTail.size(), "The wide-store stub is shorter than its scaffold");
+    require(std::equal(kWideStoreScaffoldHead.begin(), kWideStoreScaffoldHead.end(), body.begin()), "The wide-store stub does not open with the shared spill scaffold");
+    require(std::equal(kWideStoreScaffoldTail.begin(), kWideStoreScaffoldTail.end(), body.end() - static_cast<std::ptrdiff_t>(kWideStoreScaffoldTail.size())),
+        "The wide-store stub does not restore its spill slots and its stack");
+    return body;
+}
+
+void wideStoreMaterializedBodies() {
+    struct Case {
+        Bytes Site;
+        Bytes Address;
+        Bytes StorePrefix;
+        std::uint8_t Source;
+        const char* Name;
+    };
+    const std::vector<Case> cases = {
+        {{0x67, 0xC5, 0xFC, 0x11, 0x47, 0x68}, {0x67, 0x48, 0x8D, 0x47, 0x68}, {}, 0, "vmovups 0x68(%edi)"},
+        {{0x67, 0xC5, 0xFD, 0x11, 0x01}, {0x67, 0x48, 0x8D, 0x01}, {}, 0, "vmovupd (%ecx)"},
+        {{0x67, 0xC5, 0xFE, 0x7F, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0x67, 0x48, 0x8D, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {}, 0, "vmovdqu (%ecx)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x44, 0x8A, 0xF8}, {0x67, 0x48, 0x8D, 0x44, 0x8A, 0xF8}, {}, 0, "vmovups -8(%edx,%ecx,4)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x87, 0xF8, 0xFF, 0xFF, 0x7F}, {0x67, 0x48, 0x8D, 0x87, 0xF8, 0xFF, 0xFF, 0x7F}, {}, 0, "vmovups 0x7ffffff8(%edi)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x84, 0x24, 0x00, 0x01, 0x00, 0x00}, {0x67, 0x48, 0x8D, 0x84, 0x24, 0x98, 0x01, 0x00, 0x00}, {}, 0, "vmovups 0x100(%esp)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x84, 0x24, 0xFF, 0xFF, 0xFF, 0x7F}, {0x67, 0x48, 0x8D, 0x84, 0x24, 0x97, 0x00, 0x00, 0x80}, {}, 0, "vmovups 0x7fffffff(%esp)"},
+        {{0x64, 0x67, 0xC5, 0xFC, 0x11, 0x07}, {0x64, 0x67, 0x48, 0x8D, 0x07}, {0x64}, 0, "vmovups %fs:(%edi)"},
+        {{0x67, 0xC4, 0x01, 0x7C, 0x11, 0x84, 0x91, 0x10, 0x00, 0x00, 0x00}, {0x67, 0x4B, 0x8D, 0x84, 0x91, 0x10, 0x00, 0x00, 0x00}, {}, 8, "vmovups 0x10(%r9,%r10,4)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x00}, {0x67, 0x48, 0x8D, 0x00}, {}, 0, "vmovups (%eax)"}};
+    for (const auto& item : cases) {
+        const auto body = wideStoreStubBody(item.Site);
+        auto low = item.StorePrefix;
+        const auto lowHalfBytes = wideStoreLowHalf(item.Source);
+        low.insert(low.end(), lowHalfBytes.begin(), lowHalfBytes.end());
+        auto high = item.StorePrefix;
+        const auto highHalfBytes = wideStoreHighHalf(item.Source);
+        high.insert(high.end(), highHalfBytes.begin(), highHalfBytes.end());
+        Bytes expected(kWideStoreScaffoldHead.begin(), kWideStoreScaffoldHead.end());
+        expected.insert(expected.end(), item.Address.begin(), item.Address.end());
+        expected.insert(expected.end(), low.begin(), low.end());
+        expected.insert(expected.end(), high.begin(), high.end());
+        expected.insert(expected.end(), kWideStoreScaffoldTail.begin(), kWideStoreScaffoldTail.end());
+        require(body == expected, (std::string("A 32-bit addressed wide store did not materialize its effective address once: ") + item.Name).c_str());
+        const auto addressEnd = kWideStoreScaffoldHead.size() + item.Address.size() + item.StorePrefix.size();
+        require(body[addressEnd] == 0xC4 && body[addressEnd + 4] == 0x00 && body[addressEnd + 5] == 0x00,
+            "The lower half is not a 64-bit addressed store from the materialized register");
+        const auto highStart = addressEnd + item.StorePrefix.size() + lowHalfBytes.size();
+        require(body[highStart] == 0xC4 && body[highStart + 4] == 0x40 && body[highStart + 5] == 0x10 && body[highStart + 6] == 0x01,
+            "The upper half is not a 64-bit addressed store 16 bytes above the materialized register");
+    }
+    const Bytes nearBoundary = {0x67, 0xC5, 0xFC, 0x11, 0x87, 0xF8, 0xFF, 0xFF, 0x7F};
+    const auto nearBody = wideStoreStubBody(nearBoundary);
+    const auto upper = wideStoreHighHalf(0);
+    require(std::search(nearBody.begin(), nearBody.end(), upper.begin(), upper.end()) != nearBody.end(),
+        "The upper half of a store whose displacement ends at 4 GiB is not addressed from the materialized register");
+    const Bytes upperDisplacement = {0x87, 0x08, 0x00, 0x00, 0x80};
+    require(std::search(nearBody.begin(), nearBody.end(), upperDisplacement.begin(), upperDisplacement.end()) == nearBody.end(),
+        "The upper half of a store whose displacement ends at 4 GiB adds 16 to its displacement");
+}
+
+void wideStoreSpillFrame() {
+    const auto rejects = [](const std::int32_t displacement) {
+        Bytes site{0x67, 0xC5, 0xFC, 0x11, 0x84, 0x24};
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            site.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+        try {
+            (void)wideStoreStubBody(site);
+        } catch (const Codegen::CodegenException&) {
+            return true;
+        }
+        return false;
+    };
+    for (const auto displacement : {-160, -153, -152, -129})
+        require(rejects(displacement), "A 32-bit stack operand inside the wide-store spill frame was accepted");
+    for (const auto displacement : {-184, -185, -128, -120, -96, 0, 256})
+        require(!rejects(displacement), "A 32-bit stack operand outside the wide-store spill frame was rejected");
+    const Bytes indexed = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0C};
+    require(!wideStoreStubBody(indexed).empty(), "A 32-bit stack operand with an index was rejected");
+}
+
+#if LOWERING_EXECUTION_AVAILABLE
+
+constexpr std::uintptr_t kWideStoreBoundaryBase = 0xFFFF0000;
+constexpr std::size_t kWideStoreBoundaryBytes = 0x20000;
+constexpr std::uint64_t kWideStoreFlagMask = 0x8D5;
+
+alignas(32) std::array<std::uint8_t, 32> wideStoreBoundarySource{};
+
+struct WideStoreRegisters {
+    std::uint64_t Rax = 0;
+    std::uint64_t Rcx = 0;
+    std::uint64_t Rdx = 0;
+    std::uint64_t Rsi = 0;
+    std::uint64_t Rdi = 0;
+    std::uint64_t Flags = 0;
+};
+
+WideStoreRegisters wideStoreObserved{};
+
+std::uint8_t* wideStoreBoundaryPages() {
+#if defined(_WIN32)
+    auto* const pages = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(kWideStoreBoundaryBase), kWideStoreBoundaryBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    return pages;
+#else
+#if defined(MAP_FIXED_NOREPLACE)
+    constexpr int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE;
+#else
+    constexpr int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#endif
+    void* const pages = mmap(reinterpret_cast<void*>(kWideStoreBoundaryBase), kWideStoreBoundaryBytes, PROT_READ | PROT_WRITE, flags, -1, 0);
+    if (pages == MAP_FAILED)
+        return nullptr;
+    if (reinterpret_cast<std::uintptr_t>(pages) != kWideStoreBoundaryBase) {
+        munmap(pages, kWideStoreBoundaryBytes);
+        return nullptr;
+    }
+    return static_cast<std::uint8_t*>(pages);
+#endif
+}
+
+void wideStoreRun(const std::uint8_t* code, const WideStoreRegisters& input) {
+    asm volatile(
+        "vmovdqu %[source], %%ymm0\n\t"
+        "mov %[inRax], %%rax\n\t"
+        "mov %[inRcx], %%rcx\n\t"
+        "mov %[inRdx], %%rdx\n\t"
+        "mov %[inRsi], %%rsi\n\t"
+        "mov %[inRdi], %%rdi\n\t"
+        "sub $128, %%rsp\n\t"
+        "push %[inFlags]\n\t"
+        "popfq\n\t"
+        "call *%[code]\n\t"
+        "pushfq\n\t"
+        "pop %[outFlags]\n\t"
+        "mov %%rax, %[outRax]\n\t"
+        "mov %%rcx, %[outRcx]\n\t"
+        "mov %%rdx, %[outRdx]\n\t"
+        "mov %%rsi, %[outRsi]\n\t"
+        "mov %%rdi, %[outRdi]\n\t"
+        "add $128, %%rsp\n\t"
+        "vzeroupper\n\t"
+        : [outRax] "=m" (wideStoreObserved.Rax), [outRcx] "=m" (wideStoreObserved.Rcx), [outRdx] "=m" (wideStoreObserved.Rdx),
+          [outRsi] "=m" (wideStoreObserved.Rsi), [outRdi] "=m" (wideStoreObserved.Rdi), [outFlags] "=m" (wideStoreObserved.Flags)
+        : [source] "m" (wideStoreBoundarySource), [inRax] "r" (input.Rax), [inRcx] "r" (input.Rcx), [inRdx] "r" (input.Rdx),
+          [inRsi] "r" (input.Rsi), [inRdi] "r" (input.Rdi), [inFlags] "r" (input.Flags), [code] "r" (code)
+        : "rax", "rcx", "rdx", "rsi", "rdi", "cc", "memory", "xmm0");
+}
+
+void wideStoreBoundaryExecution() {
+    if (!LoweringExecution::HostExecutes(Bytes{0xC5, 0xFC, 0x11, 0x07})) {
+        std::cout << "skipped: wide store execution, the host does not execute a 32-byte store\n";
+        return;
+    }
+    auto* const region = wideStoreBoundaryPages();
+    if (region == nullptr) {
+        std::cout << "skipped: wide store execution, the 4 GiB boundary page is not available\n";
+        return;
+    }
+    for (std::size_t index = 0; index < wideStoreBoundarySource.size(); ++index)
+        wideStoreBoundarySource[index] = static_cast<std::uint8_t>(0x80 + index * 3);
+    struct Scenario {
+        Bytes Site;
+        WideStoreRegisters Input;
+        std::uint64_t Address;
+        const char* Name;
+    };
+    const std::vector<Scenario> scenarios = {
+        {{0x67, 0xC5, 0xFC, 0x11, 0x07}, {0x11, 0x22, 0x33, 0x44, 0xFFFFFFF8, kWideStoreFlagMask}, 0xFFFFFFF8, "vmovups (%edi)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x07}, {0x11, 0x22, 0x33, 0x44, 0xFFFFFFFFFFFFFFF8, 0x002}, 0xFFFFFFF8, "vmovups (%edi) beyond 4 GiB"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x07}, {0x11, 0x22, 0x33, 0x44, 0xFFFFFFF0, kWideStoreFlagMask}, 0xFFFFFFF0, "vmovups (%edi) at the boundary"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x07}, {0x11, 0x22, 0x33, 0x44, 0xFFFFFFE8, kWideStoreFlagMask}, 0xFFFFFFE8, "vmovups (%edi) below the boundary"},
+        {{0x67, 0xC5, 0xFD, 0x11, 0x87, 0xF8, 0xFF, 0xFF, 0x7F}, {0x11, 0x22, 0x33, 0x44, 0x80000000, kWideStoreFlagMask}, 0xFFFFFFF8, "vmovupd 0x7ffffff8(%edi)"},
+        {{0x67, 0xC5, 0xFE, 0x7F, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0x11, 0xFFFFFFF8, 0x33, 0x44, 0x55, 0x002}, 0xFFFFFFF8, "vmovdqu (%ecx)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x44, 0x8A, 0xF8}, {0x11, 0x40, 0xFFFFFF00, 0x44, 0x55, kWideStoreFlagMask}, 0xFFFFFFF8, "vmovups -8(%edx,%ecx,4)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x00}, {0xFFFFFFF8, 0x22, 0x33, 0x44, 0x55, kWideStoreFlagMask}, 0xFFFFFFF8, "vmovups (%eax)"},
+        {{0x67, 0xC5, 0xFC, 0x11, 0x04, 0x05, 0x00, 0x00, 0x00, 0x00}, {0xFFFFFFF0, 0x22, 0x33, 0x44, 0x55, 0x002}, 0xFFFFFFF0, "vmovups (,%eax)"}};
+    auto* const code = LoweringExecution::AllocatePages(4096);
+    require(code != nullptr, "Cannot allocate the wide store execution page");
+    std::vector<std::pair<const std::uint8_t*, const Scenario*>> placements;
+    std::size_t offset = 0;
+    for (const auto& scenario : scenarios) {
+        auto match = wideStoreLoweredStub(scenario.Site);
+        match.StubBody.at(match.ReturnBranchOffset) = 0xC3;
+        const auto length = match.ReturnBranchOffset + 1;
+        require(offset + length <= 4096, "The wide store stubs exceed their code page");
+        std::memcpy(code + offset, match.StubBody.data(), length);
+        placements.emplace_back(code + offset, &scenario);
+        offset = (offset + length + 31) & ~std::size_t{31};
+    }
+    require(LoweringExecution::ProtectPages(code, 4096, true, false), "Cannot make the wide store stubs executable");
+    std::uint64_t runs = 0;
+    for (const auto& [entry, scenario] : placements) {
+        std::memset(region, 0x5A, kWideStoreBoundaryBytes);
+        wideStoreRun(entry, scenario->Input);
+        ++runs;
+        require(wideStoreObserved.Rax == scenario->Input.Rax && wideStoreObserved.Rcx == scenario->Input.Rcx && wideStoreObserved.Rdx == scenario->Input.Rdx &&
+            wideStoreObserved.Rsi == scenario->Input.Rsi && wideStoreObserved.Rdi == scenario->Input.Rdi,
+            (std::string("A wide store stub changed a general register: ") + scenario->Name).c_str());
+        require((wideStoreObserved.Flags & kWideStoreFlagMask) == (scenario->Input.Flags & kWideStoreFlagMask),
+            (std::string("A wide store stub changed the arithmetic flags: ") + scenario->Name).c_str());
+        const auto at = scenario->Address - kWideStoreBoundaryBase;
+        for (std::size_t index = 0; index < 16; ++index) {
+            require(region[at + index] == wideStoreBoundarySource[index], (std::string("A wide store stub lost the lower half: ") + scenario->Name).c_str());
+            require(region[at + 16 + index] == wideStoreBoundarySource[16 + index], (std::string("A wide store stub lost the upper half above 4 GiB: ") + scenario->Name).c_str());
+            require(region[at - 16 + index] == 0x5A, (std::string("A wide store stub wrote before its operand: ") + scenario->Name).c_str());
+            require(region[at + 32 + index] == 0x5A, (std::string("A wide store stub wrote past its operand: ") + scenario->Name).c_str());
+        }
+    }
+    std::cout << runs << " wide store executions across the 4 GiB boundary\n";
+    LoweringExecution::FreePages(code, 4096);
+    LoweringExecution::FreePages(region, kWideStoreBoundaryBytes);
+}
+
+#else
+
+void wideStoreBoundaryExecution() { std::cout << "Wide store execution checks require an x86-64 build\n"; }
+
+#endif
+
 int main() {
     try {
         decoderLengths();
@@ -2733,6 +2984,9 @@ int main() {
         clwbExecution();
         converterAddressSizeJumpTableTargets();
         wideStoreSplit();
+        wideStoreMaterializedBodies();
+        wideStoreSpillFrame();
+        wideStoreBoundaryExecution();
         converterWideStoreWindows();
         converterWideStoreKeepsSegmentAccesses();
         converterWideStoreIslandAcrossInt64Max();
