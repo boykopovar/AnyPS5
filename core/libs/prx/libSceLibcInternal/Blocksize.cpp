@@ -1,4 +1,4 @@
-/* Derived from FreeBSD lib/libc/gen/getbsize.c (8c639945a445) */
+/* Adapted from FreeBSD release/11.4.0 lib/libc/gen/getbsize.c: https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/getbsize.c */
 /*-
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
