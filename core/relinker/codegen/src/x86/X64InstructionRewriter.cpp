@@ -237,7 +237,10 @@ RewriteResult X64InstructionRewriter::Rewrite(
         }
     }
 
-    return {rewritten, adjustments};
+    const AddressMap mapping = delta == 0
+        ? AddressMap{}
+        : AddressMap(std::vector<LayoutShift>{LayoutShift{cutStart, cutEnd, delta}});
+    return {rewritten, adjustments, mapping};
 }
 
 }
