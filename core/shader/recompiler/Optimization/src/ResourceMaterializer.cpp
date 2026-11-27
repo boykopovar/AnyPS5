@@ -2410,6 +2410,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 offer(declaredArray ? RdnaImageDimension::Dim1DArray : RdnaImageDimension::Dim3D);
             }
             if (declaredArray) offer(RdnaImageDimension::Dim2D);
+            if (!declaredArray && !table && image.read && image.fmaskCompatible && image.cubeFaceCompatible) offer(RdnaImageDimension::Dim2DMsaa);
             auto cube = mode;
             cube.dimension = RdnaImageDimension::Dim2DArray;
             cube.cube = true;
