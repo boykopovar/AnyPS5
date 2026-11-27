@@ -66,14 +66,12 @@ struct Port {
     bool opening = false;
 };
 
-// A slot reserved by an open that has not finished is taken but not yet a port.
 bool isOpen(const Port& port) { return port.used && !port.opening; }
 
 std::mutex g_mutex;
 std::mutex g_openMutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
-// Set while an open that outlived OPEN_LIMIT has not returned from SDL; opens meanwhile skip SDL.
 std::atomic<bool> g_openStalled{false};
 std::int32_t g_mode = 0;
 constexpr std::chrono::milliseconds OPEN_LIMIT{3000};

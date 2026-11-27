@@ -246,31 +246,32 @@ void TestOpenWithin() {
     Require(failed.device == 0 && !failed.timedOut);
     auto release = std::make_shared<std::promise<void>>();
     auto closed = std::make_shared<std::promise<std::uint32_t>>();
+    auto closedDevice = closed->get_future().share();
     const auto start = std::chrono::steady_clock::now();
     auto abandons = std::make_shared<std::atomic<int>>(0);
-    auto settled = std::make_shared<std::promise<int>>();
+    auto settled = std::make_shared<std::promise<bool>>();
     const auto stalled = audioin::detail::openWithin(50ms,
         [gate = release->get_future().share()] { gate.wait(); return std::uint32_t{9}; },
         [closed](std::uint32_t device) { closed->set_value(device); },
         [abandons] { abandons->fetch_add(1); },
-        [abandons, settled] { settled->set_value(abandons->load()); });
+        [abandons, closedDevice, settled] {
+            settled->set_value(abandons->load() == 1 && closedDevice.wait_for(0ms) == std::future_status::ready);
+        });
     const auto elapsed = std::chrono::steady_clock::now() - start;
     Require(stalled.device == 0 && stalled.timedOut);
     Require(elapsed >= 50ms && elapsed < 1000ms);
     Require(abandons->load() == 1);
-    auto closedDevice = closed->get_future();
     auto settledAfter = settled->get_future();
     Require(closedDevice.wait_for(0ms) == std::future_status::timeout);
     Require(settledAfter.wait_for(0ms) == std::future_status::timeout);
     release->set_value();
-    Require(settledAfter.wait_for(5s) == std::future_status::ready && settledAfter.get() == 1);
+    Require(settledAfter.wait_for(5s) == std::future_status::ready && settledAfter.get());
     Require(closedDevice.wait_for(5s) == std::future_status::ready && closedDevice.get() == 9);
     const auto quick = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{5}; }, [](std::uint32_t) { std::abort(); },
         [] { std::abort(); }, [] { std::abort(); });
     Require(quick.device == 5 && !quick.timedOut);
 }
 
-// Goes through sceAudioInOpen with the SDL open held past the 3 s limit by ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS.
 void TestOpenStall() {
     using namespace std::chrono_literals;
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_stall-" + std::to_string(std::random_device{}()) + ".raw");
@@ -289,10 +290,18 @@ void TestOpenStall() {
     Require(std::chrono::steady_clock::now() - pendingStart < 1000ms);
     Require(pending > 0 && pending != stalled && sceAudioInGetSilentState(pending) == 1);
     SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "");
-    std::this_thread::sleep_until(start + 6s);
-    const int retried = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
-    Require(retried > 0 && sceAudioInGetSilentState(retried) == 0);
-    Require(sceAudioInClose(retried) == 0 && sceAudioInClose(pending) == 0 && sceAudioInClose(stalled) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + 8s;
+    for (;;) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        const int retried = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+        Require(retried > 0);
+        const int silent = sceAudioInGetSilentState(retried);
+        Require(sceAudioInClose(retried) == 0);
+        if (silent == 0) break;
+        Require(silent == 1);
+        std::this_thread::sleep_for(50ms);
+    }
+    Require(sceAudioInClose(pending) == 0 && sceAudioInClose(stalled) == 0);
     std::filesystem::remove(path);
 }
 
