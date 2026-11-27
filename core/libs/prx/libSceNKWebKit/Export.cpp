@@ -23685,18 +23685,6 @@ int APS5_VABI _ZNK3JSC9CodeBlock4dumpERN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC9JSPromise6resultERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC9JSPromise6statusERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC9JSPromise9isHandledERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF10AtomString23convertToASCIILowercaseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
