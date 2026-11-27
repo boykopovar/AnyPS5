@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -16,6 +17,7 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/Apr/include/AmmPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -53,6 +55,8 @@ constexpr int GUEST_ENAMETOOLONG = 63;
 struct AprFile {
     std::filesystem::path path;
     std::uint64_t size;
+    bool archived = false;
+    AppArchiveNode node{};
 };
 
 std::mutex& g_filesLock = *new std::mutex();
@@ -183,7 +187,8 @@ bool _listedPathIn(const std::string& directory, const std::string& name, std::f
         if (const auto found = g_hostDirectories.find(directory); found != g_hostDirectories.end()) hostDirectory = found->second;
     }
     if (hostDirectory.empty()) {
-        if (ResolvePathError_nid_no_patch(directory.c_str(), hostDirectory) != 0) return false;
+        if (ResolvePathError_nid_no_patch(directory.c_str(), hostDirectory, false, true) != 0) return false;
+        if (AppArchiveOnly_nid_no_patch(hostDirectory)) return false;
         std::error_code error;
         if (!std::filesystem::is_directory(hostDirectory, error)) return false;
         std::lock_guard lock(g_hostDirectoriesLock);
@@ -199,16 +204,25 @@ bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
     if (!guestPath) return false;
     std::filesystem::path hostPath;
     std::uint64_t bytes = 0;
+    bool archived = false;
+    AppArchiveNode node{};
     if (!_listedPath(guestPath, hostPath, bytes)) {
-        if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
-        if (!_fileSize(hostPath, bytes)) return false;
+        if (ResolvePathError_nid_no_patch(guestPath, hostPath, false, true) != 0) return false;
+        if (AppArchiveOnly_nid_no_patch(hostPath)) {
+            if (!AppArchiveLookup_nid_no_patch(hostPath, &node)) throw std::logic_error("APR: " + hostPath.string() + " left app0.zar while resolving it");
+            if (node.Directory) return false;
+            archived = true;
+            bytes = node.Size;
+        } else if (!_fileSize(hostPath, bytes)) {
+            return false;
+        }
     }
     std::lock_guard lock(g_filesLock);
     const auto key = hostPath.string();
     auto found = g_idsByPath.find(key);
     if (found == g_idsByPath.end()) {
         found = g_idsByPath.emplace(key, static_cast<std::uint32_t>(g_files.size())).first;
-        g_files.push_back({std::move(hostPath), bytes});
+        g_files.push_back({std::move(hostPath), bytes, archived, node});
     }
     if (id) *id = found->second;
     if (size) *size = bytes;
@@ -319,6 +333,24 @@ int _readFile(const Apr::ReadFileCommand& command) {
     if (!found) return failed(SCE_KERNEL_ERROR_ENOENT, "unknown file id");
     const auto& file = *found;
     if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
+    if (file.archived) {
+        const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
+        if (!destination.Open()) return failed(SCE_KERNEL_ERROR_EFAULT, "the destination is not writable guest memory");
+        std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
+        std::uint64_t read = 0;
+        while (read < command.size && command.offset + read < file.node.Size) {
+            const auto wanted = std::min<std::uint64_t>(command.size - read, staging.size());
+            const auto obtained = AppArchiveRead_nid_no_patch(file.node.Handle, command.offset + read, staging.data(), wanted);
+            if (obtained != 0) std::memcpy(reinterpret_cast<char*>(command.destination) + read, staging.data(), static_cast<std::size_t>(obtained));
+            read += obtained;
+            if (obtained != wanted) break;
+        }
+        if (read != command.size) {
+            if (command.offset + read < file.node.Size) return failed(SCE_KERNEL_ERROR_EIO, "the archive read came back short before the end of the entry");
+            std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+        }
+        return 0;
+    }
     const auto hostPath = _hostPath(file.path);
     std::ifstream stream(hostPath, std::ios::binary);
     if (!stream) {
@@ -760,6 +792,24 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, int& st
             cursor += bytes;
             continue;
         }
+        if ((first & 0xffu) == 0x28u) {
+            const auto format = first & 0xc0000fffu;
+            if (format != 0x428u && format != 0x528u) throw std::runtime_error("APR: unsupported native read header");
+            const std::uint32_t bytes = format == 0x528u ? 24u : 20u;
+            if (bytes > buffer.offset - cursor) throw std::runtime_error("APR: truncated native read command");
+            std::array<std::uint32_t, 6> words{};
+            std::memcpy(words.data(), buffer.base + cursor, bytes);
+            if ((words[2] & 0x80000000u) != 0u || (words[4] & 0x30000u) != 0u || words[5] > 0xffu)
+                throw std::runtime_error("APR: unsupported native read flags");
+            const auto destination = (static_cast<std::uint64_t>(words[4] & 0xffffu) << 32u) | words[3];
+            const auto size = static_cast<std::uint64_t>(words[1]) + 1u;
+            constexpr std::uint64_t userLimit = 0xf00000000000ull;
+            if (destination > userLimit || size > userLimit - destination) throw std::runtime_error("APR: malformed native read range");
+            const auto offset = (static_cast<std::uint64_t>(words[5]) << 32u) | (words[4] & 0xfffc0000u) | (first >> 12u);
+            _readResolved(Apr::Opcode::ReadFile, Apr::ReadFileCommand{{}, words[2], 0, destination, size, offset}, read, status);
+            cursor += bytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
@@ -1075,7 +1125,8 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
-    File::FillFileStat(_file(id).path, &result);
+    const auto file = _file(id);
+    if (!file.archived || !File::FillArchivedStat(file.path, &result)) File::FillFileStat(file.path, &result);
     if (!GuestCopyOut_nid_no_patch(stat, &result, sizeof(result))) return _fail(GUEST_EFAULT);
     return 0;
 }

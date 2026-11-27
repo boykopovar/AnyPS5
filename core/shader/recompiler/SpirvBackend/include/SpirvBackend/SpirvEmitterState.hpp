@@ -183,6 +183,8 @@ struct SpirvEmitterState {
     std::uint32_t bdaWriteProbeFunction = 0;
     std::uint32_t bdaAtomicPointerFunction = 0;
     std::uint32_t bdaNoteWriteFunction = 0;
+    std::uint32_t bdaStorePageFunction = 0;
+    std::uint32_t bdaStorePageSpecialization = 0;
     std::array<std::uint32_t, 2> bdaByteWriteFunctions {};
     std::uint32_t bdaFaultFunction = 0;
     bool nativeF16ModesEmitted = false;
@@ -284,6 +286,7 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sampleMaskCopies;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
     std::uint32_t alphaCoverageVariable = 0;

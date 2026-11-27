@@ -1,8 +1,10 @@
 #include "prx/libSceAgc/Shader/include/CreateShader.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <stdexcept>
 #include <prx/libc/include/General.hpp>
+#include <prx/libc/include/GuestArena.hpp>
 
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -15,6 +17,18 @@ int APS5_VABI sceAgcCreateShader(Shader** dst, void* header, const volatile void
     constexpr auto fn = __func__;
     if (dst == nullptr) {
         throw std::runtime_error(std::string(fn) + ": dst is null");
+    }
+    {
+        const int savedErrno = errno;
+        bool writable = false;
+        {
+            const GuestArena::HostWrite write(dst, sizeof(*dst));
+            writable = write.Open() && GuestWritable_nid_no_patch(dst, sizeof(*dst));
+        }
+        errno = savedErrno;
+        if (!writable) {
+            throw std::runtime_error(std::string(fn) + ": dst is not writable");
+        }
     }
     if (header == nullptr) {
         throw std::runtime_error(std::string(fn) + ": header is null");
@@ -60,8 +74,13 @@ int APS5_VABI sceAgcCreateShader(Shader** dst, void* header, const volatile void
         return result;
     }
 
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &h, sizeof(h));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(fn) + ": failed to copy dst pointer");
+    }
     AgcDriverRegisterShader_nid_postfix(h);
-    *dst = h;
     return 0;
 }
 
