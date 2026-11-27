@@ -786,12 +786,12 @@ extern "C" void ParkCurrentGuestThread_nid_no_patch() {
     if (self == nullptr || HoldsSuspendAllSlot(self)) return;
     for (;;) {
         const std::uint32_t epoch = self->parkEpoch.load(std::memory_order_acquire);
-        if (!self->suspended.load(std::memory_order_acquire)) break;
+        if (!self->suspended.load(std::memory_order_seq_cst)) break;
         self->parked.store(1, std::memory_order_release);
         WakeParkWord(self->parked);
         WaitParkWord(self->parkEpoch, epoch);
+        self->parked.store(0, std::memory_order_seq_cst);
     }
-    self->parked.store(0, std::memory_order_release);
 }
 
 extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread) {
@@ -1130,7 +1130,7 @@ struct SuspendMark {
 
 static bool MarkGuestThreadSuspended(PthreadPrivate* thread, SuspendMark& mark) {
     thread->suspended.store(true, std::memory_order_seq_cst);
-    if (thread->parked.load(std::memory_order_acquire) != 0) return false;
+    if (thread->parked.load(std::memory_order_seq_cst) != 0) return false;
     mark.referenced = !thread->_adopted;
     if (mark.referenced) thread->references.fetch_add(1, std::memory_order_acq_rel);
     mark.started = thread->started.load(std::memory_order_seq_cst);

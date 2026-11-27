@@ -13,6 +13,10 @@
 
 static constexpr int SCE_OK = 0;
 static constexpr int ROUNDS = 20;
+static constexpr int RACE_ROUNDS = 200;
+static constexpr int RACE_DELAY_STEPS = 40;
+static constexpr int RACE_DELAY_SPINS = 500;
+static constexpr auto RACE_WINDOW = std::chrono::milliseconds(2);
 static constexpr auto STOPPED_WINDOW = std::chrono::milliseconds(10);
 static constexpr auto PROGRESS_LIMIT = std::chrono::seconds(5);
 static void* const FINISHED = reinterpret_cast<void*>(std::uintptr_t{7});
@@ -112,6 +116,27 @@ static void SuspendStopsOneThread() {
     for (std::size_t index = 0; index < threads.size(); ++index) Finish(threads[index], workers[index]);
 }
 
+static void SuspendRightAfterResumeStops() {
+    std::array<Worker, 2> workers;
+    const std::array<Pthread, 2> threads{Start(Spin, workers[0], "spin"), Start(Nap, workers[1], "nap")};
+    for (auto& worker : workers) WaitForProgress(worker, 0, "a worker never started");
+    for (std::size_t index = 0; index < threads.size(); ++index) {
+        Require(scePthreadSuspend(threads[index]) == SCE_OK, "scePthreadSuspend did not return SCE_OK");
+        for (int round = 0; round < RACE_ROUNDS; ++round) {
+            Require(scePthreadResume(threads[index]) == SCE_OK, "scePthreadResume failed");
+            for (volatile int spin = 0; spin < round % RACE_DELAY_STEPS * RACE_DELAY_SPINS; spin = spin + 1) {}
+            Require(scePthreadSuspend(threads[index]) == SCE_OK, "scePthreadSuspend did not return SCE_OK");
+            const std::uint64_t stopped = workers[index].progress.load();
+            std::this_thread::sleep_for(RACE_WINDOW);
+            Require(workers[index].progress.load() == stopped, "a thread suspended right after scePthreadResume kept running");
+        }
+        const std::uint64_t stopped = workers[index].progress.load();
+        Require(scePthreadResume(threads[index]) == SCE_OK, "scePthreadResume failed");
+        WaitForProgress(workers[index], stopped, "a thread did not continue after scePthreadResume");
+    }
+    for (std::size_t index = 0; index < threads.size(); ++index) Finish(threads[index], workers[index]);
+}
+
 static void SuspendErrorsThrow() {
     Worker recorded;
     const Pthread joined = Start(Record, recorded, "joined");
@@ -167,6 +192,7 @@ static void SuspendedThreadStaysStoppedThroughSuspendAll() {
 
 int main() {
     SuspendStopsOneThread();
+    SuspendRightAfterResumeStops();
     SuspendErrorsThrow();
     SuspendAllStopsEveryOtherThread();
     SingleStopsEveryOtherThread();
