@@ -977,8 +977,9 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         freshRuns(i, runs, words);
         const auto& fresh = *stageCaptures[i].compiled;
         const auto& patched = *hit.compiled;
+        const auto& patchedPush = kept.patchedPushConstants.empty() ? patched.pushConstants : kept.patchedPushConstants;
         const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
-        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
+        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patchedPush ? "push constants" : !sameBindings ? "bindings" : nullptr;
         ++stageDataVerified;
         if (what == nullptr) return;
         char message[256];
