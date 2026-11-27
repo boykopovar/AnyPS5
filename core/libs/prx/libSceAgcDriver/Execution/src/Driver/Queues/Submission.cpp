@@ -837,6 +837,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
     const auto descriptor = *packet;
     require(descriptor.flags == 0, "nonzero submission flags are not implemented");
+    SubmitCall call(queue, static_cast<std::size_t>(descriptor.dw_num));
     Submission submission{};
     submission.queue = queue;
     submission.receivedAt = receivedAt;
@@ -853,9 +854,12 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     validate(submission, descriptor.addr);
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
+    call.Enter(SubmitStage::FlipRoom);
     waitForFlipRoom(submission);
+    call.Enter(SubmitStage::FlipHold);
     const bool holdsWork = holdFlipBehindWorker(submission, cpuFlip);
     std::shared_ptr<FlipWork> earlierFlipWork;
+    call.Enter(SubmitStage::ShaderPreparation);
     const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
     if (!scan.complete || submission.rewindTail != nullptr) {
         AwaitRegistrationPreparation();
@@ -867,6 +871,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         }
         if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
     }
+    call.Enter(SubmitStage::Accepting);
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(submission));
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
     static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
@@ -906,6 +911,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         submission.enqueuedAt = now;
         if (capture != nullptr) capture->Take(captured, submission.serial, captureTime(), submission.heldAtSubmit);
         if (ring) RecordSubmission(queue, submission.serial, submission.commands, descriptor.addr, false);
+        call.Accepted();
         if (profile) {
             ++costs.submissions;
             costs.validateNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(validated - copied).count());

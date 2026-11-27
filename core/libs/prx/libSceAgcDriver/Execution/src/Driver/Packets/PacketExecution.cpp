@@ -259,6 +259,10 @@ void Driver::execute(Submission& submission) {
         }
     }
     PacketHistory recent{submission.commands};
+    struct WorkerPosition {
+        std::uint32_t queue;
+        ~WorkerPosition() { NoteWorkerIdle(queue); }
+    } workerPosition{submission.queue};
 
     static const bool profilePackets = std::getenv("APS5_PROFILE_DRAW") != nullptr;
 
@@ -435,6 +439,7 @@ void Driver::execute(Submission& submission) {
         } progress{*this, !waitPacket};
         if (!waitPacket) ++packetsInFlight;
         recent.Record(cursor);
+        NoteWorkerPacket(submission.queue, submission.serial, cursor);
         if (header == RenderingWaitPacketHeader) {
             timed(&WorkerProfile::waitMs, [&] { submission.renderingWaits.at(cursor)->Wait(); });
         } else if (submission.flips.contains(cursor)) {

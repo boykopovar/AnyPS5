@@ -2060,6 +2060,22 @@ void testSubmissionRing() {
         lines = capture.RingLines();
     }
     check(!lines.empty() && lines.front() == "[pm4 ring] ring test: 2 queue(s), up to 4 submissions each, oldest first", "the ring dump header is wrong");
+    check(std::find(lines.begin(), lines.end(), "[pm4 ring] no submit call is waiting to be accepted") != lines.end(), "the ring dump does not say that no submit call is waiting");
+    {
+        AgcDriver::DriverDetail::SubmitCall call(0x20, 64);
+        call.Enter(AgcDriver::DriverDetail::SubmitStage::ShaderPreparation);
+        std::vector<std::string> waiting;
+        {
+            CapturedStderr capture;
+            AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+            waiting = capture.RingLines();
+        }
+        check(std::any_of(waiting.begin(), waiting.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] submit call not yet accepted: queue 0x20, 64 dwords, waiting for shader preparation for ") && line.ends_with(" ms ago)"); }), "the ring dump does not name a submit call that is not accepted");
+        check(std::find(waiting.begin(), waiting.end(), "[pm4 ring] no submit call is waiting to be accepted") == waiting.end(), "the ring dump says no submit call is waiting while one is");
+        call.Accepted();
+        std::array<AgcDriver::DriverDetail::UnacceptedSubmit, AgcDriver::DriverDetail::MaximumUnacceptedSubmits> left;
+        check(AgcDriver::DriverDetail::UnacceptedSubmits(left) == 0, "an accepted submit call is still listed as waiting");
+    }
     check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x0: 6 submissions recorded, last 4 kept") != lines.end(), "the ring dump does not count every submission of queue 0");
     check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x20: 2 submissions recorded, last 2 kept") != lines.end(), "the ring dump does not count every submission of queue 0x20");
     const std::vector<std::string> expected{"0x0 #3 5a000003", "0x0 #4 5a000004", "0x0 #5 5a000005", "0x0 #6 5a000006", "0x20 #1 5b000001", "0x20 #2 5b000002"};
@@ -2090,6 +2106,27 @@ void expectSettingRejected(const char* text) {
 
 void testInvalidSubmissionRing() {
     expectSettingRejected("APS5_PM4_RING must be a number");
+}
+
+void testSubmissionRingWords() {
+    submitWrites(0, 0x5d000001u, 1);
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+        lines = capture.RingLines();
+    }
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] queue 0x0 #1 ") && line.find(": 5 dwords from 0x") != std::string::npos && line.ends_with(", first 3 kept"); }),
+          "a ring entry does not keep APS5_PM4_RING_WORDS dwords");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 ") != std::string::npos && line.ends_with(" (cut)"); }), "a packet cut by APS5_PM4_RING_WORDS is not marked");
+}
+
+void testInvalidSubmissionRingWords() {
+    expectSettingRejected("APS5_PM4_RING_WORDS must be a number");
+}
+
+void testOversizedSubmissionRing() {
+    expectSettingRejected("APS5_PM4_RING times APS5_PM4_RING_WORDS must not exceed");
 }
 
 void testInvalidStallWatchdog() {
@@ -2235,17 +2272,27 @@ void testStallWatchdog() {
                       "a WAIT_REG_MEM stalled past APS5_STALL_WATCHDOG_SECS did not dump the rings");
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         check(std::atomic_ref<std::uint32_t>(done).load() == 0, "the stalled submission finished before its gate was opened");
+        check(capture.Text().find("[gpu]   no submit call is waiting to be accepted") != std::string::npos, "a WAIT_REG_MEM timeout report does not say whether a submit call is waiting");
         std::atomic_ref<std::uint32_t>(gate).store(1);
         AgcDriverWaitIdle_nid_postfix();
         lines = capture.RingLines();
     }
     checkOneStallDump(lines, done);
     check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 WAIT_REG_MEM 00000013") != std::string::npos; }), "the stall dump does not decode the stalled submission");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] dumped at t=") && line.find(" ms; this wait began ") != std::string::npos && line.ends_with(" ms ago"); }),
+          "the stall dump does not say when it was taken and how long the wait has lasted");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.starts_with("[pm4 ring] queue 0x0 worker: inside serial ") && line.find(" at +0x0000, ") != std::string::npos; }),
+          "the stall dump does not name the packet the queue worker is inside");
 }
 
 int stallDumpCount(const CapturedStderr& capture) {
     const auto lines = capture.RingLines();
     return static_cast<int>(std::count_if(lines.begin(), lines.end(), [](const std::string& line) { return line.find("has not progressed") != std::string::npos; }));
+}
+
+int staleDumpCount(const CapturedStderr& capture) {
+    const auto lines = capture.RingLines();
+    return static_cast<int>(std::count_if(lines.begin(), lines.end(), [](const std::string& line) { return line.find("is still waiting after") != std::string::npos; }));
 }
 
 void testStallClock() {
@@ -2263,6 +2310,39 @@ void testStallClock() {
     now += std::chrono::seconds(5);
     stall.Check("WAIT_REG_MEM at", 0x40);
     check(stallDumpCount(capture) == 1, "a wait dumped the rings more than once on the injected clock");
+    check(staleDumpCount(capture) == 0, "a wait that never progressed was reported as kept waiting by progress");
+    AgcDriver::DriverDetail::SetStallClock(nullptr);
+}
+
+void testStallStale() {
+    static auto now = std::chrono::steady_clock::time_point(std::chrono::seconds(2000));
+    submitWrites(0, 0x5e000001u, 1);
+    AgcDriver::DriverDetail::SetStallClock([] { return now; });
+    CapturedStderr capture;
+    AgcDriver::DriverDetail::StallWatch stall(0x20);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    for (int step = 0; step < 7; ++step) {
+        now += std::chrono::milliseconds(500);
+        stall.Progressed();
+        stall.Check("WAIT_REG_MEM at", 0x40);
+    }
+    check(stallDumpCount(capture) == 0 && staleDumpCount(capture) == 0, "a wait whose clock keeps resetting dumped the rings before four watchdog periods");
+    now += std::chrono::milliseconds(500);
+    stall.Progressed();
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    const auto lines = capture.RingLines();
+    check(hasRingLine(lines, "[pm4 ring] queue 0x20 WAIT_REG_MEM at 0x40 is still waiting after 4 s although other packets keep resetting its watchdog (APS5_STALL_WATCHDOG_SECS)", ""),
+          "a wait four watchdog periods old whose clock keeps resetting did not dump the rings");
+    check(hasRingLine(lines, "[pm4 ring] dumped at t=", "; this wait began 4000 ms ago and last saw progress 0 ms ago"), "the dump of an old wait does not say when it began and when it last saw progress");
+    for (int step = 0; step < 16; ++step) {
+        now += std::chrono::milliseconds(500);
+        stall.Progressed();
+        stall.Check("WAIT_REG_MEM at", 0x40);
+    }
+    check(staleDumpCount(capture) == 1 && stallDumpCount(capture) == 0, "an old wait whose clock keeps resetting dumped the rings more than once");
+    now += std::chrono::seconds(1);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    check(stallDumpCount(capture) == 1, "an old wait that then stopped progressing did not dump the rings as stalled");
     AgcDriver::DriverDetail::SetStallClock(nullptr);
 }
 
@@ -3046,7 +3126,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-stale", testStallStale}, {"ring-words", testSubmissionRingWords}, {"ring-words-invalid", testInvalidSubmissionRingWords}, {"ring-oversized", testOversizedSubmissionRing}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
