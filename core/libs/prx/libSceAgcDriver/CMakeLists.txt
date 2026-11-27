@@ -1230,6 +1230,7 @@ endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
 target_sources(agc_driver_command_encoder_tests PRIVATE Graphics/src/CommandEncoder.cpp tests/AllocationFailure.cpp)
+target_compile_definitions(agc_driver_command_encoder_tests PRIVATE APS5_ENCODER_TEST_CLOCK=1)
 if(NOT ANYPS5_AGC_EXECUTION_TESTS OR "CommandEncoder" IN_LIST ANYPS5_AGC_EXECUTION_TESTS)
     add_test(NAME agc_driver_command_encoder_self_wait COMMAND agc_driver_command_encoder_tests --wait-on-the-encoder-thread)
     set_tests_properties(agc_driver_command_encoder_self_wait PROPERTIES PASS_REGULAR_EXPRESSION "asked to wait for its own thread" TIMEOUT 30)

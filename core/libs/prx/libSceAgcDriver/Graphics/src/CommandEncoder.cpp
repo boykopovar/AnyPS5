@@ -79,7 +79,9 @@ struct TestDelay {
 
 std::atomic<std::size_t> liveChunks{0};
 std::atomic<unsigned> injectedWorkerStartFailures{0};
+#ifdef APS5_ENCODER_TEST_CLOCK
 std::atomic<std::uint64_t (*)()> testClock{nullptr};
+#endif
 
 TestDelay& testDelay() {
     static TestDelay value;
@@ -934,13 +936,17 @@ void CommandEncoder::freeChunks(Chunk*& list) noexcept {
 }
 
 std::uint64_t CommandEncoder::clockNs() noexcept {
-    if (auto* clock = testClock.load(std::memory_order_relaxed)) [[unlikely]] return clock();
+#ifdef APS5_ENCODER_TEST_CLOCK
+    if (auto* clock = testClock.load(std::memory_order_relaxed)) return clock();
+#endif
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+#ifdef APS5_ENCODER_TEST_CLOCK
 void CommandEncoder::SetClockForTesting(std::uint64_t (*clock)()) {
     testClock.store(clock, std::memory_order_release);
 }
+#endif
 
 void CommandEncoder::FailNextWorkerStartsForTest(unsigned count) {
     injectedWorkerStartFailures.store(count, std::memory_order_relaxed);
