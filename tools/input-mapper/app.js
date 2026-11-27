@@ -11,9 +11,13 @@ let settings = [];
 let controllerRemaps = [];
 const configurationText = () => serialize(entries, settings, controllerRemaps);
 const settingValue = name => settings.find(setting => setting.name === name)?.value ?? '';
-const snapshot = () => JSON.stringify([
+const mappingSnapshot = () => JSON.stringify([
     entries, settingDefinitions.map(({name}) => settingValue(name)), controllerRemaps
 ]);
+const snapshot = () => ({
+    mapping: mappingSnapshot(),
+    titleId: byId('profile-title-id').value
+});
 let savedConfiguration = snapshot();
 let replacementRequest = 0;
 let captureTarget;
@@ -124,12 +128,13 @@ function element(tag, text, className) {
     return node;
 }
 
-function isDirty() {
-    return snapshot() !== savedConfiguration;
+function isDirty(includeTitleId = true) {
+    return mappingSnapshot() !== savedConfiguration.mapping ||
+        (includeTitleId && byId('profile-title-id').value !== savedConfiguration.titleId);
 }
 
-async function confirmReplacement() {
-    if (!isDirty()) return true;
+async function confirmReplacement(dirty) {
+    if (!dirty) return true;
     const confirmation = byId('replace-dialog');
     confirmation.returnValue = 'cancel';
     return new Promise(resolve => {
@@ -500,15 +505,15 @@ byId('search').addEventListener('input', filterActions);
 byId('profile-title-id').addEventListener('input', updateOutput);
 byId('reset').addEventListener('click', async () => {
     const request = ++replacementRequest;
-    if (!await confirmReplacement() || request !== replacementRequest) return;
+    if (!await confirmReplacement(isDirty()) || request !== replacementRequest) return;
     entries = [];
     settings = [];
     controllerRemaps = [];
+    byId('profile-title-id').value = '';
     savedConfiguration = snapshot();
     importReport = undefined;
     saveRequest++;
     byId('import-report').hidden = true;
-    byId('profile-title-id').value = '';
     renderControllerRemaps();
     renderInputSettings();
     render();
@@ -534,16 +539,17 @@ byId('file').addEventListener('change', async event => {
             report.focus();
             return;
         }
-        if (!await confirmReplacement() || request !== replacementRequest) return;
+        const titleId = inputTitleId(file.name);
+        if (!await confirmReplacement(isDirty(titleId !== undefined)) || request !== replacementRequest) return;
         importReport = result;
         saveRequest++;
         renderImportReport();
-        const titleId = inputTitleId(file.name);
         if (titleId !== undefined) byId('profile-title-id').value = titleId;
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
-        savedConfiguration = snapshot();
+        savedConfiguration.mapping = mappingSnapshot();
+        if (titleId !== undefined) savedConfiguration.titleId = titleId;
         renderControllerRemaps();
         renderInputSettings();
         render();
@@ -577,10 +583,10 @@ byId('copy').addEventListener('click', async () => {
     const request = ++saveRequest;
     try {
         const content = configurationText();
-        const copiedConfiguration = snapshot();
+        const copiedMapping = mappingSnapshot();
         await navigator.clipboard.writeText(content);
         if (request !== saveRequest) return;
-        savedConfiguration = copiedConfiguration;
+        savedConfiguration.mapping = copiedMapping;
         setStatus('copied');
     } catch {
         if (request !== saveRequest) return;

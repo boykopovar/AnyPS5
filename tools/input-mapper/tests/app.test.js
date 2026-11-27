@@ -283,6 +283,77 @@ test('successful imports use the destination from a recognized profile filename'
     assert.equal(preview.textContent, 'anyps5-input.ini');
 });
 
+test('editing only the profile destination requires confirmation before reset', async t => {
+    const app = await setup(t, 'reset-dirty-profile-destination');
+    const binding = 'Cross = KEY:F\n';
+    await app.importFile('anyps5-input.PPSA00001.ini', binding);
+    const titleId = app.get('profile-title-id');
+    titleId.value = 'PPSA00002';
+    titleId.dispatchEvent(new Event('input'));
+    assert.equal(app.get('preview-name').textContent, 'anyps5-input.PPSA00002.ini');
+
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(titleId.value, 'PPSA00002');
+    assert.equal(app.get('preview').value, binding);
+
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(app.dialogOpens(), 2);
+    assert.equal(titleId.value, '');
+    assert.equal(app.get('preview').value, '');
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+});
+
+test('copying the mapping leaves an edited profile destination unsaved', async t => {
+    const app = await setup(t, 'copy-dirty-profile-destination');
+    const binding = 'Cross = KEY:F\n';
+    await app.importFile('anyps5-input.ini', binding);
+    const titleId = app.get('profile-title-id');
+    titleId.value = 'PPSA00002';
+    titleId.dispatchEvent(new Event('input'));
+    let copied;
+    navigator.clipboard.writeText = async text => { copied = text; };
+    app.get('copy').click();
+    await setImmediate();
+    assert.equal(copied, binding);
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), false);
+
+    const replacement = 'Square = KEY:J\n';
+    await app.importFile('anyps5-input.PPSA00003.ini', replacement);
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(titleId.value, 'PPSA00002');
+    assert.equal(app.get('preview').value, binding);
+
+    app.setDialogDecision('discard');
+    await app.importFile('anyps5-input.PPSA00003.ini', replacement);
+    assert.equal(app.dialogOpens(), 2);
+    assert.equal(titleId.value, 'PPSA00003');
+    assert.equal(app.get('preview').value, replacement);
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+});
+
+test('importing a custom filename preserves the dirty profile destination', async t => {
+    const app = await setup(t, 'import-keeps-dirty-profile-destination');
+    await app.importFile('anyps5-input.PPSA00001.ini', 'Cross = KEY:F\n');
+    const titleId = app.get('profile-title-id');
+    titleId.value = 'PPSA00002';
+    titleId.dispatchEvent(new Event('input'));
+
+    const replacement = 'Square = KEY:J\n';
+    await app.importFile('custom.ini', replacement);
+    assert.equal(app.dialogOpens(), 0);
+    assert.equal(titleId.value, 'PPSA00002');
+    assert.equal(app.get('preview').value, replacement);
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), false);
+
+    titleId.value = 'PPSA00001';
+    titleId.dispatchEvent(new Event('input'));
+    assert.equal(window.dispatchEvent(new Event('beforeunload', {cancelable: true})), true);
+});
+
 test('replacing a built-in search result keeps the new binding reachable until it has a value', async t => {
     const app = await setup(t, 'search-add');
     const search = app.get('search');
