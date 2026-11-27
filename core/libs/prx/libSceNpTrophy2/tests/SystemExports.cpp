@@ -105,7 +105,7 @@ void testSystemIconUriBuilders() {
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 51, buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri 51");
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, std::numeric_limits<int>::max(), buf, sizeof(buf)) == kErrInvalidGroupId, "BuildGroupIconUri INT_MAX");
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, -1, buf, sizeof(buf)) == SCE_NP_TROPHY2_OK, "BuildGroupIconUri -1");
-    require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/-1/icon") == 0, "BuildGroupIconUri -1 text");
+    require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/default/icon") == 0, "BuildGroupIconUri -1 text");
     std::memset(buf, 0xA5, sizeof(buf));
     require(sceNpTrophy2SystemBuildGroupIconUri(&comm, 1, buf, sizeof(buf)) == SCE_NP_TROPHY2_OK, "BuildGroupIconUri 1");
     require(std::strcmp(buf, "trp2://localfile/NPWR12345_07/trophyGroups/1/icon") == 0, "BuildGroupIconUri 1 text");

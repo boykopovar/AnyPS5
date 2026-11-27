@@ -3,6 +3,7 @@
 #include "prx/libSceNpTrophy2/include/InventoryExports.hpp"
 #include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -77,6 +78,20 @@ void formatNpCommId(const SystemNpCommId& id, char (&out)[13]) {
     out[12] = '\0';
 }
 
+bool copyInPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool copyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return ok;
+}
+
 int readAndValidateCommId(const void* npCommId, char* uriBuf, char (&commStr)[13]) {
     if (npCommId == nullptr) {
         return kErrInvalidArgument;
@@ -85,7 +100,7 @@ int readAndValidateCommId(const void* npCommId, char* uriBuf, char (&commStr)[13
         return kErrBufferTooSmall;
     }
     SystemNpCommId id{};
-    if (!GuestCopyIn_nid_no_patch(&id, npCommId, sizeof(id))) {
+    if (!copyInPreservingErrno(&id, npCommId, sizeof(id))) {
         return kErrInvalidArgument;
     }
     if (isEmptyNpCommId(id)) {
@@ -103,12 +118,12 @@ int writeUriResult(const char* uri, char* uriBuf, std::size_t bufSize) {
     if (bufSize <= 512) {
         char padded[512]{};
         std::memcpy(padded, uri, len);
-        if (!GuestCopyOut_nid_no_patch(uriBuf, padded, bufSize)) {
+        if (!copyOutPreservingErrno(uriBuf, padded, bufSize)) {
             return kErrInvalidArgument;
         }
         return SCE_NP_TROPHY2_OK;
     }
-    if (!GuestCopyOut_nid_no_patch(uriBuf, uri, len + 1)) {
+    if (!copyOutPreservingErrno(uriBuf, uri, len + 1)) {
         return kErrInvalidArgument;
     }
     return SCE_NP_TROPHY2_OK;
@@ -140,7 +155,11 @@ int APS5_VABI sceNpTrophy2SystemBuildGroupIconUri(const void* npCommId, int grou
         return kErrInvalidGroupId;
     }
     char uri[96]{};
-    std::snprintf(uri, sizeof(uri), "trp2://localfile/%s/trophyGroups/%d/icon", commStr, groupId);
+    if (groupId == -1) {
+        std::snprintf(uri, sizeof(uri), "trp2://localfile/%s/trophyGroups/default/icon", commStr);
+    } else {
+        std::snprintf(uri, sizeof(uri), "trp2://localfile/%s/trophyGroups/%d/icon", commStr, groupId);
+    }
     return writeUriResult(uri, uriBuf, bufSize);
 }
 
@@ -189,17 +208,17 @@ int APS5_VABI sceNpTrophy2SystemCreateContext(int* context, int userId, const vo
         return kErrInvalidArgument;
     }
     const int invalid = -1;
-    if (!GuestCopyOut_nid_no_patch(context, &invalid, sizeof(invalid))) {
+    if (!copyOutPreservingErrno(context, &invalid, sizeof(invalid))) {
         return kErrInvalidArgument;
     }
     SystemNpCommId id{};
-    if (!GuestCopyIn_nid_no_patch(&id, npCommId, sizeof(id))) {
+    if (!copyInPreservingErrno(&id, npCommId, sizeof(id))) {
         return kErrInvalidArgument;
     }
     auto& state = systemState();
     std::lock_guard lock(state.mutex);
     const int created = state.nextContext;
-    if (!GuestCopyOut_nid_no_patch(context, &created, sizeof(created))) {
+    if (!copyOutPreservingErrno(context, &created, sizeof(created))) {
         return kErrInvalidArgument;
     }
     ++state.nextContext;
@@ -212,13 +231,13 @@ int APS5_VABI sceNpTrophy2SystemCreateHandle(int* handle) {
         return kErrInvalidArgument;
     }
     const int invalid = -1;
-    if (!GuestCopyOut_nid_no_patch(handle, &invalid, sizeof(invalid))) {
+    if (!copyOutPreservingErrno(handle, &invalid, sizeof(invalid))) {
         return kErrInvalidArgument;
     }
     auto& state = systemState();
     std::lock_guard lock(state.mutex);
     const int created = state.nextHandle;
-    if (!GuestCopyOut_nid_no_patch(handle, &created, sizeof(created))) {
+    if (!copyOutPreservingErrno(handle, &created, sizeof(created))) {
         return kErrInvalidArgument;
     }
     ++state.nextHandle;
@@ -283,7 +302,7 @@ int APS5_VABI sceNpTrophy2SystemIsServerAvailable(bool* available) {
         return kErrInvalidArgument;
     }
     const std::uint8_t value = 0;
-    if (!GuestCopyOut_nid_no_patch(available, &value, sizeof(value))) {
+    if (!copyOutPreservingErrno(available, &value, sizeof(value))) {
         return kErrInvalidArgument;
     }
     return SCE_NP_TROPHY2_OK;
