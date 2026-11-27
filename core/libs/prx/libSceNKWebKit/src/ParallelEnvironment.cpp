@@ -72,14 +72,6 @@ void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
-void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
-    if (!size) return;
-    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    const GuestArena::HostWrite guard(pointer, size);
-    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-}
-
 struct Worker : ParallelEnvironmentThread {
     std::mutex lock;
     std::condition_variable condition;
@@ -153,11 +145,14 @@ struct ConstructGuard {
 
 void Construct(ParallelEnvironment* self, ParallelEnvironmentFunction threadFunction, std::size_t sizeOfParameter, int requestedJobNumber, const char* function) {
     if (!self) throw std::invalid_argument("null WTF::ParallelEnvironment");
-    RequireWritableGuestBytes(self, sizeof(ParallelEnvironment), function);
+    const GuestArena::HostWrite writeGuard(self, sizeof(ParallelEnvironment));
+    if (!writeGuard.Open() || !GuestWritable_nid_no_patch(self, sizeof(ParallelEnvironment)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     const int maxNumberOfCores = _ZN3WTF22numberOfProcessorCoresEv();
     if (!requestedJobNumber || requestedJobNumber > maxNumberOfCores) requestedJobNumber = maxNumberOfCores;
     const int maxNumberOfNewThreads = requestedJobNumber - 1;
     ConstructGuard guard;
+    if (maxNumberOfCores > 0) guard.taken.reserve(static_cast<std::size_t>(maxNumberOfCores));
     {
         std::lock_guard poolLock(ThreadPoolLock());
         std::vector<Worker*>& pool = ThreadPool();
