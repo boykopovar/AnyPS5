@@ -1271,15 +1271,15 @@ class PreparationTests(unittest.TestCase):
 
     def test_modules_outside_the_given_directories_are_staged_for_the_scan(self):
         source = self.other_modules_package()
-        staged = title_run.stage_other_modules(source, {}, self.root / "input")
+        staged = title_run.stage_other_modules(source, {}, self.root / "input", set())
         self.assertEqual({directory: [path.relative_to(self.root / "input").as_posix() for path in paths] for directory, paths in staged.items()},
                          {".": ["top.prx"], "Media/Plugins": ["Media/Plugins/extra.SPRX"], "modules": ["modules/libPlugin.prx"],
                           "sce_module/nested": ["sce_module/nested/libNested.prx"]})
         self.assertEqual(sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*") if path.is_file()),
                          ["Media/Plugins/extra.SPRX", "modules/libPlugin.prx", "sce_module/nested/libNested.prx", "top.prx"])
         given = {"relink": ["--module-dir", "modules", "--module-dir", "Media/Plugins"], "executables": ["top.prx"]}
-        self.assertEqual(list(title_run.stage_other_modules(source, given, self.root / "given")), ["sce_module/nested"])
-        self.assertEqual(title_run.stage_other_modules(source, {"relink": ["--skip-sce-module"]}, self.root / "skipped"), {})
+        self.assertEqual(list(title_run.stage_other_modules(source, given, self.root / "given", set())), ["sce_module/nested"])
+        self.assertEqual(title_run.stage_other_modules(source, {"relink": ["--skip-sce-module"]}, self.root / "skipped", set()), {})
         self.assertFalse((self.root / "skipped").exists())
 
     def test_needed_module_dirs_follow_the_relinker_report(self):
@@ -1293,8 +1293,8 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(title_run.needed_module_dirs(log, staged), ["modules", "Media/My Plugins", "."])
         self.assertEqual(title_run.needed_module_dirs("Converted modules: 1\n", staged), [])
 
-    def prepare_with_relinker_report(self, report, entry=None, second=0):
-        source = self.other_modules_package()
+    def prepare_with_relinker_report(self, report, entry=None, source=None, second=0):
+        source = source or self.other_modules_package()
         build = self.root / "build"
         (build / "core/libs/libs").mkdir(parents=True)
         (build / "core/libs/libs/libmimalloc.so").write_bytes(b"allocator runtime")
@@ -1346,6 +1346,20 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNone(executable)
         self.assertEqual(commands[1][1:-2], ["--module-dir", "."])
         self.assertEqual(staged, ["eboot.elf", "sce_module/libc.prx", "top.prx"])
+
+    def test_clean_up_keeps_the_directories_staged_before_the_scan(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        files = {"eboot.bin": elf, "sce_module/nested/optional.prx": elf, "Media/Empty/nested/optional.prx": elf,
+                 "Media/Empty/locked/locked.prx": b"\x4f\x15\x3d\x1d" + bytes(60)}
+        for name, data in files.items():
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(data)
+        executable, commands, staged, work = self.prepare_with_relinker_report("", {"relink": ["--module-dir", "Media/Empty"]}, source)
+        self.assertEqual(executable.read_bytes(), b"first conversion")
+        self.assertEqual(staged, ["eboot.elf"])
+        self.assertEqual(sorted(path.relative_to(work / "input").as_posix() for path in (work / "input").rglob("*")),
+                         ["Media", "Media/Empty", "eboot.elf", "sce_module"])
 
     def test_files_are_staged_without_touching_the_package(self):
         source = package(self.root / "pkg", "PPSA00001")

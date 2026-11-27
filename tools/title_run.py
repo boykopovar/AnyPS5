@@ -748,7 +748,7 @@ def stage_inputs(package, entry, source):
         unwrap_or_copy(package / executable, source / executable)
 
 
-def stage_other_modules(package, entry, source):
+def stage_other_modules(package, entry, source, kept):
     staged = {}
     if not scans_modules(entry):
         return staged
@@ -769,7 +769,7 @@ def stage_other_modules(package, entry, source):
                     continue
                 unwrap_or_copy(module, target)
             except (unwrap_self.Refused, OSError):
-                unstage([target], source)
+                unstage([target], source, kept)
                 continue
             staged.setdefault(relative.as_posix(), []).append(target)
     return staged
@@ -779,11 +779,15 @@ def needed_module_dirs(log, staged):
     return [directory for directory in dict.fromkeys(NEEDED_MODULE.findall(log)) if directory in staged]
 
 
-def unstage(paths, source):
+def staged_folders(source):
+    return {Path(folder) for folder, _, _ in os.walk(source)}
+
+
+def unstage(paths, source, kept):
     for path in paths:
         path.unlink(missing_ok=True)
         for folder in path.parents:
-            if folder == source or not folder.is_dir() or any(folder.iterdir()):
+            if folder == source or folder in kept or not folder.is_dir() or any(folder.iterdir()):
                 break
             folder.rmdir()
 
@@ -1018,7 +1022,8 @@ def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
     source = work / "input"
     stage_inputs(package, entry, source)
-    others = stage_other_modules(package, entry, source)
+    kept = staged_folders(source)
+    others = stage_other_modules(package, entry, source, kept)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     log_path = work / "relink.log"
@@ -1030,7 +1035,7 @@ def prepare(title_id, found, entry, platform, build, work):
     needed = needed_module_dirs(log_path.read_text(encoding="utf-8", errors="replace"), others) if others else []
     for directory, paths in others.items():
         if directory not in needed:
-            unstage(paths, source)
+            unstage(paths, source, kept)
     if needed:
         flags = [argument for directory in needed for argument in ("--module-dir", directory)]
         with log_path.open("a", encoding="utf-8") as log:
