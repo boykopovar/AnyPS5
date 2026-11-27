@@ -424,9 +424,9 @@ void CheckStored(const Format& format, std::uint32_t selected, std::uint32_t dma
 
 void PackedStores(AgcDriver::VulkanDevice& device) {
     constexpr std::array formats{
-        Format{5u, 1u, 1u}, Format{11u, 2u, 1u}, Format{18u, 2u, 2u},
+        Format{5u, 1u, 1u}, Format{11u, 2u, 1u}, Format{12u, 2u, 1u}, Format{18u, 2u, 2u}, Format{19u, 2u, 2u},
         Format{20u, 4u, 1u}, Format{21u, 4u, 1u}, Format{22u, 4u, 1u, true},
-        Format{27u, 4u, 2u}, Format{60u, 4u, 4u}, Format{62u, 8u, 2u},
+        Format{27u, 4u, 2u}, Format{28u, 4u, 2u}, Format{60u, 4u, 4u}, Format{62u, 8u, 2u},
         Format{63u, 8u, 2u}, Format{64u, 8u, 2u, true}, Format{69u, 8u, 4u},
         Format{75u, 16u, 4u}, Format{76u, 16u, 4u}, Format{77u, 16u, 4u, true}};
     for (const auto dmask : {1u, 5u, 10u, 15u}) {
@@ -741,7 +741,7 @@ void RejectedEntries(AgcDriver::VulkanDevice& device) {
         Rejection{0x70u, 1u, {5u, 1u, 1u}, 0xf2eu},
         Rejection{10u, 1u, {1u, 1u, 1u}, Identity},
         Rejection{10u, 1u, {6u, 1u, 1u}, Identity},
-        Rejection{10u, 1u, {12u, 2u, 1u}, Identity},
+        Rejection{10u, 1u, {61u, 4u, 4u}, Identity},
         Rejection{10u, 1u, {13u, 2u, 1u}, Identity},
         Rejection{10u, 1u, {56u, 4u, 4u}, Identity},
         Rejection{10u, 1u, {72u, 12u, 3u}, Identity},
