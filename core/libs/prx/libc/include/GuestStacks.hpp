@@ -10,6 +10,8 @@ namespace GuestStacks {
 extern "C" {
 
 void GuestStackRegister_nid_no_patch(const void* pointer, std::size_t bytes);
+int RunHostPreload_nid_no_patch(const char* path);
+void RunEnvironmentPreload_nid_no_patch();
 void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer);
 #ifdef _WIN32
 [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*));

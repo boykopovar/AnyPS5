@@ -15,6 +15,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestStacks.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -261,6 +262,7 @@ asm(".text\n"
 
 extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("EnterGuestMainStack: null entry point");
+    GuestStacks::RunEnvironmentPreload_nid_no_patch();
     if (guestMainStackLow.load(std::memory_order_acquire) != 0) throw std::runtime_error("EnterGuestMainStack: the guest main stack was already entered");
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;

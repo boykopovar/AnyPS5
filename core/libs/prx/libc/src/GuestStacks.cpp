@@ -1,15 +1,19 @@
 #include "prx/libc/include/GuestStacks.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 #ifdef _WIN32
 #include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
-#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <map>
 #include <mutex>
-#include <stdexcept>
 #include <windows.h>
+#elif defined(__linux__) || defined(__APPLE__)
+#include <dlfcn.h>
 #endif
 
 namespace GuestStacks {
@@ -95,9 +99,36 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
 #endif
 }
 
+int RunHostPreload_nid_no_patch(const char* path) {
+    using Preload = int (*)();
+    Preload preload = nullptr;
+#ifdef _WIN32
+    HMODULE module = LoadLibraryA(path);
+    if (module == nullptr) throw std::runtime_error(std::string("APS5_PRELOAD: cannot load ") + path + " (error " + std::to_string(GetLastError()) + ")");
+    preload = reinterpret_cast<Preload>(reinterpret_cast<void*>(GetProcAddress(module, "aps5_preload")));
+#elif defined(__linux__) || defined(__APPLE__)
+    void* module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (module == nullptr) throw std::runtime_error(std::string("APS5_PRELOAD: cannot load ") + path + ": " + dlerror());
+    preload = reinterpret_cast<Preload>(dlsym(module, "aps5_preload"));
+#else
+    throw std::runtime_error("APS5_PRELOAD is not supported on this platform");
+#endif
+    if (preload == nullptr) throw std::runtime_error(std::string("APS5_PRELOAD: ") + path + " exports no aps5_preload");
+    const int result = preload();
+    APS5_LOG_OUT("[preload] %s: aps5_preload returned %d", path, result);
+    if (result < 0) throw std::runtime_error(std::string("APS5_PRELOAD: aps5_preload in ") + path + " failed with " + std::to_string(result));
+    return result;
+}
+
+void RunEnvironmentPreload_nid_no_patch() {
+    const char* path = std::getenv("APS5_PRELOAD");
+    if (path != nullptr && *path != '\0') RunHostPreload_nid_no_patch(path);
+}
+
 #ifdef _WIN32
 [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("Guest main stack requires an entry point");
+    RunEnvironmentPreload_nid_no_patch();
     const auto host = CurrentBounds();
     constexpr std::size_t guardBytes = 0x10000;
     if (host.base <= host.deallocation || host.base - host.deallocation > std::numeric_limits<std::size_t>::max() - guardBytes)
