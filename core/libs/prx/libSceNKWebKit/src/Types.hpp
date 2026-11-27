@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/LiveObjectCount.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -508,6 +509,7 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
+    LiveObjectCount<ObjectType::Frame> liveCount;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
@@ -587,6 +589,7 @@ public:
     bool isFocused = false;
     bool isVisible = false;
     SizeValue size{ 0.0, 0.0 };
+    LiveObjectCount<ObjectType::View> liveCount;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {

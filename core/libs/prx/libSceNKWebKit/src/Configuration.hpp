@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/LiveObjectCount.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
@@ -100,6 +101,7 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    LiveObjectCount<ObjectType::Page> liveCount;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
