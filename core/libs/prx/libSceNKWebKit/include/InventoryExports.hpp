@@ -4401,7 +4401,6 @@ int APS5_VABI _ZNK3JSC19HeapSnapshotBuilder18descriptionForCellEPNS_6JSCellE();
 int APS5_VABI _ZNK3JSC22FullGCActivityCallback13didGCRecentlyEv();
 int APS5_VABI _ZNK3JSC23VariableWriteFireDetail4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC2VM29deprecatedVMEntryGlobalObjectEPNS_14JSGlobalObjectE();
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression13matchedLengthEv();
 int APS5_VABI _ZNK3JSC6JSCell11toPrimitiveEPNS_14JSGlobalObjectENS_22PreferredPrimitiveTypeE();
 int APS5_VABI _ZNK3JSC6JSCell12toObjectSlowEPNS_14JSGlobalObjectE();
 int APS5_VABI _ZNK3JSC6JSCell8toNumberEPNS_14JSGlobalObjectE();
