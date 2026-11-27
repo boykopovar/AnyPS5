@@ -701,7 +701,7 @@ jobs:
             rm -f build/select.ninja build/select.tests
             exit 0
           fi
-          git diff --name-only -z "$graph_base" HEAD -- > changed.txt
+          git diff --name-only --no-renames -z "$graph_base" HEAD -- > changed.txt
           python3 tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         run: |
@@ -916,7 +916,7 @@ jobs:
             rm -f build/select.ninja build/select.tests
             exit 0
           fi
-          git diff --name-only -z "$graph_base" HEAD -- > changed.txt
+          git diff --name-only --no-renames -z "$graph_base" HEAD -- > changed.txt
           python tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         if: github.event_name != 'pull_request'
