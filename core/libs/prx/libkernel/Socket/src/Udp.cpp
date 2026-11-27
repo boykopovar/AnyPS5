@@ -164,6 +164,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool externalPeer = false;
     bool pairCreated = false;
     std::optional<GuestSockets::LocalCredentials> peerCredentials;
+    bool connectWait = false;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -2042,6 +2043,14 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->pairCreated && level == 0 && option == GuestLocalConnectWait) {
+        if (length < sizeof(int)) return Fail(22);
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, value, sizeof(enable))) return Fail(14);
+        std::lock_guard lock(socket->modeMutex);
+        socket->connectWait = enable != 0;
+        return 0;
+    }
     if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
@@ -2069,7 +2078,12 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family == GuestUnix && socket->pairCreated && level == 0 && (option == GuestLocalPeerCredentials || option == GuestLocalCredentials || option == GuestLocalConnectWait)) {
-        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, option, value, &declared);
+        bool connectWait = false;
+        {
+            std::lock_guard lock(socket->modeMutex);
+            connectWait = socket->connectWait;
+        }
+        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, connectWait, option, value, &declared);
         if (error != 0) return Fail(error);
         return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
