@@ -2,8 +2,12 @@
 /* Copyright (c) Microsoft Corporation.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
@@ -16,6 +20,35 @@ constexpr unsigned long long DigitBase = DigitMask + 1;
 
 void RequireValue(const unsigned long long* value, const char* function) {
     if (!value) throw std::invalid_argument(std::string(function) + ": null value");
+}
+
+void RequireWritable(unsigned long long* value, std::size_t words, const char* function) {
+    RequireValue(value, function);
+    const std::size_t bytes = words * sizeof(unsigned long long);
+    const int savedErrno = errno;
+    bool writable = false;
+    {
+        const GuestArena::HostWrite guard(value, bytes);
+        writable = guard.Open() && GuestWritable_nid_no_patch(value, bytes);
+    }
+    errno = savedErrno;
+    if (!writable) throw std::invalid_argument(std::string(function) + ": unwritable value");
+}
+
+void LoadWords(const unsigned long long* source, unsigned long long* destination, std::size_t words, const char* function) {
+    RequireValue(source, function);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, words * sizeof(unsigned long long));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable value");
+}
+
+void StoreWords(unsigned long long* destination, const unsigned long long* source, std::size_t words, const char* function) {
+    RequireWritable(destination, words, function);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, words * sizeof(unsigned long long));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable value");
 }
 
 void AddDigits(unsigned long long* value, int valueWords, const unsigned long long* addend, int addendWords) {
@@ -108,39 +141,46 @@ void Reduce(unsigned long long* value, unsigned long long divisor) {
 extern "C" {
 
 unsigned long long APS5_VABI sceLibcInternalMultiPrecisionGet_nid_no_patch(unsigned long long* value) {
-    RequireValue(value, "_MP_Get");
-    return (value[1] << DigitBits) + value[0];
+    unsigned long long words[2]{};
+    LoadWords(value, words, 2, "_MP_Get");
+    return (words[1] << DigitBits) + words[0];
 }
 APS5_EXPORT("lrQSsTRMMr4", sceLibcInternalMultiPrecisionGet_nid_no_patch);
 
 void APS5_VABI sceLibcInternalMultiPrecisionAdd_nid_no_patch(unsigned long long* value, unsigned long long addend) {
-    RequireValue(value, "_MP_Add");
+    unsigned long long work[ValueWords]{};
+    LoadWords(value, work, ValueWords, "_MP_Add");
     const unsigned long long digits[2] = {addend & DigitMask, addend >> DigitBits};
-    AddDigits(value, ValueWords, digits, 2);
+    AddDigits(work, ValueWords, digits, 2);
+    StoreWords(value, work, ValueWords, "_MP_Add");
 }
 APS5_EXPORT("QfPuSqhub7o", sceLibcInternalMultiPrecisionAdd_nid_no_patch);
 
 void APS5_VABI sceLibcInternalMultiPrecisionMultiply_nid_no_patch(unsigned long long* product, unsigned long long left, unsigned long long right) {
-    RequireValue(product, "_MP_Mul");
+    RequireWritable(product, ValueWords, "_MP_Mul");
+    unsigned long long work[ValueWords]{};
     const unsigned long long leftDigits[2] = {left & DigitMask, left >> DigitBits};
     const unsigned long long rightDigits[2] = {right & DigitMask, right >> DigitBits};
-    for (int index = 0; index < ValueWords; ++index) product[index] = 0;
     for (int column = 0; column < 2; ++column) {
         unsigned long long carry = 0;
         for (int row = 0; row < 2; ++row) {
-            unsigned long long& word = product[row + column];
+            unsigned long long& word = work[row + column];
             word = leftDigits[row] * rightDigits[column] + word + carry;
             carry = word >> DigitBits;
             word &= DigitMask;
         }
-        product[column + 2] = carry;
+        work[column + 2] = carry;
     }
+    StoreWords(product, work, ValueWords, "_MP_Mul");
 }
 APS5_EXPORT("Gav1Xt1Ce+c", sceLibcInternalMultiPrecisionMultiply_nid_no_patch);
 
 void APS5_VABI sceLibcInternalMultiPrecisionRemainder_nid_no_patch(unsigned long long* value, unsigned long long divisor) {
-    RequireValue(value, "_MP_Rem");
-    Reduce(value, divisor);
+    unsigned long long work[ValueWords]{};
+    LoadWords(value, work, ValueWords, "_MP_Rem");
+    RequireWritable(value, ValueWords, "_MP_Rem");
+    Reduce(work, divisor);
+    StoreWords(value, work, ValueWords, "_MP_Rem");
 }
 APS5_EXPORT("Ozk+Z6QnlTY", sceLibcInternalMultiPrecisionRemainder_nid_no_patch);
 

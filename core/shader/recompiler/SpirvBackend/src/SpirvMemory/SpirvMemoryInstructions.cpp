@@ -819,7 +819,7 @@ std::uint32_t LdsBufferAtomic64(SpirvEmitterState& state, std::uint32_t low, TNe
 
 template<typename TOperation>
 std::uint32_t EmitLdsAtomic32(SpirvEmitterState& state, const MemoryInfo& mem, TOperation&& operation) {
-    if (mem.kind == ResourceKind::Gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), operation, true);
+    if (mem.kind == ResourceKind::Gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), operation);
     if (mem.kind != ResourceKind::Lds || !state.requirements.ldsLock) return operation();
     return LockedLdsUpdate(state, TypeU32(state), ConstantU32(state, 0u), operation);
 }
@@ -1419,11 +1419,11 @@ std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, boo
             state.module.AddFunction(swap ? spv::OpAtomicExchange : append ? spv::OpAtomicIAdd : spv::OpAtomicISub, TypeU32(state), value, EmitMemoryElementPointer(state, access, index), ConstantU32(state, gds ? spv::ScopeDevice : spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), amount);
             return value;
         };
-        if (gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), emit, true);
+        if (gds && state.requirements.gdsAtomicLocks) return LockedDeviceUpdate(state, EmitGdsAtomicLockPointer(state), TypeU32(state), ConstantU32(state, 0u), emit);
         return emit();
     });
     const auto result = state.module.AllocateId();
-    EmitSubgroupShuffle(state, TypeU32(state), result, atomic, EmitHostSubgroupLane(state, sourceLane));
+    if (!EmitWaveSum(state, result, atomic)) EmitSubgroupShuffle(state, TypeU32(state), result, atomic, EmitHostSubgroupLane(state, sourceLane));
     return result;
 }
 
@@ -1560,7 +1560,7 @@ std::uint32_t GdsAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TRepl
                             state.module.AddFunction(spv::OpAtomicStore, words[half], ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), word);
                         }
                         return observed;
-                    }, true));
+                    }));
                 }
                 const auto pointer = state.module.AllocateId();
                 state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassStorageBuffer, type), pointer, state.gdsU64Variable, ConstantU32(state, 0u), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 3u)));

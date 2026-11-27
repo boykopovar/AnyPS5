@@ -143,6 +143,7 @@ std::uint32_t EmitTBufferBitcastU32ToI32(SpirvEmitterState& state, std::uint32_t
 bool IsSignedFormatComponent(SpirvFormatComponentType type);
 std::uint32_t EmitUFloatToF32Bits(SpirvEmitterState& state, std::uint32_t raw, std::uint32_t bits);
 std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw);
+std::uint32_t NormalizeFormatComponentWidth(SpirvEmitterState& state, SpirvFormatComponentType type, std::uint32_t bits, std::uint32_t raw);
 std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw);
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data);
 std::uint32_t EmitD16StoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t half);
@@ -313,13 +314,15 @@ std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, Reso
 }
 
 template<typename TUpdate>
-std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, std::uint32_t type, std::uint32_t zero, TUpdate&& update, bool oneLanePerSubgroup = false) {
+std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, std::uint32_t type, std::uint32_t zero, TUpdate&& update) {
     const auto entry = state.currentLabel;
     const auto header = state.module.AllocateId();
     const auto body = state.module.AllocateId();
     const auto pending = state.module.AllocateId();
-    const auto critical = state.module.AllocateId();
+    const auto attempt = state.module.AllocateId();
     const auto attemptMerge = state.module.AllocateId();
+    const auto critical = state.module.AllocateId();
+    const auto servedMerge = state.module.AllocateId();
     const auto pendingMerge = state.module.AllocateId();
     const auto cont = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -340,16 +343,11 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     state.module.AddFunction(spv::OpSelectionMerge, pendingMerge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, done, pendingMerge, pending);
     EmitLabel(state, pending);
-    auto attempt = pending;
-    const auto servedMerge = oneLanePerSubgroup ? state.module.AllocateId() : 0u;
-    if (oneLanePerSubgroup) {
-        const auto elected = state.module.AllocateId();
-        EmitSubgroupElect(state, elected);
-        attempt = state.module.AllocateId();
-        state.module.AddFunction(spv::OpSelectionMerge, servedMerge, spv::SelectionControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, elected, attempt, servedMerge);
-        EmitLabel(state, attempt);
-    }
+    const auto elected = state.module.AllocateId();
+    EmitSubgroupElect(state, elected);
+    state.module.AddFunction(spv::OpSelectionMerge, servedMerge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, elected, attempt, servedMerge);
+    EmitLabel(state, attempt);
     const auto previous = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u), ConstantU32(state, 0u));
     const auto acquired = state.module.AllocateId();
@@ -365,26 +363,20 @@ std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, s
     const auto criticalExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, attemptMerge);
     EmitLabel(state, attemptMerge);
-    auto served = state.module.AllocateId();
-    auto servedResult = state.module.AllocateId();
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, ConstantBool(state, true), criticalExit, ConstantBool(state, false), attempt);
-    state.module.AddFunction(spv::OpPhi, type, servedResult, old, criticalExit, result, attempt);
-    auto servedExit = attemptMerge;
-    if (oneLanePerSubgroup) {
-        state.module.AddFunction(spv::OpBranch, servedMerge);
-        EmitLabel(state, servedMerge);
-        const auto electedServed = state.module.AllocateId();
-        const auto electedResult = state.module.AllocateId();
-        state.module.AddFunction(spv::OpPhi, TypeBool(state), electedServed, served, attemptMerge, ConstantBool(state, false), pending);
-        state.module.AddFunction(spv::OpPhi, type, electedResult, servedResult, attemptMerge, result, pending);
-        served = electedServed;
-        servedResult = electedResult;
-        servedExit = servedMerge;
-    }
+    const auto attempted = state.module.AllocateId();
+    const auto attemptedResult = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), attempted, ConstantBool(state, true), criticalExit, ConstantBool(state, false), attempt);
+    state.module.AddFunction(spv::OpPhi, type, attemptedResult, old, criticalExit, result, attempt);
+    state.module.AddFunction(spv::OpBranch, servedMerge);
+    EmitLabel(state, servedMerge);
+    const auto served = state.module.AllocateId();
+    const auto servedResult = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, attempted, attemptMerge, ConstantBool(state, false), pending);
+    state.module.AddFunction(spv::OpPhi, type, servedResult, attemptedResult, attemptMerge, result, pending);
     state.module.AddFunction(spv::OpBranch, pendingMerge);
     EmitLabel(state, pendingMerge);
-    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, servedExit, done, body);
-    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, servedExit, result, body);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, servedMerge, done, body);
+    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, servedMerge, result, body);
     const auto waiting = state.module.AllocateId();
     state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), waiting, doneNext);
     const auto ballot = state.module.AllocateId();
