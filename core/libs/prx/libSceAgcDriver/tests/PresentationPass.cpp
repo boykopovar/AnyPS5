@@ -860,7 +860,7 @@ void upscaleModeTests() {
     const int after = std::fegetround();
     Require(std::fesetround(rounding) == 0, "cannot restore the rounding mode after the sharpness test");
     Require(after == FE_DOWNWARD && nearHalf == std::nextafter(1.0f, 2.0f), "sharpness parsing changed or used the caller's rounding mode");
-    for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "nan", "inf", " 1", "1 ", "+1", "0x1p0", "1e-90", "1,5"}) {
+    for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "1..2", "1e+", "nan", "inf", " 1", "1 ", "+1", "0x1p0", "1e-90", "1,5"}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode("fsr", value)); }), std::string("ANYPS5_FSR_SHARPNESS accepted ") + value);
     }
 }
