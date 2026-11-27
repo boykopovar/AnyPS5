@@ -11,6 +11,7 @@ void EmitSubgroupBallot(SpirvEmitterState& state, std::uint32_t result, std::uin
 void EmitHostSubgroupBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate);
 void EmitSubgroupBallotFindLsb(SpirvEmitterState& state, std::uint32_t result, std::uint32_t ballot);
 void EmitSubgroupShuffle(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane);
+bool EmitWaveSum(SpirvEmitterState& state, std::uint32_t result, std::uint32_t value);
 void EmitSubgroupShuffleInHalf(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane);
 void EmitSubgroupElect(SpirvEmitterState& state, std::uint32_t result);
 std::uint32_t EmitSubgroupLocalInvocationId(SpirvEmitterState& state);

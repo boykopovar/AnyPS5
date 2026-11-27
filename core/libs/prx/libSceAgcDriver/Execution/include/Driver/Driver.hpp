@@ -158,9 +158,10 @@ private:
     std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
     static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
+    static void copyRewindTail(Submission& tail, const std::uint32_t* guest, std::size_t words, std::span<const Submission::RewindReturn> returns);
     static constexpr std::size_t MaximumSegmentDepth = 64;
-    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth);
-    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords);
+    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t* origin = nullptr);
+    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords, const std::uint32_t* origin);
     static void readRegisterLists(Submission& submission);
     bool refreshIndirectSegment(Submission& submission, std::size_t index);
     void waitForFlipRoom(const Submission& submission);
@@ -418,6 +419,7 @@ private:
     static bool packetEpoch();
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
+    static std::chrono::microseconds labelFlushBusyDeadline();
     static bool labelFlushDue();
     static bool completionsPending();
     static bool reapEachPacket();
