@@ -32,6 +32,7 @@ const auto DestroyBase = &_ZN3JSC4Yarr17RegularExpressionD2Ev;
 const auto Assign = &_ZN3JSC4Yarr17RegularExpressionaSERKS1_;
 
 std::set<void*> live;
+bool throwOnNextFree = false;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     void* pointer = std::malloc(size ? size : 1);
@@ -43,6 +44,10 @@ void APS5_VABI TestFree(void* pointer) {
     if (!pointer) return;
     if (live.erase(pointer) != 1) std::abort();
     std::free(pointer);
+    if (throwOnNextFree) {
+        throwOnNextFree = false;
+        throw std::runtime_error("simulated guest free failure");
+    }
 }
 
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) {
@@ -187,6 +192,16 @@ void TestGuestPointers() {
     Require(badTarget.d == unmappedPrivate && validD->refCount == 1);
     Require(ThrowsNotImplemented([&] { Assign(&roTarget, &valid); }));
     Require(roTarget.d == readOnlyPrivate && validD->refCount == 1);
+
+    RegularExpression dst = Make("a+");
+    RegularExpressionPrivate* const oldD = dst.d;
+    Require(oldD != validD && oldD->refCount == 1);
+    throwOnNextFree = true;
+    Require(Assign(&dst, &valid) == &dst);
+    Require(!throwOnNextFree);
+    Require(dst.d == validD && validD->refCount == 2);
+    Destroy(&dst);
+    Require(validD->refCount == 1);
 
     Destroy(&valid);
 }

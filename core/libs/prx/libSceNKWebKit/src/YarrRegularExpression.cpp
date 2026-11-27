@@ -89,11 +89,26 @@ void ValidatePrivateWritable(RegularExpressionPrivate* target, const char* funct
     RequireWritableGuestValue(&target->refCount, function);
 }
 
+void ReleaseRegularExpressionNoThrow(RegularExpressionPrivate* target) noexcept {
+    if (!target) return;
+    try {
+        const GuestArena::HostWrite guard(target, sizeof(RegularExpressionPrivate));
+        if (!guard.Open() || !GuestWritable_nid_no_patch(&target->refCount, sizeof(target->refCount))) return;
+        JscRegularExpressionRelease_nid_no_patch(target);
+    } catch (...) {
+    }
+}
+
 void DestroyRegularExpression(RegularExpression* self, const char* function) {
     if (!self) throw std::invalid_argument("JSC::Yarr::RegularExpression::~RegularExpression: null this");
     const RegularExpression local = ReadGuestValue(self, function);
     ValidatePrivateWritable(local.d, function);
-    JscRegularExpressionRelease_nid_no_patch(local.d);
+    if (local.d) {
+        const GuestArena::HostWrite guard(local.d, sizeof(RegularExpressionPrivate));
+        if (!guard.Open() || !GuestWritable_nid_no_patch(&local.d->refCount, sizeof(local.d->refCount)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        JscRegularExpressionRelease_nid_no_patch(local.d);
+    }
 }
 
 }  // namespace
@@ -130,7 +145,7 @@ RegularExpression* APS5_VABI _ZN3JSC4Yarr17RegularExpressionaSERKS1_(RegularExpr
     if (!TryPublishGuestValue(self, updated, target))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     refRollback.committed = true;
-    JscRegularExpressionRelease_nid_no_patch(target.d);
+    ReleaseRegularExpressionNoThrow(target.d);
     return self;
 }
 
