@@ -410,6 +410,14 @@ void FreeCertificate(CertificateObject* certificate) {
     free_nid_postfix(certificate);
 }
 
+}
+
+void APS5_VABI FreeCertificate_nid_no_patch(LibreSsl3X509* certificate) {
+    FreeCertificate(reinterpret_cast<CertificateObject*>(certificate));
+}
+
+namespace {
+
 LibreSsl3Stack* NewStack() {
     auto* stack = reinterpret_cast<LibreSsl3Stack*>(sk_new_nid_postfix(nullptr));
     if (!stack) PutAsn1Error(MallocFailure);

@@ -1,4 +1,5 @@
 #include "prx/libSceDiscMap/include/Api.hpp"
+#include "prx/libSceDiscMap/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -38,6 +39,7 @@ int main() {
     Require(sceDiscMapGetPackageSize(0, &ret1, &ret2) == noBitmapInfo, "sceDiscMapGetPackageSize did not report missing bitmap");
     Require(ret1 == 0x5a5a5a5a5a5a5a5aull && ret2 == 0x5a5a5a5a5a5a5a5aull, "sceDiscMapGetPackageSize wrote its outputs");
     Require(sceDiscMapGetPackageSize(0, nullptr, nullptr) == noBitmapInfo, "sceDiscMapGetPackageSize with null outputs did not report missing bitmap");
+    Require(libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch() == noBitmapInfo, "5+vOlukvkfg did not report missing bitmap");
     std::puts("DiscMap tests passed");
     return 0;
 }

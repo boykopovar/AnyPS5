@@ -71,6 +71,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Coredump.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Exception.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
@@ -102,6 +103,9 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamSfoParser.cpp
 )
+if(BUILD_TESTING)
+    target_compile_definitions(libkernel PRIVATE APS5_MQUEUE_TESTING)
+endif()
 if(APPLE)
     target_link_libraries(libkernel PRIVATE "-framework CoreFoundation")
     target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MacActivity.cpp)
@@ -704,6 +708,12 @@ if(BUILD_TESTING)
     target_link_libraries(guest_aio_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_aio_tests)
     add_test(NAME guest_aio COMMAND guest_aio_tests)
+    add_test(NAME guest_aio_completion_writes COMMAND guest_aio_tests completion-writes)
+    set_tests_properties(guest_aio_completion_writes PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_aio_completion_writes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_aio_registry_tests
             ${LIBS_INCLUDE_DIR}/tests/GuestAioRegistry.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp)
@@ -1323,6 +1333,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sleep_wake_coarse PROPERTIES TIMEOUT 20 ENVIRONMENT "APS5_COARSE_TIMED_WAITS=1")
         set_tests_properties(guest_sleep_wake guest_sleep_wake_coarse PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test_executable(windows_nested_wakeable_sleep_tests
+            ${LIBS_INCLUDE_DIR}/tests/WindowsNestedWakeableSleep.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/SleepWake.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp)
+        target_include_directories(windows_nested_wakeable_sleep_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        if(MINGW)
+            target_compile_options(windows_nested_wakeable_sleep_tests PRIVATE -fasynchronous-unwind-tables)
+        endif()
+        add_test(NAME windows_nested_wakeable_sleep COMMAND windows_nested_wakeable_sleep_tests)
+        set_tests_properties(windows_nested_wakeable_sleep PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
+            "APS5_COARSE_TIMED_WAITS=unset:;APS5_NO_SLEEP_WAKE=unset:")
     endif()
     add_test_executable(guest_clock_pause_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockPause.cpp)
     target_include_directories(guest_clock_pause_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -2164,6 +2185,17 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+
+    add_test_executable(guest_kernel_socket_options_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketOptionsBounds.cpp)
+    target_include_directories(guest_kernel_socket_options_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_socket_options_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_socket_options_bounds_tests)
+    add_test(NAME guest_kernel_socket_options_bounds COMMAND guest_kernel_socket_options_bounds_tests)
+    set_tests_properties(guest_kernel_socket_options_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_socket_options_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_clock_timer_nanosleep_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockTimerNanosleepBounds.cpp)
     target_include_directories(guest_clock_timer_nanosleep_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_clock_timer_nanosleep_bounds_tests PRIVATE libkernel libc)
@@ -2679,6 +2711,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_socket_events PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_socket_submitted_record_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketSubmittedRecords.cpp)
+    target_include_directories(guest_socket_submitted_record_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_submitted_record_tests PRIVATE libc)
+    configure_windows_unwind(guest_socket_submitted_record_tests)
+    add_test(NAME guest_socket_submitted_records COMMAND guest_socket_submitted_record_tests)
+    set_tests_properties(guest_socket_submitted_records PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_socket_submitted_records PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_socket_connect_listening_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketConnectListening.cpp)
     target_include_directories(guest_socket_connect_listening_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_socket_connect_listening_tests PRIVATE libkernel libc)
@@ -2898,6 +2940,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
     set_tests_properties(guest_msync PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_msync PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_madvise_flags_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelMadviseFlags.cpp)
+    target_include_directories(guest_kernel_madvise_flags_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_madvise_flags_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_madvise_flags_tests)
+    add_test(NAME guest_kernel_madvise_flags COMMAND guest_kernel_madvise_flags_tests)
+    set_tests_properties(guest_kernel_madvise_flags PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_madvise_flags PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(WIN32)
@@ -3412,6 +3464,16 @@ if(BUILD_TESTING)
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_kernel_sysctl_kern_debug_nodes_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSysctlKernDebugNodes.cpp)
+    target_include_directories(guest_kernel_sysctl_kern_debug_nodes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_sysctl_kern_debug_nodes_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_sysctl_kern_debug_nodes_tests)
+    add_test(NAME guest_kernel_sysctl_kern_debug_nodes COMMAND guest_kernel_sysctl_kern_debug_nodes_tests)
+    set_tests_properties(guest_kernel_sysctl_kern_debug_nodes PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sysctl_kern_debug_nodes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(host_performance_session_tests
         ${LIBS_INCLUDE_DIR}/tests/HostPerformanceSession.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp)
@@ -3556,6 +3618,17 @@ list(SORT libkernelTestFragments)
 foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
+
+    add_test_executable(guest_kernel_socket_type_error_readonly_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketTypeErrorReadonlyBounds.cpp)
+    target_include_directories(guest_kernel_socket_type_error_readonly_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_socket_type_error_readonly_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_socket_type_error_readonly_bounds_tests)
+    add_test(NAME guest_kernel_socket_type_error_readonly_bounds COMMAND guest_kernel_socket_type_error_readonly_bounds_tests)
+    set_tests_properties(guest_kernel_socket_type_error_readonly_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_socket_type_error_readonly_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_kernel_cpumode_prio_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelCpumodePrioBounds.cpp)

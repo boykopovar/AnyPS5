@@ -390,7 +390,6 @@ void TestGatedCallsInsideReprojectionSession() {
     const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
     std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionEnableMirroring(&mirroring); }), "mirroring inside a reprojection session answered as without one");
-    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionGetPredictedDisplayTime(1, &time); }), "predicted display time inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1, 0, 0); }), "render config inside a reprojection session answered as without one");
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1ull << 32, 0, 0); }), "render config with the second accepted bit inside a reprojection session answered as without one");
     const Hmd2::MirroringOption option{};
@@ -400,6 +399,9 @@ void TestGatedCallsInsideReprojectionSession() {
     Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetMirroringOption(&option); }), "mirroring option inside a reprojection session answered as without one");
     for (const std::uint64_t frameId : {0ull, 1ull, 0x123456789ull}) {
         Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ParameterNull, "predicted display time into a null output inside a reprojection session");
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == static_cast<std::int32_t>(0x8A720019),
+            "predicted display time did not report the missing headset inside a reprojection session");
+        Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a headset");
     }
     Require(sceHmd2ReprojectionSetRenderConfig(0, 1, 1) == Hmd2::ParameterInvalid, "render config with nonzero reserved arguments inside a reprojection session");
     Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");

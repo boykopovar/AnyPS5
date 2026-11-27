@@ -458,11 +458,15 @@ std::uint32_t GcnLevelSlices(std::uint32_t slices, std::uint32_t level, bool pow
     return pow2Pad ? std::bit_ceil(levelSlices) : levelSlices;
 }
 
+bool GcnMultisampleTiled(TextureTileMode tileMode) {
+    return IsGcnDepthTiled(tileMode) || tileMode == TextureTileMode::kGcnDisplay2D || tileMode == TextureTileMode::kGcnThin2D;
+}
+
 }
 
 std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers, bool volume, std::uint32_t samples) {
     Require(layers != 0, "a PS4 surface has at least one slice");
-    Require(samples == 1u || (IsGcnDepthTiled(tileMode) && mipCount == 1u && layers == 1u && !volume), "a PS4 multisampled surface is modeled only as one level and one slice in a depth tile mode");
+    Require(samples == 1u || (GcnMultisampleTiled(tileMode) && mipCount == 1u && layers == 1u && !volume), "a PS4 multisampled surface is modeled only as one level and one slice in a depth tile mode or a 2D color tile mode");
     Require(!linearGeneral || tileMode == TextureTileMode::kLinear, "LINEAR_GENERAL is a linear layout");
     Require(width != 0 && height != 0 && pitch >= width, "cannot compute the mip layout of an empty PS4 texture");
     Require(mipCount != 0 && mipCount <= 16u, "texture mip count is out of range");
@@ -527,7 +531,7 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
 GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t samples) {
     Require(IsGcnTiled(tileMode), "PS4 tile geometry needs a PS4 tiled mode");
     Require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "unsupported bytes per element for PS4 tiling");
-    Require(samples == 1u || ((samples == 2u || samples == 4u || samples == 8u) && IsGcnDepthTiled(tileMode)), "PS4 multisampled tiling is only modeled for 2, 4 or 8 samples in a depth tile mode");
+    Require(samples == 1u || ((samples == 2u || samples == 4u || samples == 8u) && GcnMultisampleTiled(tileMode)), "PS4 multisampled tiling is only modeled for 2, 4 or 8 samples in a depth tile mode or a 2D color tile mode");
     const auto x = [](std::uint32_t bit) { return 1u << bit; };
     const auto y = [](std::uint32_t bit) { return 1u << (12u + bit); };
     const auto s = [](std::uint32_t bit) { return 1u << (GcnSampleShift + bit); };
@@ -539,9 +543,10 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     const auto log2Bytes = static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
     const bool displayOrder = tileMode == TextureTileMode::kGcnDisplay1D || tileMode == TextureTileMode::kGcnDisplay2D || tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnDisplay2DPrt;
     const auto log2Samples = static_cast<std::uint32_t>(std::countr_zero(samples));
+    const bool depthOrder = IsGcnDepthTiled(tileMode);
     std::array<std::uint32_t, 9> order{};
-    for (std::uint32_t bit = 0; bit < log2Samples; ++bit) order[bit] = s(bit);
-    std::ranges::copy(displayOrder ? display[log2Bytes] : thin, order.begin() + log2Samples);
+    for (std::uint32_t bit = 0; bit < log2Samples; ++bit) order[(depthOrder ? 0u : 6u) + bit] = s(bit);
+    std::ranges::copy(displayOrder ? display[log2Bytes] : thin, order.begin() + (depthOrder ? log2Samples : 0u));
     const auto orderBits = log2Samples + 6u;
     const auto microBytes = 64u * bytesPerElement * samples;
     GcnTileGeometry geometry{};
@@ -560,7 +565,7 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     struct MacroMode { std::uint32_t bankHeight; std::uint32_t banks; std::uint32_t aspect; };
     constexpr std::array<MacroMode, 5> macroModes{{{4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
     constexpr std::array<MacroMode, 5> prtMacroModes{{{8u, 16u, 4u}, {4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
-    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * microBytes));
+    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * 64u * bytesPerElement));
     switch (tileMode) {
         case TextureTileMode::kGcnDepth2D64: tileSplit = 64u; break;
         case TextureTileMode::kGcnDepth2D128: tileSplit = 128u; break;
@@ -674,7 +679,7 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
 }
 
 SurfaceGeometry describeGcnMultisampled(const GuestTextureResource& descriptor) {
-    Require(IsGcnDepthTiled(descriptor.tileMode), "PS4 multisampled textures outside the depth tile modes are not implemented");
+    Require(GcnMultisampleTiled(descriptor.tileMode), "PS4 multisampled textures outside the depth tile modes and the 2D color tile modes are not implemented");
     Require(descriptor.samples == 2u || descriptor.samples == 4u || descriptor.samples == 8u, "a PS4 multisampled texture of " + std::to_string(descriptor.samples) + " samples is not implemented");
     Require(descriptor.mipCount == 1u && descriptor.baseArray == 0u && descriptor.depthOrLastArray == 0u, "PS4 multisampled texture mip levels or array layers are not implemented");
     Require(!IsBlockCompressed(descriptor.format), "a PS4 multisampled block-compressed texture is not implemented");

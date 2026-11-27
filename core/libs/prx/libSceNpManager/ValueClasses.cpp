@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -34,9 +35,38 @@ bool ProbeGuestWritable(T* destination) {
     return ok;
 }
 
+const void* GuestFieldAddress(const void* object, std::size_t offset) {
+    if (object == nullptr) return nullptr;
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return nullptr;
+    return reinterpret_cast<const void*>(address + offset);
+}
+
+void* GuestFieldAddress(void* object, std::size_t offset) {
+    return const_cast<void*>(GuestFieldAddress(static_cast<const void*>(object), offset));
+}
+
 bool SameOnlineId(const char* lhs, const char* rhs) {
     return std::strncmp(lhs, rhs, NP_ONLINE_ID_SIZE) == 0;
 }
+
+template <typename T>
+T LoadObject(const T* source, const char* function) {
+    T value{};
+    if (!ReadGuest(source, value)) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void StoreBytes(void* destination, const void* source, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+constexpr std::size_t OnlineIdFieldBytes = offsetof(NpOnlineIdObject, term) + sizeof(std::uint32_t);
+constexpr std::size_t NpIdFieldBytes = offsetof(NpIdObject, id) + sizeof(SceNpId);
+constexpr std::size_t UserFieldBytes = offsetof(UserObject, userId) + sizeof(std::int32_t);
 
 void* const NpOnlineIdVtable[] = {
     nullptr, nullptr,
@@ -73,9 +103,9 @@ void* const NpAccessTokenVtable[] = {
 extern "C" {
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC1Ev(NpOnlineIdObject* self) {
-    self->vtable = &NpOnlineIdVtable[2];
-    std::memset(self->data, 0, sizeof(self->data));
-    self->term = 0;
+    NpOnlineIdObject object{};
+    object.vtable = &NpOnlineIdVtable[2];
+    StoreBytes(self, &object, OnlineIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC2Ev(NpOnlineIdObject* self) {
@@ -83,9 +113,9 @@ void APS5_VABI _ZN3sce2np10NpOnlineIdC2Ev(NpOnlineIdObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC1ERKS1_(NpOnlineIdObject* self, const NpOnlineIdObject* other) {
-    self->vtable = &NpOnlineIdVtable[2];
-    std::memcpy(self->data, other->data, sizeof(self->data));
-    self->term = other->term;
+    auto object = LoadObject(other, __func__);
+    object.vtable = &NpOnlineIdVtable[2];
+    StoreBytes(self, &object, OnlineIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERKS1_(NpOnlineIdObject* self, const NpOnlineIdObject* other) {
@@ -93,9 +123,12 @@ void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERKS1_(NpOnlineIdObject* self, const NpOn
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC1ERK13SceNpOnlineId(NpOnlineIdObject* self, const SceNpOnlineId* source) {
-    self->vtable = &NpOnlineIdVtable[2];
-    std::memcpy(self->data, source->data, sizeof(self->data));
-    self->term = source->term;
+    const auto id = LoadObject(source, __func__);
+    NpOnlineIdObject object{};
+    object.vtable = &NpOnlineIdVtable[2];
+    std::memcpy(object.data, id.data, sizeof(object.data));
+    object.term = id.term;
+    StoreBytes(self, &object, OnlineIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERK13SceNpOnlineId(NpOnlineIdObject* self, const SceNpOnlineId* source) {
@@ -103,19 +136,26 @@ void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERK13SceNpOnlineId(NpOnlineIdObject* self
 }
 
 void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
-    std::memset(self->data, 0, sizeof(self->data));
-    self->term = 0;
+    const NpOnlineIdObject object{};
+    StoreBytes(self->data, object.data, OnlineIdFieldBytes - offsetof(NpOnlineIdObject, data), __func__);
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
-    if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    void* const target = GuestFieldAddress(self, offsetof(NpOnlineIdObject, data));
+    if (target == nullptr || text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     std::string copy;
     const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
     if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
     if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
-    std::memset(self->data, 0, sizeof(self->data));
-    self->term = 0;
-    std::memcpy(self->data, copy.data(), copy.size());
+    struct OnlineIdPayload {
+        char data[NP_ONLINE_ID_SIZE];
+        std::uint32_t term;
+    };
+    static_assert(offsetof(NpOnlineIdObject, term) == offsetof(NpOnlineIdObject, data) + sizeof(NpOnlineIdObject::data));
+    static_assert(sizeof(OnlineIdPayload) == sizeof(NpOnlineIdObject::data) + sizeof(NpOnlineIdObject::term));
+    OnlineIdPayload payload{};
+    std::memcpy(payload.data, copy.data(), copy.size());
+    if (!GuestCopyOut_nid_no_patch(target, &payload, sizeof(payload))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -142,32 +182,45 @@ int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(const UserO
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_10NpOnlineIdES3_(const NpOnlineIdObject* lhs, const NpOnlineIdObject* rhs) {
-    return SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return SameOnlineId(left.data, right.data);
 }
 
 bool APS5_VABI _ZN3sce2npeqERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(const SceNpOnlineId* lhs, const NpOnlineIdObject* rhs) {
-    return SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return SameOnlineId(left.data, right.data);
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_10NpOnlineIdERK13SceNpOnlineId(const NpOnlineIdObject* lhs, const SceNpOnlineId* rhs) {
-    return SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return SameOnlineId(left.data, right.data);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_10NpOnlineIdES3_(const NpOnlineIdObject* lhs, const NpOnlineIdObject* rhs) {
-    return !SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return !SameOnlineId(left.data, right.data);
 }
 
 bool APS5_VABI _ZN3sce2npneERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(const SceNpOnlineId* lhs, const NpOnlineIdObject* rhs) {
-    return !SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return !SameOnlineId(left.data, right.data);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_10NpOnlineIdERK13SceNpOnlineId(const NpOnlineIdObject* lhs, const SceNpOnlineId* rhs) {
-    return !SameOnlineId(lhs->data, rhs->data);
+    const auto left = LoadObject(lhs, __func__);
+    const auto right = LoadObject(rhs, __func__);
+    return !SameOnlineId(left.data, right.data);
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC1Ev(NpIdObject* self) {
-    self->vtable = &NpIdVtable[2];
-    std::memset(&self->id, 0, sizeof(self->id));
+    NpIdObject object{};
+    object.vtable = &NpIdVtable[2];
+    StoreBytes(self, &object, NpIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC2Ev(NpIdObject* self) {
@@ -175,8 +228,9 @@ void APS5_VABI _ZN3sce2np4NpIdC2Ev(NpIdObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC1ERKS1_(NpIdObject* self, const NpIdObject* other) {
-    self->vtable = &NpIdVtable[2];
-    std::memcpy(&self->id, &other->id, sizeof(self->id));
+    auto object = LoadObject(other, __func__);
+    object.vtable = &NpIdVtable[2];
+    StoreBytes(self, &object, NpIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC2ERKS1_(NpIdObject* self, const NpIdObject* other) {
@@ -184,8 +238,10 @@ void APS5_VABI _ZN3sce2np4NpIdC2ERKS1_(NpIdObject* self, const NpIdObject* other
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC1ERK7SceNpId(NpIdObject* self, const SceNpId* source) {
-    self->vtable = &NpIdVtable[2];
-    std::memcpy(&self->id, source, sizeof(self->id));
+    NpIdObject object{};
+    object.vtable = &NpIdVtable[2];
+    object.id = LoadObject(source, __func__);
+    StoreBytes(self, &object, NpIdFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4NpIdC2ERK7SceNpId(NpIdObject* self, const SceNpId* source) {
@@ -193,12 +249,15 @@ void APS5_VABI _ZN3sce2np4NpIdC2ERK7SceNpId(NpIdObject* self, const SceNpId* sou
 }
 
 void APS5_VABI _ZN3sce2np4NpId5ClearEv(NpIdObject* self) {
-    std::memset(&self->id, 0, sizeof(self->id));
+    const SceNpId id{};
+    StoreBytes(&self->id, &id, sizeof(id), __func__);
 }
 
 void APS5_VABI _ZN3sce2np4UserC1Ev(UserObject* self) {
-    self->vtable = &UserVtable[2];
-    self->userId = USER_SERVICE_USER_ID_INVALID;
+    UserObject object{};
+    object.vtable = &UserVtable[2];
+    object.userId = USER_SERVICE_USER_ID_INVALID;
+    StoreBytes(self, &object, UserFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4UserC2Ev(UserObject* self) {
@@ -206,8 +265,10 @@ void APS5_VABI _ZN3sce2np4UserC2Ev(UserObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np4UserC1Ei(UserObject* self, int userId) {
-    self->vtable = &UserVtable[2];
-    self->userId = userId;
+    UserObject object{};
+    object.vtable = &UserVtable[2];
+    object.userId = userId;
+    StoreBytes(self, &object, UserFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4UserC2Ei(UserObject* self, int userId) {
@@ -215,8 +276,10 @@ void APS5_VABI _ZN3sce2np4UserC2Ei(UserObject* self, int userId) {
 }
 
 void APS5_VABI _ZN3sce2np4UserC1ERKS1_(UserObject* self, const UserObject* other) {
-    self->vtable = &UserVtable[2];
-    self->userId = other->userId;
+    UserObject object{};
+    object.vtable = &UserVtable[2];
+    object.userId = LoadObject(other, __func__).userId;
+    StoreBytes(self, &object, UserFieldBytes, __func__);
 }
 
 void APS5_VABI _ZN3sce2np4UserC2ERKS1_(UserObject* self, const UserObject* other) {
@@ -224,7 +287,10 @@ void APS5_VABI _ZN3sce2np4UserC2ERKS1_(UserObject* self, const UserObject* other
 }
 
 void APS5_VABI _ZN3sce2np4User5ClearEv(UserObject* self) {
-    self->userId = USER_SERVICE_USER_ID_INVALID;
+    void* const target = GuestFieldAddress(self, offsetof(UserObject, userId));
+    if (target == nullptr) return;
+    const std::int32_t invalidUserId = USER_SERVICE_USER_ID_INVALID;
+    GuestCopyOut_nid_no_patch(target, &invalidUserId, sizeof(invalidUserId));
 }
 
 bool APS5_VABI _ZNK3sce2np4User7IsEmptyEv(const UserObject* self) {
@@ -285,24 +351,25 @@ int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(int userId, UserObject* out) {
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4UserES3_(const UserObject* lhs, const UserObject* rhs) {
-    return lhs->userId == rhs->userId;
+    return LoadObject(lhs, __func__).userId == LoadObject(rhs, __func__).userId;
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4UserERKi(const UserObject* lhs, const int* rhs) {
-    return lhs->userId == *rhs;
+    return LoadObject(lhs, __func__).userId == LoadObject(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4UserES3_(const UserObject* lhs, const UserObject* rhs) {
-    return lhs->userId != rhs->userId;
+    return LoadObject(lhs, __func__).userId != LoadObject(rhs, __func__).userId;
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4UserERKi(const UserObject* lhs, const int* rhs) {
-    return lhs->userId != *rhs;
+    return LoadObject(lhs, __func__).userId != LoadObject(rhs, __func__);
 }
 
 void APS5_VABI _ZN3sce2np12NpTitleTokenC1Ev(NpTitleTokenObject* self) {
-    self->vtable = &NpTitleTokenVtable[2];
-    std::memset(self->data, 0, sizeof(self->data));
+    NpTitleTokenObject object{};
+    object.vtable = &NpTitleTokenVtable[2];
+    StoreBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np12NpTitleTokenC2Ev(NpTitleTokenObject* self) {
@@ -310,8 +377,9 @@ void APS5_VABI _ZN3sce2np12NpTitleTokenC2Ev(NpTitleTokenObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np12NpTitleTokenC1ERKS1_(NpTitleTokenObject* self, const NpTitleTokenObject* other) {
-    self->vtable = &NpTitleTokenVtable[2];
-    std::memcpy(self->data, other->data, sizeof(self->data));
+    auto object = LoadObject(other, __func__);
+    object.vtable = &NpTitleTokenVtable[2];
+    StoreBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np12NpTitleTokenC2ERKS1_(NpTitleTokenObject* self, const NpTitleTokenObject* other) {
@@ -319,16 +387,22 @@ void APS5_VABI _ZN3sce2np12NpTitleTokenC2ERKS1_(NpTitleTokenObject* self, const 
 }
 
 void APS5_VABI _ZN3sce2np12NpTitleToken5ClearEv(NpTitleTokenObject* self) {
-    std::memset(self->data, 0, sizeof(self->data));
+    const NpTitleTokenObject object{};
+    StoreBytes(self->data, object.data, sizeof(object.data), __func__);
 }
 
 const char* APS5_VABI _ZNK3sce2np12NpTitleToken6GetStrEv(const NpTitleTokenObject* self) {
-    return self->data;
+    const void* const target = GuestFieldAddress(self, offsetof(NpTitleTokenObject, data));
+    if (target == nullptr) return nullptr;
+    char probe = 0;
+    if (!GuestCopyIn_nid_no_patch(&probe, target, sizeof(probe))) return nullptr;
+    return static_cast<const char*>(target);
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1Ev(NpAccessTokenObject* self) {
-    self->vtable = &NpAccessTokenVtable[2];
-    std::memset(self->data, 0, sizeof(self->data));
+    NpAccessTokenObject object{};
+    object.vtable = &NpAccessTokenVtable[2];
+    StoreBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC2Ev(NpAccessTokenObject* self) {
@@ -336,8 +410,9 @@ void APS5_VABI _ZN3sce2np13NpAccessTokenC2Ev(NpAccessTokenObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1ERKS1_(NpAccessTokenObject* self, const NpAccessTokenObject* other) {
-    self->vtable = &NpAccessTokenVtable[2];
-    std::memcpy(self->data, other->data, sizeof(self->data));
+    auto object = LoadObject(other, __func__);
+    object.vtable = &NpAccessTokenVtable[2];
+    StoreBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERKS1_(NpAccessTokenObject* self, const NpAccessTokenObject* other) {
@@ -345,8 +420,11 @@ void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERKS1_(NpAccessTokenObject* self, cons
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken(NpAccessTokenObject* self, const SceNpAccessToken* source) {
-    self->vtable = &NpAccessTokenVtable[2];
-    std::memcpy(self->data, source->data, sizeof(self->data));
+    const auto token = LoadObject(source, __func__);
+    NpAccessTokenObject object{};
+    object.vtable = &NpAccessTokenVtable[2];
+    std::memcpy(object.data, token.data, sizeof(object.data));
+    StoreBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERK16SceNpAccessToken(NpAccessTokenObject* self, const SceNpAccessToken* source) {
@@ -354,21 +432,24 @@ void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERK16SceNpAccessToken(NpAccessTokenObj
 }
 
 void APS5_VABI _ZN3sce2np13NpAccessToken5ClearEv(NpAccessTokenObject* self) {
-    std::memset(self->data, 0, sizeof(self->data));
+    const NpAccessTokenObject object{};
+    StoreBytes(self->data, object.data, sizeof(object.data), __func__);
 }
 
 bool APS5_VABI _ZNK3sce2np13NpAccessToken7IsEmptyEv(const NpAccessTokenObject* self) {
-    std::uint8_t empty[sizeof(self->data)] {};
-    return std::memcmp(self->data, empty, sizeof(self->data)) == 0;
+    const auto token = LoadObject(self, __func__);
+    std::uint8_t empty[sizeof(token.data)] {};
+    return std::memcmp(token.data, empty, sizeof(token.data)) == 0;
 }
 
 void* APS5_VABI _ZNK3sce2np8NpTicket13GetTicketDataEv(const NpTicketObject* self) {
-    if (self->data == nullptr) throw std::runtime_error("NpTicket data is empty");
-    return self->data;
+    const auto ticket = LoadObject(self, __func__);
+    if (ticket.data == nullptr) throw std::runtime_error("NpTicket data is empty");
+    return ticket.data;
 }
 
 std::size_t APS5_VABI _ZNK3sce2np8NpTicket13GetTicketSizeEv(const NpTicketObject* self) {
-    return self->size;
+    return LoadObject(self, __func__).size;
 }
 
 }

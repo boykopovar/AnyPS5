@@ -2,19 +2,19 @@ import {actions, asciiTrim, asciiUpper, canonicalChord, canonicalValue, chordBut
 import {keyNames} from './keys.js';
 
 export const settings = [
-    {name: 'LeftStickDeadzone', kind: 'percent'},
-    {name: 'RightStickDeadzone', kind: 'percent'},
-    {name: 'MouseSensitivity', kind: 'sensitivity'},
-    {name: 'MouseVerticalScale', minimum: 0.1, maximum: 10},
-    {name: 'MouseCurve', minimum: 0.2, maximum: 5},
-    {name: 'MouseDeadzoneOffset', minimum: 0, maximum: 0.9},
-    {name: 'MouseMaxSpeed', minimum: 0.1, maximum: 10},
-    {name: 'MouseSmoothingMs', minimum: 0, maximum: 500},
-    {name: 'MouseDecayMs', minimum: 1, maximum: 1000},
-    {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
-    {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
-    {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
-    {name: 'MouseStickTarget', kind: 'stickTarget'},
+    {name: 'LeftStickDeadzone', kind: 'percent', minimum: 0, maximum: 90, builtin: '0'},
+    {name: 'RightStickDeadzone', kind: 'percent', minimum: 0, maximum: 90, builtin: '0'},
+    {name: 'MouseSensitivity', minimum: 0, minimumExclusive: true, maximum: 10, builtin: '1'},
+    {name: 'MouseVerticalScale', minimum: 0.1, maximum: 10, builtin: '1'},
+    {name: 'MouseCurve', minimum: 0.2, maximum: 5, builtin: '1'},
+    {name: 'MouseDeadzoneOffset', minimum: 0, maximum: 0.9, builtin: '0.2'},
+    {name: 'MouseMaxSpeed', minimum: 0.1, maximum: 10, builtin: '1'},
+    {name: 'MouseSmoothingMs', minimum: 0, maximum: 500, builtin: '10'},
+    {name: 'MouseDecayMs', minimum: 1, maximum: 1000, builtin: '30'},
+    {name: 'StickModifierScale', minimum: 0.05, maximum: 1, builtin: '0.5'},
+    {name: 'KeyboardRampMs', minimum: 0, maximum: 2000, builtin: '0'},
+    {name: 'TriggerRampMs', minimum: 0, maximum: 2000, builtin: '0'},
+    {name: 'MouseStickTarget', kind: 'stickTarget', builtin: 'Right'},
     {name: 'ToggleActions', kind: 'padButtons'}
 ];
 
@@ -45,8 +45,8 @@ export function settingValue(setting, value) {
         return '';
     }
     const parsed = numberPattern.test(text) ? Number(text) : undefined;
-    if (setting.kind === 'sensitivity') {
-        if (parsed === undefined || !Number.isFinite(parsed) || !(parsed > 0) || parsed > 10) return `${setting.name} must be a number greater than 0 and at most 10.`;
+    if (setting.minimumExclusive) {
+        if (!Number.isFinite(parsed) || parsed <= setting.minimum || parsed > setting.maximum) return `${setting.name} must be a number greater than ${setting.minimum} and at most ${setting.maximum}.`;
         return '';
     }
     if (setting.kind === 'stickTarget') {
