@@ -423,6 +423,11 @@ void Status() {
 void Refusals() {
     Check(sceKernelOpen("/app0/Data/Small.txt", SCE_KERNEL_O_RDWR, 0) == SCE_KERNEL_ERROR_EROFS);
     Check(sceKernelOpen("/app0/Data/Small.txt", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC, 0) == SCE_KERNEL_ERROR_EROFS);
+    for (const int lock : {SCE_KERNEL_O_SHLOCK, SCE_KERNEL_O_EXLOCK}) {
+        const int flags = SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_TRUNC | lock;
+        Check(sceKernelOpen("/app0/Data/Small.txt", flags, 0) == SCE_KERNEL_ERROR_EROFS);
+        Check(sceKernelOpen("/app0/Data", flags, 0) == SCE_KERNEL_ERROR_EISDIR);
+    }
     Check(sceKernelOpen("/app0/Data/Small.txt", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0666) == SCE_KERNEL_ERROR_EEXIST);
     Check(sceKernelOpen("/app0/Data/Small.txt", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0) == SCE_KERNEL_ERROR_ENOTDIR);
     Check(sceKernelOpen("/app0/Data/Missing.txt", SCE_KERNEL_O_RDONLY, 0) == SCE_KERNEL_ERROR_ENOENT);

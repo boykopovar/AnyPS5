@@ -285,25 +285,25 @@ static int CreationThroughSeparatorError(const std::filesystem::path& native, in
 
 static int OpenNative(const std::filesystem::path& native, int requestedFlags, std::uint16_t mode, bool* lockedAtOpen = nullptr) {
     if ((requestedFlags & SCE_KERNEL_O_DIRECTORY) != 0) requestedFlags &= ~SCE_KERNEL_O_CREAT;
-    int flags = lockedAtOpen ? requestedFlags & ~SCE_KERNEL_O_TRUNC : requestedFlags;
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
         const bool hostDirectory = !error && std::filesystem::is_directory(status);
         if (hostDirectory || AppArchiveOnly_nid_no_patch(native)) {
-            if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
-                (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
+            if ((requestedFlags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY ||
+                (requestedFlags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)) != 0) return SceErrorFromErrno(EISDIR);
             const int fd = File::OpenDirectoryDescriptor(native);
             if (fd < 0) return SceErrorFromErrno(errno);
-            File::RememberDescriptor(fd, flags);
+            File::RememberDescriptor(fd, requestedFlags);
             return fd;
         }
     }
-    if (const auto archived = File::OpenArchivedFile(native, flags)) {
+    if (const auto archived = File::OpenArchivedFile(native, requestedFlags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
-        File::RememberDescriptor(*archived, flags);
+        File::RememberDescriptor(*archived, requestedFlags);
         return *archived;
     }
+    int flags = lockedAtOpen ? requestedFlags & ~SCE_KERNEL_O_TRUNC : requestedFlags;
 #ifdef _WIN32
     std::error_code pathError;
     const auto metadataOpenPath = NativeMetadataPath(native, pathError);
