@@ -12,6 +12,13 @@
 
 namespace NKWebKit {
 
+enum class ReloadMode : std::uint32_t {
+    Normal = 0,
+    FromOrigin,
+    ExpiredOnly,
+    WithoutContentBlockers,
+};
+
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
 public:
     Retained<Object> context;
@@ -98,6 +105,8 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    std::optional<ReloadMode> lastReloadMode;
+    std::uint32_t reloadCount = 0;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:

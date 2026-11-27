@@ -8926,22 +8926,6 @@ int APS5_VABI WKPagePostMessageToInjectedBundle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageReloadExpiredOnly() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageReloadFromOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageReload() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageReloadWithoutContentBlockers() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageRequestStorageAccessConfirmResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9051,10 +9035,6 @@ int APS5_VABI WKPageSetPageUIClient() {
 }
 
 int APS5_VABI WKPageSetScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
 
