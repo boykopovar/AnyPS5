@@ -37,6 +37,13 @@ if(BUILD_TESTING)
         set_tests_properties(windows_mappings_lock windows_mappings_lock_pthread PROPERTIES TIMEOUT 60
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         set_tests_properties(windows_mappings_lock_pthread PROPERTIES ENVIRONMENT "APS5_MAPPINGS_PTHREAD_LOCK=1")
+        add_test_executable(guest_arena_windows_protection_tests ${LIBS_INCLUDE_DIR}/tests/GuestArenaWindowsProtection.cpp)
+        target_include_directories(guest_arena_windows_protection_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_arena_windows_protection_tests PRIVATE libc)
+        configure_windows_unwind(guest_arena_windows_protection_tests)
+        add_test(NAME guest_arena_windows_protection COMMAND guest_arena_windows_protection_tests)
+        set_tests_properties(guest_arena_windows_protection PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
     add_test_executable(guest_memmove_snapshot_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemmoveSnapshot.cpp)
