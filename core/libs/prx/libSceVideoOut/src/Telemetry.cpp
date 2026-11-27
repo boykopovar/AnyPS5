@@ -12,7 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
-#include <unordered_map>
+#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -31,16 +31,6 @@ constexpr char ContractLevel[] = "v1-pad";
 
 constexpr auto DropReportInterval = std::chrono::seconds(10);
 constexpr std::size_t DefaultQueueCapacity = 4096;
-
-struct PinnedGenerations {
-    std::mutex mutex;
-    std::unordered_map<const Writer*, std::uint64_t> generations;
-};
-
-PinnedGenerations& pinnedGenerations() {
-    static auto* state = new PinnedGenerations{};
-    return *state;
-}
 
 std::int64_t steadyNanos() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -147,9 +137,6 @@ Writer::Writer(const std::string& directory, std::size_t capacity, const std::st
 Writer::~Writer() {
     thread.request_stop();
     if (thread.joinable()) thread.join();
-    auto& state = pinnedGenerations();
-    std::lock_guard lock(state.mutex);
-    state.generations.erase(this);
 }
 
 bool Writer::emit(std::string line, bool mustKeep) {
@@ -217,13 +204,17 @@ void Writer::EmitPresent(std::uint64_t frame, double fps) {
 
 void Writer::EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs) {
     if (!flipTiming) return;
-    std::uint64_t selected = 0;
-    {
-        auto& state = pinnedGenerations();
-        std::lock_guard lock(state.mutex);
-        selected = state.generations.emplace(this, generation).first->second;
+    std::uint8_t state = flipGenerationState.load(std::memory_order_acquire);
+    if (state == 0 && flipGenerationState.compare_exchange_strong(state, 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+        flipGeneration = generation;
+        flipGenerationState.store(2, std::memory_order_release);
+        state = 2;
     }
-    if (selected != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
+    while (state == 1) {
+        std::this_thread::yield();
+        state = flipGenerationState.load(std::memory_order_acquire);
+    }
+    if (flipGeneration != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
     char text[128];
     std::snprintf(text, sizeof(text), ",\"n\":%llu,\"generation\":%llu,\"process_us\":%llu}\n",
         static_cast<unsigned long long>(sequence), static_cast<unsigned long long>(generation),

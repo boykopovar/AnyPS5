@@ -229,6 +229,24 @@ void completedFlipCapturePinsGenerationZero() {
     }
 }
 
+void completedFlipCapturePinsGenerationMax() {
+    constexpr auto maxGeneration = std::numeric_limits<std::uint64_t>::max();
+    const auto expectedGenerationField = "\"generation\":" + std::to_string(maxGeneration);
+    for (const bool captureStarted : {false, true}) {
+        const auto lines = captureFlipLines({2, 2}, [captureStarted, maxGeneration](VideoOutTelemetry::Writer& writer) {
+            writer.EmitCompletedFlip(maxGeneration, 1, 100);
+            if (captureStarted) writer.EmitCompletedFlip(maxGeneration, 2, 110);
+            writer.EmitCompletedFlip(0, 2, 200);
+            writer.EmitCompletedFlip(0, 3, 210);
+        });
+        check(lines.size() == (captureStarted ? 2u : 1u), "max generation must stay pinned across subsequent generations");
+        if (captureStarted) {
+            check(lines[1].find(expectedGenerationField) != std::string::npos && field(lines[1], "n") == 2 && field(lines[1], "process_us") == 110,
+                "only the max generation flip must be recorded");
+        }
+    }
+}
+
 void completedFlipCaptureCountsLoss() {
     const auto directory = freshDirectory("flip-loss");
     {
@@ -298,6 +316,7 @@ int main(int argc, char** argv) {
         completedFlipCaptureRecordsWindow();
         completedFlipCapturePinsGeneration();
         completedFlipCapturePinsGenerationZero();
+        completedFlipCapturePinsGenerationMax();
         completedFlipCaptureCountsLoss();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
