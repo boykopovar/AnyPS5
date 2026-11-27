@@ -967,13 +967,19 @@ void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std:
 }
 #endif
 
-void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members) {
+std::uint64_t FileStreamRegistrySnapshot_nid_no_patch() {
+    std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
+    const auto nextId = NextRegistryIdRef_nid_no_patch();
+    return nextId > 0 ? nextId - 1 : std::numeric_limits<std::uint64_t>::max();
+}
+
+void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members, std::uint64_t snapshot) {
     std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
     source->ClearPushback();
     if (!members) return;
     for (FileStream* cur = FileStreamRegistryHead_nid_no_patch(); cur != nullptr; cur = cur->_nextStream_nid_no_patch) {
-        if (cur == source || cur->_retired_nid_no_patch || cur->_gate_nid_no_patch != source->_gate_nid_no_patch
-            || cur->RawHandle_nid_no_patch() != members) continue;
+        if (cur == source || cur->_retired_nid_no_patch || cur->_registryId_nid_no_patch > snapshot
+            || cur->_gate_nid_no_patch != source->_gate_nid_no_patch || cur->RawHandle_nid_no_patch() != members) continue;
         cur->StoreHandleAtomic_nid_no_patch(source->RawHandle_nid_no_patch());
         cur->_guest = source->_guest;
         cur->guestError = source->guestError;
@@ -1013,14 +1019,9 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
 }
 
 void APS5_VABI fcloseall_nid_postfix() {
-    std::uint64_t snapshot;
+    const std::uint64_t snapshot = FileStreamRegistrySnapshot_nid_no_patch();
     std::FILE* const originalStdout = stdout;
     std::FILE* const originalStderr = stderr;
-    {
-        std::lock_guard<std::recursive_mutex> lock(FileStreamRegistryMutex_nid_no_patch());
-        const auto nextId = NextRegistryIdRef_nid_no_patch();
-        snapshot = nextId > 0 ? nextId - 1 : std::numeric_limits<std::uint64_t>::max();
-    }
     std::uint64_t preservationCursor = snapshot;
     for (;;) {
         auto [selected, gate] = PinNextFileStream_nid_no_patch(preservationCursor);

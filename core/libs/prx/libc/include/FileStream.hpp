@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -112,10 +113,12 @@ std::optional<std::uint64_t> ReserveFileStreamReopen_nid_no_patch(FileStream* st
 void PublishFileStreamReopen_nid_no_patch(FileStream* stream, std::uint64_t reservation);
 void CancelFileStreamReopenReservation_nid_no_patch(std::uint64_t reservation);
 bool IsFileStreamInSnapshot_nid_no_patch(FileStream* stream, std::uint64_t snapshot);
+std::uint64_t FileStreamRegistrySnapshot_nid_no_patch();
 std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
     PinNextFileStream_nid_no_patch(std::uint64_t& cursor);
 void DetachFileStreamAliasesForNative_nid_no_patch(FileStream* source, std::FILE* native);
-void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members);
+void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source, std::FILE* members,
+    std::uint64_t snapshot = std::numeric_limits<std::uint64_t>::max());
 #ifdef _WIN32
 void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream* source, std::FILE* native);
 #endif
@@ -156,7 +159,7 @@ class FileStream {
     friend std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
         PinNextFileStream_nid_no_patch(std::uint64_t&);
     friend void DetachFileStreamAliasesForNative_nid_no_patch(FileStream*, std::FILE*);
-    friend void SynchronizeFileStreamAliases_nid_no_patch(FileStream*, std::FILE*);
+    friend void SynchronizeFileStreamAliases_nid_no_patch(FileStream*, std::FILE*, std::uint64_t);
 #ifdef _WIN32
     friend void ReleaseFileStreamAliasPushbackBuffers_nid_no_patch(FileStream*, std::FILE*);
 #endif
@@ -419,8 +422,9 @@ public:
         struct SynchronizeAliases {
             FileStream* source;
             std::FILE* members;
-            ~SynchronizeAliases() { SynchronizeFileStreamAliases_nid_no_patch(source, members); }
-        } synchronizeAliases{this, previous};
+            std::uint64_t snapshot;
+            ~SynchronizeAliases() { SynchronizeFileStreamAliases_nid_no_patch(source, members, snapshot); }
+        } synchronizeAliases{this, previous, FileStreamRegistrySnapshot_nid_no_patch()};
         if (!previous) {
             if (!open || filename.empty()) {
                 errno = ENOENT;

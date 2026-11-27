@@ -2178,6 +2178,23 @@ static void CheckPushbackStateAfterAliasReopen() {
     Require(fclose_nid_postfix(&stream) == 0 && !alias.IsOpen(), "Closing the reopened source must detach its alias");
 }
 
+static void CheckAliasSynchronizationSkipsLaterRegistrations() {
+    FileStream stream(std::tmpfile());
+    FileStream alias(stream.GetHandle());
+    const std::uint64_t snapshot = FileStreamRegistrySnapshot_nid_no_patch();
+    FileStream later(stream.GetHandle());
+    Require(later.GatePtr_nid_no_patch() == stream.GatePtr_nid_no_patch(), "A stream on the same native handle shares its gate");
+    stream.SetError();
+    const auto flags = stream.GuestState().flags;
+    Require(alias.GuestState().flags != flags && later.GuestState().flags != flags, "Only the source carries the error before synchronization");
+    SynchronizeFileStreamAliases_nid_no_patch(&stream, stream.RawHandle_nid_no_patch(), snapshot);
+    Require(alias.GuestState().flags == flags, "Synchronization must update an alias registered before the snapshot");
+    Require(later.GuestState().flags != flags, "Synchronization must leave a stream registered after the snapshot unchanged");
+    later.Detach();
+    alias.Detach();
+    Require(fclose_nid_postfix(&stream) == 0, "Closing the synchronization source");
+}
+
 static void CheckZeroSizedTransfers(const std::string& base) {
     const std::string path = base + ".zero";
     auto* stream = fopen_nid_postfix(path.c_str(), "w+b");
@@ -2358,6 +2375,7 @@ int main(int argc, char** argv) {
     CheckZeroSizedTransfersOnNullStream();
     CheckWideStateAfterAliasReopen(argv[1]);
     CheckPushbackStateAfterAliasReopen();
+    CheckAliasSynchronizationSkipsLaterRegistrations();
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckUnbufferedStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
