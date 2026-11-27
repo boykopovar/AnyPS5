@@ -31,11 +31,6 @@ int APS5_VABI _Skip_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Strcollx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
     if (const char* text = StrerrorText_nid_no_patch(error)) return const_cast<char*>(text);
     char local[22];
@@ -46,11 +41,6 @@ char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
     }
     if (!GuestCopyOut_nid_no_patch(buffer, local, sizeof(local))) throw std::invalid_argument("_Strerror: an unwritable buffer");
     return buffer;
-}
-
-int APS5_VABI _Tgamma_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 void* APS5_VABI _Ttotm_nid_postfix(void* time, std::int64_t seconds, int isdst) {

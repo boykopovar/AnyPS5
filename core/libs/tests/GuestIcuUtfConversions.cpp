@@ -29,21 +29,50 @@ std::u16string Utf16(std::uint32_t value) {
     return {static_cast<char16_t>(0xd800 + value / 1024), static_cast<char16_t>(0xdc00 + value % 1024)};
 }
 
+void Scalar(std::uint32_t value) {
+    const auto bytes = Utf8(value);
+    const auto units = Utf16(value);
+    std::array<char16_t, 4> wide{0x5555, 0x5555, 0x5555, 0x5555};
+    std::array<char, 6> narrow{'X', 'X', 'X', 'X', 'X', 'X'};
+    std::int32_t length = -1, error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), 3, &length, bytes.data(), bytes.size(), &error) == wide.data(), "scalar UTF-8 return");
+    Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0 && wide[3] == 0x5555, "scalar UTF-8 decode");
+    Require(u_strToUTF8_nid_postfix(narrow.data(), 5, &length, units.data(), units.size(), &error) == narrow.data(), "scalar UTF-16 return");
+    Require(error == 0 && length == static_cast<std::int32_t>(bytes.size()) && std::memcmp(narrow.data(), bytes.data(), bytes.size()) == 0 && narrow[bytes.size()] == 0 && narrow[5] == 'X', "scalar UTF-16 encode");
+    wide.fill(0x5555);
+    Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 4, &length, bytes.data(), bytes.size(), &error) == wide.data(), "scalar lenient return");
+    Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0, "scalar lenient decode");
+}
+
+void ScalarRun(const std::string& bytes, const std::u16string& units) {
+    const auto byteCount = static_cast<std::int32_t>(bytes.size());
+    const auto unitCount = static_cast<std::int32_t>(units.size());
+    std::vector<char16_t> wide(units.size() + 2, 0x5555);
+    std::vector<char> narrow(bytes.size() + 2, 'X');
+    std::int32_t length = -1, error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), unitCount + 1, &length, bytes.data(), byteCount, &error) == wide.data(), "scalar run UTF-8 return");
+    Require(error == 0 && length == unitCount && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0 && wide[units.size() + 1] == 0x5555, "scalar run UTF-8 decode");
+    Require(u_strToUTF8_nid_postfix(narrow.data(), byteCount + 1, &length, units.data(), unitCount, &error) == narrow.data(), "scalar run UTF-16 return");
+    Require(error == 0 && length == byteCount && std::memcmp(narrow.data(), bytes.data(), bytes.size()) == 0 && narrow[bytes.size()] == 0 && narrow[bytes.size() + 1] == 'X', "scalar run UTF-16 encode");
+    std::vector<char16_t> lenient(bytes.size() + 2, 0x5555);
+    Require(u_strFromUTF8Lenient_nid_postfix(lenient.data(), byteCount + 1, &length, bytes.data(), byteCount, &error) == lenient.data(), "scalar run lenient return");
+    Require(error == 0 && length == unitCount && std::memcmp(lenient.data(), units.data(), units.size() * 2) == 0 && lenient[units.size()] == 0, "scalar run lenient decode");
+    for (auto index = units.size() + 1; index < lenient.size(); ++index) Require(lenient[index] == 0x5555, "scalar run lenient tail");
+}
+
 void Scalars() {
+    for (const std::uint32_t value : {0x0u, 0x1u, 0x7fu, 0x80u, 0x7ffu, 0x800u, 0xd7ffu, 0xe000u, 0xfffdu, 0xffffu, 0x10000u, 0x10ffffu}) Scalar(value);
+    std::string bytes;
+    std::u16string units;
     for (std::uint32_t value = 0; value <= 0x10ffff; ++value) {
         if (value >= 0xd800 && value <= 0xdfff) continue;
-        const auto bytes = Utf8(value);
-        const auto units = Utf16(value);
-        std::array<char16_t, 4> wide{0x5555, 0x5555, 0x5555, 0x5555};
-        std::array<char, 6> narrow{'X', 'X', 'X', 'X', 'X', 'X'};
-        std::int32_t length = -1, error = 0;
-        Require(u_strFromUTF8_nid_postfix(wide.data(), 3, &length, bytes.data(), bytes.size(), &error) == wide.data(), "scalar UTF-8 return");
-        Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0 && wide[3] == 0x5555, "scalar UTF-8 decode");
-        Require(u_strToUTF8_nid_postfix(narrow.data(), 5, &length, units.data(), units.size(), &error) == narrow.data(), "scalar UTF-16 return");
-        Require(error == 0 && length == static_cast<std::int32_t>(bytes.size()) && std::memcmp(narrow.data(), bytes.data(), bytes.size()) == 0 && narrow[bytes.size()] == 0 && narrow[5] == 'X', "scalar UTF-16 encode");
-        wide.fill(0x5555);
-        Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 4, &length, bytes.data(), bytes.size(), &error) == wide.data(), "scalar lenient return");
-        Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0, "scalar lenient decode");
+        bytes += Utf8(value);
+        units += Utf16(value);
+        if (bytes.size() >= 8190 || value == 0x10ffff) {
+            ScalarRun(bytes, units);
+            bytes.clear();
+            units.clear();
+        }
     }
 }
 
