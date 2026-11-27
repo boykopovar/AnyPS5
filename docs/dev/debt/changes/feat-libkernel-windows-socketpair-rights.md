@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sendmsg and recvmsg]
+
+- [sendmsg and recvmsg](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) pass descriptors in `SCM_RIGHTS` messages on Unix sockets in FreeBSD's guest layout: a 12-byte `cmsghdr`, data at offset 16, `CMSG_SPACE` records. Linux uses the host's `SCM_RIGHTS`, which merges the messages of one `sendmsg` into one record (FreeBSD keeps one each) and gives a received socket default options. On Windows a stream or seqpacket pair end queues guest duplicates beside its data: one in flight holds a descriptor number, and one passed into its own queue is never freed (`unp_gc` frees it); a datagram pair throws, as Windows drops datagrams to a full receiver. Passing a kqueue returns `EOPNOTSUPP`, as `unp_internalize` does; a random device, directory or JIT shared memory descriptor throws, as do zero-byte stream sends with descriptors, other control message types and control data on IP sockets. `MSG_PEEK` with a control buffer reads only the data and leaves the descriptors queued.

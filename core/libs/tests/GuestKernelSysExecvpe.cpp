@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 
 #include <cstdio>
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -30,12 +32,21 @@ void RequireFailure(int result, int error, const char* message) {
     Require(result == -1 && *__error_nid_postfix() == error, message);
 }
 
-void WriteFile(const char* name, const char* content, std::streamsize bytes, std::filesystem::perms mode) {
-    std::ofstream file(name, std::ios::binary);
+std::filesystem::path VerbatimPath(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    Require(!error, "failed to build verbatim path");
+    return verbatim;
+}
+
+void WriteFile(const std::filesystem::path& name, const char* content, std::streamsize bytes, std::filesystem::perms mode) {
+    const auto verbatim = VerbatimPath(name);
+    std::ofstream file(verbatim, std::ios::binary);
     file.write(content, bytes);
     file.close();
+    Require(file.good(), "failed to write test file");
 #ifndef _WIN32
-    std::filesystem::permissions(name, mode);
+    std::filesystem::permissions(verbatim, mode);
 #else
     (void)mode;
 #endif
@@ -83,6 +94,33 @@ int main() {
     RequireFailure(_execvpe_nid_postfix("./bin/plain.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     std::filesystem::create_directory("sbin");
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_absent.bin", argv, nullptr), GuestEnoent, "execvpe with the default search path and a missing file did not fail with ENOENT");
+    RequireFailure(_execvpe_nid_postfix("nul", argv, nullptr), GuestEnoent, "execvpe with a missing reserved device name did not fail with ENOENT");
+    RequireFailure(_execvpe_nid_postfix("nul.bin", argv, nullptr), GuestEnoent, "execvpe with a missing reserved device stem did not fail with ENOENT");
+    std::error_code deepError;
+    std::vector<std::filesystem::path> deepDirectories;
+    std::filesystem::path deepHost = work / "deep";
+    std::string deepGuest = "/deep";
+    std::filesystem::create_directory(VerbatimPath(deepHost), deepError);
+    Require(!deepError, "failed to create deep root directory");
+    deepDirectories.push_back(deepHost);
+    for (int index = 0; deepHost.native().size() < 260; ++index) {
+        const std::string segment = "seg_" + std::to_string(index) + "_0123456789abcdef0123456789abcdef";
+        deepGuest += "/" + segment;
+        deepHost /= segment;
+        std::filesystem::create_directory(VerbatimPath(deepHost), deepError);
+        Require(!deepError, "failed to create deep search directory");
+        deepDirectories.push_back(deepHost);
+    }
+    const auto deepSubdirEntry = deepHost / "kernel_execvpe_dir_entry.bin";
+    std::filesystem::create_directory(VerbatimPath(deepSubdirEntry), deepError);
+    Require(!deepError, "failed to create deep directory candidate");
+    setenv_nid_postfix("PATH", deepGuest.c_str(), 1);
+    RequireFailure(_execvpe_nid_postfix("kernel_execvpe_dir_entry.bin", argv, nullptr), GuestEacces, "execvpe over a directory candidate in a deep PATH entry did not fail with EACCES");
+    unsetenv_nid_postfix("PATH");
+    std::filesystem::remove(VerbatimPath(deepSubdirEntry), deepError);
+    for (auto it = deepDirectories.rbegin(); it != deepDirectories.rend(); ++it) {
+        std::filesystem::remove(VerbatimPath(*it), deepError);
+    }
 #ifndef _WIN32
     WriteFile("bin/kernel_execvpe_refused.bin", "plain", 5, static_cast<std::filesystem::perms>(plainRead));
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_refused.bin", argv, nullptr), GuestEacces, "execvpe without execute bits did not report EACCES after the search");

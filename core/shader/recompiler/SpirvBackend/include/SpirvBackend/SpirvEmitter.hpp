@@ -51,6 +51,7 @@ struct SpirvTargetOptions {
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct SpirvEmitInfo {

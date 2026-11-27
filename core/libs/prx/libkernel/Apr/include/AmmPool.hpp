@@ -6,6 +6,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace AmmPool {
@@ -26,17 +27,23 @@ struct Records {
 };
 
 inline void ReturnPages(Records& records, std::uint64_t offset, std::uint64_t bytes) {
-    auto next = records.pool.lower_bound(offset);
-    if (next != records.pool.end() && next->first == offset + bytes) {
-        bytes += next->second;
-        next = records.pool.erase(next);
-    }
+    if (bytes == 0) return;
+    const auto next = records.pool.lower_bound(offset);
+    const bool hasNext = next != records.pool.end() && next->first == offset + bytes;
     if (next != records.pool.begin()) {
         const auto previous = std::prev(next);
         if (previous->first + previous->second == offset) {
-            previous->second += bytes;
+            previous->second += bytes + (hasNext ? next->second : 0);
+            if (hasNext) records.pool.erase(next);
             return;
         }
+    }
+    if (hasNext) {
+        auto node = records.pool.extract(next);
+        node.key() = offset;
+        node.mapped() += bytes;
+        records.pool.insert(std::move(node));
+        return;
     }
     records.pool.emplace(offset, bytes);
 }
@@ -46,8 +53,14 @@ inline bool TryTakeRun(Records& records, std::uint64_t bytes, std::uint64_t& off
         if (it->second < bytes) continue;
         offset = it->first;
         const auto remaining = it->second - bytes;
-        records.pool.erase(it);
-        if (remaining != 0) records.pool.emplace(offset + bytes, remaining);
+        if (remaining == 0) {
+            records.pool.erase(it);
+        } else {
+            auto node = records.pool.extract(it);
+            node.key() = offset + bytes;
+            node.mapped() = remaining;
+            records.pool.insert(std::move(node));
+        }
         return true;
     }
     return false;
@@ -102,8 +115,15 @@ void MapScattered(Records& records, std::uint64_t address, std::uint64_t bytes, 
         mapRun(address + first * PageBytes, pages[first].physical, (last - first) * PageBytes);
         first = last;
     }
-    if (remainderBytes != 0) records.pool.emplace(remainderOffset, remainderBytes);
-    for (const auto run : runs) records.pool.erase(run);
+    if (remainderBytes != 0) {
+        for (std::size_t index = 0; index + 1 < runs.size(); ++index) records.pool.erase(runs[index]);
+        auto node = records.pool.extract(runs.back());
+        node.key() = remainderOffset;
+        node.mapped() = remainderBytes;
+        records.pool.insert(std::move(node));
+    } else {
+        for (const auto run : runs) records.pool.erase(run);
+    }
     records.pages.merge(stagedPages);
     records.pooledUses.merge(stagedUses);
 }

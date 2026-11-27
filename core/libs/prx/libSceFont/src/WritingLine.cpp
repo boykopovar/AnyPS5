@@ -312,9 +312,7 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
     if (!IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontWritingMetrics localMetrics{};
     if (writingMetrics) {
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localMetrics, writingMetrics, sizeof(localMetrics));
-        errno = savedErrno;
         if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (line->cursor) ResetOrders(*line);

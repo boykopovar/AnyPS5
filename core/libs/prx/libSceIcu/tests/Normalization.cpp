@@ -261,11 +261,16 @@ void TestFiltered() {
     error = Success;
     uset_add_nid_postfix(set, u'e');
     uset_add_nid_postfix(set, 0x0301);
+    const auto* keycaps = u_getBinaryPropertySet_nid_postfix(66, &error);
+    Expect(keycaps && error == Success, "get emoji keycap sequences for the filter");
+    uset_addAll_nid_postfix(set, keycaps);
     auto* filtered = unorm2_openFiltered_nid_postfix(nfc, set, &error);
     Expect(filtered != nullptr && error == Success, "open filtered NFC");
     char16_t result[16]{};
     ExpectInt(unorm2_normalize_nid_postfix(filtered, u"e\u0301a\u0301", -1, result, 16, &error), 3, "filtered output length");
     Expect(std::u16string(result) == u"\u00e9a\u0301", "only matching runs are normalized");
+    ExpectInt(unorm2_normalize_nid_postfix(filtered, u"1\ufe0f\u20e3e\u0301", -1, result, 16, &error), 4, "normalize with string and range items");
+    Expect(std::u16string(result) == u"1\ufe0f\u20e3\u00e9", "keycap and composed letter survive filtered normalization");
     ExpectInt(unorm2_composePair_nid_postfix(filtered, u'e', 0x0301), 0x00e9, "included pair composes");
     ExpectInt(unorm2_composePair_nid_postfix(filtered, u'a', 0x0301), -1, "excluded pair is unchanged");
     unorm2_close_nid_postfix(filtered);

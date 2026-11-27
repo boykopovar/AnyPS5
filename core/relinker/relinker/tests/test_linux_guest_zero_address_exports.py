@@ -97,8 +97,8 @@ def main():
         image = (output.parent / "app0" / "sce_module" / "provider.prx.guest.prx").read_bytes()
         symbols = exports(image)
         jumps = [symbols[name + "#guest"][1] for name in ("global", "weak", "protected", "alias")]
-        assert all(value != 0 and jump_target(image, value) == 0 for value in jumps), symbols
-        assert len(set(jumps)) == len(jumps), symbols
+        assert len(set(jumps)) == 1, symbols
+        assert jumps[0] != 0 and jump_target(image, jumps[0]) == 0, symbols
         assert symbols["internal"] == (0x12, 0) and symbols["hidden"] == (0x12, 0), symbols
         assert symbols["object#guest"] == (0x11, 0), symbols
 

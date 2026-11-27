@@ -1,0 +1,4 @@
+# libSceRegMgr
+
+## change [sceRegMgrGetVersion]
+- [sceRegMgrGetVersion](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - known contract, value measured on firmware 11.60 only: [voldemort](https://github.com/exhaustiblewizard/voldemort/blob/master/src/libs/libRegMgr.cpp) IDA notes record the PS4 export forwarding `__sys_regmgr_call(cmd=0, arg=1, ...)` and returning the registry format version (NID `q+lPgqZniW4`, same NID in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/cf6eede3f6588d779664e01874638f09484324b7/libSceRegMgr.c)); a PS5 (firmware 11.60, payload process; a title process may differ) returned `0x01140001` (18087937) in five calls in each of two runs, with the argument registers 0, with 1 as the first and with 0, 1, 2, 3, and no argument changed it; the value on PS4 and on other firmware is unmeasured, and the export returns `0x01140001` for every call (prototype `int (void)` assumed, other argument values not tried)

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <vector>
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -203,9 +204,17 @@ static void ReceiveAnsweredWithoutTheHost() {
     sender.fill(0xaa);
     std::uint32_t senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, &byte, 0, 0, sender.data(), &senderSize) == 0 && senderSize == 0);
+    KernelIovec empty{&byte, 0};
+    GuestMsghdr zero{nullptr, 0, &empty, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(unconnected, &zero, DontWait) == -1 && *__error_nid_postfix() == 57);
+    Require(recvmsg_nid_postfix(unconnected, &zero, 0) == -1 && *__error_nid_postfix() == 57);
+    Require(recvmsg_nid_postfix(accepted, &zero, DontWait) == 0);
+    Require(recvmsg_nid_postfix(accepted, &zero, 0) == 0);
 
     char received[4];
     Require(send_nid_postfix(client, "x", 1, 0) == 1);
+    Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
+    Require(recvmsg_nid_postfix(accepted, &zero, 0) == 0);
     Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
     Require(shutdown_nid_postfix(accepted, 0) == 0);
     int queued = -1;
@@ -333,7 +342,64 @@ static void BlockedReceiveEndsAtShutRead() {
     }
 }
 
+#ifdef __linux__
+extern "C" void GuestSocketConnectStartForTests_nid_no_patch(void (*hook)(int descriptor));
+
+static std::atomic<std::int64_t> sendWhileConnectStarts{0};
+static std::atomic<int> sendErrorWhileConnectStarts{0};
+static std::atomic<int> connectWhileConnectStarts{0};
+
+static void SendWhileConnectStarts(int descriptor) {
+    GuestSocketConnectStartForTests_nid_no_patch(nullptr);
+    sendWhileConnectStarts = send_nid_postfix(descriptor, "x", 1, 0);
+    sendErrorWhileConnectStarts = *__error_nid_postfix();
+    const std::array<std::uint8_t, 16> broadcast{16, 2, 0x1f, 0x90, 255, 255, 255, 255};
+    connectWhileConnectStarts = connect_nid_postfix(descriptor, broadcast.data(), broadcast.size());
+}
+
+static void SendDuringConnectFailsNotConnected() {
+    constexpr int InProgress = 36;
+    constexpr int NotConnected = 57;
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    std::vector<int> clients;
+    int pending = -1;
+    for (int attempt = 0; attempt < 8 && pending < 0; ++attempt) {
+        const int client = socket_nid_postfix(2, 1 | 0x20000000, 0);
+        Require(client >= 0);
+        clients.push_back(client);
+        sendWhileConnectStarts = 0;
+        connectWhileConnectStarts = 0;
+        GuestSocketConnectStartForTests_nid_no_patch(SendWhileConnectStarts);
+        const int connected = connect_nid_postfix(client, address.data(), address.size());
+        const int connectError = *__error_nid_postfix();
+        GuestSocketConnectStartForTests_nid_no_patch(nullptr);
+        Require(sendWhileConnectStarts == -1 && sendErrorWhileConnectStarts == NotConnected);
+        Require(connectWhileConnectStarts == -1);
+        if (connected == 0) continue;
+        Require(connectError == InProgress);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::array<std::uint8_t, 16> peer{};
+        std::uint32_t peerSize = peer.size();
+        if (getpeername_nid_postfix(client, peer.data(), &peerSize) != 0) pending = client;
+    }
+    Require(pending >= 0);
+    Require(send_nid_postfix(pending, "x", 1, 0) == -1 && *__error_nid_postfix() == NotConnected);
+    Require(write_nid_postfix(pending, "x", 1) == -1 && *__error_nid_postfix() == NotConnected);
+    Require(sendto_nid_postfix(pending, "x", 1, 0, nullptr, 0) == -1 && *__error_nid_postfix() == NotConnected);
+    for (const int client : clients) Require(close_nid_postfix(client) == 0);
+    Require(close_nid_postfix(listener) == 0);
+}
+#endif
+
 int main() {
+#ifdef __linux__
+    SendDuringConnectFailsNotConnected();
+#endif
     StreamReceiveReportsNoSender();
     SocketNameFaults();
     ListenersShareAPortAcrossFamilies();

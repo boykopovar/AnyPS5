@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -152,6 +153,15 @@ void Compatibility() {
     const Printed printed = Print(name, 0, 0);
     Require(printed.result == 1 && printed.text == "C=US, CN=example.com", "flags of zero use the traditional comma form and return 1");
     Require(Print(name, 7, 0).text == "C=US, CN=example.com", "compatibility ignores the indent");
+    ERR_clear_error_nid_postfix();
+    const Printed minIndent = Print(name, INT_MIN, 0);
+    Require(minIndent.result == 1 && minIndent.text == "C=US, CN=example.com", "compatibility handles INT_MIN indent without signed overflow");
+    Require(ERR_get_error_nid_postfix() == 0, "compatibility with INT_MIN indent leaves the error queue empty");
+    Builder singleCn;
+    singleCn.Add(Object(CommonName), "example.com");
+    const Printed singleMin = Print(singleCn.Build(), INT_MIN, 0);
+    Require(singleMin.result == 1 && singleMin.text == "CN=example.com", "compatibility handles INT_MIN indent on a single CN entry");
+    Require(ERR_get_error_nid_postfix() == 0, "compatibility single CN with INT_MIN indent leaves the error queue empty");
     Builder empty;
     Require(Print(empty.Build(), 0, 0).result == 1 && Print(empty.Build(), 0, 0).text.empty(), "an empty name prints nothing and succeeds");
     Require(Print(nullptr, 0, 0).text == "O X509_NAME", "a null name prints what X509_NAME_oneline returns without its first byte");

@@ -16,13 +16,6 @@ constexpr int GeneralizedTime = 24;
 constexpr int UtcTimeLength = 13;
 constexpr int GeneralizedTimeLength = 15;
 
-bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 bool TwoDigits(const unsigned char* data, int& value) {
     if (data[0] < '0' || data[0] > '9' || data[1] < '0' || data[1] > '9') return false;
     value = (data[0] - '0') * 10 + data[1] - '0';
@@ -32,7 +25,7 @@ bool TwoDigits(const unsigned char* data, int& value) {
 std::optional<std::int64_t> CertificateTime(const Asn1String* time, const char* caller) {
     if (!time) return std::nullopt;
     Asn1String guestTime{};
-    if (!CopyGuestInPreservingErrno(&guestTime, time, sizeof(guestTime))) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyIn_nid_no_patch(&guestTime, time, sizeof(guestTime))) NotImplemented_nid_no_patch(caller);
     if (!guestTime.data) return std::nullopt;
     int format;
     if (guestTime.length == UtcTimeLength) {
@@ -44,7 +37,7 @@ std::optional<std::int64_t> CertificateTime(const Asn1String* time, const char* 
     }
     if (guestTime.type != 0 && guestTime.type != format) return std::nullopt;
     std::array<unsigned char, GeneralizedTimeLength> buffer{};
-    if (!CopyGuestInPreservingErrno(buffer.data(), guestTime.data, static_cast<std::size_t>(guestTime.length))) {
+    if (!GuestCopyIn_nid_no_patch(buffer.data(), guestTime.data, static_cast<std::size_t>(guestTime.length))) {
         NotImplemented_nid_no_patch(caller);
     }
     const unsigned char* data = buffer.data();

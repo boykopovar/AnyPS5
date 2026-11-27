@@ -27,17 +27,10 @@ constexpr std::uint8_t FrameSigned = 1;
     throw std::invalid_argument(std::string(function) + ": " + what);
 }
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 template <class T>
 T Load(const T* source, const char* function) {
     T value{};
-    if (!CopyInPreservingErrno(&value, source, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return value;
 }
 
@@ -444,7 +437,7 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
         Unsupported(function, what);
     };
     const auto copyIn = [&](void* destination, const void* source, std::size_t bytes) {
-        if (CopyInPreservingErrno(destination, source, bytes)) return;
+        if (GuestCopyIn_nid_no_patch(destination, source, bytes)) return;
         if (frameAccessed) ExitFrame(stream, function);
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     };

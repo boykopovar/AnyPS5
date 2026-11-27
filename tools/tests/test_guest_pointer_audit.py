@@ -35,6 +35,61 @@ class AccessTests(unittest.TestCase):
             ("sceExampleRead", "attr", ["dereference"]),
         ])
 
+    def test_a_dereference_after_a_closing_parenthesis_is_reported(self):
+        source = (
+            "int APS5_VABI sceExampleGuarded(int* out) { if (out) *out = 7; return 0; }\n"
+            "long long APS5_VABI sceExampleConverted(const int* value) { return (long long)*value; }\n"
+            "void APS5_VABI sceExampleFilled(char* text, int count) { while (count--) *text++ = 0; }\n"
+            "void APS5_VABI sceExampleObject(void* self, bool ready) { if (ready) *static_cast<int*>(self) = 0; }\n"
+            "int APS5_VABI sceExampleNested(const Info* const* table) { Info value;\n"
+            "  return GuestCopyIn_nid_no_patch(&value, (const void*)*table, sizeof(value)) ? 0 : 14; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleGuarded", "out", ["dereference"]),
+            ("sceExampleConverted", "value", ["dereference"]),
+            ("sceExampleFilled", "text", ["dereference"]),
+            ("sceExampleObject", "self", ["dereference"]),
+            ("sceExampleNested", "table", ["dereference"]),
+        ])
+
+    def test_an_asterisk_before_a_member_or_element_is_not_a_dereference_of_the_parameter(self):
+        source = (
+            "long APS5_VABI sceExampleProduct(const Info* info, long count) { return (count) * info->size; }\n"
+            "long APS5_VABI sceExampleScaled(const long* values, long count) { return (count) * values[0]; }\n"
+            "void APS5_VABI sceExampleAssigned(Holder* self) { if (self->state) *self->state = 1; }\n"
+            "int APS5_VABI sceExampleLoaded(const Holder* self) { return *self->state; }\n"
+            "int APS5_VABI sceExampleCast(const void* self) { return *static_cast<const Holder*>(self)->state; }\n"
+            "long APS5_VABI sceExampleElement(const void* table, long count) { return (count) * static_cast<const long*>(table)[0]; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleProduct", "info", ["member"]),
+            ("sceExampleScaled", "values", ["index"]),
+            ("sceExampleAssigned", "self", ["member"]),
+            ("sceExampleLoaded", "self", ["member"]),
+            ("sceExampleCast", "self", ["member"]),
+            ("sceExampleElement", "table", ["index"]),
+        ])
+
+    def test_parameter_patterns_read_an_asterisk_after_a_closing_parenthesis(self):
+        dereference = dict(guest_pointer_audit.parameter_patterns("out")[1])["dereference"]
+        self.assertIsNotNone(dereference.search("if (out) *out = 7;"))
+        self.assertIsNone(dereference.search("return (count) * out->size;"))
+        self.assertIsNone(dereference.search("return (count) * out[0];"))
+
+    def test_array_parameters_are_pointer_parameters(self):
+        source = (
+            "int APS5_VABI sceExampleValues(const int values[]) { return values[0]; }\n"
+            "int APS5_VABI sceExampleTable(const Info* const table[], int count) { return table[0]->size + count; }\n"
+            "int APS5_VABI sceExampleSized(struct waitfd fds[4]) { fds[0].fd = 1; return 0; }\n"
+            "int APS5_VABI sceExampleCopied(int values[]) { int first = 0;\n"
+            "  if (!GuestCopyIn_nid_no_patch(&first, values, sizeof(first))) return 14; return first; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleValues", "values", ["index"]),
+            ("sceExampleTable", "table", ["index"]),
+            ("sceExampleSized", "fds", ["index"]),
+        ])
+
     def test_accesses_through_a_cast_are_reported(self):
         source = (
             "void APS5_VABI sceExampleInit(void* self) { *static_cast<std::uint8_t*>(self) = 0; }\n"
@@ -165,6 +220,41 @@ class AccessTests(unittest.TestCase):
             "int APS5_VABI sceExampleValue(const char* p) { char values[32]{}; return std::snprintf(values, sizeof(values), \"%p\", p); }\n"
         )
         self.assertEqual(findings(source), [("sceExampleSn", "p", ["library call"]), ("sceExampleS", "p", ["library call"])])
+
+    def test_string_search_concatenation_and_conversion_operands_are_checked(self):
+        source = (
+            "int APS5_VABI sceExampleFind(const void* p, std::size_t n) { return std::memchr(p, 0, n) != nullptr; }\n"
+            "int APS5_VABI sceExampleAppend(char* out, const char* in) { std::strcat(out, in); return 0; }\n"
+            "int APS5_VABI sceExampleAppendN(char* out, const char* in) { std::strncat(out, in, 4); return 0; }\n"
+            "int APS5_VABI sceExampleFirst(const char* p) { return std::strchr(p, '=') != nullptr; }\n"
+            "int APS5_VABI sceExampleLast(const char* p) { return std::strrchr(p, '_') != nullptr; }\n"
+            "int APS5_VABI sceExampleSearch(const char* p, const char* q) { return std::strstr(p, q) != nullptr; }\n"
+            "int APS5_VABI sceExampleAny(const char* p, const char* q) { return std::strpbrk(p, q) != nullptr; }\n"
+            "int APS5_VABI sceExampleSpan(const char* p, const char* q) { return static_cast<int>(std::strspn(p, q)); }\n"
+            "int APS5_VABI sceExampleBreak(const char* p, const char* q) { return static_cast<int>(std::strcspn(p, q)); }\n"
+            "long long APS5_VABI sceExampleParse(const char* p, char** end) { return std::strtoll(p, end, 10); }\n"
+            "long long APS5_VABI sceExampleParseLocal(const char* p) { char* end = nullptr; return std::strtoll(p, &end, 10); }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleFind", "p", ["library call"]),
+            ("sceExampleAppend", "out", ["library call"]),
+            ("sceExampleAppend", "in", ["library call"]),
+            ("sceExampleAppendN", "out", ["library call"]),
+            ("sceExampleAppendN", "in", ["library call"]),
+            ("sceExampleFirst", "p", ["library call"]),
+            ("sceExampleLast", "p", ["library call"]),
+            ("sceExampleSearch", "p", ["library call"]),
+            ("sceExampleSearch", "q", ["library call"]),
+            ("sceExampleAny", "p", ["library call"]),
+            ("sceExampleAny", "q", ["library call"]),
+            ("sceExampleSpan", "p", ["library call"]),
+            ("sceExampleSpan", "q", ["library call"]),
+            ("sceExampleBreak", "p", ["library call"]),
+            ("sceExampleBreak", "q", ["library call"]),
+            ("sceExampleParse", "p", ["library call"]),
+            ("sceExampleParse", "end", ["library call"]),
+            ("sceExampleParseLocal", "p", ["library call"]),
+        ])
 
     def test_line_is_the_earliest_access_of_any_kind(self):
         entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
@@ -382,6 +472,40 @@ class SourceCodeBlankingTests(unittest.TestCase):
         code = guest_pointer_audit.source_code(text)
         self.assertEqual(code.count("\n"), text.count("\n"))
         self.assertIn("g();", code)
+
+    def test_digit_separators_and_character_literals_do_not_hide_following_code(self):
+        source = (
+            "int APS5_VABI sceExampleQuotes(int* out) {\n"
+            "  int n = 1'000 + 0x1F'FF;\n"
+            "  int c = x'\\n';\n"
+            '  const char* s = 9.L"/* not a comment";\n'
+            "  *out = n + c;\n"
+            "  return 0;\n"
+            "}\n"
+        )
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual((entry["function"], entry["parameter"], entry["line"], entry["kinds"]),
+                         ("sceExampleQuotes", "out", 5, ["dereference"]))
+
+    def test_multiple_parameters_report_each_parameters_earliest_line(self):
+        source = (
+            "int APS5_VABI sceExampleMulti(Info* first, int* second) {\n"
+            "  *second = 1;\n"
+            "  first->size = 2;\n"
+            "  return 0;\n"
+            "}\n"
+        )
+        entries = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual([(e["parameter"], e["line"], e["kinds"]) for e in entries], [
+            ("first", 3, ["member"]),
+            ("second", 2, ["dereference"]),
+        ])
+
+    def test_line_spliced_vabi_definition_is_still_audited(self):
+        source = "int APS5_\\\nVABI sceExampleSplit(int* out) {\n  *out = 1;\n  return 0;\n}\n"
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual((entry["function"], entry["parameter"], entry["line"], entry["kinds"]),
+                         ("sceExampleSplit", "out", 3, ["dereference"]))
 
 
 if __name__ == "__main__":

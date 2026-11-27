@@ -33,14 +33,15 @@ enum class ProtectionSpaceAuthenticationScheme : std::uint8_t {
 class ProtectionSpace final : public ObjectOf<ObjectType::ProtectionSpace> {
 public:
     ProtectionSpace() = default;
-    ProtectionSpace(Retained<String> host, int port, ProtectionSpaceServerType serverType, Retained<String> realm, ProtectionSpaceAuthenticationScheme authenticationScheme)
-        : host(std::move(host)), realm(std::move(realm)), port(port), serverType(serverType), authenticationScheme(authenticationScheme) {}
+    ProtectionSpace(Retained<String> host, int port, ProtectionSpaceServerType serverType, Retained<String> realm, ProtectionSpaceAuthenticationScheme authenticationScheme, Retained<CertificateInfo> certificateInfo = {})
+        : host(std::move(host)), realm(std::move(realm)), port(port), serverType(serverType), authenticationScheme(authenticationScheme), certificateInfo(std::move(certificateInfo)) {}
 
     Retained<String> host;
     Retained<String> realm;
     int port = 0;
     ProtectionSpaceServerType serverType = ProtectionSpaceServerType::HTTP;
     ProtectionSpaceAuthenticationScheme authenticationScheme = ProtectionSpaceAuthenticationScheme::Default;
+    Retained<CertificateInfo> certificateInfo;
 };
 
 }  // namespace NKWebKit
