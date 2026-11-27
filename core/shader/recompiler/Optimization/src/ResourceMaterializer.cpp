@@ -1902,7 +1902,7 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
         if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i), buffer.typedLoads)) {
-            if (buffer.read) {
+            if (buffer.read && decodeBufferDescriptor(snapshot.buffers.at(i)).Type() != 0u) {
                 snapshot.keepsDestination.resize(plan.info.buffers.size(), 0u);
                 snapshot.keepsDestination[i] = 1u;
             }

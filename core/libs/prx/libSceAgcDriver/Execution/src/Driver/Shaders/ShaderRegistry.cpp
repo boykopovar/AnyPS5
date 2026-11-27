@@ -1376,6 +1376,7 @@ struct SplitTableCallParts {
     std::mutex mutex;
     std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>> handles;
     std::vector<std::pair<bool, bool>> samples;
+    std::vector<char> typedBufferLoads;
 };
 
 namespace {
@@ -1486,6 +1487,7 @@ std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompil
     parts->vectorCount = built.stateVectors;
     parts->handles.resize(parts->programs.size());
     parts->samples.resize(parts->programs.size());
+    parts->typedBufferLoads.resize(parts->programs.size(), 0);
     std::lock_guard lock(mutex);
     if (known.size() >= 256u) known.clear();
     return known.emplace(std::move(key), std::move(parts)).first->second;
@@ -1526,6 +1528,7 @@ ShaderRecompiler::PreparedShaderInvocation SplitTableCallPartInvocation(SplitTab
         std::lock_guard lock(parts.mutex);
         source.context.convertedSamples = parts.samples[part].first;
         source.context.layerRowSamples = parts.samples[part].second;
+        source.context.typedBufferLoads = parts.typedBufferLoads[part] != 0;
         handle = parts.handles[part];
     }
     if (handle == nullptr) {
@@ -1608,6 +1611,11 @@ SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCal
             if (parts.samples[part].second) throw;
             parts.samples[part].second = true;
             parts.handles[part] = nullptr;
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            std::lock_guard lock(parts.mutex);
+            if (parts.typedBufferLoads[part] != 0) throw;
+            parts.typedBufferLoads[part] = 1;
+            parts.handles[part] = nullptr;
         }
     }
 }
@@ -1631,6 +1639,9 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             retry[part] = 1;
             return;
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            retry[part] = 1;
+            return;
         } catch (...) {
             failures[part] = std::current_exception();
             return;
@@ -1640,6 +1651,8 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             sampled[part] = 1;
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            sampled[part] = 1;
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
             sampled[part] = 1;
         } catch (...) {
             failures[part] = std::current_exception();
