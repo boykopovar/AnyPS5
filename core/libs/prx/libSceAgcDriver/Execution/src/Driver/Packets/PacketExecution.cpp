@@ -449,7 +449,9 @@ void Driver::execute(Submission& submission) {
         recent.Record(cursor);
         if (header == RenderingWaitPacketHeader) {
             timed(&WorkerProfile::waitMs, [&] { submission.renderingWaits.at(cursor)->Wait(); });
+            gateOpened() = true;
         } else if (submission.flips.contains(cursor)) {
+            gateOpened() = true;
             if (opcode == 0x49) {
                 if (!wroteOnGpu) {
                     Pm4::Execute(packet, queue);
