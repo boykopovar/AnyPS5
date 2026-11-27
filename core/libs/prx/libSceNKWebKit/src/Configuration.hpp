@@ -101,6 +101,12 @@ public:
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
+    enum class NetworkProxyMode {
+        Default,
+        NoProxy,
+        Custom
+    };
+
     bool resourceLoadStatisticsEnabled = false;
     bool resourceLoadStatisticsDebugMode = false;
     std::vector<std::string> debugPrevalentResources;
@@ -111,6 +117,10 @@ public:
     std::vector<std::string> thirdPartyCNAMEDomains;
     std::vector<std::string> sameSiteStrictCookiesHosts;
     bool firstPartyWebsiteDataRemovalMode = false;
+    NetworkProxyMode networkProxyMode = NetworkProxyMode::Default;
+    std::string customProxyUrl;
+    std::string customProxyIgnoreHosts;
+    std::string networkProcessBundleIdentifier;
 };
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 

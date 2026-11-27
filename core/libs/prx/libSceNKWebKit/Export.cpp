@@ -9124,10 +9124,6 @@ int APS5_VABI WKWebsiteDataStoreClearAppBoundSession() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreCreateNonPersistentDataStore() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9136,23 +9132,11 @@ int APS5_VABI WKWebsiteDataStoreCreateWithConfiguration() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreDisableNetworkProxySettings() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreDoesStatisticsDomainIDExistInDatabase() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKWebsiteDataStoreDumpResourceLoadStatistics() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreEnableCustomNetworkProxySettings() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreEnableDefaultNetworkProxySettings() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9381,10 +9365,6 @@ int APS5_VABI WKWebsiteDataStoreStatisticsResetToConsistentState() {
 }
 
 int APS5_VABI WKWebsiteDataStoreStatisticsUpdateCookieBlocking() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -728,5 +728,12 @@ void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyHostCNAMEDom
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const void* dataStore, const void* cnameURLString, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const void* dataStore, const void* hostNameRef, void* context, void (*callback)(void*));
 void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(const void* dataStore, bool value, void* context, void (*callback)(void*));
+using WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcessFunction = void (APS5_VABI*)(void* context);
+using WKWebsiteDataStoreClearBundleIdentifierInNetworkProcessFunction = void (APS5_VABI*)(void* context);
+void APS5_VABI WKWebsiteDataStoreEnableDefaultNetworkProxySettings(const void* dataStoreRef);
+void APS5_VABI WKWebsiteDataStoreEnableCustomNetworkProxySettings(const void* dataStoreRef, const void* proxyUrlRef, const void* ignoreHostsRef);
+void APS5_VABI WKWebsiteDataStoreDisableNetworkProxySettings(const void* dataStoreRef);
+void APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess(const void* dataStoreRef, const void* bundleIdentifierRef, void* context, WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcessFunction completionHandler);
+void APS5_VABI WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess(const void* dataStoreRef, void* context, WKWebsiteDataStoreClearBundleIdentifierInNetworkProcessFunction completionHandler);
 
 }
