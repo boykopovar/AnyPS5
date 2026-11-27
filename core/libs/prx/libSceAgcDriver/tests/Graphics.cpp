@@ -12629,6 +12629,30 @@ void unorm4_4_4_4TargetTests() {
         Require(!AgcDriver::Graphics::DecodeState(blending).blend.blendEnable, "a 4_4_4_4 replacement equation with an opaque destination must disable blending");
     }
 
+    {
+        auto alphaOnly = queue;
+        alphaOnly.context[0x31c] &= ~((3u << 11u) | 0x10000u);
+        alphaOnly.context[0x8e] = 8u;
+        alphaOnly.context[0x1e0] = 0x60010504u;
+        const auto result = AgcDriver::Graphics::DecodeState(alphaOnly);
+        Require(!result.blend.blendEnable && result.color.partialWriteMask == 0xf000u, "an alpha-only 4_4_4_4 replacement must ignore the RGB blend equation");
+
+        alphaOnly.context[0x8e] = 0xfu;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(alphaOnly); }, "blending into a 4_4_4_4 unorm color target is unsupported");
+    }
+
+    {
+        auto replacement = queue;
+        replacement.context[0x1e0] = 0x40000001u;
+        for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
+            replacement.context[0x31c] = (replacement.context.at(0x31c) & ~((3u << 11u) | 0x10000u)) | (swap << 11u);
+            const auto result = AgcDriver::Graphics::DecodeState(replacement);
+            Require(!result.blend.blendEnable && result.color.componentMapping == mapping, "a reversed 4_4_4_4 replacement must keep its component order and bypass blending");
+        }
+        replacement.context[0x1e0] = 0x61010001u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(replacement); }, "blending into a color target with a reversed component order");
+    }
+
     auto changed = queue;
     for (const auto& [targetMask, wordMask] : {std::pair{1u, 0xf000u}, std::pair{7u, 0xfff0u}, std::pair{8u, 0x000fu}, std::pair{0xau, 0x0f0fu}}) {
         changed.context[0x8e] = targetMask;

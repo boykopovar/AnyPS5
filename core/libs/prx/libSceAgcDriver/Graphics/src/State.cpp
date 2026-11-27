@@ -2087,9 +2087,24 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         state.blendEnable = ((blend >> 30u) & 1u) != 0 && (read(cx, 0x31c + slot * 0xfu) & 0x10000u) == 0;
         Require(!state.blendEnable || !color.uintExport, "blending into an unsigned integer target is unsupported");
+        const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
+        const bool opaqueDestination = state.blendEnable && (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
+        const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
+        if (state.blendEnable && nibbles) {
+            const auto replaces = [opaqueDestination](std::uint32_t equation, auto opaqueFactor) {
+                auto source = blendFactor(equation & 0x1fu);
+                auto destination = blendFactor((equation >> 8u) & 0x1fu);
+                if (opaqueDestination) {
+                    source = opaqueFactor(source);
+                    destination = opaqueFactor(destination);
+                }
+                return source == VK_BLEND_FACTOR_ONE && destination == VK_BLEND_FACTOR_ZERO && blendOp((equation >> 5u) & 7u) == VK_BLEND_OP_ADD;
+            };
+            if (((exportedMask & 7u) == 0u || replaces(blend, colorFactorWithOpaqueDestination)) &&
+                ((exportedMask & 8u) == 0u || replaces(alpha, alphaFactorWithOpaqueDestination))) state.blendEnable = VK_FALSE;
+        }
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
-            const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
             const auto recordBlendConstant = [&](std::uint32_t channel, float value) {
                 Require((requiredBlendMask & (1u << channel)) == 0 || requiredBlendConstants[channel] == value, "color targets require conflicting blend constants after component swap");
                 requiredBlendConstants[channel] = value;
@@ -2112,7 +2127,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
                 state.dstColorBlendFactor = blendFactor((blend >> 8u) & 0x1fu);
                 state.colorBlendOp = blendOp((blend >> 5u) & 7u);
-                const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
                 state.srcAlphaBlendFactor = blendFactor(alpha & 0x1fu);
                 state.dstAlphaBlendFactor = blendFactor((alpha >> 8u) & 0x1fu);
                 state.alphaBlendOp = blendOp((alpha >> 5u) & 7u);
@@ -2154,10 +2168,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
-            const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
-            const bool alphaNeedsBlend = nibbles && (exportedMask & 8u) != 0u &&
-                (state.srcAlphaBlendFactor != VK_BLEND_FACTOR_ONE || state.dstAlphaBlendFactor != VK_BLEND_FACTOR_ZERO || state.alphaBlendOp != VK_BLEND_OP_ADD);
-            if (!alphaNeedsBlend && state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
+            if (!nibbles && state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
             const bool floating = color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10;
             if (floating && state.blendEnable) {
                 color.mergeBlend = PackedBlendControl(blend);
