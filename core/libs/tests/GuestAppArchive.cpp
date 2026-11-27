@@ -607,6 +607,43 @@ void UnwindBounds() {
         LibcUnwind::Lookup overflowFdeQuery{0x1010, &overflowFdeRange[20], 0, 0, 0, overflowFdeRange.data() + overflowFdeRange.size(), overflowFdeRange.data(), overflowFdeRange.data(), &overflowFdeRange[20]};
         Require(!LibcUnwind::DecodeRange(overflowFrame, overflowFdeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing ULEB128 start in FDE");
     }
+
+    {
+        Require(LibcUnwind::EffectiveSectionSize(0, sizeof(validEhFrame)) == sizeof(validEhFrame), "EffectiveSectionSize failed SizeOfRawData fallback");
+        Require(LibcUnwind::EffectiveSectionSize(24, sizeof(validEhFrame)) == 24, "EffectiveSectionSize ignored nonzero VirtualSize");
+        Require(LibcUnwind::EffectiveSectionSize(0, 0) == 0, "EffectiveSectionSize failed zero-size section");
+
+        std::array<LibcUnwind::Byte, 64> sectionImage{};
+        std::memcpy(&sectionImage[16], validEhFrame, sizeof(validEhFrame));
+
+        const LibcUnwind::Byte* frames = nullptr;
+        const LibcUnwind::Byte* framesEnd = nullptr;
+        Require(LibcUnwind::SectionBounds(sectionImage.data(), 16, 0, sizeof(validEhFrame), frames, framesEnd), "SectionBounds rejected VirtualSize == 0 with nonzero SizeOfRawData");
+        Require(frames == &sectionImage[16] && framesEnd == &sectionImage[16] + sizeof(validEhFrame), "SectionBounds computed unexpected fallback bounds");
+
+        LibcUnwind::Frame sectionFrame{};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        LibcUnwind::Lookup fallbackQuery{0x1010, frames + 20, 0, 0, 0, framesEnd, frames, frames, framesEnd};
+        Require(LibcUnwind::DecodeRange(sectionFrame, fallbackQuery, p, augmentation, lsdaEncoding), "DecodeRange rejected .ehfram bounds with VirtualSize == 0 fallback");
+        Require(sectionFrame.start == 0x1000 && sectionFrame.length == 0x40, "DecodeRange decoded unexpected range from fallback .ehfram bounds");
+
+        const LibcUnwind::Byte* truncFrames = nullptr;
+        const LibcUnwind::Byte* truncFramesEnd = nullptr;
+        Require(LibcUnwind::SectionBounds(sectionImage.data(), 16, 24, sizeof(validEhFrame), truncFrames, truncFramesEnd), "SectionBounds rejected nonzero VirtualSize");
+        Require(truncFrames == &sectionImage[16] && truncFramesEnd == &sectionImage[16] + 24, "SectionBounds did not prefer nonzero VirtualSize");
+        LibcUnwind::Lookup truncQuery{0x1010, truncFrames + 20, 0, 0, 0, truncFramesEnd, truncFrames, truncFrames, truncFramesEnd};
+        LibcUnwind::Frame truncFrame{};
+        Require(!LibcUnwind::DecodeRange(truncFrame, truncQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted FDE past nonzero VirtualSize");
+
+        const LibcUnwind::Byte* badBegin = &sectionImage[0];
+        const LibcUnwind::Byte* badEnd = &sectionImage[0];
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), 16, 0, 0, badBegin, badEnd) && !badBegin && !badEnd, "SectionBounds accepted empty section");
+        Require(!LibcUnwind::SectionBounds(nullptr, 16, 0, sizeof(validEhFrame), badBegin, badEnd), "SectionBounds accepted null image base");
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), ~LibcUnwind::Word(0) - 4, 16, 0, badBegin, badEnd), "SectionBounds accepted virtualAddress wraparound");
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), 16, ~LibcUnwind::Word(0) - 4, 0, badBegin, badEnd), "SectionBounds accepted section size wraparound");
+    }
 }
 
 }

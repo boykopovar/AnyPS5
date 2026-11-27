@@ -345,16 +345,25 @@ const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte
     return index;
 }
 
+Word EffectiveSectionSize(const IMAGE_SECTION_HEADER& section) {
+    return EffectiveSectionSize(section.Misc.VirtualSize, section.SizeOfRawData);
+}
+
+bool SectionBounds(const Byte* base, const IMAGE_SECTION_HEADER& section, const Byte*& begin, const Byte*& end) {
+    return SectionBounds(base, section.VirtualAddress, section.Misc.VirtualSize, section.SizeOfRawData, begin, end);
+}
+
 bool SectionBoundsFor(const Byte* base, const IMAGE_NT_HEADERS64* nt, const Byte* ptr, const Byte*& begin, const Byte*& end) {
     if (!base || !nt || !ptr) return false;
     const auto* sections = IMAGE_FIRST_SECTION(nt);
     const Word addr = Word(ptr);
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
-        const Word size = sections[i].Misc.VirtualSize ? sections[i].Misc.VirtualSize : sections[i].SizeOfRawData;
-        const Word start = Word(base) + sections[i].VirtualAddress;
-        if (addr >= start && addr - start < size) {
-            begin = reinterpret_cast<const Byte*>(start);
-            end = reinterpret_cast<const Byte*>(start + size);
+        const Byte* sectionBegin = nullptr;
+        const Byte* sectionEnd = nullptr;
+        if (!SectionBounds(base, sections[i], sectionBegin, sectionEnd)) continue;
+        if (addr >= Word(sectionBegin) && addr < Word(sectionEnd)) {
+            begin = sectionBegin;
+            end = sectionEnd;
             return true;
         }
     }
@@ -411,7 +420,7 @@ bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
     bool dwarf = false;
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         if (std::memcmp(sections[i].Name, ".ehmeta", 8) == 0 || std::memcmp(sections[i].Name, ".ehfram", 8) == 0) dwarf = true;
-        if (std::memcmp(sections[i].Name, ".sehgcc", 8) == 0 && sections[i].Misc.VirtualSize >= 2 * sizeof(PEXCEPTION_ROUTINE))
+        if (std::memcmp(sections[i].Name, ".sehgcc", 8) == 0 && EffectiveSectionSize(sections[i]) >= 2 * sizeof(PEXCEPTION_ROUTINE))
             personalities = reinterpret_cast<const PEXCEPTION_ROUTINE*>(base + sections[i].VirtualAddress);
     }
     if (dwarf && !personalities) return false;
@@ -611,15 +620,17 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     if (!nt) return false;
     const auto* sections = IMAGE_FIRST_SECTION(nt);
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
-        const Word start = Word(base) + sections[i].VirtualAddress;
-        if (query.pc >= start && query.pc - start < sections[i].Misc.VirtualSize) query.segment = start;
+        const Byte* sectionBegin = nullptr;
+        const Byte* sectionEnd = nullptr;
+        if (SectionBounds(base, sections[i], sectionBegin, sectionEnd) && query.pc >= Word(sectionBegin) && query.pc < Word(sectionEnd))
+            query.segment = Word(sectionBegin);
     }
     for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         const auto& section = sections[i];
         if (std::memcmp(section.Name, ".ehmeta", 8) == 0) {
-            const Word metaSize = section.Misc.VirtualSize ? section.Misc.VirtualSize : section.SizeOfRawData;
-            if (metaSize < sizeof(std::uint32_t)) return false;
-            const Byte* metadata = base + section.VirtualAddress;
+            const Byte* metadata = nullptr;
+            const Byte* metadataEnd = nullptr;
+            if (!SectionBounds(base, section, metadata, metadataEnd) || static_cast<std::size_t>(metadataEnd - metadata) < sizeof(std::uint32_t)) return false;
             const Byte* header = base + Read<std::uint32_t>(metadata);
             const Byte* headerBegin = nullptr;
             const Byte* headerEnd = nullptr;
@@ -638,16 +649,19 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
             return DecodeCandidate(context, frame, query);
         }
         if (std::memcmp(section.Name, ".ehfram", 8) != 0) continue;
-        const Byte* frames = base + section.VirtualAddress;
-        const ImageKey key {Word(base), nt->FileHeader.TimeDateStamp, nt->OptionalHeader.CheckSum, nt->OptionalHeader.SizeOfImage, section.VirtualAddress, section.Misc.VirtualSize};
-        const auto& index = IndexFrames(key, frames, frames + section.Misc.VirtualSize);
+        const Byte* frames = nullptr;
+        const Byte* framesEnd = nullptr;
+        if (!SectionBounds(base, section, frames, framesEnd)) continue;
+        const Word framesSize = static_cast<Word>(framesEnd - frames);
+        const ImageKey key {Word(base), nt->FileHeader.TimeDateStamp, nt->OptionalHeader.CheckSum, nt->OptionalHeader.SizeOfImage, section.VirtualAddress, framesSize};
+        const auto& index = IndexFrames(key, frames, framesEnd);
         auto found = std::upper_bound(index.begin(), index.end(), query.pc, [](Word pc, const std::pair<Word, const Byte*>& entry) { return pc < entry.first; });
         if (found == index.begin()) continue;
         query.fde = std::prev(found)->second;
         query.fdeBegin = frames;
-        query.fdeEnd = frames + section.Misc.VirtualSize;
+        query.fdeEnd = framesEnd;
         query.cieBegin = frames;
-        query.cieEnd = frames + section.Misc.VirtualSize;
+        query.cieEnd = framesEnd;
         frame = {};
         if (DecodeCandidate(context, frame, query)) return true;
     }

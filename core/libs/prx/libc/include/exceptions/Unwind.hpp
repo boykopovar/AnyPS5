@@ -203,6 +203,24 @@ inline unsigned TryEncodingSize(Byte encoding) {
 
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; Word segment {}; const Byte* fdeEnd {}; const Byte* fdeBegin {}; const Byte* cieBegin {}; const Byte* cieEnd {}; };
 
+inline Word EffectiveSectionSize(Word virtualSize, Word rawSize) {
+    return virtualSize ? virtualSize : rawSize;
+}
+
+inline bool SectionBounds(const Byte* base, Word virtualAddress, Word virtualSize, Word rawSize, const Byte*& begin, const Byte*& end) {
+    begin = nullptr;
+    end = nullptr;
+    if (!base) return false;
+    const Word baseAddr = Word(base);
+    if (virtualAddress > ~Word(0) - baseAddr) return false;
+    const Word start = baseAddr + virtualAddress;
+    const Word size = EffectiveSectionSize(virtualSize, rawSize);
+    if (!size || size > ~Word(0) - start) return false;
+    begin = reinterpret_cast<const Byte*>(start);
+    end = reinterpret_cast<const Byte*>(start + size);
+    return true;
+}
+
 inline bool SearchEhFrameHeader(const Byte* header, const Byte* headerEnd, Lookup& query) {
     if (!header || !headerEnd || headerEnd < header || static_cast<std::size_t>(headerEnd - header) < 4) return false;
     if (header[0] != 1 || header[3] == 255) return false;
