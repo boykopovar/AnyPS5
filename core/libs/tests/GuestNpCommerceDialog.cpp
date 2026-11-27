@@ -6,8 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -103,23 +101,25 @@ public:
     explicit SyncBarrier(int count) : total(count) {}
 
     void ArriveAndWait() {
-        std::unique_lock<std::mutex> lock(mutex);
-        const std::uint64_t current = generation;
-        if (++arrived == total) {
-            arrived = 0;
-            ++generation;
-            cv.notify_all();
+        const std::uint64_t current = generation.load(std::memory_order_acquire);
+        if (arrived.fetch_add(1, std::memory_order_acq_rel) + 1 == total) {
+            arrived.store(0, std::memory_order_relaxed);
+            generation.fetch_add(1, std::memory_order_release);
         } else {
-            cv.wait(lock, [&]() { return generation != current; });
+            unsigned spins = 0;
+            while (generation.load(std::memory_order_acquire) == current) {
+                if (++spins >= 256u) {
+                    spins = 0;
+                    std::this_thread::yield();
+                }
+            }
         }
     }
 
 private:
     const int total;
-    int arrived = 0;
-    std::uint64_t generation = 0;
-    std::mutex mutex;
-    std::condition_variable cv;
+    std::atomic<int> arrived{0};
+    std::atomic<std::uint64_t> generation{0};
 };
 
 void RequireConcurrentLifecycle() {
@@ -128,8 +128,8 @@ void RequireConcurrentLifecycle() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
     Require(sceNpCommerceDialogGetStatus() == statusNone);
 
-    constexpr int threadCount = 4;
-    constexpr int rounds = 256;
+    const int threadCount = std::max(4, std::min(8, static_cast<int>(std::thread::hardware_concurrency())));
+    constexpr int rounds = 2048;
     SyncBarrier barrier(threadCount + 1);
     std::vector<int> initResults(threadCount, -1);
     std::vector<int> termResults(threadCount, -1);
