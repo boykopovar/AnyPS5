@@ -469,7 +469,7 @@ PanicChildResult RunSemaphorePanicChild(const char* program, const char* mode, c
     Require(length != 0 && length < executable.size(), "the test executable path must be readable");
     executable.resize(length);
     const std::wstring wideMode(mode, mode + std::strlen(mode));
-    const std::wstring command = L"\"" + executable + L"\" " + wideMode + L" \"" + marker.wstring() + L"\"";
+    std::wstring command = L"\"" + executable + L"\" " + wideMode + L" \"" + marker.wstring() + L"\"";
     STARTUPINFOW startup {};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION child {};
