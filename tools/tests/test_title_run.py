@@ -208,6 +208,10 @@ class AnalysisTests(unittest.TestCase):
         text = "[time] scheduler tick raised to 0.5 ms\nFailed to load module: libs/libSceSystemService.prx\nGetLastError: 127 - The specified procedure could not be found.\n"
         self.assertEqual(title_run.first_error(text), "Failed to load module: libs/libSceSystemService.prx")
 
+    def test_first_error_reports_a_needed_module_the_loader_did_not_find(self):
+        line = "work/PPSA00001/PPSA00001: error while loading shared libraries: libPlugin.prx: cannot open shared object file: No such file or directory"
+        self.assertEqual(title_run.first_error(line + "\n"), line)
+
     def test_input_audit_skips_invalid_telemetry_lines(self):
         path = self.root / "aps5-summary.jsonl"
         good = '{"presents":10,"window":{"ms":1000},"gpu":"Good"}'
@@ -1253,6 +1257,95 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(asset.read_bytes(), b"source configuration")
         self.assertEqual((source / "Media/Plugins/plugin.sprx").read_bytes(), elf)
         self.assertEqual((work / "input/Media/Plugins/plugin.sprx").read_bytes(), elf)
+
+    def other_modules_package(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        files = {"eboot.bin": elf, "sce_module/libc.prx": elf, "sce_module/nested/libNested.prx": elf, "modules/libPlugin.prx": elf,
+                 "modules/readme.txt": b"text", "modules/tool.elf": elf, "data/notes.prx": b"text", "data/locked.prx": b"\x4f\x15\x3d\x1d" + bytes(60),
+                 "Media/Plugins/extra.SPRX": elf, "top.prx": elf}
+        for name, data in files.items():
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(data)
+        return source
+
+    def test_modules_outside_the_given_directories_are_staged_for_the_scan(self):
+        source = self.other_modules_package()
+        staged = title_run.stage_other_modules(source, {}, self.root / "input")
+        self.assertEqual({directory: [path.relative_to(self.root / "input").as_posix() for path in paths] for directory, paths in staged.items()},
+                         {".": ["top.prx"], "Media/Plugins": ["Media/Plugins/extra.SPRX"], "modules": ["modules/libPlugin.prx"],
+                          "sce_module/nested": ["sce_module/nested/libNested.prx"]})
+        self.assertEqual(sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*") if path.is_file()),
+                         ["Media/Plugins/extra.SPRX", "modules/libPlugin.prx", "sce_module/nested/libNested.prx", "top.prx"])
+        given = {"relink": ["--module-dir", "modules", "--module-dir", "Media/Plugins"], "executables": ["top.prx"]}
+        self.assertEqual(list(title_run.stage_other_modules(source, given, self.root / "given")), ["sce_module/nested"])
+        self.assertEqual(title_run.stage_other_modules(source, {"relink": ["--skip-sce-module"]}, self.root / "skipped"), {})
+        self.assertFalse((self.root / "skipped").exists())
+
+    def test_needed_module_dirs_follow_the_relinker_report(self):
+        log = ("Converted modules: 1\n"
+               "Needed module not converted: libPlugin.prx at modules/libPlugin.prx; add --module-dir modules\n"
+               "Needed module not converted: libOther.prx at modules/libOther.sprx; add --module-dir modules\n"
+               "Needed module not converted: libWrapped.prx at Media/My Plugins/libWrapped.prx; add --module-dir Media/My Plugins and unwrap the SELF container\n"
+               "Needed module not converted: libTop.prx at libTop.prx; add --module-dir .\n"
+               "Needed module not converted: libGone.prx at gone/libGone.prx; add --module-dir gone\n")
+        staged = {".": [], "Media/My Plugins": [], "modules": [], "unused": []}
+        self.assertEqual(title_run.needed_module_dirs(log, staged), ["modules", "Media/My Plugins", "."])
+        self.assertEqual(title_run.needed_module_dirs("Converted modules: 1\n", staged), [])
+
+    def prepare_with_relinker_report(self, report, entry=None, second=0):
+        source = self.other_modules_package()
+        build = self.root / "build"
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "core/libs/libs/libmimalloc.so").write_bytes(b"allocator runtime")
+        work = self.root / "work"
+        work.mkdir()
+        commands = []
+
+        def convert(command, stdout, **kwargs):
+            commands.append(command)
+            if len(commands) == 1:
+                stdout.write("Converted modules: 1\n" + report)
+                stdout.flush()
+                Path(command[-1]).write_bytes(b"first conversion")
+                return subprocess.CompletedProcess(command, 0)
+            stdout.write("Converted modules: 2\n")
+            stdout.flush()
+            Path(command[-1]).write_bytes(b"second conversion")
+            return subprocess.CompletedProcess(command, second)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert), \
+                unittest.mock.patch.object(title_run, "host_is_intel", return_value=False):
+            executable = title_run.prepare("PPSA00001", {"package": source}, entry or {}, "linux", build, work)
+        staged = sorted(path.relative_to(work / "input").as_posix() for path in (work / "input").rglob("*") if path.is_file())
+        return executable, commands, staged, work
+
+    def test_prepare_converts_a_needed_module_the_relinker_reports(self):
+        report = "Needed module not converted: libPlugin.prx at modules/libPlugin.prx; add --module-dir modules\n"
+        executable, commands, staged, work = self.prepare_with_relinker_report(report, {"relink": ["--registry"]})
+        self.assertEqual(executable.read_bytes(), b"second conversion")
+        self.assertEqual([command[1:-2] for command in commands], [["--registry"], ["--module-dir", "modules", "--registry"]])
+        self.assertEqual(staged, ["eboot.elf", "modules/libPlugin.prx", "sce_module/libc.prx"])
+        self.assertFalse((work / "input/Media").exists())
+        self.assertEqual((work / "relink.log").read_text(encoding="utf-8"),
+                         "Converted modules: 1\n" + report + "Relinking with --module-dir modules\nConverted modules: 2\n")
+        self.assertEqual((work / "app0/modules/libPlugin.prx").read_bytes(), b"\x7fELF" + bytes(60))
+
+    def test_prepare_relinks_once_when_no_other_module_is_needed(self):
+        report = "Needed module not converted: libGone.prx at gone/libGone.prx; add --module-dir gone\n"
+        executable, commands, staged, work = self.prepare_with_relinker_report(report)
+        self.assertEqual(executable.read_bytes(), b"first conversion")
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(staged, ["eboot.elf", "sce_module/libc.prx"])
+        self.assertEqual(sorted(path.name for path in (work / "input").iterdir()), ["eboot.elf", "sce_module"])
+        self.assertEqual(sorted(path.name for path in (work / "input/sce_module").iterdir()), ["libc.prx"])
+
+    def test_prepare_reports_a_failed_second_conversion(self):
+        report = "Needed module not converted: libTop.prx at top.prx; add --module-dir .\n"
+        executable, commands, staged, work = self.prepare_with_relinker_report(report, second=1)
+        self.assertIsNone(executable)
+        self.assertEqual(commands[1][1:-2], ["--module-dir", "."])
+        self.assertEqual(staged, ["eboot.elf", "sce_module/libc.prx", "top.prx"])
 
     def test_files_are_staged_without_touching_the_package(self):
         source = package(self.root / "pkg", "PPSA00001")

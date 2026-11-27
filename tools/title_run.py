@@ -213,7 +213,7 @@ def relink_args(entry, platform, intel_host=False):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
+ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:|error while loading shared libraries:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 MAX_WINDOW_MS = int(sys.float_info.max)
@@ -705,6 +705,8 @@ def module_dirs(entry):
 
 STANDARD_MODULE_DIRS = ("sce_module", "sce_modules", "prx")
 MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
+MODULE_SUFFIXES = (".prx", ".sprx", ".suprx", ".debug_prx")
+NEEDED_MODULE = re.compile(r"^Needed module not converted: .+ at .+; add --module-dir (.+?)(?: and unwrap the SELF container)?$", re.MULTILINE)
 
 
 def is_module(path):
@@ -712,19 +714,29 @@ def is_module(path):
         return file.read(4) in MODULE_MAGICS
 
 
-def stage_inputs(package, entry, source):
-    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+def package_executables(package, entry):
+    return [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
+
+
+def scans_modules(entry):
     options = iter(entry.get("relink", []))
     for option in options:
         if option == "--skip-sce-module":
-            return
+            return False
         if option == "--":
             break
         if option in ("--exclude-sce-module", "--module-dir", "--rpath"):
             next(options, None)
+    return True
+
+
+def stage_inputs(package, entry, source):
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    if not scans_modules(entry):
+        return
     if not (package / "sce_modules").is_dir():
         (source / "sce_module").mkdir(parents=True)
-    executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
+    executables = package_executables(package, entry)
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
         if not (package / directory).is_dir():
             continue
@@ -734,6 +746,46 @@ def stage_inputs(package, entry, source):
             unwrap_or_copy(module, source / directory / module.name)
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)
+
+
+def stage_other_modules(package, entry, source):
+    staged = {}
+    if not scans_modules(entry):
+        return staged
+    given = {os.path.normcase(os.path.normpath(directory)) for directory in (*STANDARD_MODULE_DIRS, *module_dirs(entry))}
+    executables = package_executables(package, entry)
+    for folder, subdirs, names in os.walk(package):
+        subdirs.sort()
+        relative = Path(folder).relative_to(package)
+        if os.path.normcase(os.path.normpath(relative)) in given:
+            continue
+        for name in sorted(names):
+            module = Path(folder) / name
+            target = source / relative / name
+            if not name.lower().endswith(MODULE_SUFFIXES) or target.exists():
+                continue
+            try:
+                if not module.is_file() or not is_module(module) or any(module.samefile(executable) for executable in executables):
+                    continue
+                unwrap_or_copy(module, target)
+            except (unwrap_self.Refused, OSError):
+                unstage([target], source)
+                continue
+            staged.setdefault(relative.as_posix(), []).append(target)
+    return staged
+
+
+def needed_module_dirs(log, staged):
+    return [directory for directory in dict.fromkeys(NEEDED_MODULE.findall(log)) if directory in staged]
+
+
+def unstage(paths, source):
+    for path in paths:
+        path.unlink(missing_ok=True)
+        for folder in path.parents:
+            if folder == source or not folder.is_dir() or any(folder.iterdir()):
+                break
+            folder.rmdir()
 
 
 def path_locations(path):
@@ -966,13 +1018,28 @@ def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
     source = work / "input"
     stage_inputs(package, entry, source)
+    others = stage_other_modules(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
-    with (work / "relink.log").open("w", encoding="utf-8") as log:
+    log_path = work / "relink.log"
+    with log_path.open("w", encoding="utf-8") as log:
         relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel()), str(source / "eboot.elf"), str(executable)],
                                   stdout=log, stderr=subprocess.STDOUT)
     if relinked.returncode != 0:
         return None
+    needed = needed_module_dirs(log_path.read_text(encoding="utf-8", errors="replace"), others) if others else []
+    for directory, paths in others.items():
+        if directory not in needed:
+            unstage(paths, source)
+    if needed:
+        flags = [argument for directory in needed for argument in ("--module-dir", directory)]
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"Relinking with {' '.join(flags)}\n")
+            log.flush()
+            relinked = subprocess.run([str(relinker), *relink_args({**entry, "relink": [*flags, *entry.get("relink", [])]}, platform, host_is_intel()),
+                                       str(source / "eboot.elf"), str(executable)], stdout=log, stderr=subprocess.STDOUT)
+        if relinked.returncode != 0:
+            return None
     link_tree(package, work / "app0", {"sce_module"})
     libs = work / "libs"
     libs.mkdir()
