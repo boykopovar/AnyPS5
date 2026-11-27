@@ -1489,9 +1489,21 @@ void TestHashOfReencoding() {
     RequireHash(crl, Sha512(absent));
     FreeCrlValue(crl);
 
-    const Bytes integerParameter = BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x02, Bytes{0x01})}));
-    RequireNotImplemented([&] { Parse(integerParameter); });
-    DrainErrors();
+    const Bytes integerParameter = BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x02, Bytes{0x00, 0x80})}));
+    crl = Parse(integerParameter);
+    Require(crl != nullptr);
+    RequireHash(crl, Sha512(integerParameter));
+    FreeCrlValue(crl);
+
+    crl = Parse(BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x03, Bytes{0x04, 0x5f})})));
+    Require(crl != nullptr);
+    RequireHash(crl, Sha512(BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x03, Bytes{0x04, 0x50})}))));
+    FreeCrlValue(crl);
+
+    crl = Parse(BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x03, Bytes{0x03})})));
+    Require(crl != nullptr);
+    RequireHash(crl, Sha512(BuildCrl(TbsHead(), Sequence({Oid({0x2b, 0x65, 0x70}), Tlv(0x03, Bytes{0x00})}))));
+    FreeCrlValue(crl);
     Require(allocations.empty());
 }
 

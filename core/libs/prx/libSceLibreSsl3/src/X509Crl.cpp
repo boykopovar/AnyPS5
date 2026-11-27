@@ -1499,10 +1499,19 @@ std::vector<unsigned char> AlgorithmEncoding(std::span<const unsigned char> enco
     if (!body.empty()) {
         Tlv parameter;
         ReparseTlv(body, parameter);
-        if (parameter.tag != NullTag && parameter.tag != OctetStringTag && parameter.tag != ObjectTag && !IsStringTag(parameter.tag))
-            NotImplemented_nid_no_patch("d2i_X509_CRL: hashing a signature algorithm with an INTEGER, BOOLEAN or BIT STRING parameter");
-        AppendHeader(content, parameter.tag, parameter.content.size());
-        content.insert(content.end(), parameter.content.begin(), parameter.content.end());
+        if (parameter.tag == BitStringTag) {
+            const unsigned char unusedBits = parameter.content.size() > 1 ? parameter.content.front() : 0;
+            AppendHeader(content, BitStringTag, parameter.content.size());
+            content.push_back(unusedBits);
+            content.insert(content.end(), parameter.content.begin() + 1, parameter.content.end());
+            if (parameter.content.size() > 1) content.back() &= static_cast<unsigned char>(0xff << unusedBits);
+        } else {
+            if (parameter.tag != NullTag && parameter.tag != IntegerTag && parameter.tag != OctetStringTag &&
+                parameter.tag != ObjectTag && !IsStringTag(parameter.tag))
+                NotImplemented_nid_no_patch("d2i_X509_CRL: hashing a signature algorithm with a BOOLEAN parameter");
+            AppendHeader(content, parameter.tag, parameter.content.size());
+            content.insert(content.end(), parameter.content.begin(), parameter.content.end());
+        }
     }
     std::vector<unsigned char> output;
     AppendHeader(output, SequenceTag, content.size());
