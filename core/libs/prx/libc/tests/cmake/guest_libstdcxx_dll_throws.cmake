@@ -1,0 +1,12 @@
+add_test_executable(guest_libstdcxx_dll_throws_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibstdcxxDllThrows.cpp)
+target_include_directories(guest_libstdcxx_dll_throws_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libstdcxx_dll_throws_tests PRIVATE libc)
+configure_windows_unwind(guest_libstdcxx_dll_throws_tests)
+foreach(mode regex base rethrow all rethrown filesystem badalloc)
+    add_test(NAME guest_libstdcxx_dll_throws_${mode} COMMAND guest_libstdcxx_dll_throws_tests ${mode})
+    set_tests_properties(guest_libstdcxx_dll_throws_${mode} PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libstdcxx_dll_throws_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endforeach()

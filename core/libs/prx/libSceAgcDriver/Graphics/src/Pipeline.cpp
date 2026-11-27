@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -25,6 +27,7 @@
 #include <deque>
 #include <list>
 #include <mutex>
+#include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
@@ -32,6 +35,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -165,6 +169,81 @@ bool FragmentInterlock(std::span<const CompiledShader> shaders) {
     });
 }
 
+namespace {
+
+struct ProvokingDecorations {
+    std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
+    std::vector<std::uint64_t> perVertexValues;
+    std::vector<std::uint64_t> perPrimitiveValues;
+};
+
+bool ReadProvokingDecorations(const ShaderRecompiler::RecompileResult& program, ProvokingDecorations& decorations) {
+    const auto words = program.spirv.Words();
+    if (words.size() < 5) return false;
+    constexpr std::uint32_t NoMember = 0xffffffffu;
+    const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if (count == 0 || count > words.size() - cursor) return false;
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
+        if (decoration != 0 && count > decoration) {
+            const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
+            if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) decorations.perVertexValues.push_back(target);
+            if (words[cursor + decoration] == spv::DecorationPerPrimitiveEXT) decorations.perPrimitiveValues.push_back(target);
+            if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) decorations.builtIns[target] = words[cursor + decoration + 1];
+        }
+        cursor += count;
+    }
+    return true;
+}
+
+bool ReadsProvokingVertex(const ShaderRecompiler::RecompileResult& program) {
+    if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
+        return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
+    })) return true;
+    ProvokingDecorations decorations;
+    if (!ReadProvokingDecorations(program, decorations)) return true;
+    const auto& builtIns = decorations.builtIns;
+    return std::any_of(decorations.perVertexValues.begin(), decorations.perVertexValues.end(), [&](std::uint64_t target) {
+        const auto builtIn = builtIns.find(target);
+        if (builtIn == builtIns.end()) return true;
+        switch (builtIn->second) {
+        case spv::BuiltInFragCoord:
+        case spv::BuiltInPointCoord:
+        case spv::BuiltInFrontFacing:
+        case spv::BuiltInSampleId:
+        case spv::BuiltInSamplePosition:
+        case spv::BuiltInSampleMask:
+        case spv::BuiltInHelperInvocation:
+        case spv::BuiltInSubgroupSize:
+        case spv::BuiltInSubgroupLocalInvocationId:
+            return false;
+        default:
+            return true;
+        }
+    });
+}
+
+bool WritesProvokingVertexBuiltIn(const ShaderRecompiler::RecompileResult& program) {
+    ProvokingDecorations decorations;
+    if (!ReadProvokingDecorations(program, decorations)) return true;
+    return std::any_of(decorations.builtIns.begin(), decorations.builtIns.end(), [&](const auto& builtIn) {
+        return (builtIn.second == spv::BuiltInLayer || builtIn.second == spv::BuiltInViewportIndex) &&
+               std::find(decorations.perPrimitiveValues.begin(), decorations.perPrimitiveValues.end(), builtIn.first) == decorations.perPrimitiveValues.end();
+    });
+}
+
+}
+
+bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed) {
+    if (provokingVertexLast || !tessellation || state.provokingVertexMode != VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT) return false;
+    if (state.rectList || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return false;
+    if (shaders.size() != 2u || shaders[0].stage != ShaderRecompiler::ShaderStage::Vertex || shaders[1].stage != ShaderRecompiler::ShaderStage::Fragment || shaders[0].program == nullptr || shaders[1].program == nullptr) return false;
+    if (!ReadsProvokingVertex(*shaders[1].program) || WritesProvokingVertexBuiltIn(*shaders[0].program)) return false;
+    return (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !primitiveListRestart)) || (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!state.primitiveRestart || !indexed));
+}
+
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
     Require(state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT || state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT, "invalid provoking vertex mode");
     if (state.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT) {
@@ -185,68 +264,9 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
         }
         return;
     }
-    struct Decorations {
-        std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
-        std::vector<std::uint64_t> perVertexValues;
-        std::vector<std::uint64_t> perPrimitiveValues;
-    };
-    const auto readDecorations = [](const ShaderRecompiler::RecompileResult& program, Decorations& decorations) {
-        const auto words = program.spirv.Words();
-        if (words.size() < 5) return false;
-        constexpr std::uint32_t NoMember = 0xffffffffu;
-        const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
-        for (std::size_t cursor = 5; cursor < words.size();) {
-            const auto count = words[cursor] >> 16u;
-            if (count == 0 || count > words.size() - cursor) return false;
-            const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-            const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
-            if (decoration != 0 && count > decoration) {
-                const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
-                if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) decorations.perVertexValues.push_back(target);
-                if (words[cursor + decoration] == spv::DecorationPerPrimitiveEXT) decorations.perPrimitiveValues.push_back(target);
-                if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) decorations.builtIns[target] = words[cursor + decoration + 1];
-            }
-            cursor += count;
-        }
-        return true;
-    };
-    const auto readsProvokingVertex = [&](const ShaderRecompiler::RecompileResult& program) {
-        if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
-            return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
-        })) return true;
-        Decorations decorations;
-        if (!readDecorations(program, decorations)) return true;
-        const auto& builtIns = decorations.builtIns;
-        return std::any_of(decorations.perVertexValues.begin(), decorations.perVertexValues.end(), [&](std::uint64_t target) {
-            const auto builtIn = builtIns.find(target);
-            if (builtIn == builtIns.end()) return true;
-            switch (builtIn->second) {
-            case spv::BuiltInFragCoord:
-            case spv::BuiltInPointCoord:
-            case spv::BuiltInFrontFacing:
-            case spv::BuiltInSampleId:
-            case spv::BuiltInSamplePosition:
-            case spv::BuiltInSampleMask:
-            case spv::BuiltInHelperInvocation:
-            case spv::BuiltInSubgroupSize:
-            case spv::BuiltInSubgroupLocalInvocationId:
-                return false;
-            default:
-                return true;
-            }
-        });
-    };
-    const auto writesProvokingVertexBuiltIn = [&](const ShaderRecompiler::RecompileResult& program) {
-        Decorations decorations;
-        if (!readDecorations(program, decorations)) return true;
-        return std::any_of(decorations.builtIns.begin(), decorations.builtIns.end(), [&](const auto& builtIn) {
-            return (builtIn.second == spv::BuiltInLayer || builtIn.second == spv::BuiltInViewportIndex) &&
-                   std::find(decorations.perPrimitiveValues.begin(), decorations.perPrimitiveValues.end(), builtIn.first) == decorations.perPrimitiveValues.end();
-        });
-    };
     const bool observed = std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
-        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) return shader.program == nullptr || readsProvokingVertex(*shader.program);
-        return shader.program != nullptr && writesProvokingVertexBuiltIn(*shader.program);
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) return shader.program == nullptr || ReadsProvokingVertex(*shader.program);
+        return shader.program != nullptr && WritesProvokingVertexBuiltIn(*shader.program);
     });
     if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
@@ -333,7 +353,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
 
 void ValidateSampleMask(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
     if (!PartialSampleMask(state)) return;
-    const bool uniform = UniformSampleMask(state) && !SampleMaskFollowsOrder(state, HostSampleLocationsFor(context, state).order);
+    const bool uniform = UniformSampleMask(state) && !SampleMaskInShader(state, HostSampleLocationsFor(context, state).order, context.staticSampleMaskStopsShading);
     for (const auto& shader : shaders) {
         if (shader.stage != ShaderRecompiler::ShaderStage::Fragment) continue;
         Require(shader.program != nullptr, "missing compiled fragment shader");
@@ -356,6 +376,8 @@ VkShaderStageFlags pushStagesOf(const Context& context) {
 }
 
 constexpr std::size_t MaxColorWriteMasks = 8;
+
+constexpr VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT PixelWave32Subgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
 
 using ColorWriteMasks = std::array<VkColorComponentFlags, MaxColorWriteMasks>;
 
@@ -381,9 +403,13 @@ ColorWriteMasks channelWriteMasks(const State& state, std::span<const VkPipeline
     return masks;
 }
 
-VkPipelineColorBlendAttachmentState keyedBlend(const Context& context, VkPipelineColorBlendAttachmentState blend) {
-    if (context.dynamicColorWriteMask) blend.colorWriteMask = 0;
+VkPipelineColorBlendAttachmentState keyedBlend(bool dynamicColorWriteMask, VkPipelineColorBlendAttachmentState blend) {
+    if (dynamicColorWriteMask) blend.colorWriteMask = 0;
     return blend;
+}
+
+bool AvoidsInterlockEpilog(const Context& context, std::span<const CompiledShader> shaders) {
+    return !context.orderedInterlockEpilogs && FragmentInterlock(shaders);
 }
 
 template<typename TValue>
@@ -393,9 +419,308 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
     key.insert(key.end(), bytes.begin(), bytes.end());
 }
 
-bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
+bool FallbackDepth16(const Context& context, const State& state) {
+    return state.depth.has_value() && state.depth->format == VK_FORMAT_D16_UNORM_S8_UINT && HostDepthFormat(context, state.depth->format) != VK_FORMAT_D16_UNORM_S8_UINT;
+}
+
+bool QuantizesDepth16(const Context& context, const State& state) {
+    return FallbackDepth16(context, state) && (state.depthTest || state.depthWrite);
+}
+
+std::uint32_t QuantizeDepth16Step(float value) {
+    if (!(value > 0.0f)) return 0u;
+    if (value >= 1.0f) return 65535u;
+    return static_cast<std::uint32_t>(std::rint(value * 65535.0f));
+}
+
+std::pair<float, float> HostDepthBounds(const Context& context, const State& state) {
+    if (!FallbackDepth16(context, state)) return {state.minDepthBounds, state.maxDepthBounds};
+    const std::uint32_t minStep = QuantizeDepth16Step(state.minDepthBounds);
+    const std::uint32_t maxStep = QuantizeDepth16Step(state.maxDepthBounds);
+    if (minStep > maxStep) {
+        return {static_cast<float>(minStep) * (1.0f / 65535.0f), static_cast<float>(maxStep) * (1.0f / 65535.0f)};
+    }
+    const float minBound = minStep == 0u ? 0.0f : (static_cast<float>(minStep) - 0.25f) * (1.0f / 65535.0f);
+    const float maxBound = maxStep == 65535u ? 1.0f : (static_cast<float>(maxStep) + 0.25f) * (1.0f / 65535.0f);
+    return {minBound, maxBound};
+}
+
+std::vector<std::uint32_t> QuantizeFragmentDepth16(const CompiledShader& shader) {
+    const auto words = shader.program->spirv.Words();
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber && words[3] != 0, "invalid fragment SPIR-V header");
+    std::uint32_t glslStd450Id = 0;
+    std::uint32_t entryPointId = 0;
+    bool earlyFragmentTests = false;
+    bool depthReplacing = false;
+    std::uint32_t fragDepthVar = 0;
+    std::uint32_t fragCoordVar = 0;
+    std::uint32_t f32Type = 0;
+    std::uint32_t u32Type = 0;
+    std::uint32_t v4f32Type = 0;
+    std::uint32_t ptrInputV4F32 = 0;
+    std::uint32_t ptrInputF32 = 0;
+    std::uint32_t ptrOutputF32 = 0;
+    std::uint32_t constU32_2 = 0;
+    std::uint32_t const0 = 0;
+    std::uint32_t const1 = 0;
+    std::uint32_t const65535 = 0;
+    std::uint32_t constInv65535 = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated fragment SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (op == spv::OpFunction) break;
+        if (op == spv::OpExtInstImport && count == 6 && words[cursor + 2] == 0x4c534c47u && words[cursor + 3] == 0x6474732eu && words[cursor + 4] == 0x3035342eu && words[cursor + 5] == 0u) glslStd450Id = words[cursor + 1];
+        else if (op == spv::OpEntryPoint && count >= 3 && words[cursor + 1] == spv::ExecutionModelFragment) entryPointId = words[cursor + 2];
+        else if (op == spv::OpExecutionMode && count >= 3) {
+            if (words[cursor + 2] == spv::ExecutionModeEarlyFragmentTests) earlyFragmentTests = true;
+            else if (words[cursor + 2] == spv::ExecutionModeDepthReplacing) depthReplacing = true;
+        } else if (op == spv::OpDecorate && count == 4 && words[cursor + 2] == spv::DecorationBuiltIn) {
+            if (words[cursor + 3] == spv::BuiltInFragDepth) fragDepthVar = words[cursor + 1];
+            else if (words[cursor + 3] == spv::BuiltInFragCoord) fragCoordVar = words[cursor + 1];
+        } else if (op == spv::OpTypeFloat && count == 3 && words[cursor + 2] == 32u) f32Type = words[cursor + 1];
+        else if (op == spv::OpTypeInt && count == 4 && words[cursor + 2] == 32u && words[cursor + 3] == 0u) u32Type = words[cursor + 1];
+        else if (op == spv::OpTypeVector && count == 4 && f32Type != 0 && words[cursor + 2] == f32Type && words[cursor + 3] == 4u) v4f32Type = words[cursor + 1];
+        else if (op == spv::OpTypePointer && count == 4) {
+            if (words[cursor + 2] == spv::StorageClassInput && v4f32Type != 0 && words[cursor + 3] == v4f32Type) ptrInputV4F32 = words[cursor + 1];
+            else if (words[cursor + 2] == spv::StorageClassInput && f32Type != 0 && words[cursor + 3] == f32Type) ptrInputF32 = words[cursor + 1];
+            else if (words[cursor + 2] == spv::StorageClassOutput && f32Type != 0 && words[cursor + 3] == f32Type) ptrOutputF32 = words[cursor + 1];
+        } else if (op == spv::OpConstant && count == 4) {
+            if (u32Type != 0 && words[cursor + 1] == u32Type && words[cursor + 3] == 2u) constU32_2 = words[cursor + 2];
+            else if (f32Type != 0 && words[cursor + 1] == f32Type) {
+                if (words[cursor + 3] == 0x00000000u) const0 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x3f800000u) const1 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x477fff00u) const65535 = words[cursor + 2];
+                else if (words[cursor + 3] == 0x37800080u) constInv65535 = words[cursor + 2];
+            }
+        }
+        cursor += count;
+    }
+    Require(entryPointId != 0, "fragment SPIR-V has no entry point");
+    Require(!earlyFragmentTests || !ShadersWriteMemory(std::span(&shader, 1)), "early fragment tests with memory writes on a 16-bit depth target with stencil that the device stores in another depth format are not implemented");
+    std::uint32_t nextId = words[3];
+    const bool needGlslStd450 = glslStd450Id == 0;
+    if (needGlslStd450) glslStd450Id = nextId++;
+    const bool needF32Type = f32Type == 0;
+    if (needF32Type) f32Type = nextId++;
+    const bool needFragCoord = fragDepthVar == 0;
+    bool needU32Type = false;
+    bool needV4F32Type = false;
+    bool needPtrInputV4F32 = false;
+    bool needPtrInputF32 = false;
+    bool needPtrOutputF32 = false;
+    bool needConstU32_2 = false;
+    bool createFragCoordVar = false;
+    bool createFragDepthVar = false;
+    if (needFragCoord) {
+        if (u32Type == 0) {
+            u32Type = nextId++;
+            needU32Type = true;
+        }
+        if (v4f32Type == 0) {
+            v4f32Type = nextId++;
+            needV4F32Type = true;
+        }
+        if (ptrInputV4F32 == 0) {
+            ptrInputV4F32 = nextId++;
+            needPtrInputV4F32 = true;
+        }
+        if (ptrInputF32 == 0) {
+            ptrInputF32 = nextId++;
+            needPtrInputF32 = true;
+        }
+        if (ptrOutputF32 == 0) {
+            ptrOutputF32 = nextId++;
+            needPtrOutputF32 = true;
+        }
+        if (constU32_2 == 0) {
+            constU32_2 = nextId++;
+            needConstU32_2 = true;
+        }
+        if (fragCoordVar == 0) {
+            fragCoordVar = nextId++;
+            createFragCoordVar = true;
+        }
+        fragDepthVar = nextId++;
+        createFragDepthVar = true;
+    }
+    const bool needConst0 = const0 == 0;
+    if (needConst0) const0 = nextId++;
+    const bool needConst1 = const1 == 0;
+    if (needConst1) const1 = nextId++;
+    const bool needConst65535 = const65535 == 0;
+    if (needConst65535) const65535 = nextId++;
+    const bool needConstInv65535 = constInv65535 == 0;
+    if (needConstInv65535) constInv65535 = nextId++;
+    const auto isPostAnnotation = [](spv::Op op) {
+        switch (op) {
+        case spv::OpCapability:
+        case spv::OpExtension:
+        case spv::OpExtInstImport:
+        case spv::OpMemoryModel:
+        case spv::OpEntryPoint:
+        case spv::OpExecutionMode:
+        case spv::OpExecutionModeId:
+        case spv::OpString:
+        case spv::OpSourceExtension:
+        case spv::OpSource:
+        case spv::OpSourceContinued:
+        case spv::OpName:
+        case spv::OpMemberName:
+        case spv::OpModuleProcessed:
+        case spv::OpDecorate:
+        case spv::OpMemberDecorate:
+        case spv::OpDecorationGroup:
+        case spv::OpGroupDecorate:
+        case spv::OpGroupMemberDecorate:
+        case spv::OpDecorateId:
+        case spv::OpDecorateString:
+            return false;
+        default:
+            return true;
+        }
+    };
+    std::vector<std::uint32_t> out;
+    out.reserve(words.size() + 64);
+    out.insert(out.end(), words.begin(), words.begin() + 5);
+    std::size_t copied = 5;
+    const auto flushTo = [&](std::size_t limit) {
+        if (copied < limit) {
+            out.insert(out.end(), words.begin() + static_cast<std::ptrdiff_t>(copied), words.begin() + static_cast<std::ptrdiff_t>(limit));
+            copied = limit;
+        }
+    };
+    const auto emitQuantizedStore = [&](std::uint32_t valueId, std::span<const std::uint32_t> storeTail) {
+        const auto clamped = nextId++;
+        const auto scaled = nextId++;
+        const auto rounded = nextId++;
+        const auto quantized = nextId++;
+        out.insert(out.end(), {
+            (8u << 16u) | static_cast<std::uint32_t>(spv::OpExtInst), f32Type, clamped, glslStd450Id, static_cast<std::uint32_t>(GLSLstd450FClamp), valueId, const0, const1,
+            (5u << 16u) | static_cast<std::uint32_t>(spv::OpFMul), f32Type, scaled, clamped, const65535,
+            (6u << 16u) | static_cast<std::uint32_t>(spv::OpExtInst), f32Type, rounded, glslStd450Id, static_cast<std::uint32_t>(GLSLstd450RoundEven), scaled,
+            (5u << 16u) | static_cast<std::uint32_t>(spv::OpFMul), f32Type, quantized, rounded, constInv65535,
+            ((3u + static_cast<std::uint32_t>(storeTail.size())) << 16u) | static_cast<std::uint32_t>(spv::OpStore), fragDepthVar, quantized
+        });
+        out.insert(out.end(), storeTail.begin(), storeTail.end());
+    };
+    bool emittedDecorations = !createFragCoordVar && !createFragDepthVar;
+    bool emittedDeclarations = false;
+    bool inEntryFunction = false;
+    bool waitingForEntryInsert = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated fragment SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (op == spv::OpMemoryModel && needGlslStd450) {
+            flushTo(cursor);
+            out.insert(out.end(), {(6u << 16u) | static_cast<std::uint32_t>(spv::OpExtInstImport), glslStd450Id, 0x4c534c47u, 0x6474732eu, 0x3035342eu, 0u});
+        }
+        if (!emittedDecorations && isPostAnnotation(op)) {
+            flushTo(cursor);
+            emittedDecorations = true;
+            if (createFragCoordVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpDecorate), fragCoordVar, static_cast<std::uint32_t>(spv::DecorationBuiltIn), static_cast<std::uint32_t>(spv::BuiltInFragCoord)});
+            if (createFragDepthVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpDecorate), fragDepthVar, static_cast<std::uint32_t>(spv::DecorationBuiltIn), static_cast<std::uint32_t>(spv::BuiltInFragDepth)});
+        }
+        if (!emittedDeclarations && op == spv::OpFunction) {
+            flushTo(cursor);
+            emittedDeclarations = true;
+            if (needF32Type) out.insert(out.end(), {(3u << 16u) | static_cast<std::uint32_t>(spv::OpTypeFloat), f32Type, 32u});
+            if (needU32Type) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypeInt), u32Type, 32u, 0u});
+            if (needV4F32Type) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypeVector), v4f32Type, f32Type, 4u});
+            if (needPtrInputV4F32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrInputV4F32, static_cast<std::uint32_t>(spv::StorageClassInput), v4f32Type});
+            if (needPtrInputF32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrInputF32, static_cast<std::uint32_t>(spv::StorageClassInput), f32Type});
+            if (needPtrOutputF32) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpTypePointer), ptrOutputF32, static_cast<std::uint32_t>(spv::StorageClassOutput), f32Type});
+            if (needConstU32_2) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), u32Type, constU32_2, 2u});
+            if (needConst0) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const0, 0x00000000u});
+            if (needConst1) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const1, 0x3f800000u});
+            if (needConst65535) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, const65535, 0x477fff00u});
+            if (needConstInv65535) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpConstant), f32Type, constInv65535, 0x37800080u});
+            if (createFragCoordVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpVariable), ptrInputV4F32, fragCoordVar, static_cast<std::uint32_t>(spv::StorageClassInput)});
+            if (createFragDepthVar) out.insert(out.end(), {(4u << 16u) | static_cast<std::uint32_t>(spv::OpVariable), ptrOutputF32, fragDepthVar, static_cast<std::uint32_t>(spv::StorageClassOutput)});
+        }
+        if (op == spv::OpEntryPoint) {
+            if (needFragCoord) {
+                const auto entrySpan = words.subspan(cursor, count);
+                const bool addCoord = createFragCoordVar || std::find(entrySpan.begin() + 5, entrySpan.end(), fragCoordVar) == entrySpan.end();
+                const bool addDepth = createFragDepthVar || std::find(entrySpan.begin() + 5, entrySpan.end(), fragDepthVar) == entrySpan.end();
+                const std::uint32_t extra = (addCoord ? 1u : 0u) + (addDepth ? 1u : 0u);
+                flushTo(cursor);
+                out.push_back(((count + extra) << 16u) | static_cast<std::uint32_t>(spv::OpEntryPoint));
+                out.insert(out.end(), words.begin() + static_cast<std::ptrdiff_t>(cursor + 1), words.begin() + static_cast<std::ptrdiff_t>(cursor + count));
+                if (addCoord) out.push_back(fragCoordVar);
+                if (addDepth) out.push_back(fragDepthVar);
+                copied = cursor + count;
+            }
+            if (!depthReplacing) {
+                flushTo(cursor + count);
+                out.insert(out.end(), {(3u << 16u) | static_cast<std::uint32_t>(spv::OpExecutionMode), entryPointId, static_cast<std::uint32_t>(spv::ExecutionModeDepthReplacing)});
+            }
+            cursor += count;
+            continue;
+        }
+        if (op == spv::OpExecutionMode && count >= 3 && (words[cursor + 2] == spv::ExecutionModeEarlyFragmentTests || words[cursor + 2] == spv::ExecutionModeDepthLess || words[cursor + 2] == spv::ExecutionModeDepthGreater)) {
+            flushTo(cursor);
+            copied = cursor + count;
+            cursor += count;
+            continue;
+        }
+        if (needFragCoord) {
+            if (op == spv::OpFunction && count >= 3 && words[cursor + 2] == entryPointId) inEntryFunction = true;
+            else if (op == spv::OpFunctionEnd) {
+                inEntryFunction = false;
+                waitingForEntryInsert = false;
+            } else if (inEntryFunction && op == spv::OpLabel) {
+                inEntryFunction = false;
+                waitingForEntryInsert = true;
+            } else if (waitingForEntryInsert && op != spv::OpVariable && op != spv::OpLine && op != spv::OpNoLine) {
+                flushTo(cursor);
+                const auto zPtr = nextId++;
+                const auto zValue = nextId++;
+                out.insert(out.end(), {
+                    (5u << 16u) | static_cast<std::uint32_t>(spv::OpAccessChain), ptrInputF32, zPtr, fragCoordVar, constU32_2,
+                    (4u << 16u) | static_cast<std::uint32_t>(spv::OpLoad), f32Type, zValue, zPtr
+                });
+                emitQuantizedStore(zValue, {});
+                break;
+            }
+        } else if (op == spv::OpStore && count >= 3 && words[cursor + 1] == fragDepthVar) {
+            flushTo(cursor);
+            emitQuantizedStore(words[cursor + 2], words.subspan(cursor + 3, count - 3));
+            copied = cursor + count;
+            cursor += count;
+            continue;
+        }
+        cursor += count;
+    }
+    flushTo(words.size());
+    out[3] = nextId;
+    return out;
+}
+
+bool narrowLibraryKeysNow() {
+    return !RuntimeSwitches::Set(RuntimeSwitch::WideLibraryKeys);
+}
+
+bool shadesPerSample(const ShaderRecompiler::RecompileResult& program) {
+    const auto words = program.spirv.Words();
+    if (words.size() < 5) return true;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if (count == 0 || count > words.size() - cursor) return true;
+        if (static_cast<spv::Op>(words[cursor] & 0xffffu) == spv::OpDecorate && count >= 3) {
+            const auto decoration = words[cursor + 2];
+            if (decoration == spv::DecorationSample) return true;
+            if (decoration == spv::DecorationBuiltIn && count >= 4 && (words[cursor + 3] == spv::BuiltInSampleId || words[cursor + 3] == spv::BuiltInSamplePosition)) return true;
+        }
+        cursor += count;
+    }
+    return false;
+}
+
+bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, bool narrow) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || FragmentInterlock(shaders)) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || AvoidsInterlockEpilog(context, shaders)) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -441,34 +766,34 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     appendKey(keys.preRasterization, state.negativeOneToOne);
     appendKey(keys.preRasterization, state.depthClamp && context.depthClamp);
     appendKey(keys.preRasterization, state.conservativeRasterization);
-    appendKey(keys.preRasterization, state.depth.has_value() && state.depthBias);
+    if (!narrow || !context.dynamicDepthBiasEnable) appendKey(keys.preRasterization, state.depth.has_value() && state.depthBias);
     appendKey(keys.preRasterization, state.stages.tessellation.has_value());
     if (state.stages.tessellation) appendKey(keys.preRasterization, state.stages.tessellation->inputControlPoints);
-    appendKey(keys.fragmentShader, state.samples);
-    appendKey(keys.fragmentOutput, state.samples);
-    appendKey(keys.fragmentShader, state.perSampleShading);
-    appendKey(keys.fragmentOutput, state.perSampleShading);
-    appendKey(keys.fragmentShader, state.mergedCoverage);
-    appendKey(keys.fragmentOutput, state.mergedCoverage);
-    appendKey(keys.fragmentShader, state.truncatedCoverage);
-    appendKey(keys.fragmentOutput, state.truncatedCoverage);
+    keys.narrow = narrow;
+    keys.fragmentPerSample = state.perSampleShading || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.stage == Stage::Fragment && shadesPerSample(*shader.program); });
+    appendKey(keys.preRasterization, narrow);
+    appendKey(keys.fragmentShader, narrow);
+    const bool fragmentSamples = !narrow || keys.fragmentPerSample;
+    appendKey(keys.fragmentShader, fragmentSamples);
+    const auto sampleKey = [&](const auto& value) {
+        if (fragmentSamples) appendKey(keys.fragmentShader, value);
+        appendKey(keys.fragmentOutput, value);
+    };
+    sampleKey(state.samples);
+    sampleKey(state.perSampleShading);
+    sampleKey(state.mergedCoverage);
+    sampleKey(state.truncatedCoverage);
     const auto sampleLocationsEnabled = ValidateSampleLocations(context, state);
-    appendKey(keys.fragmentShader, sampleLocationsEnabled);
-    appendKey(keys.fragmentOutput, sampleLocationsEnabled);
-    appendKey(keys.fragmentShader, state.customSampleLocations);
-    appendKey(keys.fragmentOutput, state.customSampleLocations);
+    sampleKey(sampleLocationsEnabled);
+    sampleKey(state.customSampleLocations);
     if (state.customSampleLocations) {
-        appendKey(keys.fragmentShader, state.sampleLocationGrid);
-        appendKey(keys.fragmentOutput, state.sampleLocationGrid);
+        sampleKey(state.sampleLocationGrid);
         const auto grid = SampleLocationGrid(state);
         for (std::uint32_t pixel = 0; pixel < grid.width * grid.height; ++pixel) {
-            for (std::uint32_t sample = 0; sample < state.samples; ++sample) {
-                appendKey(keys.fragmentShader, state.sampleLocations[pixel * 8u + sample]);
-                appendKey(keys.fragmentOutput, state.sampleLocations[pixel * 8u + sample]);
-            }
+            for (std::uint32_t sample = 0; sample < state.samples; ++sample) sampleKey(state.sampleLocations[pixel * 8u + sample]);
         }
     }
-    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context, blend));
+    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, keyedBlend(context.dynamicColorWriteMask, blend));
     appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
@@ -478,9 +803,12 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(keys.renderPass, color.partialWriteMask != 0u);
     }
     appendKey(keys.renderPass, state.depth.has_value());
-    if (state.depth) appendKey(keys.renderPass, state.depth->format);
-    appendKey(keys.fragmentShader, HostSampleMask(state));
-    appendKey(keys.fragmentOutput, HostSampleMask(state));
+    if (state.depth) {
+        appendKey(keys.renderPass, state.depth->format);
+        appendKey(keys.renderPass, HostDepthFormat(context, state.depth->format));
+    }
+    appendKey(keys.fragmentShader, QuantizesDepth16(context, state));
+    sampleKey(HostSampleMask(state));
     for (auto* key : {&keys.fragmentShader, &keys.fragmentOutput}) {
         appendKey(*key, context.sampleLocationSampleCounts);
         appendKey(*key, context.sampleLocationGridSampleCounts);
@@ -516,7 +844,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
-Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
+Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicColorWriteMask(context.dynamicColorWriteMask && !AvoidsInterlockEpilog(context, shaders)), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
@@ -569,10 +897,11 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<PipelineSpecialization> specializations;
         specializations.reserve(shaders.size());
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
+        const bool quantizeDepth16 = QuantizesDepth16(context, state);
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            const auto demoted = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
-            const auto words = demoted.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(demoted);
+            const auto patched = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
+            const auto words = patched.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(patched);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -580,6 +909,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
+            if (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && context.pixelWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &PixelWave32Subgroup;
             specializations.emplace_back(shader, context.atomicLockTable, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
@@ -690,13 +1020,17 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         viewports.viewportCount = ViewportCount(state);
         viewports.scissorCount = ViewportCount(state);
         PipelineLibraryKeys keys;
-        libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders);
+        narrowLibraryKeys = narrowLibraryKeysNow();
+        libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders, narrowLibraryKeys);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         if (state.stencilReplayReference) dynamicStates.push_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
+        if (state.stencilReplayReference && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE && context.graphicsPipelineLibrary) dynamicStates.push_back(VK_DYNAMIC_STATE_FRONT_FACE_EXT);
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
-        if (context.dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
+        dynamicDepthBiasEnable = libraries && narrowLibraryKeys && context.dynamicDepthBiasEnable;
+        if (dynamicDepthBiasEnable) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE);
+        if (dynamicColorWriteMask) dynamicStates.push_back(VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT);
         dynamicSlots = CommandState::DynamicSlots(dynamicStates);
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
@@ -747,7 +1081,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         depthStencil.front = state.stencilFront;
         depthStencil.back = state.stencilBack;
         const VkSampleMask sampleMask = HostSampleMask(state);
-        if (PartialSampleMask(state) && UniformSampleMask(state) && !SampleMaskFollowsOrder(state, sampleOrder)) samples.pSampleMask = &sampleMask;
+        if (PartialSampleMask(state) && UniformSampleMask(state) && !SampleMaskInShader(state, sampleOrder, context.staticSampleMaskStopsShading)) samples.pSampleMask = &sampleMask;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         const bool alternateAlpha = SplitsAlternateAlpha(state);
         std::vector<VkPipelineColorBlendAttachmentState> firstChannels(state.blends.begin(), state.blends.end());
@@ -771,8 +1105,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const auto firstMasks = channelWriteMasks(state, state.blends, false);
         const auto secondMasks = channelWriteMasks(state, state.blends, true);
         for (std::size_t index = 0; index < firstChannels.size(); ++index) {
-            firstChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : firstMasks[index];
-            secondChannels[index].colorWriteMask = context.dynamicColorWriteMask ? 0u : secondMasks[index];
+            firstChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : firstMasks[index];
+            secondChannels[index].colorWriteMask = dynamicColorWriteMask ? 0u : secondMasks[index];
         }
         if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
             blend.logicOpEnable = VK_TRUE;
@@ -902,8 +1236,6 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     for (const auto& owner : owners) resident = resident && owner != nullptr;
     const auto depthReleases = attachments > colorAttachments ? DepthSurfacesReleased() : 0u;
     if (resident) {
-        // Entries whose views are gone can never match again and go as soon as no recorded draw holds
-        // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [&](const CachedFramebuffer& entry) {
             if (entry.framebuffer.use_count() != 1) return false;
             if (entry.depthReleases != depthReleases) return true;
@@ -917,7 +1249,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             // View handles are recycled once a StorageTexture is destroyed, so the owners must be the
             // very objects the views were made for.
             bool same = true;
-            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->owners[i].lock().get() == owners[i].get();
+            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->ownerPointers[i] == owners[i].get() && !it->owners[i].owner_before(owners[i]) && !owners[i].owner_before(it->owners[i]);
             if (!same) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
@@ -939,7 +1271,10 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     CachedFramebuffer entry;
     entry.views.assign(targets.begin(), targets.end());
     entry.owners.assign(owners.begin(), owners.end());
-    for (const auto& owner : owners) entry.owned.push_back(owner != nullptr);
+    for (const auto& owner : owners) {
+        entry.owned.push_back(owner != nullptr);
+        entry.ownerPointers.push_back(owner.get());
+    }
     entry.extent = extent;
     entry.layers = layers;
     entry.depthReleases = depthReleases;
@@ -948,12 +1283,14 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     return framebuffer;
 }
 
-void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked) const {
+void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked, bool secondaryContents) const {
     const auto commands = recording.Commands();
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
         Require(views.size() == attachments, "render targets do not match the pipeline's attachments");
-        std::vector<VkRenderingAttachmentInfoKHR> colors(colorSlots.size(), VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        InlineList<VkRenderingAttachmentInfoKHR, 8> colorStorage;
+        for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) colorStorage.EmplaceBack(VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        auto colors = colorStorage.Span();
         for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) {
             if (colorSlots[slot] == ~0u) continue;
             colors[slot].imageView = views[colorSlots[slot]];
@@ -971,13 +1308,14 @@ void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, Vk
         VkRenderingInfoKHR rendering{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
         rendering.renderArea = {{0, 0}, extent};
         rendering.layerCount = state.renderLayers;
+        if (secondaryContents) rendering.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
         const bool outputs = !state.rasterizerDiscard;
         rendering.colorAttachmentCount = outputs ? static_cast<std::uint32_t>(colors.size()) : 0u;
         rendering.pColorAttachments = outputs && !colors.empty() ? colors.data() : nullptr;
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
         if (outputs && depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
         context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
-        Continue(recording, state, masked);
+        if (!secondaryContents) Continue(recording, state, masked);
         return;
     }
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -1025,15 +1363,18 @@ void Pipeline::Continue(CommandState& recording, const State& state, const State
     }
     if (depthBias) recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;
-    recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
+    const auto [minDepthBounds, maxDepthBounds] = HostDepthBounds(context, state);
+    recording.SetDepthBounds(context, minDepthBounds, maxDepthBounds);
 }
 
 void Pipeline::setLibraryState(CommandState& recording, const State& state) const {
     const bool depth = state.depth.has_value();
+    const auto [minDepthBounds, maxDepthBounds] = depthBounds ? HostDepthBounds(context, state) : std::pair{0.0f, 1.0f};
     recording.SetCullMode(context, state.cullMode);
     recording.SetFrontFace(context, state.frontFace);
     recording.SetDepthBias(context, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
-    recording.SetDepthBounds(context, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
+    if (dynamicDepthBiasEnable) recording.SetDepthBiasEnable(context, depthBias);
+    recording.SetDepthBounds(context, minDepthBounds, maxDepthBounds);
     recording.SetDepthTestEnable(context, depth && state.depthTest);
     recording.SetDepthWriteEnable(context, depth && state.depthWrite);
     recording.SetDepthCompareOp(context, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
@@ -1061,8 +1402,30 @@ void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state
     setColorWriteMasks(recording, state, masked, true);
 }
 
+bool Pipeline::MasksStencilReplayPasses(const State& state) const {
+    return libraries && (dynamicColorWriteMask || std::ranges::all_of(state.blends, [](const VkPipelineColorBlendAttachmentState& blend) { return blend.colorWriteMask == 0u; }));
+}
+
+void Pipeline::SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const {
+    Require(MasksStencilReplayPasses(state) && state.depth.has_value(), "stencil replay passes need dynamic depth, stencil and color write masks");
+    recording.SetDepthWriteEnable(context, colorAndDepth && state.depthWrite);
+    if (colorAndDepth) setColorWriteMasks(recording, state, masked, false);
+    else if (dynamicColorWriteMask && !state.blends.empty()) {
+        const std::vector<VkColorComponentFlags> none(state.blends.size(), 0u);
+        recording.SetColorWriteMasks(context, none);
+    }
+    const auto front = state.stencilFront.writeMask & stencilBits;
+    const auto back = state.stencilBack.writeMask & stencilBits;
+    if (front == back) {
+        recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, front);
+        return;
+    }
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_BIT, front);
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_BACK_BIT, back);
+}
+
 void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {
-    if (!context.dynamicColorWriteMask || state.blends.empty()) return;
+    if (!dynamicColorWriteMask || state.blends.empty()) return;
     const auto masks = channelWriteMasks(state, masked != nullptr ? std::span(masked->blends) : std::span(state.blends), secondChannel);
     recording.SetColorWriteMasks(context, std::span(masks).first(state.blends.size()));
 }
@@ -1073,7 +1436,10 @@ void Pipeline::ContinueBackFaces(CommandState& recording, const State& state, co
     setColorWriteMasks(recording, state, masked, false);
     setViewports(recording, state);
     recording.SetDepthBias(context, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
-    if (depthBounds) recording.SetDepthBounds(context, state.minDepthBounds, state.maxDepthBounds);
+    if (depthBounds) {
+        const auto [minDepthBounds, maxDepthBounds] = HostDepthBounds(context, state);
+        recording.SetDepthBounds(context, minDepthBounds, maxDepthBounds);
+    }
 }
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
@@ -1134,7 +1500,7 @@ void append(KeyWriter& key, const TValue& value) {
 // replay insert an entry a later draw finds; a generated stage (rect-list pair, geometry) is keyed
 // by its identity like the others, so a replayed pipeline built from another device's generated
 // module is missed rather than used.
-std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool narrowLibraryKeys) {
     const auto capacity = 512 + sizeof(State) + sizeof(Context) + shaders.size() * 64 + input.bindings.size() * sizeof(VkVertexInputBindingDescription) + input.attributes.size() * sizeof(VkVertexInputAttributeDescription) + resources.mainKey.size_bytes() + resources.fragmentKey.size_bytes() + state.blends.size() * sizeof(VkPipelineColorBlendAttachmentState) + state.colors.size() * 64;
     KeyWriter key(storage, capacity);
     append(key, context.device);
@@ -1177,8 +1543,10 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, state.depthClamp && context.depthClamp);
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
-    for (const auto& blend : state.blends) append(key, keyedBlend(context, blend));
+    const bool dynamicColorWriteMask = context.dynamicColorWriteMask && !AvoidsInterlockEpilog(context, shaders);
+    for (const auto& blend : state.blends) append(key, keyedBlend(dynamicColorWriteMask, blend));
     key.Put(state.colorRop);
+    append(key, narrowLibraryKeys);
     key.PutBytes(state.blendConstants.data(), sizeof(state.blendConstants));
     append(key, state.samples);
     append(key, state.perSampleShading);
@@ -1201,6 +1569,7 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, state.depth.has_value());
     if (state.depth) {
         append(key, state.depth->format);
+        append(key, HostDepthFormat(context, state.depth->format));
         append(key, state.depth->samples);
         append(key, state.depthTest);
         append(key, state.depthWrite);
@@ -1374,7 +1743,8 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     auto& store = Pipelines();
     struct PipelineKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
-    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const bool narrowLibraryKeys = narrowLibraryKeysNow();
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeys);
     const std::span<const std::byte> key(storage.data(), length);
     if (key.empty()) {
         std::lock_guard lock(store.mutex);
@@ -1430,6 +1800,11 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     const bool replaying = PipelineJournalReplaying();
     {
         std::lock_guard lock(store.mutex);
+        if (pipeline->NarrowLibraryKeys() != narrowLibraryKeys) {
+            ++store.uncached;
+            ++store.totals.uncached;
+            return pipeline;
+        }
         bool collision = false;
         if (auto raced = lookup(collision)) {
             if (storeHash != nullptr) *storeHash = hash;
@@ -1459,7 +1834,6 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.index[hash] = std::prev(store.entries.end());
         }
         while (store.entries.size() > storeBound(store)) {
-            // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
             const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
             if (victim == store.entries.end()) break;
             const auto evictedHash = victim->hash;
@@ -1602,7 +1976,7 @@ std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     struct DeferredKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, DeferredKeyStorage>();
-    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const auto length = disabled ? std::size_t{0} : pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());
     const std::span<const std::byte> key(storage.data(), length);
     if (disabled || key.empty()) return CachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, nullptr, storeHash);
     const auto hash = hashKey(key);
@@ -1655,7 +2029,7 @@ std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
     struct PipelineScratchStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineScratchStorage>();
-    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout, narrowLibraryKeysNow());
     key.assign(storage.begin(), storage.begin() + static_cast<std::ptrdiff_t>(length));
 }
 

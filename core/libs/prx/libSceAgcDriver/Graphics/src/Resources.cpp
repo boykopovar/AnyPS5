@@ -275,6 +275,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdUpdateBuffer = context.Function<PFN_vkCmdUpdateBuffer>("vkCmdUpdateBuffer");
     functions.cmdFillBuffer = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
     functions.cmdBindPipeline = context.lookup<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
+    functions.cmdExecuteCommands = context.lookup<PFN_vkCmdExecuteCommands>("vkCmdExecuteCommands");
     functions.cmdBindDescriptorSets = context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
     functions.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
     functions.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
@@ -284,6 +285,7 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdSetViewport = context.lookup<PFN_vkCmdSetViewport>("vkCmdSetViewport");
     functions.cmdSetScissor = context.lookup<PFN_vkCmdSetScissor>("vkCmdSetScissor");
     if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.lookup<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
+    if (context.dynamicDepthBiasEnable) functions.cmdSetDepthBiasEnable = context.lookup<PFN_vkCmdSetDepthBiasEnableEXT>("vkCmdSetDepthBiasEnableEXT");
     functions.cmdSetDepthBounds = context.lookup<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.lookup<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {

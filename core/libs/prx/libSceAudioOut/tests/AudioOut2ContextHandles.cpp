@@ -90,6 +90,13 @@ void RequireInvalidContext(AudioOut2ContextHandle context) {
     Require(sceAudioOut2LoContextDestroy(context) == errorInvalidHandle, "a context that does not exist was destroyed through the low-latency call");
 }
 
+void ContextAttributesNullList() {
+    const auto context = CreateContext();
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == static_cast<int>(0x80268001), "an empty null attribute list was not refused with the console code");
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == static_cast<int>(0x80268001), "a null attribute list with a count was not refused with the console code");
+    Require(sceAudioOut2ContextDestroy(context) == 0, "a live context was not destroyed");
+}
+
 void DestroyedContextIsInvalid() {
     const auto context = CreateContext();
     AudioOut2PortHandle port = 0;
@@ -259,6 +266,10 @@ void FirmwareExSignatures() {
 
     Require(sceAudioOut2LoContextGetAttributes(context, &badAttribute, 0) == 0, "an empty context attribute read was refused");
     Require(sceAudioOut2LoContextGetAttributes(context, &badAttribute, 1) == errorInvalidParam, "an unknown context attribute was accepted");
+    errno = EBUSY;
+    Require(sceAudioOut2LoContextGetAttributes(context, reinterpret_cast<AudioOut2Attribute*>(std::uintptr_t{0x10}), 1) == errorInvalidParam,
+            "an unreadable context attribute list was accepted");
+    Require(errno == EBUSY, "an unreadable context attribute list preserves errno");
     badAttribute.attribute_id = 0x1e;
     Require(sceAudioOut2LoContextGetAttributes(context + 8, &badAttribute, 1) == errorInvalidParam, "a context attribute read on a dead context was not refused");
 
@@ -343,6 +354,7 @@ int main() {
     OversizedGrainIsRefused();
     BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
+    ContextAttributesNullList();
     QueueLevelRejectsUnwritableOutputs();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);

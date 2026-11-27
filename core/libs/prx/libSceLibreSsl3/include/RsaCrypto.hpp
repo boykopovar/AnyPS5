@@ -10,6 +10,8 @@ namespace LibreSsl3 {
 
 int RsaByteCount_nid_no_patch(const LibreSsl3Rsa* rsa);
 int RsaBitCount_nid_no_patch(const LibreSsl3Rsa* rsa);
+int RsaSecurityBits_nid_no_patch(const LibreSsl3Rsa* rsa);
+int RsaPublicCompare_nid_no_patch(const LibreSsl3Rsa* first, const LibreSsl3Rsa* second);
 int RsaComponentBits_nid_no_patch(const void* component);
 LibreSsl3Bignum* NewRsaBignum_nid_no_patch(const unsigned char* bytes, std::size_t length);
 LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number);

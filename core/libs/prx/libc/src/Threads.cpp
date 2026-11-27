@@ -41,6 +41,34 @@ namespace {
 constexpr std::int64_t nanosPerSecond = 1000000000;
 constexpr std::int64_t longestSleepSeconds = 86400;
 
+Xtime LoadXtime(const Xtime* target, const char* function) {
+    Xtime value{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, target, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": invalid argument");
+    return value;
+}
+
+void StoreXtime(Xtime* destination, const Xtime& value, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": invalid argument");
+}
+
+bool JoinCodeWritable(int* code) {
+    return code == nullptr || GuestWritable_nid_no_patch(code, sizeof(*code));
+}
+
+void StoreJoinCode(int* code, void* result) {
+    if (code == nullptr) return;
+    const int value = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(code, &value, sizeof(value));
+    errno = savedErrno;
+}
+
 timespec XtimeDeadline(const Xtime& time, const char* function) {
     constexpr auto largest = std::numeric_limits<std::int64_t>::max();
     constexpr auto smallest = std::numeric_limits<std::int64_t>::min();
@@ -202,12 +230,18 @@ extern "C" {
 int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type) {
     if (!handle)
         throw std::invalid_argument("_Mtx_init: null handle pointer");
-    *handle = nullptr;
+    void* stored = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &stored, sizeof(stored)))
+        throw std::invalid_argument("_Mtx_init: unwritable handle pointer");
     auto* mutex = new (std::nothrow) DinkumwareMutex();
     if (!mutex)
         return threadNomem;
     mutex->type = type;
-    *handle = mutex;
+    stored = mutex;
+    if (!GuestCopyOut_nid_no_patch(handle, &stored, sizeof(stored))) {
+        delete mutex;
+        throw std::invalid_argument("_Mtx_init: unwritable handle pointer");
+    }
     return threadSuccess;
 }
 
@@ -312,11 +346,17 @@ int APS5_VABI _Mtx_unlock_nid_postfix(void** handle) {
 int APS5_VABI _Cnd_init_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_init: null handle pointer");
-    *handle = nullptr;
+    void* stored = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &stored, sizeof(stored)))
+        throw std::invalid_argument("_Cnd_init: unwritable handle pointer");
     auto* condition = new (std::nothrow) DinkumwareCondition();
     if (!condition)
         return threadNomem;
-    *handle = condition;
+    stored = condition;
+    if (!GuestCopyOut_nid_no_patch(handle, &stored, sizeof(stored))) {
+        delete condition;
+        throw std::invalid_argument("_Cnd_init: unwritable handle pointer");
+    }
     return threadSuccess;
 }
 
@@ -339,12 +379,17 @@ int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");
-    if (!*handle)
+    void* current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, handle, sizeof(current)))
+        throw std::invalid_argument("_Cnd_destroy: unreadable condition handle pointer");
+    if (!current)
         return;
-    auto* condition = ResolveCondition(handle, "_Cnd_destroy");
+    auto* condition = ResolveCondition(&current, "_Cnd_destroy");
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared)))
+        throw std::invalid_argument("_Cnd_destroy: unwritable condition handle pointer");
     condition->tag = 0;
     delete condition;
-    *handle = nullptr;
 }
 
 int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) {
@@ -374,7 +419,7 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHandle, const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadlineTime = XtimePoint(*target, "_Cnd_timedwait");
+    const auto deadlineTime = XtimePoint(LoadXtime(target, __func__), "_Cnd_timedwait");
     auto* condition = ResolveCondition(conditionHandle, "_Cnd_timedwait");
     auto* mutex = ResolveMutex(mutexHandle, "_Cnd_timedwait");
     if (!IsOwnedByCaller(mutex))
@@ -421,10 +466,14 @@ unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
     return count;
 }
 
+unsigned APS5_VABI _ZNSt3__16thread20hardware_concurrencyEv_nid_postfix() {
+    return _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
+}
+
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadline = XtimeDeadline(*target, "_Thrd_sleep");
+    const auto deadline = XtimeDeadline(LoadXtime(target, __func__), "_Thrd_sleep");
     for (;;) {
         timespec now{};
         if (clock_gettime(CLOCK_REALTIME, &now) != 0)
@@ -453,6 +502,26 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
 int APS5_VABI _Thrd_yield_nid_postfix() {
     std::this_thread::yield();
     return threadSuccess;
+}
+
+void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds) {
+    std::int64_t remaining{};
+    if (!GuestCopyIn_nid_no_patch(&remaining, nanoseconds, sizeof(remaining))) throw std::invalid_argument("this_thread::sleep_for: unreadable duration");
+    constexpr std::int64_t maxChunk = longestSleepSeconds * nanosPerSecond;
+    while (remaining > 0) {
+        const auto chunk = std::min(remaining, maxChunk);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(chunk);
+        for (;;) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+#ifdef _WIN32
+            PreciseSleepHundredNanos(static_cast<unsigned long long>(std::chrono::ceil<PreciseHundredNanos>(deadline - now).count()));
+#else
+            std::this_thread::sleep_for(deadline - now);
+#endif
+        }
+        remaining -= chunk;
+    }
 }
 
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
@@ -634,9 +703,10 @@ void APS5_VABI _ZNSt4_Pad7_LaunchEPKcPP12pthread_attrPP7pthread_nid_postfix(Gues
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {
     const auto join = registeredPthreadJoin.load(std::memory_order_acquire);
     if (!join) throw std::runtime_error("_Thrd_join: pthread_join is not registered");
+    if (!JoinCodeWritable(code)) return threadError;
     void* result = nullptr;
     if (join(thread, &result) != 0) return threadError;
-    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    StoreJoinCode(code, result);
     return threadSuccess;
 }
 
@@ -644,6 +714,39 @@ int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
     const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
     if (!detach) throw std::runtime_error("_Thrd_detach: pthread_detach is not registered");
     return detach(thread) == 0 ? threadSuccess : threadError;
+}
+
+static Pthread CheckedLibcxxThread(Pthread* thread, const char* function) {
+    Pthread value = nullptr;
+    if (reinterpret_cast<std::uintptr_t>(thread) % alignof(Pthread) != 0 ||
+        !GuestWritable_nid_no_patch(thread, sizeof(Pthread)) ||
+        !GuestCopyIn_nid_no_patch(&value, thread, sizeof(value)))
+        throw std::invalid_argument(std::string(function) + ": invalid thread address");
+    return value;
+}
+
+void APS5_VABI _ZNSt3__16thread4joinEv_nid_postfix(Pthread* thread) {
+    const auto value = CheckedLibcxxThread(thread, __func__);
+    if (!value) throw std::system_error(EINVAL, std::generic_category(), "thread::join failed");
+    const auto join = registeredPthreadJoin.load(std::memory_order_acquire);
+    if (!join) throw std::runtime_error("thread::join: pthread_join is not registered");
+    const int error = join(value, nullptr);
+    if (error != 0) throw std::system_error(error, std::generic_category(), "thread::join failed");
+    *thread = nullptr;
+}
+
+void APS5_VABI _ZNSt3__16thread6detachEv_nid_postfix(Pthread* thread) {
+    const auto value = CheckedLibcxxThread(thread, __func__);
+    if (!value) throw std::system_error(EINVAL, std::generic_category(), "thread::detach failed");
+    const auto detach = registeredPthreadDetach.load(std::memory_order_acquire);
+    if (!detach) throw std::runtime_error("thread::detach: pthread_detach is not registered");
+    const int error = detach(value);
+    if (error != 0) throw std::system_error(error, std::generic_category(), "thread::detach failed");
+    *thread = nullptr;
+}
+
+void APS5_VABI _ZNSt3__16threadD1Ev_nid_postfix(Pthread* thread) {
+    if (CheckedLibcxxThread(thread, __func__)) std::terminate();
 }
 
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
@@ -834,7 +937,9 @@ static const char* SyncObjectName(const char* name) {
 
 int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
     const auto& sync = PthreadSync(__func__);
-    *mutex = nullptr;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(mutex, &cleared, sizeof(cleared)))
+        throw std::invalid_argument(std::string(__func__) + ": unwritable mutex pointer");
     void* attr = nullptr;
     const int created = sync.mutexattrInit(&attr);
     if (created != 0) return CreateResult(created);
@@ -997,11 +1102,12 @@ void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix() 
 int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
+    const auto wanted = LoadXtime(target, __func__);
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
     const std::uint64_t nowSeconds = ticks / 1000000;
     const std::int64_t nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
-    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec) + static_cast<std::uint64_t>(target->nsec / nanosPerSecond);
-    std::int64_t nanos = target->nsec % nanosPerSecond;
+    std::uint64_t seconds = static_cast<std::uint64_t>(wanted.sec) + static_cast<std::uint64_t>(wanted.nsec / nanosPerSecond);
+    std::int64_t nanos = wanted.nsec % nanosPerSecond;
     if (nanos < 0) {
         nanos += nanosPerSecond;
         --seconds;
@@ -1023,8 +1129,10 @@ void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime*
     if (!now)
         APS5_INVALID_ARG_EX;
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
-    now->sec = static_cast<std::int64_t>(ticks / 1000000);
-    now->nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    Xtime value{};
+    value.sec = static_cast<std::int64_t>(ticks / 1000000);
+    value.nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    StoreXtime(now, value, __func__);
 }
 
 Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target) {
@@ -1034,8 +1142,9 @@ Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(c
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
     const std::uint64_t nowSeconds = ticks / 1000000;
     const auto nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
-    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
-    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    const auto wanted = LoadXtime(target, __func__);
+    std::uint64_t seconds = static_cast<std::uint64_t>(wanted.sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(wanted.nsec);
     if (static_cast<std::int64_t>(nanos) < 0) {
         const std::uint64_t lowest = 0 - billion;
         const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
@@ -1154,9 +1263,10 @@ int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {
 }
 
 int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code) {
+    if (!JoinCodeWritable(code)) return threadError;
     void* result = nullptr;
     if (PthreadSync(__func__).join(thread, &result) != 0) return threadError;
-    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
+    StoreJoinCode(code, result);
     return threadSuccess;
 }
 

@@ -50,6 +50,8 @@ std::size_t TableEntries(std::span<const std::uint8_t> code, std::size_t table, 
     while (table + (entries + 1) * 4 <= end) {
         std::int32_t relative = 0;
         std::memcpy(&relative, code.data() + table + entries * 4, sizeof(relative));
+        if (relative < 0 && static_cast<std::uint64_t>(-static_cast<std::int64_t>(relative)) > table) break;
+        if (relative > 0 && static_cast<std::uint64_t>(relative) > std::numeric_limits<std::int64_t>::max() - table) break;
         const auto destination = static_cast<std::int64_t>(table) + relative;
         if (destination < 0 || destination >= static_cast<std::int64_t>(firstTable) || !instructionStarts[static_cast<std::size_t>(destination)]) break;
         ++entries;
@@ -107,12 +109,19 @@ bool IsForbiddenSyscallInstruction(std::span<const std::uint8_t> code, std::size
     return (b0 == 0x0f && (b1 == 0x05 || b1 == 0x34 || b1 == 0x07)) || (b0 == 0xcd && b1 == 0x80);
 }
 
+std::optional<VirtualAddress> RelativeTarget(const VirtualAddress next, const std::int64_t displacement) {
+    const auto target = next + static_cast<VirtualAddress>(displacement);
+    const bool wrapped = displacement < 0 ? target > next : target < next;
+    if (wrapped) return std::nullopt;
+    return target;
+}
+
 bool IsValid64BitInstruction(std::span<const std::uint8_t> code, std::size_t pos, const Codegen::DecodedInstructionInfo& info, VirtualAddress baseVAddr, VirtualAddress segmentVAddr, VirtualAddress segmentEnd) {
     if (info.Length == 0 || info.Length > code.size() - pos) return false;
     if (!info.IsTwoByteOpcode && IsInvalid64BitSingleByteOpcode(info.Opcode)) return false;
     if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-        const auto target = static_cast<std::int64_t>(baseVAddr + pos + info.Length) + info.BranchDisp;
-        if (target < static_cast<std::int64_t>(segmentVAddr) || target >= static_cast<std::int64_t>(segmentEnd)) return false;
+        const auto target = RelativeTarget(baseVAddr + pos + info.Length, info.BranchDisp);
+        if (!target || *target < segmentVAddr || *target >= segmentEnd) return false;
     }
     return true;
 }
@@ -292,10 +301,12 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
         if (info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.OpcodeOffset < info.Length && info.Length >= 4 && code[position + info.OpcodeOffset] == 0x8d) {
             std::int32_t displacement = 0;
             std::memcpy(&displacement, code.data() + next - 4, sizeof(displacement));
-            const auto target = static_cast<std::int64_t>(next) + displacement;
-            if (target > static_cast<std::int64_t>(next) && target < static_cast<std::int64_t>(code.size())) {
-                loads.push_back({position, static_cast<std::size_t>(target)});
-                loadsAt[static_cast<std::size_t>(target)].push_back(position);
+            if (displacement > 0 && static_cast<std::uint64_t>(displacement) <= code.size() - next) {
+                const auto target = next + static_cast<std::size_t>(displacement);
+                if (target < code.size()) {
+                    loads.push_back({position, target});
+                    loadsAt[target].push_back(position);
+                }
             }
         }
         if (info.FlowKind == Codegen::ControlFlowKind::IndirectJump) {
@@ -332,9 +343,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             }
             if (info.Length == 0 || info.Length > funcCode.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                const auto target = static_cast<std::int64_t>(funcBegin + pos + info.Length) + info.BranchDisp;
-                if (target >= static_cast<std::int64_t>(segmentVAddr) && target < static_cast<std::int64_t>(segmentEnd))
-                    branchTargets.insert(static_cast<VirtualAddress>(target));
+                const auto target = RelativeTarget(funcBegin + pos + info.Length, info.BranchDisp);
+                if (target && *target >= segmentVAddr && *target < segmentEnd)
+                    branchTargets.insert(*target);
             }
             pos += info.Length;
         }
@@ -371,10 +382,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             }
             if (info.Length == 0 || info.Length > segment.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                const auto target = static_cast<std::int64_t>(segmentVAddr + pos + info.Length) + info.BranchDisp;
-                if (target >= static_cast<std::int64_t>(segmentVAddr) && target < static_cast<std::int64_t>(segmentEnd)) {
-                    const auto targetVAddr = static_cast<VirtualAddress>(target);
-                    if (branchTargets.insert(targetVAddr).second) pendingTargets.push_back(targetVAddr);
+                const auto target = RelativeTarget(segmentVAddr + pos + info.Length, info.BranchDisp);
+                if (target && *target >= segmentVAddr && *target < segmentEnd) {
+                    if (branchTargets.insert(*target).second) pendingTargets.push_back(*target);
                 }
             }
             if (info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap) break;
@@ -410,11 +420,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             if (info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.OpcodeOffset < info.Length && info.Length >= 4 && funcCode[pos + info.OpcodeOffset] == 0x8d) {
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, funcCode.data() + next - 4, sizeof(displacement));
-                const auto target = static_cast<std::int64_t>(begin + next) + displacement;
-                if (target >= static_cast<std::int64_t>(end) && target < static_cast<std::int64_t>(inspectEnd)) {
-                    const auto targetVAddr = static_cast<VirtualAddress>(target);
-                    candidateTable = candidateTable ? std::min(*candidateTable, targetVAddr) : targetVAddr;
-                }
+                const auto target = RelativeTarget(begin + next, displacement);
+                if (target && *target >= end && *target < inspectEnd)
+                    candidateTable = candidateTable ? std::min(*candidateTable, *target) : *target;
             }
             pos = next;
         }

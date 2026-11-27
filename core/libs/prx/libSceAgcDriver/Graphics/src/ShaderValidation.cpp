@@ -166,7 +166,7 @@ struct Module {
             Require(value == spv::BuiltInPosition && signature == "f32x4" && !position, "unsupported or duplicate vertex built-in output");
             position = true;
         } else {
-            Require((storage == spv::StorageClassInput && ((value == spv::BuiltInFragCoord && signature == "f32x4") || ((value == spv::BuiltInFrontFacing || value == spv::BuiltInHelperInvocation) && signature == "bool") || ((value == spv::BuiltInSampleId || value == spv::BuiltInLayer) && signature == "i32") || (value == spv::BuiltInSampleMask && signature == "i32[1]"))) || (storage == spv::StorageClassOutput && ((value == spv::BuiltInFragDepth && signature == "f32") || (value == spv::BuiltInFragStencilRefEXT && signature == "i32") || (value == spv::BuiltInSampleMask && (signature == "i32[1]" || signature == "u32[1]")))), "unsupported fragment built-in");
+            Require((storage == spv::StorageClassInput && ((value == spv::BuiltInFragCoord && signature == "f32x4") || ((value == spv::BuiltInFrontFacing || value == spv::BuiltInHelperInvocation) && signature == "bool") || ((value == spv::BuiltInSampleId || value == spv::BuiltInLayer) && signature == "i32") || (value == spv::BuiltInSampleMask && signature == "i32[1]"))) || (storage == spv::StorageClassOutput && ((value == spv::BuiltInFragDepth && signature == "f32") || (value == spv::BuiltInFragStencilRefEXT && (signature == "i32" || signature == "u32")) || (value == spv::BuiltInSampleMask && (signature == "i32[1]" || signature == "u32[1]")))), "unsupported fragment built-in");
         }
     }
 };
@@ -237,6 +237,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
                     case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
                     case spv::CapabilityGroupNonUniformQuad: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT; break;
+                    case spv::CapabilityGroupNonUniformClustered: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_CLUSTERED_BIT; break;
                     default: break;
                 }
                 const bool isSubgroupCapability = subgroupOperations != 0;

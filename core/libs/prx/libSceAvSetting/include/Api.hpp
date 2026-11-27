@@ -6,13 +6,13 @@
 
 extern "C" {
 
-int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void);
+int APS5_VABI sceAvControlGetPuTypeByMonitorInfo(void* argument1);
 int APS5_VABI sceAvControlIsVideoOutModeSupportedByMonitorInfoWithOptions(void);
 int APS5_VABI sceAvControlSetDitherModeForDiag(std::uint32_t mode);
 int APS5_VABI sceAvControlSetLayoutModeForDiag(void);
 int APS5_VABI sceAvControlSetMonitorFakeMode(void);
 int APS5_VABI sceAvControlGetCurrentOutputSysMode(void);
-int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(void);
+int APS5_VABI sceAvControlGetNativeHdmiMonitorInfo(std::uint64_t, void* info);
 int APS5_VABI sceAvControlGetRawMonitorInfo(std::uint64_t argument1, void* info);
 int APS5_VABI sceAvControlGetKsvList(std::uint64_t argument1, void* list);
 int APS5_VABI sceAvControlGetRawEdid(std::uint64_t argument1, void* edid);
@@ -68,7 +68,7 @@ int APS5_VABI sceAvControlSetHdcpEncryption(std::uint64_t argument1, std::uint32
 int APS5_VABI sceAvControlSetHdcpStatus(std::uint32_t argument1, std::uint32_t argument2);
 int APS5_VABI sceAvControlSetHdmiGamutMetadata(void);
 int APS5_VABI sceAvControlSetHdrMetadata(std::uint64_t type);
-int APS5_VABI sceAvControlSetVideoOutSource(void);
+void APS5_VABI sceAvControlSetVideoOutSource(std::int32_t* out, std::int32_t source);
 int APS5_VABI sceAvControlSimulateProcessOutputModeArbitration(void);
 int APS5_VABI sceAvSettingAddCallbacks(void);
 int APS5_VABI sceAvSettingAddCallbacksForLnc(void);
@@ -96,11 +96,11 @@ int APS5_VABI sceAvSettingGetCurrentDeviceInfo_(std::int32_t device, void* info)
 int APS5_VABI sceAvSettingGetCurrentHdmiDeviceId(void);
 int APS5_VABI sceAvSettingGetCurrentOutputMode2_(void);
 int APS5_VABI sceAvSettingGetCurrentOutputMode_(void);
-int APS5_VABI sceAvSettingGetDetailedHdcpStatus(void);
-int APS5_VABI sceAvSettingGetDeviceInfo(void);
-int APS5_VABI sceAvSettingGetHdcpStatus(void);
-int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum(void);
-int APS5_VABI sceAvSettingGetHdmiKsvList(void);
+int APS5_VABI sceAvSettingGetDetailedHdcpStatus(void* status);
+int APS5_VABI sceAvSettingGetDeviceInfo(std::uint64_t argument1, void* info);
+int APS5_VABI sceAvSettingGetHdcpStatus(void* status);
+int APS5_VABI sceAvSettingGetHdmiConnectDisconnectNum(void* number);
+int APS5_VABI sceAvSettingGetHdmiKsvList(std::uint64_t argument1, void* list);
 int APS5_VABI sceAvSettingGetHdmiMonitorInfo(void);
 int APS5_VABI sceAvSettingGetHdmiRawEdid(void);
 int APS5_VABI sceAvSettingGetMorpheusPuStatus(void);

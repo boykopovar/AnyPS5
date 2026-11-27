@@ -686,7 +686,7 @@ long double FmaProductDominates(long double x, long double y, long double z, int
         std::feholdexcept(&environment);
         volatile long double product = x * y;
         long double result = product;
-        if (!std::fetestexcept(FE_INEXACT)) result = std::nextafter(result, toward);
+        if (!std::fetestexcept(FE_INEXACT)) result = nextafterl_nid_postfix(result, toward);
         std::feupdateenv(&environment);
         return result;
     };
@@ -711,11 +711,11 @@ long double FmaFarApart(long double x, long double y, long double z, int roundin
     case FE_TONEAREST:
         return z;
     case FE_TOWARDZERO:
-        return productPositive == (z > 0.0L) ? z : std::nextafter(z, 0.0L);
+        return productPositive == (z > 0.0L) ? z : nextafterl_nid_postfix(z, 0.0L);
     case FE_DOWNWARD:
-        return productPositive ? z : std::nextafter(z, -Infinity);
+        return productPositive ? z : nextafterl_nid_postfix(z, -Infinity);
     default:
-        return productPositive ? std::nextafter(z, Infinity) : z;
+        return productPositive ? nextafterl_nid_postfix(z, Infinity) : z;
     }
 }
 
@@ -730,15 +730,15 @@ long double FmaScaled(long double xs, long double ys, long double zs, int spread
     if (static_cast<int>(static_cast<unsigned>(spread) + exponent) > -16383) {
         volatile long double high = sum.hi;
         std::fesetround(rounding);
-        return std::ldexp(high + rest, spread);
+        return scalbnl_nid_postfix(high + rest, spread);
     }
-    const long double floor = std::ldexp(std::copysign(0x1p-16382L, sum.hi), -spread);
+    const long double floor = scalbnl_nid_postfix(std::copysign(0x1p-16382L, sum.hi), -spread);
     const ExtendedPair lifted = AddExact(sum.hi, floor);
     volatile long double high = lifted.hi;
     volatile long double low = lifted.lo + rest;
     volatile long double anchor = floor;
     std::fesetround(rounding);
-    return std::ldexp((high + low) - anchor, spread);
+    return scalbnl_nid_postfix((high + low) - anchor, spread);
 }
 
 }
@@ -747,9 +747,10 @@ extern "C" {
 
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y) { return std::copysign(x, y); }
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y) {
-    if (std::isnan(x)) return x;
-    if (std::isnan(y)) return y;
-    return x > y ? x - y : 0.0L;
+    if (ExtendedNan(Bits(x))) return x;
+    if (ExtendedNan(Bits(y))) return y;
+    const volatile long double difference = x - y;
+    return x > y ? difference : 0.0L;
 }
 
 long double APS5_VABI fmodl_nid_postfix(long double x, long double y) {
@@ -773,11 +774,11 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         ErrnoGuard guard;
         result = std::remquo(x, y, &bits);
     }
-    if (domain) errno = EDOM;
     if (!std::isnan(result)) {
         const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
-        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low))) throw std::invalid_argument("remquol: unwritable quotient");
     }
+    if (domain) errno = EDOM;
     return result;
 }
 
@@ -787,18 +788,25 @@ long double APS5_VABI logbl_nid_postfix(long double x) {
 }
 
 int APS5_VABI ilogbl_nid_postfix(long double x) {
-    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return INT_MAX;
-    ErrnoGuard guard;
-    return std::ilogb(x);
+    const ExtendedBits bits = Bits(x);
+    const int field = bits.signExponent & 0x7fff;
+    if (field == 0x7fff) return INT_MAX;
+    if (field != 0) return field - 16383;
+    return bits.mantissa != 0 ? static_cast<int>(std::bit_width(bits.mantissa)) - 16446 : INT_MIN;
 }
 
 long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
-long double APS5_VABI roundl_nid_postfix(long double x) { return std::isfinite(x) ? std::round(x) : x; }
-
-std::int64_t APS5_VABI lroundl_nid_postfix(long double x) {
-    ErrnoGuard guard;
-    return std::llround(x);
+long double APS5_VABI roundl_nid_postfix(long double x) {
+    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return x;
+    const bool negative = !(x >= 0.0L);
+    const long double whole = floorl_nid_postfix(negative ? -x : x);
+    const long double difference = negative ? x + whole : whole - x;
+    const volatile long double above = 1.0L + whole;
+    const long double rounded = -0.5L < difference ? whole : above;
+    return negative ? -rounded : rounded;
 }
+
+std::int64_t APS5_VABI lroundl_nid_postfix(long double x) { return llroundl_nid_postfix(x); }
 
 std::int64_t APS5_VABI lrintl_nid_postfix(long double x) {
     ErrnoGuard guard;
@@ -842,7 +850,7 @@ long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
         whole = JoinExtended(bits.mantissa & ~mask, bits.signExponent);
         fraction = x - whole;
     }
-    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    if (!GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole))) throw std::invalid_argument("modfl: unwritable integral");
     return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
@@ -857,7 +865,6 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     if (z == 0.0L) return x * y;
     if (!std::isfinite(x) || !std::isfinite(y)) return x * y + z;
     if (!std::isfinite(z)) return z;
-    ErrnoGuard guard;
     int xExponent = 0, yExponent = 0, zExponent = 0;
     const long double xs = std::frexp(x, &xExponent);
     const long double ys = std::frexp(y, &yExponent);
@@ -866,7 +873,7 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     const int spread = xExponent + yExponent - zExponent;
     if (spread > std::numeric_limits<long double>::digits * 2) return FmaProductDominates(x, y, z, rounding);
     if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
-    return FmaScaled(xs, ys, std::ldexp(zs, -spread), xExponent + yExponent, rounding);
+    return FmaScaled(xs, ys, scalbnl_nid_postfix(zs, -spread), xExponent + yExponent, rounding);
 }
 
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
@@ -1040,6 +1047,38 @@ long double APS5_VABI expl_nid_postfix(long double x) {
     if (kind != NotANumber) ExtendedExp(&x, 1.0L, 0);
     return x;
 }
+
+long double APS5_VABI expm1l_nid_postfix(long double x) {
+    static constexpr long double Numerator[] = {0xd604ba2248d1f283p-87L, 0x8c644368eb68debap-81L, 0xa5fd526b77ad1728p-76L, 0x839385147e87dc88p-73L,
+                                                0xf148c91f229b672ep-69L, 0x87add5d3a52caaf7p-68L, 0xec187027092759ecp-64L};
+    static constexpr long double Denominator[] = {0xd3d1dbe234e341eap-84L, -0x9c869fafd283aadfp-78L, 0xd990d690d0ca448bp-74L, -0xb39c668b5bbb81c0p-70L,
+                                                  0xb7cc5cece575eafdp-67L, -0xdb22b56c9481c48ep-65L, 0xec187027092759ecp-64L};
+    constexpr long double Tiny = 0x1p-66L;
+    constexpr long double Ln2 = 0xb17217f7d1cf79acp-64L;
+    constexpr long double Ln1Point5 = 0xcf991f65fcc25f96p-65L;
+    constexpr long double Ln3 = 0x8c9f53d5681854bbp-63L;
+    constexpr long double Ln5 = 0xce020fbf6c699b58p-63L;
+    const auto ratio = [](long double reduced) {
+        long double top = Numerator[0];
+        long double bottom = Denominator[0];
+        for (int index = 1; index < 7; ++index) {
+            top = top * reduced + Numerator[index];
+            bottom = bottom * reduced + Denominator[index];
+        }
+        return top * reduced / bottom;
+    };
+    const short kind = TestExtended(Bits(x));
+    if (kind == Infinite) return std::signbit(x) ? -1.0L : x;
+    if (kind != Finite) return x;
+    if (!(x < -Tiny) && !(Tiny < x)) return x;
+    if (-Ln2 > x || !(Ln5 > x)) return expl_nid_postfix(x) + -1.0L;
+    if (Ln1Point5 > x) return ratio(x);
+    if (Ln3 > x) {
+        const long double half = ratio(x + -Ln2);
+        return half + half + 1.0L;
+    }
+    return ratio(x + -(Ln2 + Ln2)) * 4.0L + 3.0L;
+}
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
@@ -1093,7 +1132,12 @@ const std::array<PowerLogarithm, 257>& PowerLogarithms() {
     return table;
 }
 
-long double PowerExtended(long double x, long double y) {
+void StorePowerScale(short* scale, short value) {
+    if (scale == nullptr) return;
+    if (!GuestCopyOut_nid_no_patch(scale, &value, sizeof(value))) throw std::invalid_argument("_LPow: unwritable exponent");
+}
+
+long double PowerExtended(long double x, long double y, short* scale) {
     static constexpr long double Log2EParts[] = {0xb8aa3b29p-31L, 0xb82fe176p-64L, 0xbe87fed0p-95L, 0xd23a7d10p-128L};
     constexpr long double SquareRootOfHalf = 0xb504f333f9de6484p-64L;
     constexpr long double Log2E = 0xb8aa3b295c17f0bcp-63L;
@@ -1107,6 +1151,7 @@ long double PowerExtended(long double x, long double y) {
     const short xKind = UnscaleExtended(exponent, fraction).code;
     const short yKind = TruncateExtended(whole, 0).code;
     const auto odd = [&whole] { return TruncateExtended(whole, -1).code < 0; };
+    StorePowerScale(scale, 0);
     if (yKind == Zero && y == 0.0L) return 1.0L;
     if (xKind < 0 && exponent == 1 && (fraction == 0.5L || (yKind == Infinite && fraction == -0.5L))) return 1.0L;
     if (!(xKind < 0 && yKind <= 0)) {
@@ -1202,6 +1247,10 @@ long double PowerExtended(long double x, long double y) {
         result = LibcDetail::GetWide<long double>(scaled.data(), 4) * Ln2;
         shift = static_cast<std::int64_t>(integral);
     }
+    if (scale != nullptr) {
+        StorePowerScale(scale, static_cast<short>(static_cast<std::uint16_t>(shift)));
+        shift = 0;
+    }
     const short state = ExtendedExp(&result, 1.0L, shift);
     if (state == Zero || (state == Infinite && 0.0L > result)) {
         result = 0.0L;
@@ -1224,7 +1273,9 @@ short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
     return step.code;
 }
 
-long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return PowerExtended(base, exp); }
+long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return PowerExtended(base, exp, nullptr); }
+
+long double PowerScaled_nid_no_patch(long double base, long double exp, short* scale) { return PowerExtended(base, exp, scale); }
 
 short APS5_VABI _Dscale_nid_postfix(double* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
 short APS5_VABI _FDscale_nid_postfix(float* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }

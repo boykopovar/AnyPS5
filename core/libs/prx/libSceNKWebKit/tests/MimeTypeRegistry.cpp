@@ -189,8 +189,8 @@ void TestTypePredicates() {
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/svg+xml")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/json")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/javascript")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("multipart/x-mixed-replace")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/pdf")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/png")));
@@ -244,6 +244,32 @@ void TestExtensions() {
         MakeString(""), MakeString("image/png")), ""));
     Require(Equals(_ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
         MakeString(nullptr), MakeString("image/png")), nullptr));
+
+    const unsigned char latin[] = {'c', 'a', 'f', 0xE9};
+    const unsigned char latinNamed[] = {'c', 'a', 'f', 0xE9, '.', 'p', 'n', 'g'};
+    const String narrow = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKhj(latin, sizeof(latin)), MakeString("image/png"));
+    Require(narrow.impl && (narrow.impl->hashAndFlags & 4) != 0 && narrow.impl->length == sizeof(latinNamed));
+    Require(std::memcmp(narrow.impl->data, latinNamed, sizeof(latinNamed)) == 0);
+
+    const char16_t kana[] = {0x30B2, 0x30FC, 0x30E0};
+    const char16_t kanaNamed[] = {0x30B2, 0x30FC, 0x30E0, u'.', u'h', u't', u'm'};
+    const String wide = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(kana, 3), MakeString("text/html"));
+    Require(wide.impl && (wide.impl->hashAndFlags & 4) == 0 && wide.impl->length == 7);
+    Require(std::memcmp(wide.impl->data, kanaNamed, sizeof(kanaNamed)) == 0);
+
+    const char16_t plain[] = {u't', u'e', u's', u't'};
+    const char16_t plainNamed[] = {u't', u'e', u's', u't', u'.', u'p', u'n', u'g'};
+    const String plainWide = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(plain, 4), MakeString("image/png"));
+    Require(plainWide.impl && (plainWide.impl->hashAndFlags & 4) == 0 && plainWide.impl->length == 8);
+    Require(std::memcmp(plainWide.impl->data, plainNamed, sizeof(plainNamed)) == 0);
+
+    const char16_t dotted[] = {0x30B2, u'.', u'x'};
+    const String kept = _ZN7WebCore16MIMETypeRegistry30appendFileExtensionIfNecessaryERKN3WTF6StringES4_(
+        _ZN3WTF10StringImpl6createEPKDsj(dotted, 3), MakeString("image/png"));
+    Require(kept.impl && kept.impl->length == 3 && std::memcmp(kept.impl->data, dotted, sizeof(dotted)) == 0);
 }
 
 void TestAllowedAndEncoding() {
@@ -275,6 +301,33 @@ void TestAllowedAndEncoding() {
     Require(Contains(combinedMimes, "image/jpeg"));
     Require(_ZN7WebCore16MIMETypeRegistry32containsImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(sampleMimes, emptyExts));
     Require(Equals(_ZN7WebCore16MIMETypeRegistry33preferredImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(sampleMimes, emptyExts), "image/png"));
+
+    const auto units = [](const String& value) {
+        std::u16string text;
+        if (!value.impl) return text;
+        for (unsigned i = 0; i < value.impl->length; ++i)
+            text.push_back((value.impl->hashAndFlags & 4) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
+        return text;
+    };
+    Vector<String> accentedMimes;
+    accentedMimes.append(MakeString("A/\xC3\x89t\xC3\xA9"));
+    accentedMimes.append(MakeString("a/\xC3\xA8"));
+    accentedMimes.append(MakeString(nullptr));
+    accentedMimes.append(MakeString("a/\xC3\x89T\xC3\xA9"));
+    accentedMimes.append(MakeString("a/\xE2\x82\xAC"));
+    accentedMimes.append(MakeString(""));
+    accentedMimes.append(MakeString(nullptr));
+    accentedMimes.append(MakeString("a/\xC3\xA9t\xC3\xA9"));
+    auto accented = _ZN7WebCore16MIMETypeRegistry16allowedMIMETypesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(accentedMimes, sampleExts);
+    Require(accented.size == 8);
+    Require(units(accented[0]) == u"a/\u00C9t\u00E9");
+    Require(units(accented[1]) == u"a/\u00E8");
+    Require(!accented[2].impl);
+    Require(units(accented[3]) == u"a/\u20AC");
+    Require(accented[4].impl && !accented[4].impl->length);
+    Require(units(accented[5]) == u"a/\u00E9t\u00E9");
+    Require(Equals(accented[6], "image/png"));
+    Require(Equals(accented[7], "text/html"));
 
     Vector<String> nonPngMimes;
     nonPngMimes.append(MakeString("image/jpeg"));
@@ -412,6 +465,57 @@ void RequireThrowsNotImplemented(const std::function<void()>& fn) {
     Require(threw);
 }
 
+void TestLettersComparison() {
+    auto& textTrack = _ZN7WebCore16MIMETypeRegistry28isSupportedTextTrackMIMETypeERKN3WTF6StringE;
+    Require(textTrack(MakeString("text\x0Fvtt")));
+    Require(textTrack(MakeString("TEXT\x0FVTT")));
+    Require(!textTrack(MakeString("text\x1Fvtt")));
+    Require(!textTrack(MakeString("text\x2Evtt")));
+    Require(!textTrack(MakeString("tex\x14\x0Fvtt")));
+    auto& text = _ZN7WebCore16MIMETypeRegistry14isTextMIMETypeERKN3WTF6StringE;
+    Require(text(MakeString("text\x0Fplain")));
+    Require(text(MakeString("text\x0Fjavascript")));
+    Require(text(MakeString("application\x0Fjson")));
+    Require(text(MakeString("text\x0Fjson")));
+    Require(!text(MakeString("text\x0Fhtml")));
+    Require(!text(MakeString("text\x0Fxml")));
+    Require(!text(MakeString("text\x0Fxsl")));
+    Require(_ZN7WebCore16MIMETypeRegistry29isSupportedJavaScriptMIMETypeERKN3WTF6StringE(MakeString("text\x0Fjavascript")));
+    Require(_ZN7WebCore16MIMETypeRegistry29isSupportedJavaScriptMIMETypeERKN3WTF6StringE(MakeString("application/x\x0D" "ecmascript")));
+    Require(_ZN7WebCore16MIMETypeRegistry23isSupportedJSONMIMETypeERKN3WTF6StringE(MakeString("application\x0Fjson")));
+    auto& xml = _ZN7WebCore16MIMETypeRegistry13isXMLMIMETypeERKN3WTF6StringE;
+    Require(xml(MakeString("text\x0Fxml")));
+    Require(xml(MakeString("application\x0Fxml")));
+    auto& entity = _ZN7WebCore16MIMETypeRegistry19isXMLEntityMIMETypeEN3WTF10StringViewE;
+    Require(entity(MakeView("text\x0Fxml-external-parsed-entity")));
+    Require(entity(MakeView("application/xml\x0D" "external\x0Dparsed\x0D" "entity")));
+    Require(!entity(MakeView("text/xml\x1D" "external-parsed-entity")));
+    auto& pdf = _ZN7WebCore16MIMETypeRegistry25isPDFOrPostScriptMIMETypeERKN3WTF6StringE;
+    Require(pdf(MakeString("application\x0Fpdf")));
+    Require(pdf(MakeString("text\x0Fpdf")));
+    Require(pdf(MakeString("application\x0Fpostscript")));
+    auto& svg = _ZN7WebCore16MIMETypeRegistry34isSupportedImageVideoOrSVGMIMETypeERKN3WTF6StringE;
+    Require(svg(MakeString("image\x0Fsvg+xml")));
+    Require(svg(MakeString("image/svg\x0Bxml")));
+    Require(!svg(MakeString("image\x0Fpng")));
+    auto& preview = _ZN7WebCore16MIMETypeRegistry23isSystemPreviewMIMETypeERKN3WTF6StringE;
+    Require(preview(MakeString("model\x0Fusd")));
+    Require(preview(MakeString("model/vnd\x0Ereality")));
+    Require(preview(MakeString("model/vnd\x0Epixar\x0Eusd")));
+    Require(preview(MakeString("model/vnd.usdz\x0Bzip")));
+    Require(!preview(MakeString("model/vnd\x1Ereality")));
+    auto& canShow = _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE;
+    Require(canShow(MakeString("text\x0Fplain")));
+    Require(canShow(MakeString("text\x0Funknown")));
+    Require(!canShow(MakeString("text\x0F" "calendar")));
+    Require(!canShow(MakeString("text/x\x0D" "vcard")));
+    Require(canShow(MakeString("application\x0Fjavascript")));
+    auto& nonImage = _ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE;
+    Require(nonImage(MakeString("TEXT/JavaScript")));
+    Require(!nonImage(MakeString("text\x0Fjavascript")));
+    Require(!nonImage(MakeString("text\x0Fhtml")));
+}
+
 void TestCanShowMIMEType() {
     auto& canShow = _ZN7WebCore16MIMETypeRegistry15canShowMIMETypeERKN3WTF6StringE;
     Require(canShow(MakeString("image/png")));
@@ -423,8 +527,6 @@ void TestCanShowMIMEType() {
     Require(canShow(MakeString("application/xhtml+xml")));
     Require(canShow(MakeString("application/javascript")));
     Require(canShow(MakeString("application/ecmascript")));
-    Require(canShow(MakeString("application/x-ftp-directory")));
-    Require(canShow(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(canShow(MakeString("text/javascript")));
     Require(canShow(MakeString("application/json")));
     Require(canShow(MakeString("application/vnd.api+json")));
@@ -438,6 +540,7 @@ void TestCanShowMIMEType() {
     Require(!canShow(MakeString(nullptr)));
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("video/mp4")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/octet-stream")); });
+    RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-ftp-directory")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-mpegurl")); });
 }
 
@@ -530,6 +633,7 @@ int main() {
     TestExtensionsForMIMEType();
     TestAllowedFileExtensions();
     TestIsSupportedMediaMIMEType();
+    TestLettersComparison();
     std::printf("All libSceNKWebKit MimeTypeRegistry tests passed!\n");
     return 0;
 }

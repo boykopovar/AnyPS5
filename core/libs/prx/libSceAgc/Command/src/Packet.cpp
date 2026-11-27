@@ -112,10 +112,21 @@ private:
 
 void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
     Require(buffer != nullptr && count != 0, function, "null command buffer or empty allocation");
+    auto& stripe = allocationStripe(buffer);
+    std::unique_lock serialized(stripe.mutex);
+    stripe.grown.wait(serialized, [&] {
+        const auto entry = stripe.find(buffer);
+        return entry == stripe.growing.end() || entry->thread == std::this_thread::get_id();
+    });
     if (available(*buffer, function) < count) {
         Require(buffer->callback != nullptr, function, "command buffer exhausted");
         Require(count <= std::numeric_limits<std::uint32_t>::max() - buffer->reserved_dw, function, "command buffer allocation overflow");
-        Require(buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data), function, "command buffer allocation callback failed");
+        bool grew = false;
+        {
+            const GrowScope growing(stripe, serialized, buffer);
+            grew = buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data);
+        }
+        Require(grew, function, "command buffer allocation callback failed");
         Require(available(*buffer, function) >= count, function, "command buffer allocation callback returned insufficient space");
     }
 }
@@ -224,9 +235,8 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
 
 std::uint32_t* WriteIndirectRegisters(CommandBuffer* buffer, std::uint32_t opcode, const volatile ShaderRegister* registers, std::uint32_t count, const char* function) {
     const auto address = reinterpret_cast<std::uintptr_t>(registers);
-    if (address != 0 || count != 0) CheckAddress(address, 4, function);
-    CheckBits(count, 0x3fffu, function);
-    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count}, function);
+    Require(address != 0 || count == 0, function, "null register list with a count");
+    return Emit(buffer, opcode, {static_cast<std::uint32_t>(address) & ~3u, static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count & 0x3fffu}, function);
 }
 
 void PatchIndirectAddress(std::uint32_t* packet, std::uint32_t opcode, const volatile ShaderRegister* registers, const char* function) {

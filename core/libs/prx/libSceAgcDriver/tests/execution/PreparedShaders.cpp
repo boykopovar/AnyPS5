@@ -744,7 +744,7 @@ void UnsupportedTypeRegistration() {
     header.shader.code = code.data();
     header.shader.sh_registers = header.registers.data();
     header.shader.num_sh_registers = header.registers.size();
-    header.shader.type = 8;
+    header.shader.type = 9;
     AgcDriverRegisterShader_nid_postfix(&header.shader);
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
@@ -1249,6 +1249,28 @@ std::string Logged(TAction action) {
     return capture.Finish();
 }
 
+void FetchShaderRegistration() {
+    alignas(256) static const std::array<std::uint32_t, 1> fetchCode{0xbf810000u};
+    alignas(256) static const std::array<std::uint32_t, 1> unknownCode{0xbf810000u};
+    struct Header {
+        Shader shader{};
+    } fetch, unknown;
+    for (auto* header : {&fetch, &unknown}) {
+        header->shader.file_header = 0x34333231u;
+        header->shader.version = 0x18;
+        header->shader.header_size = sizeof(Header);
+        header->shader.shader_size = sizeof(fetchCode);
+    }
+    fetch.shader.code = fetchCode.data();
+    fetch.shader.type = 8;
+    unknown.shader.code = unknownCode.data();
+    unknown.shader.type = 9;
+    const auto fetchLog = Logged([&] { AgcDriverRegisterShader_nid_postfix(&fetch.shader); });
+    Require(fetchLog.find("unsupported registered shader type") == std::string::npos, "a fetch shader was logged as an unsupported registered shader type");
+    const auto unknownLog = Logged([&] { AgcDriverRegisterShader_nid_postfix(&unknown.shader); });
+    Require(unknownLog.find("unsupported registered shader type 9") != std::string::npos, "an unknown registered shader type was not logged");
+}
+
 void SettleResolvedAbis() {
     AgcDriver::DriverDetail::AwaitRegistrationPreparation();
     while (AgcDriver::DriverDetail::RegistrationPreparationsPending() != std::optional<std::size_t>{0}) std::this_thread::yield();
@@ -1321,6 +1343,7 @@ alignas(256) constexpr std::array<std::uint32_t, 64> BarrierFreeWaterfallVertexC
 alignas(256) constexpr std::array<std::uint32_t, 11> FrontCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> UndecodablePixelCode{0xf1949f05u, 0x00060018u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> PassthroughPixelCode{0xc8020002u, 0xf800180fu, 0x00000000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> PerVertexPixelCode{0xc80a0000u, 0xc80e0001u, 0xc8120002u, 0xf800180fu, 0x04040302u, 0xbf810000u};
 
 void DescribeWaterfallPixel(AbiHeader& pixel) {
     DescribeAbi(pixel, WaterfallPixelCode, 1, {{0x8, ProgramLow(WaterfallPixelCode.data())}, {0x9, ProgramHigh(WaterfallPixelCode.data())}, {0xa, 0}, {0xb, 2u << 1u}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
@@ -1582,7 +1605,7 @@ void AbiDeferredPixel() {
         for (std::size_t index = 0; index < header->shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, header->registers[index].offset, header->registers[index].value});
         for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
     }
-    commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    commands.insert(commands.end(), {0xc0016900u, 0x203, 0x400u, 0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of a deferred pixel shader was not submitted");
     ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "is not a valid runtime value");
@@ -1695,31 +1718,36 @@ void AbiDeferredVertexInputs() {
 }
 
 void AbiDeferredRectanglePairs() {
+#ifdef _WIN32
+    Require(_putenv_s("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1") == 0, "cannot emulate per-vertex inputs");
+#else
+    Require(setenv("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC", "1", 1) == 0, "cannot emulate per-vertex inputs");
+#endif
     static AbiHeader front;
     DescribeFront(front);
     static AbiHeader pixel;
-    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0x420}, {0x1c5, 4}});
+    DescribeAbi(pixel, PerVertexPixelCode, 1, {{0x8, ProgramLow(PerVertexPixelCode.data())}, {0x9, ProgramHigh(PerVertexPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
     static AbiHeader unresolved;
     DescribeWaterfallPixel(unresolved);
     for (auto* header : {&front, &pixel, &unresolved}) AgcDriverRegisterShader_nid_postfix(&header->shader);
-    const std::array<ShaderRegister, 1> passthrough{pixel.context[3]};
+    const std::array<ShaderRegister, 1> inputControl{pixel.context[3]};
     const auto resolve = [&] {
         AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, nullptr, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &unresolved.shader, 17);
-        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         scope.Commit();
     };
     {
         AgcDriver::ShaderPreparationScope scope({&pixel.shader});
-        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, inputControl, {});
         scope.Commit();
     }
     SettleResolvedAbis();
     auto log = Logged(resolve);
-    Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
+    Require(Deferrals(log) == 1 && log.find("an emulated per-vertex parameter is not exported by the vertex shader") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
     log = Logged(resolve);
     Require(Deferrals(log) == 0, "a rectangle pair deferred at its pipeline ABI was logged again");
     const auto draw = [&](bool withPixel) {
@@ -1730,14 +1758,14 @@ void AbiDeferredRectanglePairs() {
             for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
         }
         if (!withPixel) commands.insert(commands.end(), {0xc0017600u, 0x8, 0});
-        commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
+        commands.insert(commands.end(), {0xc0016900u, 0x203, withPixel ? 0x400u : 0u, 0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
         Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
         Require(sceAgcDriverSubmitDcb(&packet) == 0, "a rect-list draw was not submitted");
         AgcDriverWaitIdle_nid_postfix();
     };
     draw(false);
-    ExpectFailure([&] { draw(true); }, "custom per-vertex interpolation is unsupported");
-    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
+    ExpectFailure([&] { draw(true); }, "an emulated per-vertex parameter is not exported by the vertex shader");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "an emulated per-vertex parameter is not exported by the vertex shader");
 }
 
 void CommittedAbis() {
@@ -2176,6 +2204,7 @@ int main(int argc, char** argv) {
         UnprovenProgramsAtSubmit();
         RegistrationRetry();
         RegistrationWithoutSpecials();
+        FetchShaderRegistration();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
         return 0;

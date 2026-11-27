@@ -1,8 +1,10 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGifParser/include/InventoryExports.hpp"
+#include "Allocator.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
@@ -19,6 +21,16 @@ std::array<std::byte, kConfigSize> g_config{};
 std::array<std::byte, kConfigSize> g_configCopy{};
 
 } // namespace
+
+GifParser::Allocator GifParser::GetAllocator_nid_no_patch() {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    Allocator allocator{};
+    std::memcpy(&allocator.allocate, g_config.data(), sizeof(allocator.allocate));
+    std::memcpy(&allocator.release, g_config.data() + 0x18, sizeof(allocator.release));
+    if (!allocator.allocate || !allocator.release)
+        throw std::logic_error("GIF metadata: allocator has not been initialized");
+    return allocator;
+}
 
 extern "C" {
 

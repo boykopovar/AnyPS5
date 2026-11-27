@@ -38,6 +38,17 @@ static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     return true;
 }
 
+static bool ReadCharmapEncoding(FreeType::GuestFaceRec* face, std::int32_t& encoding, bool& hasCharmap) {
+    FreeType::GuestCharMapRec* charmap = nullptr;
+    if (!CopyGuestIn(&charmap, &face->charmap, sizeof(charmap))) return false;
+    hasCharmap = (charmap != nullptr);
+    if (!hasCharmap) {
+        encoding = 0;
+        return true;
+    }
+    return CopyGuestIn(&encoding, &charmap->encoding, sizeof(encoding));
+}
+
 extern "C" {
 
 FcConfig* APS5_VABI FcConfigGetCurrent() {
@@ -70,10 +81,6 @@ int APS5_VABI FcInit() {
 
 int APS5_VABI FcInitBringUptoDate() {
     return 1;
-}
-
-int APS5_VABI FcFontRenderPrepare() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result) {
@@ -133,12 +140,15 @@ FcCharSet* APS5_VABI FcCharSetCreate() {
 
 std::uint32_t APS5_VABI FcFreeTypeCharIndex(FreeType::GuestFaceRec* face, std::uint32_t character) {
     if (!face) return 0;
+    std::int32_t current = 0;
+    bool hasCharmap = false;
+    if (!ReadCharmapEncoding(face, current, hasCharmap)) return 0;
     constexpr std::array encodings{FT_ENCODING_UNICODE, FT_ENCODING_MS_SYMBOL};
-    const auto current = face->charmap ? face->charmap->encoding : 0;
-    const std::size_t initial = current == encodings[1] ? 1 : 0;
+    const std::size_t initial = (hasCharmap && current == encodings[1]) ? 1 : 0;
     for (std::size_t offset = 0; offset < encodings.size(); ++offset) {
         const auto encoding = encodings[(initial + offset) % encodings.size()];
-        if ((!face->charmap || face->charmap->encoding != encoding) &&
+        if (!ReadCharmapEncoding(face, current, hasCharmap)) return 0;
+        if ((!hasCharmap || current != encoding) &&
             FT_Select_Charmap_nid_postfix(face, encoding) != 0) continue;
         if (const auto glyph = FT_Get_Char_Index_nid_postfix(face, character)) return glyph;
         if (character < 0x100 && encoding == FT_ENCODING_MS_SYMBOL) {

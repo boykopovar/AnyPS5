@@ -2,15 +2,20 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdio>
+#include <string>
 
 namespace {
 
 constexpr int MutexTypeRecursive = 2;
 constexpr std::size_t MutexNameSize = 32;
+constexpr int GuestNameTooLong = 63;
+constexpr int CppErrorInvalidArgument = 1;
 
 }
 
@@ -18,8 +23,18 @@ extern "C" {
 
 int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name) {
     char mutexName[MutexNameSize];
+    std::string copied;
+    if (name != nullptr) {
+        const int error = CopyGuestString_nid_no_patch(name, MutexNameSize, copied);
+        if (error == 63) {
+            copied.resize(MutexNameSize);
+            if (!GuestCopyIn_nid_no_patch(copied.data(), name, MutexNameSize)) return 1;
+        } else if (error != 0) {
+            return 1;
+        }
+    }
     if (name != nullptr)
-        std::snprintf(mutexName, sizeof(mutexName), "SceLibcI_%s", name);
+        std::snprintf(mutexName, sizeof(mutexName), "SceLibcI_%s", copied.c_str());
     else
         std::snprintf(mutexName, sizeof(mutexName), "SceLibcI");
     PthreadMutexattr attr = nullptr;
@@ -34,6 +49,11 @@ int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name) {
 }
 
 int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
+    if (name != nullptr) {
+        std::string copied;
+        if (CopyGuestString_nid_no_patch(name, MutexNameSize, copied) == GuestNameTooLong)
+            _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(CppErrorInvalidArgument);
+    }
     return _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(mutex, type, name);
 }
 

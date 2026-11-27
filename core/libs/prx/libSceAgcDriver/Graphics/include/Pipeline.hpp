@@ -50,7 +50,7 @@ public:
     VkPipelineLayout Layout() const;
     std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<void>> owners, VkExtent2D extent, std::uint32_t layers = 1);
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
-    void Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr) const;
+    void Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr, bool secondaryContents = false) const;
     // The same inside a render pass another pipeline of the same attachments began (compatible by
     // construction: the attachment formats alone decide).
     void Continue(CommandState& recording, const State& state, const State* masked = nullptr) const;
@@ -59,9 +59,21 @@ public:
     void ContinueBackFaces(CommandState& recording, const State& state, const State* masked = nullptr) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
     void ContinueSecondChannel(CommandState& recording, const State& state, const State* masked = nullptr) const;
+    bool MasksStencilReplayPasses(const State& state) const;
+    void SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const;
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
+    bool NarrowLibraryKeys() const { return narrowLibraryKeys; }
+    VkFormat DepthFormat() const { return depthFormat; }
+    bool DynamicRendering() const { return dynamicRendering; }
+    std::uint32_t ColorSlotCount() const { return static_cast<std::uint32_t>(colorSlots.size()); }
+    bool BindsColor() const {
+        for (const auto slot : colorSlots) {
+            if (slot != ~0u) return true;
+        }
+        return false;
+    }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
@@ -71,6 +83,7 @@ private:
     struct CachedFramebuffer {
         std::vector<VkImageView> views;
         std::vector<std::weak_ptr<void>> owners;
+        std::vector<const void*> ownerPointers;
         std::vector<bool> owned;
         VkExtent2D extent;
         std::uint32_t layers = 1;
@@ -95,6 +108,9 @@ private:
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
+    bool narrowLibraryKeys = false;
+    bool dynamicDepthBiasEnable = false;
+    bool dynamicColorWriteMask = false;
     std::uint32_t dynamicSlots = 0;
     std::shared_ptr<OptimizedPipeline> optimized;
     bool dynamicRendering = false;
@@ -158,6 +174,7 @@ void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConf
 void ValidateLineWidth(const Context& context, float width);
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders = {});
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
+bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed);
 bool ValidateSampleLocations(const Context& context, const State& state);
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);

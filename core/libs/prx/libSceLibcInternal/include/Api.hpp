@@ -21,6 +21,7 @@ struct GuestOption {
 };
 
 struct GuestDirectoryEntry;
+struct GuestLocaleFacade;
 
 struct LibcUtimbuf {
     std::int64_t actime;
@@ -33,6 +34,7 @@ extern "C" {
 
 bool APS5_VABI sceLibcInternalWideCtypeDoIs_nid_no_patch(const GuestLocale::Facet* self, short mask, char16_t character);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoIsRange_nid_no_patch(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination);
+const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanIs_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
 char16_t APS5_VABI sceLibcInternalWideCtypeDoToupper_nid_no_patch(const GuestLocale::Facet* self, char16_t character);
 const char16_t* APS5_VABI sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last);
@@ -43,6 +45,7 @@ void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
 GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip);
 void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location);
+void APS5_VABI _reclaim_telldir_nid_postfix(void* handle);
 int APS5_VABI __fflush_nid_postfix(FileStream* stream);
 int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
@@ -135,6 +138,7 @@ int APS5_VABI _ZNSt10filesystem7_RenameEPKcS1__nid_postfix(const char* from, con
 int APS5_VABI _ZNSt10filesystem7_ResizeEPKcm_nid_postfix(const char* path, std::uint64_t size);
 int APS5_VABI _ZNSt10filesystem10_Copy_fileEPKcS1__nid_postfix(const char* from, const char* to);
 int APS5_VABI _ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE_nid_postfix(const char* path, std::uint64_t* space);
+bool APS5_VABI _ZNSt10filesystem12_Current_setEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
@@ -151,6 +155,9 @@ void APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix(GuestLocale::CollateFacet* self,
 void APS5_VABI _ZNSt7collateIcEC1EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
 void APS5_VABI _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
 void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC2Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt7collateIcED0Ev_nid_postfix(GuestLocale::CollateFacet* self);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
@@ -188,9 +195,12 @@ void APS5_VABI _ZNSt22_Future_error_categoryD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt23_Generic_error_categoryD0Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt18bad_variant_accessD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt18bad_variant_accessD0Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt13bad_exceptionD0Ev_nid_postfix(void* self);
 [[noreturn]] void APS5_VABI sceLibcInternalXoverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI _ZNKSs5_XranEv_nid_postfix(const GuestLocale::String* self);
 [[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const GuestLocale::String* self);
+[[noreturn]] void APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix(const GuestLocale::String* self);
+[[noreturn]] void APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix(const GuestLocale::String* self);
 GuestLocale::String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);
 GuestLocale::String* APS5_VABI _ZNSs6appendERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
 GuestLocale::String* APS5_VABI _ZNSs6appendEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
@@ -204,6 +214,7 @@ GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm_nid_p
 GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
 GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6assignEmw_nid_postfix(GuestLocale::String* self, std::size_t count, std::uint16_t character);
 GuestLocale::String* APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count, std::uint16_t character);
+void APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix(GuestLocale::String* self, std::size_t newSize, std::size_t oldLength);
 GuestLocale::String* APS5_VABI _ZNSs6insertEmmc_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count, char character);
 void APS5_VABI sceLibcInternalFundamentalTypeInfoBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalFundamentalTypeInfoCompleteDestructor_nid_no_patch(void* self);
@@ -288,6 +299,13 @@ void APS5_VABI _ZNSt8messagesIcEC2Em_nid_postfix(void* self, std::size_t referen
 void APS5_VABI _ZNSt8messagesIwEC1EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC1ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
 void APS5_VABI _ZNSt8messagesIwEC2Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC1Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIcEC2EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC1Em_nid_postfix(void* self, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC2EPKcm_nid_postfix(void* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+std::size_t APS5_VABI _ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+std::size_t APS5_VABI _ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, long double units);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, char fill, const GuestLocale::String* digits);
 GuestLocale::OutputIterator APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe_nid_postfix(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::IosBase* stream, std::uint16_t fill, long double units);
@@ -354,6 +372,9 @@ LibcUnexpectedHandler APS5_VABI _ZSt14get_unexpectedv_nid_postfix();
 void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
+GuestLocaleFacade* APS5_VABI _ZNSt6locale6globalERKS__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix(GuestLocale::Implementation* self, bool transparent);
+void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* self, int category, const char* localeName);
 
 
 }

@@ -287,6 +287,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <atomic>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
@@ -296,7 +297,53 @@ constexpr int MallocFailure = 65;
 constexpr int Asn1OctetString = 4;
 constexpr int DifferentKeyTypes = 101;
 constexpr int MissingParameters = 103;
+constexpr int CommandNotSupported = 147;
+constexpr int OperationNotSupported = 150;
+constexpr int UnsupportedAlgorithm = 156;
+constexpr int RsaType = 6;
 constexpr int EcType = 408;
+constexpr int NoKeyType = -1;
+constexpr int DhType = 28;
+constexpr int DsaType = 116;
+constexpr int CmacType = 894;
+constexpr int X25519Type = 950;
+constexpr int Ed25519Type = 952;
+constexpr int HkdfType = 1022;
+constexpr int Tls1PrfType = 1055;
+
+int MacKeyRejection(int type) {
+    switch (type) {
+    case NoKeyType:
+    case CmacType:
+        return 0;
+    case RsaType:
+    case DhType:
+    case DsaType:
+    case EcType:
+    case LibreSsl3PkeyRsaPss:
+    case X25519Type:
+    case Ed25519Type:
+        return CommandNotSupported;
+    case HkdfType:
+    case Tls1PrfType:
+        return OperationNotSupported;
+    default:
+        return UnsupportedAlgorithm;
+    }
+}
+
+void ReleasePkeyData(LibreSsl3EvpPkey* key) {
+    if (!key->key) return;
+    if (key->method) {
+        const auto* method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
+        if (method->keyFree) method->keyFree(key);
+    } else if (key->type == RsaType) {
+        RSA_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3Rsa*>(key->key));
+    } else if (key->type == EcType) {
+        EC_KEY_free_nid_postfix(static_cast<EcKey*>(key->key));
+    }
+    key->key = nullptr;
+}
 
 } // namespace
 
@@ -336,8 +383,17 @@ void APS5_VABI EVP_PKEY_free_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key) {
     free_nid_postfix(key);
 }
 
-int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey*, LibreSsl3Rsa*) {
-    NotImplemented_nid_no_patch("EVP_PKEY_set1_RSA of native LibreSSL3 algorithm data");
+int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key, LibreSsl3Rsa* rsa) {
+    if (!key) throw std::invalid_argument("EVP_PKEY_set1_RSA requires an EVP_PKEY");
+    ReleasePkeyData(key);
+    const auto* method = FindNativePkeyAsn1Method_nid_no_patch(RsaType);
+    if (!method) NotImplemented_nid_no_patch(__func__);
+    key->type = RsaType;
+    key->method = method;
+    key->key = rsa;
+    if (!rsa) return 0;
+    RSA_up_ref_nid_postfix(rsa);
+    return 1;
 }
 
 int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* to,
@@ -359,7 +415,10 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
 }
 
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {
-    if (type != LibreSsl3PkeyHmac) return nullptr;
+    if (type != LibreSsl3PkeyHmac) {
+        if (const int reason = MacKeyRejection(type)) LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
+        return nullptr;
+    }
     if ((!key && keyLength > 0) || keyLength < -1) return nullptr;
     auto* octets = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
     if (!octets) return nullptr;

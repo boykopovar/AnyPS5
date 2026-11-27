@@ -164,25 +164,7 @@ public:
     void Release() {
         if (!fetched || stream == nullptr || next < 0) return;
         fetched = false;
-        const std::uint32_t code = static_cast<std::uint32_t>(next);
-        unsigned char bytes[4];
-        std::size_t count = 0;
-        if (code < 0x80) {
-            bytes[count++] = static_cast<unsigned char>(code);
-        } else if (code < 0x800) {
-            bytes[count++] = static_cast<unsigned char>(0xc0 | (code >> 6));
-            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
-        } else if (code < 0x10000) {
-            bytes[count++] = static_cast<unsigned char>(0xe0 | (code >> 12));
-            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
-            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
-        } else {
-            bytes[count++] = static_cast<unsigned char>(0xf0 | (code >> 18));
-            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f));
-            bytes[count++] = static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f));
-            bytes[count++] = static_cast<unsigned char>(0x80 | (code & 0x3f));
-        }
-        while (count != 0) ungetc_nid_postfix(bytes[--count], stream);
+        ungetwc_nid_postfix(next, stream);
     }
 };
 
@@ -278,7 +260,7 @@ private:
             directive.length += static_cast<char>(*format++);
         }
         directive.conversion = *format;
-        if (directive.conversion == 0) Fail("incomplete conversion specification");
+        if (directive.conversion == 0) return directive;
         ++format;
         if (directive.conversion == u'[') {
             directive.setExcluded = *format == u'^';
@@ -365,8 +347,6 @@ private:
     }
 
     Outcome Float(const Directive& directive) {
-        if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
-            Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
         if (!directive.suppress && (target = args.Next<void*>()) == nullptr) return Outcome::Violation;
         SkipSpace();

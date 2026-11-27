@@ -25,6 +25,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include "SavedExecMaskLoop.hpp"
 #include "ShaderDiskCache.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -437,7 +438,7 @@ void verifySpecializedModuleRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "specialized module release: the module caches kept the words of a module no result uses");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "specialized module release: the module caches kept the words of a module no result uses, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(pixel);
     require(again.specializationId == specializationId, "specialized module release: a module built again from its key got another specialization ID");
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
@@ -485,7 +486,7 @@ void verifyLayerSpecializationRelease() {
         specializationId = first.specializationId;
         words = first.spirv.Copy();
     }
-    require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
+    require(released.Expired() != (std::getenv("APS5_KEEP_SPECIALIZED_MIB") != nullptr), "layer module release: the metadata retained unused SPIR-V words, or APS5_KEEP_SPECIALIZED_MIB released a kept module");
     const auto again = Recompile(request);
     require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
     require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
@@ -575,6 +576,67 @@ void verifyResultMemoBudget() {
     SetResultMemoBudget(0u);
     for (const auto value : {5u, 6u, 7u}) static_cast<void>(compile(value));
     require(ResultMemoBytes() > budget, "result memo budget: clearing the budget kept bounding the memo");
+}
+
+bool compileResultMemoBuffer(std::uint32_t address, std::uint32_t stride) {
+    using namespace ShaderRecompiler;
+    static const std::vector<std::uint32_t> code{0xe0700000u, 0x80000000u, 0xbf810000u};
+    const std::array<std::uint32_t, 4> buffer{address, stride << 16u, 0x40u, 0x00027facu};
+    auto request = FrontendRequest(code, buffer);
+    request.useCache = true;
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto regions = memory.Regions();
+    request.context.memory = regions;
+    bool hit = false;
+    static_cast<void>(Recompile(request, *capture, &hit));
+    return hit;
+}
+
+void verifyResultMemoWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        38u, 164u, 181u, 241u, 283u, 335u, 376u, 385u, 438u, 461u, 498u, 539u, 588u, 710u, 792u, 836u, 914u
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(!compileResultMemoPixel(colliding[i]), "result memo ways: a distinct snapshot unexpectedly hit the memo");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: one of 16 results sharing a set was evicted");
+    }
+    require(!compileResultMemoPixel(colliding[16]), "result memo ways: an unseen 17th snapshot hit the memo");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        require(compileResultMemoPixel(colliding[i]), "result memo ways: inserting a 17th result evicted a newer entry than the LRU one");
+    }
+    require(!compileResultMemoPixel(colliding[0]), "result memo ways: the 17th result in one set did not evict the least recently used entry");
+}
+
+void verifyResultMemoMaskedWays() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 17> colliding{
+        21u, 96u, 134u, 184u, 405u, 411u, 499u, 568u, 590u, 617u, 656u, 678u, 796u, 883u, 884u, 949u, 971u
+    };
+    const auto expectPatched = [&](std::uint32_t address, std::uint32_t stride, bool expectedPatch, const char* message) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(address, stride), "result memo masked ways: a new buffer address unexpectedly hit the full memo");
+        const bool patched = ResultMemoBytes() == before;
+        require(patched == expectedPatch, message);
+    };
+    for (std::size_t i = 0; i < 16u; ++i) {
+        const auto before = ResultMemoBytes();
+        require(!compileResultMemoBuffer(0x10000000u, colliding[i]), "result memo masked ways: an unseen masked snapshot hit the memo");
+        require(ResultMemoBytes() > before, "result memo masked ways: a missed masked snapshot inserted no entry");
+    }
+    for (std::size_t i = 0; i < 16u; ++i) {
+        expectPatched(0x10000100u, colliding[i], true, "result memo masked ways: one of 16 masked donors sharing a set was evicted");
+    }
+    const auto before17 = ResultMemoBytes();
+    require(!compileResultMemoBuffer(0x10000000u, colliding[16]), "result memo masked ways: an unseen 17th masked snapshot hit the memo");
+    require(ResultMemoBytes() > before17, "result memo masked ways: the 17th masked snapshot inserted no entry");
+    for (std::size_t i = 1; i < 17u; ++i) {
+        expectPatched(0x10000200u, colliding[i], true, "result memo masked ways: inserting a 17th masked donor evicted a newer entry than the LRU one");
+    }
+    expectPatched(0x10000200u, colliding[0], false, "result memo masked ways: the 17th masked donor in one set did not evict the least recently used entry");
 }
 
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
@@ -1197,6 +1259,14 @@ void verifyWaterfallRuntimeValues() {
         std::uint32_t result = 0;
         require(evaluator.Evaluate(Detail::IrNode(&nestedFirst), result) && result == (word == 4u ? word : word + 1u), "waterfall: a nested select ignored its uniform condition");
     }
+    auto& copiedCondition = make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane});
+    auto& copiedMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&copiedCondition, &uniform});
+    auto& copiedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &copiedMask});
+    require(SrtWalker().ValidateRuntimeValue(plan, &copiedFirst), "waterfall: a mask whose conjunct is a structural copy of the select condition was rejected");
+    auto& negatedCondition = make(IrOpcode::INotEqual32, IrType::Bool, {&input, &lane});
+    auto& negatedMask = make(IrOpcode::LogicalAnd, IrType::Bool, {&negatedCondition, &uniform});
+    auto& negatedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &negatedMask});
+    require(!SrtWalker().ValidateRuntimeValue(plan, &negatedFirst), "waterfall: a mask whose conjunct is the negation of the select condition was accepted");
 }
 
 void verifyUniformVectorComponents() {
@@ -1408,6 +1478,14 @@ void verifyMayDecideSharedConditions() {
     require(Detail::Evaluator::MayDecide(plan, decided), "MayDecide did not decide 64 levels of shared conditions over a uniform conjunct");
     std::unordered_map<const IrValue*, bool> memo;
     require(!Detail::Evaluator::MayDecide(plan, undecided, memo) && Detail::Evaluator::MayDecide(plan, decided, memo), "MayDecide answered differently through a shared memo");
+    const auto uniformConjunct = [&] { return &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), &make(IrOpcode::IEqual32, IrType::Bool, {&input, &input})}); };
+    auto& copies = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), uniformConjunct()});
+    auto& lanes = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct(), &make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), varying()})});
+    auto& looped = make(IrOpcode::Phi, IrType::Bool, {uniformConjunct()});
+    looped.AddArgument(&looped);
+    require(Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&copies})), "MayDecide did not decide a branch on a phi of two copies of a condition with a uniform conjunct");
+    require(!Detail::Evaluator::MayDecide(plan, &make(IrOpcode::LogicalNot, IrType::Bool, {&lanes})), "MayDecide decided a phi of a decidable and an undecidable condition");
+    require(Detail::Evaluator::MayDecide(plan, &looped), "MayDecide did not decide a phi that carries one decidable condition around a loop");
 }
 
 void verifyEvaluatedValues() {
@@ -1873,6 +1951,24 @@ void verifyTypeZeroImageMaterialization() {
         require(!flushed && waits == 0u && std::ranges::any_of(knownCapture->snapshot.images, [&](const DescriptorValue& value) {
             return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
         }), "raw-to-known descriptor transition: cached Raw descriptor was not invalidated and replaced by KnownValue");
+    }
+
+    phase = 4u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory forcedSpanMemory({}, multiPending, nullptr, hookWaits);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorForceSync));
+        const auto forcedCapture = forcedSpanMemory.Capture(request);
+        static_cast<void>(AgcDriver::ShaderMemory::descriptorScope(&forcedSpanMemory, SrtDescriptorEndForceSync));
+        require(std::ranges::any_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }) && std::ranges::none_of(forcedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
+        }), "force-sync descriptor span: a T# span read under SrtDescriptorForceSync took the KnownValue bytes instead of reading through the flush hook");
     }
 
     for (std::uint32_t record = 0; record < 128u; ++record) {
@@ -3981,12 +4077,19 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
 }
 
 
-void verifyNestedSnapshotRetry() {
+void verifyNestedSnapshotRetry(bool sampler) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
     constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
-    std::vector<std::array<std::uint32_t, 8>> leaves(Children, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
-    const auto child = TableV(leaves.data(), 32u, Children);
+    const std::uint32_t leafDwords = sampler ? 4u : 8u;
+    const auto texture = TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u);
+    const std::array<std::uint32_t, 4> pointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+    std::vector<std::uint32_t> leaves;
+    for (std::uint32_t leaf = 0; leaf < Children; ++leaf) {
+        if (sampler) leaves.insert(leaves.end(), pointClamp.begin(), pointClamp.end());
+        else leaves.insert(leaves.end(), texture.begin(), texture.end());
+    }
+    const auto child = TableV(leaves.data(), leafDwords * 4u, Children);
     std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
     const auto root = TableV(parents.data(), 8u, Parents);
     std::vector<std::unique_ptr<IrValue>> values;
@@ -4012,17 +4115,25 @@ void verifyNestedSnapshotRetry() {
     plan.descriptorSources[1].tableColumn = parent;
     TableColumn nested;
     nested.heapSource = 1u;
-    nested.stride = 32u;
-    nested.dwordCount = 8u;
+    nested.stride = leafDwords * 4u;
+    nested.dwordCount = leafDwords;
+    nested.sampler = sampler;
     plan.descriptorSources[2].tableColumn = nested;
-    ImageResource image;
-    image.source = 2u;
-    image.table = 0u;
-    image.resourceClass = ImageResourceClass::Sampled;
-    image.dimension = RdnaImageDimension::Dim2D;
-    image.read = true;
-    plan.info.images.push_back(image);
-    plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    if (sampler) {
+        SamplerResource resource;
+        resource.source = 2u;
+        resource.table = 0u;
+        plan.info.samplers.push_back(resource);
+    } else {
+        ImageResource image;
+        image.source = 2u;
+        image.table = 0u;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    }
     struct Memory {
         std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
         std::uint64_t epoch = 0;
@@ -4079,6 +4190,99 @@ void verifyNestedSnapshotRetry() {
     const auto retried = capture(true);
     require(stable.tables == retried.tables && stable.nested == retried.nested,
             "nested retry: an invalidation changed the captured keys, pointers, words or codes");
+}
+
+void verifyNestedParentScanBudget() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Leaves = 4u;
+    std::array<std::array<std::uint32_t, 8>, Leaves> first{};
+    std::array<std::array<std::uint32_t, 8>, Leaves> second{};
+    first.fill(TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+    second.fill(TableT(reinterpret_cast<const void*>(0x100001000ull), TableFormat8888UNorm, TableType2D, 2u));
+    const auto firstChild = TableV(first.data(), 32u, Leaves);
+    const auto secondChild = TableV(second.data(), 32u, Leaves);
+    alignas(16) std::array<std::uint32_t, 8> block{};
+    std::copy(firstChild.begin(), firstChild.end(), block.begin());
+    std::copy(secondChild.begin(), secondChild.end(), block.begin() + 4u);
+    std::vector<std::uint64_t> shared(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::uint64_t> other(Parents, reinterpret_cast<std::uintptr_t>(block.data()));
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    const auto heap = [&](const std::vector<std::uint64_t>& records) {
+        const auto source = static_cast<std::uint32_t>(plan.descriptorSources.size());
+        plan.descriptorSources.emplace_back();
+        const auto words = TableV(records.data(), 8u, Parents);
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+            value->SetImmediateU32(words[word]);
+            plan.descriptorSources[source].dwords[word] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources[source].dwordCount = 4u;
+        return source;
+    };
+    const auto table = [&](std::uint32_t heapSource, std::uint32_t immediate) {
+        TableColumn parent;
+        parent.heapSource = heapSource;
+        parent.stride = 8u;
+        parent.dwordCount = 4u;
+        parent.indirect = true;
+        parent.buffer = true;
+        parent.indirectImmediate = immediate;
+        plan.descriptorSources.emplace_back().tableColumn = parent;
+        TableColumn nested;
+        nested.heapSource = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        nested.stride = 32u;
+        nested.dwordCount = 8u;
+        plan.descriptorSources.emplace_back().tableColumn = nested;
+        ImageResource image;
+        image.source = static_cast<std::uint32_t>(plan.descriptorSources.size() - 1u);
+        image.table = static_cast<std::uint32_t>(plan.info.images.size());
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        plan.materializationSources.push_back(image.source);
+    };
+    const auto sharedHeap = heap(shared);
+    table(sharedHeap, 0u);
+    table(sharedHeap, 16u);
+    table(heap(other), 0u);
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 5> ranges;
+    } memory{{{{reinterpret_cast<std::uintptr_t>(shared.data()), shared.size() * sizeof(shared[0])},
+               {reinterpret_cast<std::uintptr_t>(other.data()), other.size() * sizeof(other[0])},
+               {reinterpret_cast<std::uintptr_t>(block.data()), sizeof(block)},
+               {reinterpret_cast<std::uintptr_t>(first.data()), sizeof(first)},
+               {reinterpret_cast<std::uintptr_t>(second.data()), sizeof(second)}}}};
+    SrtRuntime runtime{};
+    runtime.userContext = &memory;
+    runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+        for (const auto& [base, size] : static_cast<Memory*>(context)->ranges) {
+            if (address >= base && address - base <= size - sizeof(*value)) {
+                std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                return true;
+            }
+        }
+        return false;
+    };
+    ResourceSnapshot snapshot;
+    ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+    const auto& tables = snapshot.tables.tables;
+    require(tables.size() == 3u && tables[0].keys == Parents, "nested parent scans: the first V# behind the parent records was truncated");
+    require(tables[1].keys == Parents,
+            std::string("nested parent scans: a second V# behind the same parent records was charged for them again (" + std::to_string(tables[1].keys) + " of " + std::to_string(Parents) + " keys)").c_str());
+    require(tables[1].pointers.size() == Parents && tables[1].pointers.at(Parents - 1u) == reinterpret_cast<std::uintptr_t>(block.data()) && (tables[1].codes.at(Parents - 1u) & ImageTableAbi::PoisonFlag) == 0u,
+            "nested parent scans: the last record behind the second V# was not captured");
+    require(snapshot.tables.nested.size() == 3u && snapshot.tables.nested.at(tables[0].codes.at(0)).base != snapshot.tables.nested.at(tables[1].codes.at(0)).base,
+            "nested parent scans: the two V#s behind one pointer did not keep their own child tables");
+    require(tables[2].keys == ImageTableAbi::MaxParentKeys - Parents,
+            std::string("nested parent scans: parent records of another heap were not charged to the shared budget (" + std::to_string(tables[2].keys) + " keys)").c_str());
 }
 
 void verifyTableSnapshotReuse() {
@@ -6118,6 +6322,36 @@ void verifyImageTableRegistration() {
     const auto colorRegions = colorMemory.Regions();
     colorRequest.context.memory = colorRegions;
     expectFailure([&] { static_cast<void>(Recompile(colorRequest, *colorCapture)); }, "comparison sampling of a color texture through a sampler table is not implemented", "image table registration: a color compare through a sampler table was accepted");
+    guest.heap[1] = guest.heap[0];
+    auto samplerCode = colorCompareCode;
+    samplerCode[9] = 0x20000020u;
+    samplerCode[10] = 0xf09c0f08u;
+    samplerCode.insert(samplerCode.begin() + 8, {0x8710ff10u, 0x30u});
+    const auto sampler = CompileTable(TableRequest(samplerCode, userData));
+    const auto& samplerSnapshot = sampler.capture->snapshot.tables.tables.at(0);
+    const auto samplerCodes = TableCodes(TableMap(*sampler.result), 0);
+    for (const std::uint32_t addend : {16u, 32u}) {
+        auto offsetCode = samplerCode;
+        offsetCode.insert(offsetCode.begin() + 10, {0x8110ff10u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf4280202u);
+        require(load != offsetCode.end(), "sampler table masked addend: the descriptor load is missing");
+        load[1] = 0x20000000u | (32u - addend);
+        const auto offset = CompileTable(TableRequest(offsetCode, userData));
+        const auto& samplerInfo = offset.capture->plan->info.samplers.at(0);
+        const auto& column = *offset.capture->plan->descriptorSources.at(samplerInfo.source).tableColumn;
+        require(column.sampler && !column.address && column.stride == 16u && column.addend == addend && column.offset == 32u - addend && column.dwordCount == 4u, "sampler table masked addend: the column is wrong");
+        const auto& snapshot = offset.capture->snapshot.tables.tables.at(0);
+        require(snapshot.codes == samplerSnapshot.codes && snapshot.words.size() == samplerSnapshot.words.size(), "sampler table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(snapshot.words[i].dwords == samplerSnapshot.words[i].dwords, "sampler table masked addend: the sampler words changed");
+        require(TableCodes(TableMap(*offset.result), 0) == samplerCodes, "sampler table masked addend: the map codes changed");
+    }
+    auto wrappedCode = samplerCode;
+    wrappedCode.insert(wrappedCode.begin() + 10, {0x8110ff10u, 0xfffffff0u});
+    const auto wrapped = CompileTable(TableRequest(wrappedCode, userData));
+    const auto& wrappedMap = TableMap(*wrapped.result);
+    require(wrapped.capture->snapshot.tables.tables.at(0).keys == 0u && TableCodes(wrappedMap, 0).empty(), "sampler table masked addend: an out-of-bounds start captured descriptors");
+    const auto outsideSampler = wrappedMap.at(Abi::TableHeader(0) + Abi::TableOutsideCode);
+    require(wrappedMap.at(Abi::TableHeader(0) + Abi::TableFault) == 0u && outsideSampler != Abi::NullCode && wrappedMap.at(outsideSampler + Abi::SamplerRecordFlags) == 0u, "sampler table masked addend: the out-of-bounds zero sampler is wrong");
 }
 
 bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {
@@ -6262,6 +6496,27 @@ void verifyPointerImageTable() {
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, masked.target.vulkanVersion, masked.target.spirvVersion));
 #endif
+    for (const std::uint32_t addend : {32u, 64u}) {
+        auto offsetCode = maskedCode;
+        offsetCode.erase(offsetCode.begin() + 10, offsetCode.begin() + 13);
+        offsetCode.insert(offsetCode.begin() + 10, {0x8f128511u, 0x8712ff12u, 0x1fe0u, 0x8112ff12u, addend});
+        const auto load = std::find(offsetCode.begin(), offsetCode.end(), 0xf40c0900u);
+        require(load != offsetCode.end(), "pointer image table masked addend: the descriptor load is missing");
+        load[1] = 0x24000000u | (Palette - addend);
+        const auto offsetRequest = request(offsetCode, 0x36000u + addend);
+        const auto offsetPlan = GetResourcePlan(offsetRequest);
+        require(offsetPlan->info.images.size() == 1u && offsetPlan->info.images[0].table == 0u, "pointer image table masked addend: the T# was not planned as a table");
+        const auto& offsetColumn = *offsetPlan->descriptorSources.at(offsetPlan->info.images[0].source).tableColumn;
+        require(offsetColumn.address && offsetColumn.stride == 32u && offsetColumn.addend == addend && offsetColumn.offset == Palette - addend && offsetColumn.dwordCount == 8u && offsetColumn.unkeyed && offsetColumn.keyDomains.empty(), "pointer image table masked addend: the column is wrong");
+        const auto offsetCompiled = CompileTable(offsetRequest);
+        const auto& offsetSnapshot = offsetCompiled.capture->snapshot.tables.tables.at(0);
+        require(offsetSnapshot.codes.size() >= snapshot.codes.size() && std::equal(snapshot.codes.begin(), snapshot.codes.end(), offsetSnapshot.codes.begin()), "pointer image table masked addend: the snapshot selected other records");
+        for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(offsetSnapshot.words.at(i).dwords == snapshot.words[i].dwords, "pointer image table masked addend: the descriptor words changed");
+        require(TableCovered(offsetCompiled.regions, root + Palette / 4u, Entries * 32u), "pointer image table masked addend: the descriptor bytes were not captured");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv, offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
+#endif
+    }
 
     const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4040500u, 0xfa000030u,
         0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c090au, 0x241fff00u, 0xf09c0f08u, 0x01090000u,
@@ -8915,7 +9170,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQT4AAAA=", "new requests did not use serialization version 62");
+    require(requestPrefix(encoded, 8u) == "NVNQQT8AAAA=", "new requests did not use serialization version 63");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9036,7 +9291,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQT8AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9094,7 +9349,7 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 14u && bytes[4] == 62u, "a legacy fixture did not start from serialization version 62");
+    require(bytes.size() > 14u && bytes[4] == 63u, "a legacy fixture did not start from serialization version 63");
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return bytes;
@@ -9113,6 +9368,65 @@ std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
         }
     }
     return text;
+}
+
+void verifyEmulatedBarycentricRequests() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> code{0xbf810000u};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = ShaderPixelStageInfo{};
+    request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, std::nullopt, {}};
+    const RequestSerializer serializer;
+    std::vector<std::uint64_t> native;
+    RecompileCacheKey::Build(request, native);
+    auto unset = request;
+    unset.graphics.reset();
+    std::vector<std::uint64_t> withoutGraphics;
+    RecompileCacheKey::Build(unset, withoutGraphics);
+    require(native == withoutGraphics && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(unset), "a pixel request that does not emulate barycentrics changed its cache key");
+    auto emulated = request;
+    emulated.graphics->emulateBarycentrics = true;
+    std::vector<std::uint64_t> forced;
+    RecompileCacheKey::Build(emulated, forced);
+    require(forced.size() == native.size() + 1u && RecompileCacheKey::ContextHash(emulated) != RecompileCacheKey::ContextHash(request), "emulated barycentrics are not one extra cache key element");
+    const auto added = std::ranges::mismatch(native, forced).in2;
+    auto removed = forced;
+    removed.erase(removed.begin() + (added - forced.begin()));
+    require(removed == native, "emulated barycentrics changed cache key elements other than their own");
+    for (const auto stage : {ShaderStage::Vertex, ShaderStage::Mesh, ShaderStage::TessellationEvaluation}) {
+        auto other = request;
+        other.shader.stage = stage;
+        other.context.pixel.reset();
+        std::vector<std::uint64_t> plain;
+        RecompileCacheKey::Build(other, plain);
+        other.graphics->emulateBarycentrics = true;
+        std::vector<std::uint64_t> flagged;
+        RecompileCacheKey::Build(other, flagged);
+        require(plain == flagged, "emulated barycentrics changed the cache key of a stage other than the pixel shader");
+    }
+    const auto encoded = serializer.Serialize(emulated);
+    const auto replay = serializer.Deserialize(encoded);
+    require(replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics && serializer.Serialize(replay.request) == encoded, "emulated barycentrics were lost in serialization");
+    auto bytes = decodeBase64(serializer.Serialize(request));
+    auto flagged = decodeBase64(encoded);
+    require(bytes[4] == 63u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
+    auto legacyBytes = bytes;
+    legacyBytes[4] = 62u;
+    const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
+    require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
+    std::vector<std::uint64_t> legacyKey;
+    RecompileCacheKey::Build(legacy.request, legacyKey);
+    require(legacyKey == native && serializer.Serialize(legacy.request) == serializer.Serialize(request), "a version 62 request changed its cache key or its upgraded bytes");
+    flagged[4] = 62u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
+    flagged[4] = 63u;
+    flagged.back() = 0u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "flag is clear", "a written but clear emulated barycentrics flag was accepted");
+    auto orphanBytes = decodeBase64(serializer.Serialize(unset));
+    orphanBytes.push_back(1u);
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(orphanBytes))); }, "emulated barycentrics without a graphics context", "emulated barycentrics without a graphics context were accepted");
 }
 
 void verifyDepthExportClamp() {
@@ -9898,6 +10212,16 @@ void verifyPixelInputs() {
         RecompileCacheKey::Build(other, key);
         require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the pixel input layout");
     }
+    request.context.pixel->alphaToCoverage = true;
+    request.context.pixel->ditheredAlphaToCoverage = true;
+    request.context.pixel->ditheredAlphaSamples = 1;
+    request.context.pixel->singleSampleDither = SingleSampleDither::E701;
+    auto rounded = request;
+    rounded.context.pixel->singleSampleDither = SingleSampleDither::Rounded18701;
+    std::vector<std::uint64_t> roundedKey;
+    RecompileCacheKey::BuildInterface(request, key);
+    RecompileCacheKey::BuildInterface(rounded, roundedKey);
+    require(key != roundedKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(rounded), "the cache keys alias the single-sample dither patterns");
 }
 
 ShaderRecompiler::RecompileRequest slotRequest(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code, bool hostInterpolationFirst) {
@@ -12123,15 +12447,27 @@ void verifyFmaskImageMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
-    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 163u, 165u}) {
+    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 162u, 163u, 164u, 165u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         const auto expanded = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
-        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format of up to 8 samples did not select the FMASK expansion mode");
+        require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format did not select the FMASK expansion mode");
     }
     require(std::ranges::count_if(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) == 1, "FMASK expansion needs exactly one runtime image mode");
     descriptor.dwords[1] = 159u << 20u;
     descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
+    descriptor.dwords[6] = 0u;
+    for (const auto format : {161u, 162u, 164u, 166u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        descriptor.dwords[3] = 0x91800005u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
+    }
+    descriptor.dwords[3] = (descriptor.dwords[3] & ~0xfffu) | 0xfacu;
+    for (const auto format : {162u, 164u, 167u, 168u}) {
+        descriptor.dwords[1] = format << 20u;
+        const auto wide = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+        require(modes[wide].conversionFormat == FmaskExpansion && modes[wide].dimension == RdnaImageDimension::Dim2D, "a 16-sample FMASK identity view did not select the FMASK expansion mode");
+    }
     descriptor.dwords[1] = 166u << 20u;
     descriptor.dwords[6] = 1u << 21u;
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without readable metadata");
@@ -12575,6 +12911,85 @@ void verifyGcnTableImageConversion() {
     }
 }
 
+void verifySpannedShuffleThroughMemory() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Lanes = 64u;
+    constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    alignas(256) static std::array<std::uint32_t, Lanes * 16u> output{};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> code{0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    std::array<std::uint32_t, 8> userData{};
+    userData[4] = static_cast<std::uint32_t>(address);
+    userData[5] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (64u << 16u);
+    userData[6] = Lanes;
+    userData[7] = 0x11016facu;
+    alignas(256) static constexpr std::array<std::uint32_t, 11> lanePredicated{0x7d880094u, 0xbe88246au, 0x34040082u, 0xdacc0000u, 0x0a000002u, 0xbf8cc07fu, 0xe0702000u, 0x80010a00u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+    const auto compile = [&](std::span<const std::uint32_t> program, std::uint32_t subgroupSize, bool spanned, bool throughMemory) {
+        const auto codeAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(program.data()));
+        const std::array<MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(program)}}};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, codeAddress, program, 0, {}};
+        request.context.waveSize = Lanes;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{Lanes, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.context.memory = memory;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024u;
+        request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.spannedWaves = spanned;
+        request.target.spannedShuffleThroughMemory = throughMemory;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    struct Counts {
+        std::uint32_t shuffles = 0;
+        std::uint32_t workgroupBarriers = 0;
+        std::uint32_t subgroupBarriers = 0;
+        std::uint32_t workgroupVariables = 0;
+    };
+    const auto count = [](std::span<const std::uint32_t> spirv) {
+        Counts result;
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpConstant && (spirv[cursor] >> 16u) == 4u) constants[spirv[cursor + 2u]] = spirv[cursor + 3u];
+            if (op == spv::OpGroupNonUniformShuffle) ++result.shuffles;
+            if (op == spv::OpVariable && spirv[cursor + 3u] == spv::StorageClassWorkgroup) ++result.workgroupVariables;
+            if (op == spv::OpControlBarrier) {
+                const auto scope = constants.find(spirv[cursor + 1u]);
+                if (scope != constants.end() && scope->second == spv::ScopeWorkgroup) ++result.workgroupBarriers;
+                if (scope != constants.end() && scope->second == spv::ScopeSubgroup) ++result.subgroupBarriers;
+            }
+        }
+        return result;
+    };
+    const std::span<const std::uint32_t> straight{code};
+    const auto native = compile(straight, 32u, true, false);
+    require(native.fullSubgroups, "spanned shuffle: the wave64 compute program did not span two 32-lane subgroups");
+    const auto nativeCounts = count(native.spirv);
+    require(nativeCounts.shuffles >= 1u && nativeCounts.subgroupBarriers == 0u, "spanned shuffle: without the flag the lane read is not the native subgroup shuffle");
+    const auto exchanged = compile(straight, 32u, true, true);
+    require(exchanged.fullSubgroups, "spanned shuffle: the flagged wave64 compute program did not span two 32-lane subgroups");
+    const auto exchangedCounts = count(exchanged.spirv);
+    require(exchangedCounts.shuffles == 0u, "spanned shuffle: with the flag the lane read still uses OpGroupNonUniformShuffle, which NVIDIA's compiler crashes on in the title's shader");
+    require(exchangedCounts.workgroupVariables >= 1u && exchangedCounts.workgroupBarriers >= nativeCounts.workgroupBarriers + 2u, "spanned shuffle: with the flag the lane read does not go through a workgroup array between two more workgroup-scope barriers");
+    require(exchangedCounts.subgroupBarriers == 0u, "spanned shuffle: with the flag the exchange uses a subgroup-scope barrier, which did not make LDS writes visible on NVIDIA");
+    const auto unspanned = compile(straight, 32u, false, true);
+    const auto unspannedNative = compile(straight, 32u, false, false);
+    require(!unspanned.fullSubgroups && unspanned.spirv == unspannedNative.spirv, "spanned shuffle: the flag changed a program that does not span subgroups");
+    const auto predicatedNative = compile(lanePredicated, 32u, true, false);
+    const auto predicated = compile(lanePredicated, 32u, true, true);
+    require(predicated.fullSubgroups && count(predicated.spirv).shuffles == 0u && count(predicated.spirv).workgroupBarriers >= count(predicatedNative.spirv).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
+    require(!SpannedBarrierInDivergentFlow(predicated.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
+    require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -12618,6 +13033,32 @@ void verifyPixelQuadPermReads() {
     }
     const auto shifted = compile(rowShift, true);
     require(declares(shifted, spv::OpGroupNonUniformShuffle) && !declares(shifted, spv::OpGroupNonUniformQuadBroadcast), "a pixel row shift read went through quad operations");
+    const auto broadcastLanes = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::vector<std::uint32_t> indices;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad perm: truncated SPIR-V instruction");
+            const auto opcode = words[cursor] & 0xffffu;
+            if (opcode == static_cast<std::uint32_t>(spv::OpConstant) && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (opcode == static_cast<std::uint32_t>(spv::OpGroupNonUniformQuadBroadcast)) indices.push_back(words[cursor + 5]);
+            cursor += count;
+        }
+        std::vector<std::uint32_t> lanes;
+        for (const auto index : indices) {
+            const auto constant = constants.find(index);
+            require(constant != constants.end(), "quad perm: a broadcast lane is not a 32-bit constant");
+            lanes.push_back(constant->second);
+        }
+        return lanes;
+    };
+    constexpr std::array<std::uint32_t, 6> uniformQuadPerm{0xbefe0ac1u, 0x7e0202fau, 0xff005500u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    const auto swapLanes = broadcastLanes(compile(quadPerm, true));
+    require(!swapLanes.empty() && swapLanes.size() % 4u == 0u, "a quad_perm that reads different lanes did not broadcast every lane of the quad");
+    for (std::size_t index = 0; index < swapLanes.size(); ++index) require(swapLanes[index] == index % 4u, "a quad_perm that reads different lanes did not broadcast every lane of the quad in order");
+    const auto uniformLanes = broadcastLanes(compile(uniformQuadPerm, true));
+    require(uniformLanes.size() * 4u == swapLanes.size() && std::ranges::all_of(uniformLanes, [](std::uint32_t lane) { return lane == 1u; }), "a quad_perm whose four lanes read lane 1 did not read it with one broadcast per read");
 }
 
 void verifyCubeDepthCompareMode() {
@@ -13200,6 +13641,11 @@ int main(int argc, char** argv) {
             std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--specialized-module-release") {
+            verifySpecializedModuleRelease();
+            std::cout << "A specialized module is released with its last result, or kept and served again, as APS5_KEEP_SPECIALIZED_MIB says\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
@@ -13230,6 +13676,11 @@ int main(int argc, char** argv) {
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--spanned-shuffle-memory") {
+            verifySpannedShuffleThroughMemory();
+            std::cout << "Spanned wave64 shuffles go through workgroup memory only when the target asks for it\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
@@ -13243,6 +13694,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways") {
+            verifyResultMemoWays();
+            std::cout << "Each result memo set keeps 16 results and evicts the least recently used entry\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-ways-masked") {
+            verifyResultMemoMaskedWays();
+            std::cout << "Each masked result memo set keeps 16 donors and evicts the least recently used entry\n";
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
@@ -13302,8 +13763,18 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
-            verifyNestedSnapshotRetry();
+            verifyNestedSnapshotRetry(false);
             std::cout << "Nested snapshot retry preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
+            verifyNestedSnapshotRetry(true);
+            std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-parent-scan-budget") {
+            verifyNestedParentScanBudget();
+            std::cout << "Nested parent records are charged once per scan, other heaps still share the budget\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
@@ -13420,6 +13891,7 @@ int main(int argc, char** argv) {
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();
         verifyPixelRequestSerialization();
+        verifyEmulatedBarycentricRequests();
         verifyVertexInfoVersion19();
         verifyDepthRemapRequests();
         verifyMergedHullConfiguration();
@@ -13467,6 +13939,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifySpannedShuffleThroughMemory();
         verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
