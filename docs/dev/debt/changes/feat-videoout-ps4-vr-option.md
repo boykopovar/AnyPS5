@@ -1,0 +1,5 @@
+# libSceVideoOut
+
+## change [sceVideoOutRegisterBuffers, sceVideoOutSubmitChangeBufferAttribute]
+
+- [sceVideoOutRegisterBuffers, sceVideoOutSubmitChangeBufferAttribute](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut, PS4) - what the console does with option 8 (STRICT_COLORIMETRY) and option 7 (VR) is unknown, and whether a PS4 title's 8 means the same as a PS5 title's was not measured. Option 8 is stored and presented as option 0, as `sceVideoOutRegisterBuffers2` does since PR 647; CUSA00223 01.07 registers its first two tiled 3840x2160 buffers with it. Options 7 and 15 are accepted and stored, as the option check that both calls share in PS4 firmware 13.52's `libSceVideoOut.sprx` (0x69cb; read from disassembly, not run) takes the low three bits only all together; showing such a buffer throws. CUSA24767 01.71 registers a second set of three buffers with option 7. Not checked: the firmware accepts a VR buffer only at 1920x1080 in one port state. Any other option throws `VIDEO_OUT_ERROR_INVALID_OPTION`, bit 4 included, which the firmware accepts on some ports.

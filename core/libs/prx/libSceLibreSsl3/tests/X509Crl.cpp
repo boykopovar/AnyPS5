@@ -202,6 +202,14 @@ Bytes CrlReasonExtension(unsigned char reason) {
     return Extension({0x55, 0x1d, 0x15}, false, Tlv(0x0a, Bytes{reason}));
 }
 
+Bytes CertificateIssuerExtension(const char* commonName) {
+    return Extension({0x55, 0x1d, 0x1d}, true, Sequence({Tlv(0xa4, IssuerName(commonName))}));
+}
+
+Bytes InvalidityDateExtension() {
+    return Extension({0x55, 0x1d, 0x18}, false, GeneralizedTime("20240102000000Z"));
+}
+
 Bytes RevokedEntry(const Bytes& serial) {
     return Sequence({Tlv(0x02, serial), UtcTime("240102000000Z")});
 }
@@ -670,6 +678,80 @@ void TestRemoveFromCrl() {
     Require(allocations.empty());
 }
 
+int LookupSerial(LibreSsl3X509Crl* crl, int low, const LibreSslX509Name* issuer, LibreSsl3Revoked** found) {
+    Serial serial(static_cast<unsigned char>(low));
+    LibreSsl3CertificateInfo info{};
+    LibreSsl3Certificate certificate{};
+    SetCertificate(certificate, info, &serial.value, issuer);
+    return X509_CRL_get0_by_cert_nid_postfix(crl, found, &certificate);
+}
+
+void TestCertificateIssuerEntries() {
+    LibreSsl3X509Crl* crl = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntry(Bytes{0x10, 0x01}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, CertificateIssuerExtension("Other CA")),
+            RevokedEntry(Bytes{0x10, 0x03}),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x04}, CrlReasonExtension(8)),
+        })),
+    })));
+    Require(crl != nullptr);
+    LibreSsl3X509Crl* other = Parse(CrlWithIssuer(IssuerName("Other CA")));
+    Require(other != nullptr);
+    const LibreSslX509Name* crlIssuer = crl->crl->issuer;
+    const LibreSslX509Name* otherIssuer = other->crl->issuer;
+    Require(RevokedEntryAt(crl, 1)->extensions != nullptr && RevokedEntryAt(crl, 1)->extensions->num == 1);
+    for (int index = 0; index < 4; ++index) Require(RevokedEntryAt(crl, index)->issuer == nullptr);
+    Require(RevokedEntryAt(crl, 3)->reason == 8);
+
+    LibreSsl3Revoked* found = nullptr;
+    Require(LookupSerial(crl, 0x01, nullptr, &found) == 1);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(crl, 0)));
+    Require(LookupSerial(crl, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(crl, 0x01, otherIssuer, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, nullptr, nullptr) == 0);
+    Require(LookupSerial(crl, 0x05, otherIssuer, nullptr) == 0);
+
+    for (const int low : {0x02, 0x03, 0x04}) {
+        for (const LibreSslX509Name* issuer : {otherIssuer, crlIssuer, static_cast<const LibreSslX509Name*>(nullptr)}) {
+            found = nullptr;
+            RequireNotImplemented([&] { LookupSerial(crl, low, issuer, &found); });
+            Require(found == nullptr);
+        }
+    }
+
+    LibreSsl3X509Crl* second = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+            Join({CrlReasonExtension(1), CertificateIssuerExtension("Other CA")}))),
+    })));
+    Require(second != nullptr);
+    Require(RevokedEntryAt(second, 0)->extensions->num == 2 && RevokedEntryAt(second, 0)->reason == 1);
+    RequireNotImplemented([&] { LookupSerial(second, 0x01, otherIssuer, nullptr); });
+    Require(LookupSerial(second, 0x02, otherIssuer, nullptr) == 0);
+
+    LibreSsl3X509Crl* direct = Parse(BuildCrl(Join({
+        TbsHead(),
+        Tlv(0x30, Join({
+            RevokedEntryWithExtensions(Bytes{0x10, 0x01}, CrlReasonExtension(1)),
+            RevokedEntryWithExtensions(Bytes{0x10, 0x02}, Join({InvalidityDateExtension(), CrlReasonExtension(8)})),
+        })),
+    })));
+    Require(direct != nullptr);
+    Require(LookupSerial(direct, 0x01, crlIssuer, nullptr) == 1);
+    Require(LookupSerial(direct, 0x02, nullptr, &found) == 2);
+    Require(reinterpret_cast<const void*>(found) == reinterpret_cast<const void*>(RevokedEntryAt(direct, 1)));
+    Require(LookupSerial(direct, 0x02, otherIssuer, nullptr) == 0);
+
+    FreeCrlValue(direct);
+    FreeCrlValue(second);
+    FreeCrlValue(other);
+    FreeCrlValue(crl);
+    RequireQueue({});
+    Require(allocations.empty());
+}
+
 void TestTrailingData() {
     Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
     const std::size_t length = der.size();
@@ -857,7 +939,7 @@ void TestArgumentErrors() {
     LibreSsl3X509Crl* const first = output;
     const unsigned char* second = der.data();
     Require(d2i_X509_CRL_nid_postfix(&output, &second, static_cast<std::int64_t>(der.size())) == output);
-    Require(output != nullptr && output != first);
+    Require(output != nullptr);
     Require(second == der.data() + der.size());
     Require(allocations.size() == retained);
     X509_CRL_free_nid_postfix(output);
@@ -879,6 +961,88 @@ void TestReferenceCountedFree() {
     Require(allocations.empty());
     X509_CRL_free_nid_postfix(nullptr);
     DrainErrors();
+}
+
+void TestReusedOutput() {
+    const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
+    const Bytes truncated(der.begin(), der.end() - 1);
+    Bytes wrongTag = der;
+    wrongTag[0] = 0x31;
+    const Bytes inner = BuildCrl(Join({TbsHead(), Tlv(0x04, Bytes{0x00})}));
+    const std::int64_t size = static_cast<std::int64_t>(der.size());
+
+    LibreSsl3X509Crl* first = Parse(der);
+    Require(first != nullptr);
+    const std::size_t live = allocations.size();
+    first->references = 2;
+    LibreSsl3X509Crl* output = first;
+    const unsigned char* input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == truncated.data());
+    Require(allocations.size() == live);
+    Require(first->references == 1);
+    Require(ERR_get_error_nid_postfix() != 0);
+    DrainErrors();
+
+    output = first;
+    input = wrongTag.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, size) == nullptr);
+    Require(output == nullptr);
+    Require(input == wrongTag.data());
+    Require(allocations.empty());
+    DrainErrors();
+
+    LibreSsl3X509Crl* kept = Parse(der);
+    Require(kept != nullptr);
+    Require(allocations.size() == live);
+    kept->references = 2;
+    output = kept;
+    input = inner.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(inner.size())) == nullptr);
+    Require(output == nullptr);
+    Require(input == inner.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, 0) == nullptr);
+    Require(output == nullptr);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = kept;
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, -1) == nullptr);
+    Require(output == kept);
+    Require(input == der.data());
+    Require(allocations.size() == live);
+    Require(kept->references == 1);
+    DrainErrors();
+
+    output = nullptr;
+    input = truncated.data();
+    Require(d2i_X509_CRL_nid_postfix(&output, &input, static_cast<std::int64_t>(truncated.size())) == nullptr);
+    Require(output == nullptr);
+    Require(allocations.size() == live);
+    DrainErrors();
+
+    kept->references = 2;
+    output = kept;
+    input = der.data();
+    LibreSsl3X509Crl* replaced = d2i_X509_CRL_nid_postfix(&output, &input, size);
+    Require(replaced != nullptr && replaced == output && replaced != kept);
+    Require(input == der.data() + der.size());
+    Require(allocations.size() == 2 * live);
+    Require(kept->references == 1);
+    X509_CRL_free_nid_postfix(replaced);
+    X509_CRL_free_nid_postfix(kept);
+    Require(allocations.empty());
+    RequireQueue({});
 }
 
 void TestAllocationFailures() {
@@ -1252,11 +1416,13 @@ int main() {
     TestExtensionArgumentErrors();
     TestGet0ByCert();
     TestRemoveFromCrl();
+    TestCertificateIssuerEntries();
     TestTrailingData();
     TestMalformed();
     TestTimes();
     TestArgumentErrors();
     TestReferenceCountedFree();
+    TestReusedOutput();
     TestAllocationFailures();
     TestNonMinimalLengths();
     TestRejectedNameValues();

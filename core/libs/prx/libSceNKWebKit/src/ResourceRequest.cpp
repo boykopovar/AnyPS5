@@ -28,6 +28,8 @@
 #include "prx/libSceNKWebKit/include/FormDataExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -35,8 +37,11 @@
 #include "prx/libSceNKWebKit/src/WtfVector.hpp"
 
 #include <cstring>
+#include <initializer_list>
 #include <memory>
+#include <new>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace NKWebKit::WebCoreAbi {
@@ -595,6 +600,14 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(dou
     defaultTimeoutInterval = timeoutInterval;
 }
 
+void APS5_VABI _ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv(ResourceRequestBase* self) {
+    auto& request = Checked(self);
+    UpdateResourceRequest(request);
+    auto* headers = reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, HTTPHeaderName::ContentType);
+    request.platformRequestUpdated = false;
+}
+
 void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(ResourceRequestBase* self) {
     auto& request = Checked(self);
     UpdateResourceRequest(request);
@@ -786,4 +799,143 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9hasUploadEv(const ResourceReque
     return false;
 }
 
+}
+
+namespace {
+
+using NKWebKit::WebCoreAbi::ResourceResponseBase;
+using NKWebKit::WebCoreAbi::ResourceResponseStatusLayout;
+
+constexpr int kMovedPermanently = 301;
+constexpr int kFound = 302;
+constexpr int kSeeOther = 303;
+
+NKWebKit::HttpAbi::HTTPHeaderMap& HeaderFields(LegacyResourceRequestBase& request) {
+    return *reinterpret_cast<NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+}
+
+const NKWebKit::HttpAbi::HTTPHeaderMap& HeaderFields(const LegacyResourceRequestBase& request) {
+    return *reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+}
+
+template<class TVector>
+void ValidateCopySource(const TVector& source) {
+    if (source.size > source.capacity) throw std::invalid_argument("invalid WTF::Vector size in a WebCore::ResourceRequest");
+    if (source.size && !source.buffer) throw std::invalid_argument("null WTF::Vector storage in a WebCore::ResourceRequest");
+}
+
+template<class TEntry, class TVector>
+void CopyVector(TVector& target, const TVector& source) {
+    target = {};
+    if (!source.capacity) return;
+    auto* buffer = static_cast<TEntry*>(_ZN3WTF10fastMallocEm(std::size_t{source.capacity} * sizeof(TEntry)));
+    const auto* entries = static_cast<const TEntry*>(source.buffer);
+    for (unsigned index = 0; index < source.size; ++index) new (&buffer[index]) TEntry(entries[index]);
+    target.buffer = buffer;
+    target.capacity = source.capacity;
+    target.size = source.size;
+}
+
+LegacyResourceRequestBase CopyRequest(const LegacyResourceRequestBase& source) {
+    const auto& sourceHeaders = HeaderFields(source);
+    ValidateCopySource(sourceHeaders.common);
+    ValidateCopySource(sourceHeaders.uncommon);
+    ValidateCopySource(source.responseContentDispositionEncodingFallbackArray);
+    LegacyResourceRequestBase copy{};
+    copy.timeoutInterval = source.timeoutInterval;
+    Assign(copy.firstPartyForCookies, source.firstPartyForCookies);
+    copy.httpMethod = source.httpMethod;
+    copy.initiatorIdentifier = source.initiatorIdentifier;
+    copy.cachePartition = source.cachePartition;
+    auto& headers = HeaderFields(copy);
+    CopyVector<NKWebKit::HttpAbi::CommonHeader>(headers.common, sourceHeaders.common);
+    CopyVector<NKWebKit::HttpAbi::UncommonHeader>(headers.uncommon, sourceHeaders.uncommon);
+    CopyVector<String>(copy.responseContentDispositionEncodingFallbackArray, source.responseContentDispositionEncodingFallbackArray);
+    copy.httpBody = source.httpBody;
+    if (copy.httpBody) static_cast<NKWebKit::WebCoreAbi::FormData*>(copy.httpBody)->ref();
+    copy.cachePolicy = source.cachePolicy;
+    copy.sameSiteDisposition = source.sameSiteDisposition;
+    copy.priority = source.priority;
+    copy.requester = source.requester;
+    copy.inspectorInitiatorNodeIdentifier = source.inspectorInitiatorNodeIdentifier;
+    copy.allowCookies = source.allowCookies;
+    copy.resourceRequestBodyUpdated = source.resourceRequestBodyUpdated;
+    copy.platformRequestBodyUpdated = source.platformRequestBodyUpdated;
+    copy.hiddenFromInspector = source.hiddenFromInspector;
+    copy.isTopSite = source.isTopSite;
+    return copy;
+}
+
+bool EqualLettersIgnoringASCIICase(const String& string, std::string_view lowerCaseLetters) {
+    if (!string.impl || string.impl->length != lowerCaseLetters.size()) return false;
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    for (unsigned index = 0; index < view.length; ++index) {
+        if ((NKWebKit::WtfAbi::CodeUnitAt(view, index) | 0x20) != static_cast<unsigned char>(lowerCaseLetters[index])) return false;
+    }
+    return true;
+}
+
+bool ShouldUseGet(const String& method, int statusCode) {
+    if (EqualLettersIgnoringASCIICase(method, "get") || EqualLettersIgnoringASCIICase(method, "head")) return false;
+    if (statusCode == kMovedPermanently || statusCode == kFound) return EqualLettersIgnoringASCIICase(method, "post");
+    return statusCode == kSeeOther;
+}
+
+bool IsASCIIAlphaCaselessEqual(char16_t unit, char lowerCaseLetter) {
+    return (unit | 0x20) == static_cast<unsigned char>(lowerCaseLetter);
+}
+
+bool ProtocolIs(const String& string, std::string_view protocol) {
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    bool isLeading = true;
+    std::size_t position = 0;
+    for (unsigned index = 0; index < view.length; ++index) {
+        const char16_t unit = NKWebKit::WtfAbi::CodeUnitAt(view, index);
+        if (isLeading) {
+            if (unit <= u' ') continue;
+            isLeading = false;
+        } else if (unit == u'\t' || unit == u'\r' || unit == u'\n') {
+            continue;
+        }
+        if (position == protocol.size()) return unit == u':';
+        if (!IsASCIIAlphaCaselessEqual(unit, protocol[position++])) return false;
+    }
+    return false;
+}
+
+}
+
+extern "C" LegacyResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(
+    const LegacyResourceRequestBase* self, const ResourceResponseBase* redirectResponse, bool shouldClearReferrerOnHTTPSToHTTPRedirect) {
+    const auto& source = Checked(self);
+    const String location = _ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE(redirectResponse, HTTPHeaderName::Location);
+    const URL& responseURL = _ZNK7WebCore20ResourceResponseBase3urlEv(redirectResponse);
+    URL target{};
+    if (location.impl && location.impl->length) _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(&target, &responseURL, &location, nullptr);
+    const String ownURL(std::exchange(target.impl, nullptr));
+    target.impl = ownURL.impl;
+
+    LegacyResourceRequestBase request = CopyRequest(source);
+    auto& headers = HeaderFields(request);
+    request.resourceRequestUpdated = true;
+    Assign(request.url, target);
+    source.resourceRequestUpdated = true;
+    if (ShouldUseGet(source.httpMethod, reinterpret_cast<const ResourceResponseStatusLayout*>(redirectResponse)->httpStatusCode)) {
+        request.httpMethod = DefaultHTTPMethod();
+        if (auto* body = static_cast<NKWebKit::WebCoreAbi::FormData*>(std::exchange(request.httpBody, nullptr))) body->deref();
+        request.resourceRequestBodyUpdated = true;
+        request.platformRequestBodyUpdated = false;
+        for (const HTTPHeaderName name : {HTTPHeaderName::ContentLength, HTTPHeaderName::ContentLanguage, HTTPHeaderName::ContentEncoding,
+                                          HTTPHeaderName::ContentLocation, HTTPHeaderName::ContentType})
+            _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, name);
+    }
+    if (shouldClearReferrerOnHTTPSToHTTPRedirect && !_ZNK3WTF3URL10protocolIsEPKc(&request.url, "https")) {
+        const String referrer = _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::Referer);
+        if (ProtocolIs(referrer, "https")) _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::Referer);
+    }
+    if (!_ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(&request.url, &responseURL))
+        _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::Origin);
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::Authorization);
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::ProxyAuthorization);
+    return request;
 }

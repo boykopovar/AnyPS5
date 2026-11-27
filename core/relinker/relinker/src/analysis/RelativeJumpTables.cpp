@@ -110,15 +110,19 @@ bool IsForbiddenSyscallInstruction(std::span<const std::uint8_t> code, std::size
     return (b0 == 0x0f && (b1 == 0x05 || b1 == 0x34 || b1 == 0x07)) || (b0 == 0xcd && b1 == 0x80);
 }
 
+std::optional<VirtualAddress> RelativeTarget(const VirtualAddress next, const std::int64_t displacement) {
+    const auto target = next + static_cast<VirtualAddress>(displacement);
+    const bool wrapped = displacement < 0 ? target > next : target < next;
+    if (wrapped) return std::nullopt;
+    return target;
+}
+
 bool IsValid64BitInstruction(std::span<const std::uint8_t> code, std::size_t pos, const Codegen::DecodedInstructionInfo& info, VirtualAddress baseVAddr, VirtualAddress segmentVAddr, VirtualAddress segmentEnd) {
     if (info.Length == 0 || info.Length > code.size() - pos) return false;
     if (!info.IsTwoByteOpcode && IsInvalid64BitSingleByteOpcode(info.Opcode)) return false;
     if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-        const auto next = baseVAddr + pos + info.Length;
-        if (info.BranchDisp < 0 && next < static_cast<std::uint64_t>(-info.BranchDisp)) return false;
-        if (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<std::uint64_t>(info.BranchDisp)) return false;
-        const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-        if (target < segmentVAddr || target >= segmentEnd) return false;
+        const auto target = RelativeTarget(baseVAddr + pos + info.Length, info.BranchDisp);
+        if (!target || *target < segmentVAddr || *target >= segmentEnd) return false;
     }
     return true;
 }
@@ -501,13 +505,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             }
             if (info.Length == 0 || info.Length > funcCode.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                const auto next = funcBegin + pos + info.Length;
-                if ((info.BranchDisp >= 0 || next >= static_cast<std::uint64_t>(-info.BranchDisp))
-                    && (info.BranchDisp <= 0 || std::numeric_limits<VirtualAddress>::max() - next >= static_cast<std::uint64_t>(info.BranchDisp))) {
-                    const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                    if (target >= segmentVAddr && target < segmentEnd)
-                        branchTargets.insert(target);
-                }
+                const auto target = RelativeTarget(funcBegin + pos + info.Length, info.BranchDisp);
+                if (target && *target >= segmentVAddr && *target < segmentEnd)
+                    branchTargets.insert(*target);
             }
             pos += info.Length;
         }
@@ -544,13 +544,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             }
             if (info.Length == 0 || info.Length > segment.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                const auto next = segmentVAddr + pos + info.Length;
-                if ((info.BranchDisp >= 0 || next >= static_cast<std::uint64_t>(-info.BranchDisp))
-                    && (info.BranchDisp <= 0 || std::numeric_limits<VirtualAddress>::max() - next >= static_cast<std::uint64_t>(info.BranchDisp))) {
-                    const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                    if (target >= segmentVAddr && target < segmentEnd) {
-                        if (branchTargets.insert(target).second) pendingTargets.push_back(target);
-                    }
+                const auto target = RelativeTarget(segmentVAddr + pos + info.Length, info.BranchDisp);
+                if (target && *target >= segmentVAddr && *target < segmentEnd) {
+                    if (branchTargets.insert(*target).second) pendingTargets.push_back(*target);
                 }
             }
             if (info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap) break;
@@ -628,14 +624,9 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             if (info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.OpcodeOffset < info.Length && info.Length >= 4 && funcCode[pos + info.OpcodeOffset] == 0x8d) {
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, funcCode.data() + next - 4, sizeof(displacement));
-                const auto base = begin + next;
-                if ((displacement >= 0 || base >= static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement)))
-                    && (displacement <= 0 || std::numeric_limits<VirtualAddress>::max() - base >= static_cast<std::uint64_t>(displacement))) {
-                    const auto target = base + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
-                    if (target >= end && target < inspectEnd) {
-                        candidateTable = candidateTable ? std::min(*candidateTable, target) : target;
-                    }
-                }
+                const auto target = RelativeTarget(begin + next, displacement);
+                if (target && *target >= end && *target < inspectEnd)
+                    candidateTable = candidateTable ? std::min(*candidateTable, *target) : *target;
             }
             pos = next;
         }
