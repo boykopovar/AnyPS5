@@ -1,4 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -13,6 +15,7 @@
 
 static constexpr int SigUsr1 = 30;
 static constexpr int Rounds = 10;
+static constexpr int MutexTypeRecursive = 2;
 static constexpr std::size_t RipOffset = 0xe0;
 static constexpr std::size_t ConvertedBytes = 64u << 20u;
 static void Require(bool value) { if (!value) std::abort(); }
@@ -35,6 +38,10 @@ static std::atomic<int> beforeWait{0};
 static HANDLE alertableHandle = nullptr;
 static HANDLE release = nullptr;
 static HANDLE alertableRelease = nullptr;
+static std::atomic<int> stops{0};
+static std::atomic<int> resumed{0};
+static std::atomic<bool> resume{false};
+static std::atomic<int> initializations{0};
 
 static void APS5_VABI Handler(int, void* context) {
     std::uint64_t rip = 0;
@@ -108,6 +115,124 @@ static void WaitDeliveries(int expected) {
     }
 }
 
+static void APS5_VABI Stop(int, void*) {
+    stops.fetch_add(1);
+    while (!resume.load()) std::this_thread::yield();
+    resumed.fetch_add(1);
+}
+
+static void WaitCount(const std::atomic<int>& count, int expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (count.load() < expected) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+}
+
+struct Relock {
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    int levels = 1;
+    bool timed = false;
+    bool signaled = false;
+    std::atomic<bool> waiting{false};
+    std::atomic<int> result{-1};
+};
+
+static void* APS5_VABI Relocker(void* opaque) {
+    auto& relock = *static_cast<Relock*>(opaque);
+    for (int level = 0; level < relock.levels; ++level) Require(scePthreadMutexLock(&relock.mutex) == 0);
+    relock.waiting.store(true);
+    int waited = 0;
+    while (waited == 0 && !relock.signaled)
+        waited = relock.timed ? scePthreadCondTimedwait(&relock.cond, &relock.mutex, 10000000) : scePthreadCondWait(&relock.cond, &relock.mutex);
+    relock.result.store(waited);
+    for (int level = 0; level < relock.levels; ++level) Require(scePthreadMutexUnlock(&relock.mutex) == 0);
+    Require(scePthreadMutexUnlock(&relock.mutex) != 0);
+    return nullptr;
+}
+
+static void RaiseInRelock(int levels, bool timed) {
+    for (int round = 0; round < Rounds; ++round) {
+        Relock relock;
+        relock.levels = levels;
+        relock.timed = timed;
+        PthreadMutexattr attr = nullptr;
+        Require(scePthreadMutexattrInit(&attr) == 0);
+        if (levels > 1) Require(scePthreadMutexattrSettype(&attr, MutexTypeRecursive) == 0);
+        Require(scePthreadMutexInit(&relock.mutex, &attr, nullptr) == 0);
+        Require(scePthreadMutexattrDestroy(&attr) == 0);
+        Require(scePthreadCondInit(&relock.cond, nullptr, nullptr) == 0);
+        Pthread waiter = nullptr;
+        Require(scePthreadCreate(&waiter, nullptr, Relocker, &relock, "relocking after a wake") == 0);
+        while (!relock.waiting.load()) std::this_thread::yield();
+        Require(scePthreadMutexLock(&relock.mutex) == 0);
+        relock.signaled = true;
+        Require(scePthreadCondSignal(&relock.cond) == 0);
+        for (int raise = 0; raise < 2; ++raise) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            resume.store(false);
+            const int before = stops.load();
+            Require(sceKernelRaiseException(waiter, SigUsr1) == 0);
+            WaitCount(stops, before + 1);
+            Require(relock.result.load() == -1);
+            resume.store(true);
+            WaitCount(resumed, before + 1);
+        }
+        Require(scePthreadMutexUnlock(&relock.mutex) == 0);
+        Require(scePthreadJoin(waiter, nullptr) == 0);
+        Require(relock.result.load() == 0);
+        Require(scePthreadCondDestroy(&relock.cond) == 0);
+        Require(scePthreadMutexDestroy(&relock.mutex) == 0);
+    }
+}
+
+static void APS5_VABI Initialize() {
+    initializations.fetch_add(1);
+    while (!resume.load()) std::this_thread::yield();
+}
+
+struct OnceCall {
+    GuestOnce* control = nullptr;
+    std::atomic<bool> calling{false};
+    std::atomic<int> result{-1};
+};
+
+static void* APS5_VABI CallOnce(void* opaque) {
+    auto& call = *static_cast<OnceCall*>(opaque);
+    call.calling.store(true);
+    call.result.store(pthread_once_nid_postfix(call.control, Initialize));
+    return nullptr;
+}
+
+static void RaiseInOnce() {
+    for (int round = 0; round < Rounds; ++round) {
+        GuestOnce control{0, nullptr};
+        OnceCall first{&control};
+        OnceCall second{&control};
+        resume.store(false);
+        const int before = stops.load();
+        Pthread initializer = nullptr;
+        Require(scePthreadCreate(&initializer, nullptr, CallOnce, &first, "running a once initializer") == 0);
+        while (initializations.load() != round + 1) std::this_thread::yield();
+        Require(sceKernelRaiseException(initializer, SigUsr1) == 0);
+        WaitCount(stops, before + 1);
+        Pthread waiter = nullptr;
+        Require(scePthreadCreate(&waiter, nullptr, CallOnce, &second, "waiting on a once initializer") == 0);
+        while (!second.calling.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(sceKernelRaiseException(waiter, SigUsr1) == 0);
+        WaitCount(stops, before + 2);
+        Require(first.result.load() == -1 && second.result.load() == -1);
+        resume.store(true);
+        Require(scePthreadJoin(initializer, nullptr) == 0);
+        Require(scePthreadJoin(waiter, nullptr) == 0);
+        Require(first.result.load() == 0 && second.result.load() == 0);
+        Require(control.state == 1);
+        Require(initializations.load() == round + 1);
+    }
+}
+
 int main() {
     const auto* image = reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
     const auto* headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(image + reinterpret_cast<const IMAGE_DOS_HEADER*>(image)->e_lfanew);
@@ -175,4 +300,12 @@ int main() {
     Require(outsideImage.load() == 0);
     Require(beforeWait.load() == Rounds);
     Require(insideAlertableWait.load() == 0);
+
+    Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Stop)) == 0);
+    RaiseInRelock(1, false);
+    RaiseInRelock(3, false);
+    RaiseInRelock(1, true);
+    RaiseInRelock(3, true);
+    RaiseInOnce();
+    Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
 }
