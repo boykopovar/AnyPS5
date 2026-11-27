@@ -218,6 +218,22 @@ void CheckSignalcontextPartialWrite() {
     Require(std::memcmp(g_signalFailureStack.bytes, originalStack.data(), StackBytes) == 0, "signalcontext leaves all stack bytes unchanged after stack preflight failure");
 }
 
+void CheckSignalcontextMinimumHeadroom() {
+    constexpr std::uint64_t MinimumHeadroom = 128 + sizeof(UserUcontext) + 80 + 15 + 3 * sizeof(std::uint64_t) + 16;
+    const auto base = reinterpret_cast<std::uintptr_t>(g_signalFailureStack.bytes) + 8;
+    std::memset(g_signalFailureStack.bytes, 0x6b, StackBytes);
+    UserUcontext context{};
+    context.mcontext.rsp = base + MinimumHeadroom;
+    context.sigmask[0] = 0xffffffffu;
+    const UserUcontext originalContext = context;
+    *__error_nid_postfix() = 0;
+    Require(signalcontext_nid_postfix(&context, 15, nullptr) == 0, "signalcontext accepts the exact checked headroom boundary");
+    const auto savedAddress = (originalContext.mcontext.rsp - 128 - sizeof(UserUcontext)) & ~static_cast<std::uint64_t>(15);
+    Require(context.mcontext.rsp == base, "minimum-headroom frame starts at the supplied stack boundary");
+    Require(context.link == reinterpret_cast<UserUcontext*>(savedAddress), "minimum-headroom context links to its saved copy");
+    Require(std::memcmp(reinterpret_cast<const void*>(savedAddress), &originalContext, sizeof(originalContext)) == 0, "minimum-headroom frame preserves the original context");
+}
+
 std::uint16_t ControlWord() {
     std::uint16_t control = 0;
     asm volatile("fnstcw %0" : "=m"(control));
@@ -357,6 +373,7 @@ void CheckErrors() {
     Require((signalContext.sigmask[0] & (1u << 14)) == 0, "signalcontext unmasks the delivered signal");
     Require(signalContext.mcontext.rdi == reinterpret_cast<std::uint64_t>(&signalContext), "signalcontext passes the context pointer as rdi");
     CheckSignalcontextPartialWrite();
+    CheckSignalcontextMinimumHeadroom();
 }
 
 void CheckCapture() {
