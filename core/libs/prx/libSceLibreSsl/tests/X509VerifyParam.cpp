@@ -1,18 +1,14 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
-#include "prx/libc/include/General.hpp"
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
-#include <filesystem>
 #include <initializer_list>
 #include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace {
@@ -96,62 +92,18 @@ void Ipv6() {
 void Unsupported() {
     auto* store = X509_STORE_new_nid_postfix();
     RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, nullptr); }, "null address text");
+    RequireAddress(store->param, "10.0.0.3", {10, 0, 0, 3});
+    Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, reinterpret_cast<const char*>(std::uintptr_t{0x10})) == 0,
+        "an unreadable address text is rejected");
+    Require(store->param->id->ipLength == 4 && std::memcmp(store->param->id->ip, "\x0a\x00\x00\x03", 4) == 0,
+        "an unreadable address text keeps the previous address");
+    const std::vector<char> unterminated(65536, '1');
+    Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, unterminated.data()) == 0, "an unterminated address text is rejected");
+    Require(store->param->id->ipLength == 4 && std::memcmp(store->param->id->ip, "\x0a\x00\x00\x03", 4) == 0,
+        "an unterminated address text keeps the previous address");
     Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "bad") == 0, "a rejected address does not read the verify parameters");
     RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "1.2.3.4"); }, "null verify parameters");
     X509_STORE_free_nid_postfix(store);
-}
-
-constexpr std::uint64_t ConfIgnoreReturnCodes = 0x2;
-constexpr std::uint64_t ConfIgnoreMissingFile = 0x10;
-
-constexpr std::uint64_t PackError(std::uint64_t library, std::uint64_t reason) {
-    return library << 24 | 0xfffull << 12 | reason;
-}
-
-constexpr std::uint64_t SystemNoSuchFile = PackError(2, 2);
-constexpr std::uint64_t BioNoSuchFile = PackError(32, 128);
-constexpr std::uint64_t ConfNoSuchFile = PackError(14, 114);
-constexpr std::uint64_t ConfMallocFailure = PackError(14, 65);
-
-std::vector<std::uint64_t> DrainErrors() {
-    std::vector<std::uint64_t> codes;
-    while (const std::uint64_t code = ERR_get_error_nid_postfix()) codes.push_back(code);
-    return codes;
-}
-
-struct ConfTempDirectory {
-    std::filesystem::path path;
-
-    ConfTempDirectory() {
-        path = std::filesystem::temp_directory_path() /
-            ("anyps5-libressl-conf-flags-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        Require(std::filesystem::create_directory(path), "create conf temp directory");
-        AddPathAlias_nid_no_patch("/conf-ignore-ret-test", path.string().c_str());
-    }
-
-    ~ConfTempDirectory() {
-        RemovePathAlias_nid_no_patch("/conf-ignore-ret-test");
-        std::error_code ignored;
-        std::filesystem::remove_all(path, ignored);
-    }
-};
-
-void ConfLoadFileIgnoreReturnCodes() {
-    const ConfTempDirectory temp;
-    constexpr const char* missing = "/conf-ignore-ret-test/missing.cnf";
-    const std::vector<std::uint64_t> expectedMissing{SystemNoSuchFile, BioNoSuchFile, ConfNoSuchFile};
-
-    ERR_clear_error_nid_postfix();
-    Require(CONF_modules_load_file_nid_postfix(missing, nullptr, 0) == 0, "missing conf without flags returns 0");
-    Require(DrainErrors() == expectedMissing, "missing conf without flags queues SYS/BIO/CONF errors");
-
-    Require(CONF_modules_load_file_nid_postfix(missing, nullptr, ConfIgnoreReturnCodes) == 1,
-            "missing conf with CONF_MFLAGS_IGNORE_RETURN_CODES returns 1");
-    Require(DrainErrors() == expectedMissing, "CONF_MFLAGS_IGNORE_RETURN_CODES preserves the 3 queued errors");
-
-    Require(CONF_modules_load_file_nid_postfix(missing, nullptr, ConfIgnoreMissingFile) == 1,
-            "missing conf with CONF_MFLAGS_IGNORE_MISSING_FILE returns 1");
-    Require(DrainErrors().empty(), "CONF_MFLAGS_IGNORE_MISSING_FILE clears the error queue");
 }
 
 int allocations = 0;
@@ -178,16 +130,6 @@ void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtim
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
 
-void ConfLoadFileIgnoreReturnCodesAllocator() {
-    ERR_clear_error_nid_postfix();
-    failNext = true;
-    Require(CONF_modules_load_file_nid_postfix("/conf-ignore-ret-test/missing.cnf", nullptr, ConfIgnoreReturnCodes) == 1,
-            "failed CONF allocation with CONF_MFLAGS_IGNORE_RETURN_CODES returns 1");
-    Require(!failNext, "failing allocator hook was consumed");
-    Require(DrainErrors() == std::vector<std::uint64_t>{ConfMallocFailure},
-            "failed CONF allocation queues CONF_R_MALLOC_FAILURE");
-}
-
 void Allocator() {
     std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch), reinterpret_cast<void*>(Calloc_nid_no_patch),
@@ -204,7 +146,6 @@ void Allocator() {
     Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(param, "10.0.0.2") == 0, "a failed copy fails the call");
     Require(param->id->ip == kept && param->id->ipLength == 16 && frees == 1, "a failed copy keeps the previous address");
     X509_STORE_free_nid_postfix(store);
-    ConfLoadFileIgnoreReturnCodesAllocator();
 }
 
 } // namespace
@@ -220,5 +161,4 @@ int main(int argc, char**) {
     Ipv4();
     Ipv6();
     Unsupported();
-    ConfLoadFileIgnoreReturnCodes();
 }

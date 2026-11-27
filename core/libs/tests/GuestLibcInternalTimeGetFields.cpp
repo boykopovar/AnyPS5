@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
+void APS5_VABI sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(void* self, const void* info, std::size_t refs);
 }
 
 namespace {
@@ -260,7 +262,6 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
     Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
-    Require(Throws([] { libSceLibcInternalInventory_199_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
     Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
 
     if (hasLibrary) {
@@ -307,8 +308,9 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
         Require(std::memcmp(&charPut->names, expectedTimes, sizeof(*expectedTimes)) == 0, "NID time_put<char> _Init");
         nidPutD0(&charPut->base);
 
-        GuestLocale::Facet widePutFacet{};
-        Require(Throws([&] { nidWidePutInit(&widePutFacet, &info); }), "NID ZolDcuDSD0Q still throws");
+        GuestLocale::Facet widePutFacet{nullptr, 5, 0};
+        nidWidePutInit(&widePutFacet, &info);
+        Require(widePutFacet.vtable != nullptr && widePutFacet.references == 5, "NID ZolDcuDSD0Q installs wide time_put vtable");
     }
 
     _ZNSt8_LocinfoD1Ev_nid_postfix(&info);
@@ -365,6 +367,14 @@ void CheckGroup1ConstructionAndLifetime() {
     Require(putDefault.base.vtable != nullptr && putDefault.base.references == 1, "time_put<char> C2 default ctor");
     Require(std::memcmp(&putDefault.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 populates TimeInfo");
 
+    TimePutCharStorage putBaseFromLocinfo{};
+    sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, &info, 4);
+    Require(putBaseFromLocinfo.base.vtable == putFromLocinfo.base.vtable && putBaseFromLocinfo.base.references == 4 && putBaseFromLocinfo.base.reserved == 0,
+        "time_put<char> C2 locinfo ctor sets the facet header as C1 does");
+    Require(std::memcmp(&putBaseFromLocinfo.names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C2 locinfo ctor populates TimeInfo");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(nullptr, &info, 0); }), "time_put<char> C2 locinfo ctor null self throws");
+    Require(Throws([&] { sceLibcInternalUnknown6_110_IuFImJ5pkTk_nid_no_patch(&putBaseFromLocinfo.base, nullptr, 0); }), "time_put<char> C2 locinfo ctor null locinfo throws");
+
     GuestTm tm{};
     tm.tm_year = 126;
     tm.tm_mon = 10;
@@ -405,7 +415,13 @@ void CheckGroup1ConstructionAndLifetime() {
     Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom_nid_postfix(&putFromLocinfo.base, nullptr, 0); }), "char time_put C1 null locinfo throws");
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em_nid_postfix(nullptr, 0); }), "char time_put C2 null self throws");
     Require(Throws([] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(nullptr, 0); }), "wide time_put C1 null self throws");
-    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, &info); }), "wide time_put _Init still throws");
+    GuestLocale::Facet reinitWideFacet{nullptr, 4, 0};
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&reinitWideFacet, &info);
+    Require(reinitWideFacet.vtable == &putWideVtable->facet && reinitWideFacet.references == 4, "wide time_put _Init installs vtable without touching references");
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, &info);
+    Require(putWideGuarded.base.vtable != nullptr && putWideGuarded.base.references == 4 && putWideGuarded.guard == expectedGuard, "wide time_put _Init preserves guarded storage");
+    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(nullptr, &info); }), "wide time_put _Init null self throws");
+    Require(Throws([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(&putWideGuarded.base, nullptr); }), "wide time_put _Init null locinfo throws");
     Require(NotImplementedCalls_nid_no_patch() > before, "error paths reported via NotImplemented");
 }
 
@@ -423,9 +439,13 @@ struct InputStreambuf {
     GuestLocale::InputIterator Begin() {
         return GuestLocale::InputIterator{{reinterpret_cast<std::uint64_t>(&buffer), 0}};
     }
-    char RemainingFirst() const {
-        if (next != nullptr && next < end) return *next;
-        return index < storage.size() ? static_cast<char>(storage[index]) : '\0';
+    TChar RemainingFirst() const {
+        TChar value{};
+        if (next != nullptr && next < end) {
+            std::memcpy(&value, next, sizeof(TChar));
+            return value;
+        }
+        return index < storage.size() ? storage[index] : value;
     }
 };
 
@@ -1524,6 +1544,86 @@ void CheckGroup6Getloctxt(bool hasLibrary) {
     }
 }
 
+void CheckGroup6WideGetloctxt(bool hasLibrary) {
+    using WideGetloctxtFn = int (APS5_VABI*)(GuestLocale::InputIterator*, GuestLocale::InputIterator*, std::size_t, const std::uint16_t*);
+    using MixedGetloctxtFn = int (APS5_VABI*)(GuestLocale::InputIterator*, GuestLocale::InputIterator*, std::size_t, const char*);
+    WideGetloctxtFn wide = &_ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix;
+    MixedGetloctxtFn mixed = &_ZSt10_GetloctxtIcSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix;
+    if (hasLibrary) {
+        if (auto resolved = ResolveExport<WideGetloctxtFn>("_ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix")) wide = resolved;
+        if (auto resolved = ResolveExport<MixedGetloctxtFn>("_ZSt10_GetloctxtIcSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix")) mixed = resolved;
+    }
+    const auto units = [](const char16_t* text) { return reinterpret_cast<const std::uint16_t*>(text); };
+    GuestLocale::InputIterator endIter = EndIter();
+
+    static constexpr char16_t wideBoolTable[] = u"\0false\0true";
+    struct WideCase {
+        const char16_t* table;
+        std::size_t count;
+        const char16_t* input;
+        int result;
+        char16_t next;
+    };
+    for (const WideCase& item : {WideCase{u":Jan:Feb:Mar", 0, u"Feb", 1, u'\0'}, WideCase{u":Jan:Feb:Mar", 0, u"feb", 1, u'\0'},
+             WideCase{u":Jan:Feb:Mar", 0, u"MAR", 2, u'\0'}, WideCase{u":Jan:Feb:Mar", 0, u"Febx", 1, u'x'},
+             WideCase{u":Jan:Feb:Mar", 0, u"Ma", -1, u'\0'}, WideCase{u":Jan:Feb:Mar", 0, u"Xyz", -2, u'X'},
+             WideCase{u":Jan:Feb:Mar", 0, u"", -2, u'\0'}, WideCase{u",a,ab,abc", 0, u"abd", 1, u'd'},
+             WideCase{u":\u00e9t\u00e9:\u0416", 0, u"\u0416", 1, u'\0'}, WideCase{u":\u00e9t\u00e9", 0, u"\u00c9t\u00e9", -2, u'\u00c9'},
+             WideCase{u":Feb", 0, u"\u0146eb", -2, u'\u0146'}, WideCase{u"", 0, u"Feb", -2, u'F'},
+             WideCase{u"Jan:Feb", 0, u"Jan", -2, u'J'}, WideCase{u":Jan:January", 5, u"Jan", 0, u'\0'},
+             WideCase{wideBoolTable, 2, u"true", 1, u'\0'}, WideCase{wideBoolTable, 2, u"tru", -1, u'\0'},
+             WideCase{wideBoolTable, 0, u"true", -2, u't'}}) {
+        for (bool buffered : {true, false}) {
+            InputStreambuf<char16_t> sb{};
+            sb.Setup(item.input, buffered);
+            GuestLocale::InputIterator first = sb.Begin();
+            Require(wide(&first, &endIter, item.count, units(item.table)) == item.result, "wide _Getloctxt result");
+            Require(sb.RemainingFirst() == item.next, "wide _Getloctxt consumption");
+        }
+    }
+
+    static constexpr char charBoolTable[] = "\0false\0true";
+    struct MixedCase {
+        const char* table;
+        std::size_t count;
+        const char16_t* input;
+        int result;
+        char16_t next;
+    };
+    for (const MixedCase& item : {MixedCase{":Jan:Feb:Mar", 0, u"Feb", 1, u'\0'}, MixedCase{":Jan:Feb:Mar", 0, u"FEB", 1, u'\0'},
+             MixedCase{":Jan:Feb:Mar", 0, u"Febx", 1, u'x'}, MixedCase{":Jan:Feb:Mar", 0, u"Ma", -1, u'\0'},
+             MixedCase{":Jan:Feb:Mar", 0, u"Xyz", -2, u'X'}, MixedCase{":Feb", 0, u"\u0146eb", -2, u'\u0146'},
+             MixedCase{":\xe9t\xe9", 0, u"\u00e9t\u00e9", -2, u'\u00e9'}, MixedCase{":AM:PM", 0, u"pm", 1, u'\0'},
+             MixedCase{charBoolTable, 2, u"false", 0, u'\0'}, MixedCase{charBoolTable, 2, u"TRUEx", 1, u'x'},
+             MixedCase{"", 0, u"Feb", -2, u'F'}}) {
+        for (bool buffered : {true, false}) {
+            InputStreambuf<char16_t> sb{};
+            sb.Setup(item.input, buffered);
+            GuestLocale::InputIterator first = sb.Begin();
+            Require(mixed(&first, &endIter, item.count, item.table) == item.result, "mixed _Getloctxt result");
+            Require(sb.RemainingFirst() == item.next, "mixed _Getloctxt consumption");
+        }
+    }
+
+    {
+        InputStreambuf<char16_t> sb{};
+        sb.Setup(u"Jan", true);
+        GuestLocale::InputIterator first = sb.Begin();
+        GuestLocale::InputIterator nullIter{{0, 0}};
+        Require(wide(nullptr, &endIter, 0, units(u":Jan")) == -2, "wide null first -> -2");
+        Require(wide(&first, nullptr, 0, units(u":Jan")) == -2, "wide null last -> -2");
+        Require(wide(&first, &endIter, 0, nullptr) == -2, "wide null ptr -> -2");
+        Require(wide(&nullIter, &endIter, 0, units(u":Jan")) == -2, "wide null buffer -> -2");
+        Require(mixed(nullptr, &endIter, 0, ":Jan") == -2, "mixed null first -> -2");
+        Require(mixed(&first, nullptr, 0, ":Jan") == -2, "mixed null last -> -2");
+        Require(mixed(&first, &endIter, 0, nullptr) == -2, "mixed null ptr -> -2");
+        Require(mixed(&nullIter, &endIter, 0, ":Jan") == -2, "mixed null buffer -> -2");
+        Require(sb.RemainingFirst() == u'J', "null arguments consume nothing");
+        Require(Throws([&] { wide(&first, &endIter, SIZE_MAX, units(u":Jan")); }), "wide SIZE_MAX throws length_error");
+        Require(Throws([&] { mixed(&first, &endIter, SIZE_MAX, ":Jan"); }), "mixed SIZE_MAX throws length_error");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1533,7 +1633,7 @@ int main(int argc, char** argv) {
     bool hasLibrary = false;
     if (argc >= 2) {
 #ifdef _WIN32
-        g_library = LoadLibraryA(argv[1]);
+        g_library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
         g_library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -1557,5 +1657,6 @@ int main(int argc, char** argv) {
     CheckGroup4GetAndGetFmt();
     CheckGroup5RemainingTimeGet(hasLibrary);
     CheckGroup6Getloctxt(hasLibrary);
+    CheckGroup6WideGetloctxt(hasLibrary);
     return 0;
 }

@@ -1054,10 +1054,13 @@ badPadding:
 
     case LibreSsl3PkeyControlDigestInit:
     case LibreSsl3PkeyControlPkcs7Sign:
+    case LibreSsl3PkeyControlCmsSign:
         return 1;
 
     case LibreSsl3PkeyControlPkcs7Encrypt:
     case LibreSsl3PkeyControlPkcs7Decrypt:
+    case LibreSsl3PkeyControlCmsDecrypt:
+    case LibreSsl3PkeyControlCmsEncrypt:
         if (method->keyType != LibreSsl3PkeyRsaPss) return 1;
         QueueRsaError(ReasonKeyTypeOperationNotSupported);
         return -2;

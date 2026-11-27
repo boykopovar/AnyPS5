@@ -1,0 +1,5 @@
+# libSceNet
+
+## change [sceNetThreadCreate, sceNetThreadExit, sceNetThreadJoin, sceNetEmulationGet and sceNetEmulationSet]
+
+- [sceNetThreadCreate, sceNetThreadExit, sceNetThreadJoin, sceNetEmulationGet and sceNetEmulationSet](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - the signatures, the `{ entry, arg, reserved, flags }` parameter block and the `EOPNOTSUPP` of the two emulation calls ("not available on retail units") follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/net/net.cpp) (PS4), not a PS5 measurement. The block is read on the new thread, so it must stay valid until the thread starts, `flags` is ignored (shadPS4 ends the thread with `pthread_exit` when bit 0 is set, which ends it the same way), and a failing `scePthreadCreate` or `scePthreadJoin` result is returned as it is, where shadPS4 also sets the net errno from it. A null thread output creates the thread detached, since nothing can join it. This is a host leak fix, not a console measurement: shadPS4 leaves that thread joinable, and the only guest-visible difference is that the thread joining its own `scePthreadSelf` handle now gets `EINVAL`.

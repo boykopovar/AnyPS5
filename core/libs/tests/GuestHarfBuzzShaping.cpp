@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <hb.h>
 
@@ -159,7 +160,11 @@ static void Check(const Api& api) {
 #ifndef _WIN32
     rusage after{};
     getrusage(RUSAGE_SELF, &after);
+#ifdef __APPLE__
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024 * 1024);
+#else
     Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024);
+#endif
 #endif
     api.destroyBuffer(buffer);
     api.destroyFont(font);
@@ -171,7 +176,7 @@ int main(int argc, char** argv) try {
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto module = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
