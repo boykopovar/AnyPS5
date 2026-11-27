@@ -1,6 +1,7 @@
 #include "prx/libSceXml/src/NodeList.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -32,7 +33,11 @@ bool CopyOutGuest(T* destination, const T& source, std::size_t bytes = sizeof(T)
 
 bool IsGuestWritable(void* destination, std::size_t bytes) {
     const int savedErrno = errno;
-    const bool writable = GuestWritable_nid_no_patch(destination, bytes);
+    bool writable = false;
+    {
+        const GuestArena::HostWrite write(destination, bytes);
+        writable = write.Open() && GuestWritable_nid_no_patch(destination, bytes);
+    }
     errno = savedErrno;
     return writable;
 }
@@ -46,7 +51,7 @@ XmlHandle ReadGuestHandle(const XmlHandle* guest, const char* function) {
 }
 
 void WriteGuestHandle(XmlHandle* guest, const XmlHandle& value, const char* function) {
-    if (!CopyOutGuest(guest, value)) {
+    if (!IsGuestWritable(guest, sizeof(XmlHandle)) || !CopyOutGuest(guest, value)) {
         throw std::logic_error(std::string(function) + ": writing to an unwritable object");
     }
 }
@@ -78,6 +83,30 @@ bool SameNode(const XmlNodeId& left, const XmlNodeId& right) {
     return left.first == right.first && left.second == right.second && left.flag == right.flag;
 }
 
+struct BlockGuard {
+    XmlMemAllocator* allocator = nullptr;
+    void* userData = nullptr;
+    void* block = nullptr;
+
+    BlockGuard(XmlMemAllocator* allocator, void* userData, void* block)
+        : allocator(allocator), userData(userData), block(block) {}
+
+    ~BlockGuard() {
+        if (block != nullptr) {
+            allocator->vtable->deallocate(allocator, block, userData);
+        }
+    }
+
+    BlockGuard(const BlockGuard&) = delete;
+    BlockGuard& operator=(const BlockGuard&) = delete;
+
+    void* release() {
+        void* released = block;
+        block = nullptr;
+        return released;
+    }
+};
+
 void Attach(XmlHandle* self, XmlMemAllocator* allocator, void* userData, const std::vector<XmlNodeId>* initialItems, const char* function) {
     if (!IsGuestWritable(self, sizeof(XmlHandle))) {
         throw std::logic_error(std::string(function) + ": writing to an unwritable object");
@@ -88,16 +117,16 @@ void Attach(XmlHandle* self, XmlMemAllocator* allocator, void* userData, const s
     if (initialItems != nullptr) state->items = *initialItems;
     void* block = allocator->vtable->allocate(allocator, BlockSize, userData);
     if (block == nullptr) throw std::logic_error("sce::Xml::Dom::NodeList: an allocation failure while initializing a node list was not measured");
+    BlockGuard blockGuard(allocator, userData, block);
     NodeListState* rawState = state.get();
     if (!CopyOutGuest(static_cast<NodeListState**>(block), rawState)) {
-        allocator->vtable->deallocate(allocator, block, userData);
         throw std::logic_error(std::string(function) + ": writing to an unwritable node list block");
     }
     const XmlHandle updated{block};
     if (!CopyOutGuest(self, updated)) {
-        allocator->vtable->deallocate(allocator, block, userData);
         throw std::logic_error(std::string(function) + ": writing to an unwritable object");
     }
+    blockGuard.release();
     state.release();
 }
 
