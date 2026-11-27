@@ -1,6 +1,7 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 
@@ -9,11 +10,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <initializer_list>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -283,11 +286,8 @@ void Limits() {
            "max_allocation_size_mb");
     Expect(Run("allocator_may_return_null=1", [] { Require(__asan_malloc(std::size_t{1} << 41) == nullptr, "too big returns null"); }), 0,
            {"WARNING: AddressSanitizer failed to allocate 0x20000000000 bytes\n"}, "too big returns null");
-    Expect(Run(nullptr, [] {
-               ::setenv("APS5_TEST_HEAP_FAIL", "1", 1);
-               __asan_malloc(std::size_t{3} << 30);
-           }),
-           1, {"ERROR: AddressSanitizer: out of memory: allocator is trying to allocate 0xc0000000 bytes\n", "SUMMARY: AddressSanitizer: out-of-memory"}, "out of memory");
+    Expect(Run(nullptr, [] { __asan_malloc(std::size_t{0xfff} << 28); }), 1,
+           {"ERROR: AddressSanitizer: out of memory: allocator is trying to allocate 0xfff0000000 bytes\n", "SUMMARY: AddressSanitizer: out-of-memory"}, "out of memory");
 }
 
 void Ownership() {
@@ -577,10 +577,10 @@ void Containers() {
 }
 
 void Reports() {
-    char directory[] = "/tmp/asan-report-XXXXXX";
-    Require(::mkdtemp(directory) != nullptr, "mkdtemp");
+    static std::string directory;
+    directory = "/tmp/asan-report-" + std::to_string(::getpid());
     static std::string prefix;
-    prefix = std::string(directory) + "/nested/log";
+    prefix = directory + "/nested/log";
     const auto outcome = Run(nullptr, [] {
         __sanitizer_set_report_path(prefix.c_str());
         const std::string path = __sanitizer_get_report_path();
@@ -589,11 +589,13 @@ void Reports() {
         __sanitizer_set_report_path("stderr");
         Require(std::strcmp(__sanitizer_get_report_path(), "") == 0, "stderr has no report path");
         __sanitizer_print_stack_trace();
-        std::ifstream file(path);
+        std::ifstream file(ResolvePath_nid_no_patch(path.c_str()));
         std::stringstream contents;
         contents << file.rdbuf();
         Require(contents.str() == "AddressSanitizer can not describe address in more detail (wild memory access suspected).\n", "the report went to the file");
     });
+    std::error_code removed;
+    std::filesystem::remove_all(ResolvePath_nid_no_patch(directory.c_str()), removed);
     Expect(outcome, 0, {"    #0 0x"}, "report path");
     ExpectAbsent(outcome, "wild memory access", "report path keeps stderr clean");
     ExpectClean(Run(nullptr, [] {

@@ -207,8 +207,11 @@ void APS5_VABI OnError(const char* report) {
     Require(__asan_get_report_pc() != 0 && __asan_get_report_sp() != 0, "report registers are recorded");
 }
 
+volatile int afterLoad = 0;
+
 [[gnu::noinline]] void LoadOnce(std::uintptr_t address) {
     __asan_load2_noabort(address);
+    afterLoad = 0;
 }
 
 void APS5_VABI OnDeath() {
@@ -387,7 +390,7 @@ void Stack() {
            }),
            1, {"stack-use-after-scope on address " + Hex(arena + 3), "  Stack use after scope:   f8\n"}, "stack use after scope");
     struct Case {
-        void (*set)(std::uintptr_t, std::uintptr_t);
+        void(APS5_VABI* set)(std::uintptr_t, std::uintptr_t);
         const char* bug;
     };
     static const Case cases[] = {{__asan_set_shadow_f1, "stack-buffer-underflow"}, {__asan_set_shadow_f2, "stack-buffer-overflow"}, {__asan_set_shadow_f3, "stack-buffer-overflow"},
