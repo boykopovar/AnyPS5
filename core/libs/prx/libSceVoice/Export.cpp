@@ -248,6 +248,7 @@ int APS5_VABI sceVoiceDeletePort(uint32_t port_id) {
 int APS5_VABI sceVoiceConnectIPortToOPort(uint32_t input_port_id, uint32_t output_port_id) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
     if (!IsInput(RequirePort(voice, input_port_id, __func__).type)) Fail(__func__, "first port is not an input port");
     if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "second port is not an output port");
     voice.connections.emplace(input_port_id, output_port_id);
@@ -257,6 +258,7 @@ int APS5_VABI sceVoiceConnectIPortToOPort(uint32_t input_port_id, uint32_t outpu
 int APS5_VABI sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t output_port_id) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
     RequirePort(voice, input_port_id, __func__);
     if (output_port_id > 127) Fail(__func__, "the result for a second port id above 127 is unknown");
     if (!voice.ports.contains(output_port_id) || voice.connections.erase({input_port_id, output_port_id}) == 0) return PortNotFound;
