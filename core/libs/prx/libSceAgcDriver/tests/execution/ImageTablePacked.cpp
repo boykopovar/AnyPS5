@@ -422,12 +422,20 @@ void CheckStored(const Format& format, std::uint32_t selected, std::uint32_t dma
     Require(Texels[selected] == expected, name + ": packed store bits, dmask order or untouched texels differ");
 }
 
+bool PackedLoadable(const Format& format) {
+    constexpr std::array unreadable{2u, 8u, 13u, 15u, 24u, 29u, 57u, 66u, 71u};
+    return std::find(unreadable.begin(), unreadable.end(), format.id) == unreadable.end();
+}
+
 void PackedStores(AgcDriver::VulkanDevice& device) {
     constexpr std::array formats{
         Format{5u, 1u, 1u}, Format{11u, 2u, 1u}, Format{18u, 2u, 2u},
         Format{20u, 4u, 1u}, Format{21u, 4u, 1u}, Format{22u, 4u, 1u, true},
         Format{27u, 4u, 2u}, Format{60u, 4u, 4u}, Format{62u, 8u, 2u},
         Format{63u, 8u, 2u}, Format{64u, 8u, 2u, true}, Format{69u, 8u, 4u},
+        Format{1u, 1u, 1u}, Format{2u, 1u, 1u}, Format{7u, 2u, 1u}, Format{8u, 2u, 1u}, Format{13u, 2u, 1u},
+        Format{14u, 2u, 2u}, Format{23u, 4u, 2u}, Format{29u, 4u, 2u}, Format{56u, 4u, 4u}, Format{57u, 4u, 4u},
+        Format{65u, 8u, 4u}, Format{71u, 8u, 4u},
         Format{75u, 16u, 4u}, Format{76u, 16u, 4u}, Format{77u, 16u, 4u, true}};
     for (const auto dmask : {1u, 5u, 10u, 15u}) {
         const auto directCode = Code(10u, dmask, false);
@@ -453,8 +461,10 @@ void PackedStores(AgcDriver::VulkanDevice& device) {
                 Require(table.tables != 0u && table.log.find("image table:") == std::string::npos, name + ": valid storage entry rejected:\n" + table.log);
                 CheckStored(format, selected, dmask, initial[selected], name);
                 Require(Texels[selected] == direct && Texels[1u - selected] == initial[1u - selected], name + ": wrong destination table entry");
-                const auto read = Run(device, readCode, selected);
-                CheckPacked(read, format, selected, 15u, false, false, name + " round trip");
+                if (PackedLoadable(format)) {
+                    const auto read = Run(device, readCode, selected);
+                    CheckPacked(read, format, selected, 15u, false, false, name + " round trip");
+                }
                 if (artifact != 0u) Require(table.cacheHit && table.artifact == artifact, name + ": storage format rebuilt shader");
                 artifact = table.artifact;
             }
@@ -734,11 +744,11 @@ void RejectedEntries(AgcDriver::VulkanDevice& device) {
         Rejection{0x71u, 1u, {11u, 2u, 1u}, Identity},
         Rejection{0x74u, 1u, {18u, 2u, 2u}, Identity},
         Rejection{0x70u, 1u, {5u, 1u, 1u}, 0xf2eu},
-        Rejection{10u, 1u, {1u, 1u, 1u}, Identity},
+        Rejection{10u, 1u, {44u, 4u, 4u}, Identity},
         Rejection{10u, 1u, {6u, 1u, 1u}, Identity},
         Rejection{10u, 1u, {12u, 2u, 1u}, Identity},
-        Rejection{10u, 1u, {13u, 2u, 1u}, Identity},
-        Rejection{10u, 1u, {56u, 4u, 4u}, Identity},
+        Rejection{10u, 1u, {50u, 4u, 4u}, Identity},
+        Rejection{10u, 1u, {133u, 2u, 3u}, Identity},
         Rejection{10u, 1u, {72u, 12u, 3u}, Identity},
         Rejection{10u, 1u, {54u, 4u, 4u}, Identity}};
     for (const auto& rejected : cases) {

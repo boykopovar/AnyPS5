@@ -382,6 +382,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
+    const bool rawPackedStorage = storage && base.packed && base.written && !base.read && !base.atomic && (format == IrBufferFormat::Format8UNorm || format == IrBufferFormat::Format8SNorm || format == IrBufferFormat::Format16UNorm || format == IrBufferFormat::Format16SNorm || format == IrBufferFormat::Format16Float || format == IrBufferFormat::Format8_8UNorm || format == IrBufferFormat::Format8_8SNorm || format == IrBufferFormat::Format16_16UNorm || format == IrBufferFormat::Format16_16SNorm || format == IrBufferFormat::Format16_16Float || format == IrBufferFormat::Format8_8_8_8UNorm || format == IrBufferFormat::Format8_8_8_8SNorm || format == IrBufferFormat::Format16_16_16_16UNorm || format == IrBufferFormat::Format16_16_16_16SNorm || format == IrBufferFormat::Format16_16_16_16Float);
     const bool rawFloat16Storage = storage && base.written && !base.read && !base.atomic &&
         (remappedFormat == IrBufferFormat::Format16Float || remappedFormat == IrBufferFormat::Format16_16Float || remappedFormat == IrBufferFormat::Format16_16_16_16Float);
     decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
@@ -399,7 +400,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         if (rawSintStorage) {
             decoded.numericClass = IrTextureNumericClass::Uint;
         }
-        if (rawFloat16Storage) {
+        if (rawFloat16Storage || rawPackedStorage) {
             decoded.numericClass = IrTextureNumericClass::Uint;
         }
         if ((rawSintStorage || rawFloat16Storage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
@@ -2158,6 +2159,21 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 if (image.packed && image.resourceClass == ImageResourceClass::Storage) {
                     auto viewFormat = mode.packedFormat;
                     switch (viewFormat) {
+                        case IrBufferFormat::Format8UNorm:
+                        case IrBufferFormat::Format8SNorm: viewFormat = IrBufferFormat::Format8UInt; break;
+                        case IrBufferFormat::Format16UNorm:
+                        case IrBufferFormat::Format16SNorm:
+                        case IrBufferFormat::Format16Float: viewFormat = IrBufferFormat::Format16UInt; break;
+                        case IrBufferFormat::Format8_8UNorm:
+                        case IrBufferFormat::Format8_8SNorm: viewFormat = IrBufferFormat::Format8_8UInt; break;
+                        case IrBufferFormat::Format16_16UNorm:
+                        case IrBufferFormat::Format16_16SNorm:
+                        case IrBufferFormat::Format16_16Float: viewFormat = IrBufferFormat::Format16_16UInt; break;
+                        case IrBufferFormat::Format8_8_8_8UNorm:
+                        case IrBufferFormat::Format8_8_8_8SNorm: viewFormat = IrBufferFormat::Format8_8_8_8UInt; break;
+                        case IrBufferFormat::Format16_16_16_16UNorm:
+                        case IrBufferFormat::Format16_16_16_16SNorm:
+                        case IrBufferFormat::Format16_16_16_16Float: viewFormat = IrBufferFormat::Format16_16_16_16UInt; break;
                         case IrBufferFormat::Format32SInt: viewFormat = IrBufferFormat::Format32UInt; break;
                         case IrBufferFormat::Format32_32SInt: viewFormat = IrBufferFormat::Format32_32UInt; break;
                         case IrBufferFormat::Format32_32_32_32SInt: viewFormat = IrBufferFormat::Format32_32_32_32UInt; break;
@@ -2508,12 +2524,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             const auto info = GetFormatInfo(format);
             if (info.packedBitfield || info.componentCount == 0u || (storage && info.byteSize == 12u)) continue;
             if (image.byElements != 0u && info.byteSize * 8u * image.byElements > 32u) continue;
-            const auto numeric = storage && (format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt) ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
+            const bool rawPacked = format == IrBufferFormat::Format8UNorm || format == IrBufferFormat::Format8SNorm || format == IrBufferFormat::Format16UNorm || format == IrBufferFormat::Format16SNorm || format == IrBufferFormat::Format16Float || format == IrBufferFormat::Format8_8UNorm || format == IrBufferFormat::Format8_8SNorm || format == IrBufferFormat::Format16_16UNorm || format == IrBufferFormat::Format16_16SNorm || format == IrBufferFormat::Format16_16Float || format == IrBufferFormat::Format8_8_8_8UNorm || format == IrBufferFormat::Format8_8_8_8SNorm || format == IrBufferFormat::Format16_16_16_16UNorm || format == IrBufferFormat::Format16_16_16_16SNorm || format == IrBufferFormat::Format16_16_16_16Float;
+            const auto numeric = storage && (rawPacked || format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt) ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
             bool supported = numeric != IrTextureNumericClass::Unsupported && (!storage || numeric != IrTextureNumericClass::Sint);
             for (std::uint32_t component = 0u; component < info.componentCount; ++component) {
                 const auto bits = info.componentBits[component];
                 const bool exactRead = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint || (info.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (info.type == SpirvFormatComponentType::Float && bits == 32u);
-                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || (bits == 32u && (info.type == SpirvFormatComponentType::Sint || info.type == SpirvFormatComponentType::Float));
+                const bool exactWrite = info.type == SpirvFormatComponentType::Uint || rawPacked || (bits == 32u && (info.type == SpirvFormatComponentType::Sint || info.type == SpirvFormatComponentType::Float));
                 supported &= storage ? exactWrite : exactRead;
             }
             if (supported) append(numeric, IrBufferFormat::Invalid, format, false, false);
@@ -2653,7 +2670,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         if (storage && packedFormat.byteSize == 12u) return reject(PoisonReason::InvalidFormat, "runtime packed image uses a format the hardware does not write");
         for (std::uint32_t component = 0u; component < packedFormat.componentCount; ++component) {
             const auto bits = packedFormat.componentBits[component];
-            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (bits == 32u && (packedFormat.type == SpirvFormatComponentType::Sint || packedFormat.type == SpirvFormatComponentType::Float)) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
+            const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || decoded.numericClass == IrTextureNumericClass::Uint || (bits == 32u && (packedFormat.type == SpirvFormatComponentType::Sint || packedFormat.type == SpirvFormatComponentType::Float)) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
             if (!exact) return reject(PoisonReason::InvalidFormat, storage ? "runtime packed image bits are not reproducible through the view" : "runtime packed image bits are not recoverable from the view");
         }
     }

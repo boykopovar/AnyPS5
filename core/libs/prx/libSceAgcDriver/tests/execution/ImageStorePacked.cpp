@@ -85,7 +85,7 @@ struct Format {
     std::uint32_t bytes;
 };
 
-constexpr std::array<Format, 10> Formats{{
+constexpr std::array<Format, 18> Formats{{
     {"8_UINT", 5u, 1u},
     {"16_UINT", 11u, 2u},
     {"8_8_UINT", 18u, 2u},
@@ -96,6 +96,14 @@ constexpr std::array<Format, 10> Formats{{
     {"32_32_UINT", 62u, 8u},
     {"16_16_16_16_UINT", 69u, 8u},
     {"32_32_32_32_FLOAT", 77u, 16u},
+    {"8_UNORM", 1u, 1u},
+    {"8_SNORM", 2u, 1u},
+    {"16_UNORM", 7u, 2u},
+    {"16_FLOAT", 13u, 2u},
+    {"16_16_SNORM", 24u, 4u},
+    {"8_8_8_8_UNORM", 56u, 4u},
+    {"8_8_8_8_SNORM", 57u, 4u},
+    {"16_16_16_16_FLOAT", 71u, 8u},
 }};
 
 std::uint32_t Levels(bool mip) {
@@ -243,7 +251,7 @@ int main() {
             Run(*device, texels, MipCode, format, IdentitySwizzle, true);
             Check(texels, format, true, "image_store_mip_pck");
         }
-        RequireRefused(*device, texels, {"8_8_8_8_UNORM", 56u, 4u}, "not reproducible");
+        RequireRefused(*device, texels, {"2_10_10_10_UNORM", 44u, 4u}, "bitfield");
         RequireRefused(*device, texels, {"32_32_32_FLOAT", 74u, 12u}, "does not write");
         std::puts("image store packed tests passed");
         return 0;

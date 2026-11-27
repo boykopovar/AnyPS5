@@ -1281,7 +1281,7 @@ std::uint32_t PackedStoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
         }
         const auto bits = info.componentBits[component];
         const auto offset = info.componentBitOffset[component];
-        const bool exact = (info.type == SpirvFormatComponentType::Uint && numericClass == IrTextureNumericClass::Uint) || (bits == 32u && ((info.type == SpirvFormatComponentType::Sint && numericClass == IrTextureNumericClass::Uint) || (info.type == SpirvFormatComponentType::Float && numericClass == IrTextureNumericClass::Float)));
+        const bool exact = numericClass == IrTextureNumericClass::Uint || (bits == 32u && info.type == SpirvFormatComponentType::Float && numericClass == IrTextureNumericClass::Float);
         if (!exact || offset % 32u + bits > 32u) {
             ctx.Fail(access.inst, "stores packed texels of a format whose bits are not reproducible through the view");
         }
