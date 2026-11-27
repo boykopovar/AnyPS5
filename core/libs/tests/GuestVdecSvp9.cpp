@@ -163,6 +163,12 @@ void TestFrameBufferQuery() {
     Require(AllBytesEqual(outFb.data(), 0, outFb.size(), 0xA5), "33wXf5Ne2xc null touched out");
     Require(errno == kPreservedErrno, "33wXf5Ne2xc null errno");
 
+    cfg.Init(0u, 40, 0u, 8, -2, 17);
+    Require(libSceVdecSvp9Unknown_33wXf5Ne2xc_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outFb.data()) == -1, "33wXf5Ne2xc width = -2");
+    cfg.Init(0u, 40, 0u, 8, 30, -2);
+    Require(libSceVdecSvp9Unknown_33wXf5Ne2xc_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outFb.data()) == -1, "33wXf5Ne2xc height = -2");
+    cfg.Init(0u, 40, 0u, 8, 30, 0x04000000);
+    Require(libSceVdecSvp9Unknown_33wXf5Ne2xc_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outFb.data()) == -1, "33wXf5Ne2xc height << 6 overflow");
     cfg.Init(0u, 40, 0u, 8, 0x81, 17);
     Require(libSceVdecSvp9Unknown_33wXf5Ne2xc_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outFb.data()) == -1, "33wXf5Ne2xc width > 0x80");
     cfg.Init(0u, 40, 0u, 8, 30, 0x41);
@@ -179,12 +185,14 @@ void TestFrameBufferQuery() {
         std::uint32_t rec2c;
         std::uint64_t expectedSize;
     };
-    const std::array<FbCase, 5> cases{{
+    const std::array<FbCase, 7> cases{{
         {0u, 0u, 30, 17, 0u, 0x330000ULL},
         {2u, 0u, 30, 17, 0u, 0x660000ULL},
         {0u, 1u, 30, 17, 0u, 0x3fc000ULL},
         {0u, 0u, -1, 17, 0u, 0x3000000ULL},
         {0u, 0u, 30, -1, 1u, 0x3300000ULL},
+        {0u, 0u, 0x80, 0x40, 0u, 0x3000000ULL},
+        {0u, 0u, 0x80, 0x44, 1u, 0x3300000ULL},
     }};
     for (const auto& entry : cases) {
         cfg.Init(entry.profile, 40, entry.flag8, 8, entry.wMb, entry.hMb);
@@ -228,6 +236,12 @@ void TestMemoryQuery() {
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=0");
     cfg.Init(0u, 40, 0u, 8, 30, 0);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=0");
+    cfg.Init(0u, 40, 0u, 8, -2, 17);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=-2");
+    cfg.Init(0u, 40, 0u, 8, 30, -2);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=-2");
+    cfg.Init(0u, 40, 0u, 8, 30, 0x04000000);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=0x04000000");
     cfg.Init(0u, 40, 0u, 8, 0x101, 17);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw w=0x101");
     cfg.Init(0u, 40, 0u, 8, 0x81, 17);
@@ -236,6 +250,8 @@ void TestMemoryQuery() {
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw h=0x41");
     cfg.Init(0u, 40, 0u, -2, 30, 17);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw dpb=-2");
+    cfg.Init(0u, 40, 0u, INT32_MIN, 30, 17);
+    Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw dpb=INT32_MIN");
     cfg.Init(0u, 40, 0u, 9, 30, 17);
     Require(libSceVdecSvp9Unknown_BFFONbbPMXw_nid_no_patch(cfg.bytes.data(), rec.bytes.data(), outMem.data()) == -1, "BFFONbbPMXw dpb=9");
     Require(AllBytesEqual(outMem.data(), 0, outMem.size(), 0xA5), "BFFONbbPMXw invalid touched out");
@@ -320,6 +336,16 @@ void TestPreDecoderValidation() {
     RecBuf zeroRec{};
     zeroRec.Init(0ULL, 0, 0u, 0u);
     Require(libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(cfg.bytes.data(), zeroRec.bytes.data(), memInfo.data(), &dummyA4, handle.data()) == -1, "JawAvxR7M+k rec[0]==0");
+
+    ConfigBuf badCfg{};
+    badCfg.Init(0u, 40, 0u, 8, -2, 17);
+    Require(libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(badCfg.bytes.data(), rec.bytes.data(), memInfo.data(), &dummyA4, handle.data()) == -1, "JawAvxR7M+k w=-2");
+    badCfg.Init(0u, 40, 0u, 8, 30, -2);
+    Require(libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(badCfg.bytes.data(), rec.bytes.data(), memInfo.data(), &dummyA4, handle.data()) == -1, "JawAvxR7M+k h=-2");
+    badCfg.Init(0u, 40, 0u, 8, 30, 0x04000000);
+    Require(libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(badCfg.bytes.data(), rec.bytes.data(), memInfo.data(), &dummyA4, handle.data()) == -1, "JawAvxR7M+k h=0x04000000");
+    badCfg.Init(0u, 40, 0u, INT32_MIN, 30, 17);
+    Require(libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(badCfg.bytes.data(), rec.bytes.data(), memInfo.data(), &dummyA4, handle.data()) == -1, "JawAvxR7M+k dpb=INT32_MIN");
 
     auto checkMemReject = [&](std::size_t off, std::uint64_t badVal, bool isU32, const char* msg) {
         auto badMem = memInfo;

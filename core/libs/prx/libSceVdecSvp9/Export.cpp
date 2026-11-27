@@ -83,6 +83,10 @@ bool IsValidLevel(std::int32_t level) {
     return index <= 0x3eu && ((0x6038060180601801ULL >> index) & 1ULL) != 0ULL;
 }
 
+bool IsValidDpb(std::int32_t dpb) {
+    return dpb >= -1 && dpb <= 8;
+}
+
 bool ComputeDimensions(const std::uint8_t* cfg, std::uint32_t recFlag2c, DimInfo& out) {
     const std::uint32_t limit = (recFlag2c != 0u) ? 0x1100u : 0x1000u;
     out.flag8 = (ReadU32(cfg + 0x08) == 1u);
@@ -94,12 +98,12 @@ bool ComputeDimensions(const std::uint8_t* cfg, std::uint32_t recFlag2c, DimInfo
         out.h = limit;
         return true;
     }
-    const std::uint32_t hScaled = static_cast<std::uint32_t>(hIn) << 6;
-    if (wIn >= 0x81 || hScaled > limit) {
+    const std::int32_t hLimit = static_cast<std::int32_t>(limit >> 6);
+    if (wIn < 0 || hIn < 0 || wIn > 0x80 || hIn > hLimit) {
         return false;
     }
     out.w = static_cast<std::uint32_t>(wIn) << 6;
-    out.h = hScaled;
+    out.h = static_cast<std::uint32_t>(hIn) << 6;
     return true;
 }
 
@@ -245,7 +249,7 @@ bool RunMemoryQuery(const std::uint8_t* cfg, const std::uint8_t* rec, MemBlock (
         return false;
     }
     const std::int32_t dpb = ReadI32(cfg + 0x0c);
-    if (static_cast<std::uint32_t>(dpb - 9) < 0xfffffff6u) {
+    if (!IsValidDpb(dpb)) {
         return false;
     }
     DimInfo dim{};
@@ -364,7 +368,7 @@ int APS5_VABI libSceVdecSvp9Unknown_JawAvxR7M_plus_k_nid_no_patch(const void* cf
         return -1;
     }
     const std::int32_t dpb = ReadI32(cfgBuf + 0x0c);
-    if (static_cast<std::uint32_t>(dpb - 9) < 0xfffffff6u) {
+    if (!IsValidDpb(dpb)) {
         return -1;
     }
     MemBlock req[3]{};
