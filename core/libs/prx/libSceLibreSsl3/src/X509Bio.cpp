@@ -98,6 +98,7 @@ struct Header {
 struct Frame {
     bool indefinite;
     std::size_t end;
+    std::size_t boundary;
 };
 
 template <typename T>
@@ -195,11 +196,7 @@ bool ParseHeader(const unsigned char* data, std::size_t available, Header& heade
 }
 
 std::size_t DefiniteBoundary(const std::vector<Frame>& frames) {
-    std::size_t boundary = std::numeric_limits<std::size_t>::max();
-    for (const auto& frame : frames) {
-        if (!frame.indefinite) boundary = std::min(boundary, frame.end);
-    }
-    return boundary;
+    return frames.empty() ? std::numeric_limits<std::size_t>::max() : frames.back().boundary;
 }
 
 bool PopCompletedFrames(std::vector<Frame>& frames, std::size_t offset) {
@@ -285,14 +282,14 @@ bool ReadObject(LibreSsl::Bio* bio, std::vector<unsigned char>& bytes) {
         offset += header.size;
         if (frames.empty()) {
             if (header.indefinite) {
-                frames.push_back({true, 0});
+                frames.push_back({true, 0, boundary});
                 continue;
             }
             if (!readBody(header.length)) return false;
             break;
         }
         if (header.indefinite) {
-            frames.push_back({true, 0});
+            frames.push_back({true, 0, boundary});
             continue;
         }
         const bool eoc = !header.constructed && header.length == 0 && header.tag == 0 && header.tagClass == 0;
@@ -311,7 +308,8 @@ bool ReadObject(LibreSsl::Bio* bio, std::vector<unsigned char>& bytes) {
             return false;
         }
         if (header.constructed) {
-            frames.push_back({false, offset + header.length});
+            const std::size_t end = offset + header.length;
+            frames.push_back({false, end, std::min(boundary, end)});
         } else if (!readBody(header.length)) {
             return false;
         }
