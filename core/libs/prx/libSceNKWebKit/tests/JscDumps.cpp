@@ -1,11 +1,21 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/Api.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::JscDumpAbi::CellAttributes;
 using NKWebKit::JscDumpAbi::HeapRange;
@@ -140,11 +150,90 @@ void TestNullArguments() {
     Require(streams.log.empty());
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+bool ThrowsNotImplemented(TFunction function, const char* symbol) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    Streams streams;
+    const CellAttributes attributes{0, 0};
+    const HeapRange range{1, 2};
+    constexpr const char* kCellSymbol = "_ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE";
+    constexpr const char* kRangeSymbol = "_ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE";
+
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(reinterpret_cast<const CellAttributes*>(pages.Guard()), streams.Out()); }, kCellSymbol));
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(reinterpret_cast<const CellAttributes*>(pages.Guard() - 1), streams.Out()); }, kCellSymbol));
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(&attributes, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(pages.Guard())); }, kCellSymbol));
+
+    TestStream badVtableStream{reinterpret_cast<void* const*>(pages.Guard()), &streams.log, 'X', nullptr};
+    Require(ThrowsNotImplemented([&] {
+        _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(&attributes, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&badVtableStream));
+    }, kCellSymbol));
+
+    TestStream badInnerStream{testVtable, &streams.log, 'Y', reinterpret_cast<TestStream*>(pages.Guard())};
+    Require(ThrowsNotImplemented([&] {
+        _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(&attributes, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&badInnerStream));
+    }, kCellSymbol));
+
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(reinterpret_cast<const HeapRange*>(pages.Guard()), streams.Out()); }, kRangeSymbol));
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(reinterpret_cast<const HeapRange*>(pages.Guard() - 2), streams.Out()); }, kRangeSymbol));
+    Require(ThrowsNotImplemented([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(&range, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(pages.Guard())); }, kRangeSymbol));
+    Require(ThrowsNotImplemented([&] {
+        _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(&range, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&badVtableStream));
+    }, kRangeSymbol));
+}
+
 }
 
 int main() {
     TestCellAttributes();
     TestHeapRange();
     TestNullArguments();
+    TestGuestPointers();
     return 0;
 }

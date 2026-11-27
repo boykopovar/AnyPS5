@@ -103,11 +103,15 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/JscDumpExports.hpp"
 
 #include <cstdarg>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 
@@ -119,46 +123,58 @@ using VprintfFunction = void (APS5_VABI*)(PrintStream*, const char*, VaList*);
 using BeginFunction = PrintStream* (APS5_VABI*)(PrintStream*);
 using EndFunction = void (APS5_VABI*)(PrintStream*);
 
+static_assert(std::is_trivially_copyable_v<CellAttributes>);
+static_assert(std::is_trivially_copyable_v<HeapRange>);
+
 template<typename TFunction>
-TFunction Slot(PrintStream& out, std::size_t slot) {
-    return reinterpret_cast<TFunction>(const_cast<void*>(out.vtable[slot]));
+TFunction ReadSlot(PrintStream* out, std::size_t slot, const char* function) {
+    if (!out) throw std::invalid_argument("null WTF::PrintStream");
+    void* const* vtablePtr = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&vtablePtr, out, sizeof(vtablePtr)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!vtablePtr) throw std::invalid_argument("null WTF::PrintStream");
+    const std::size_t byteOffset = slot * sizeof(void*);
+    const auto baseAddress = reinterpret_cast<std::uintptr_t>(vtablePtr);
+    if (byteOffset > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    void* slotValue = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&slotValue, reinterpret_cast<const void*>(baseAddress + byteOffset), sizeof(slotValue)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!slotValue) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return reinterpret_cast<TFunction>(slotValue);
 }
 
-void APS5_VABI JscDumpPrintf_nid_no_patch(PrintStream& out, const char* format, ...) {
+void APS5_VABI JscDumpPrintf_nid_no_patch(PrintStream* out, VprintfFunction vprintfFn, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
+    vprintfFn(out, format, reinterpret_cast<VaList*>(arguments));
     __builtin_sysv_va_end(arguments);
 #else
     std::va_list arguments;
     va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
+    vprintfFn(out, format, reinterpret_cast<VaList*>(arguments));
     va_end(arguments);
 #endif
 }
 
-PrintStream& Checked(PrintStream* out) {
-    if (!out || !out->vtable) throw std::invalid_argument("null WTF::PrintStream");
-    return *out;
+PrintStream* CheckedBegin(PrintStream* out, BeginFunction beginFn, const char* function) {
+    PrintStream* inner = beginFn(out);
+    static_cast<void>(ReadSlot<VprintfFunction>(inner, NKWebKit::WtfDumpAbi::PrintStreamVprintf, function));
+    return inner;
 }
 
-PrintStream& Begin(PrintStream& out) {
-    return Checked(Slot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin)(&out));
+void PrintText(PrintStream* out, const char* text, const char* function) {
+    const auto vprintfFn = ReadSlot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf, function);
+    JscDumpPrintf_nid_no_patch(out, vprintfFn, "%s", text);
 }
 
-void End(PrintStream& out) {
-    Slot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd)(&out);
-}
-
-void PrintText(PrintStream& out, const char* text) {
-    JscDumpPrintf_nid_no_patch(out, "%s", text);
-}
-
-void Print(PrintStream& out, const char* text) {
-    PrintStream& stream = Begin(out);
-    PrintText(stream, text);
-    End(out);
+void Print(PrintStream* out, const char* text, const char* function) {
+    const auto beginFn = ReadSlot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin, function);
+    const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, function);
+    PrintStream* stream = CheckedBegin(out, beginFn, function);
+    PrintText(stream, text, function);
+    endFn(out);
 }
 
 const char* DestructionModeName(std::int8_t mode) {
@@ -183,27 +199,35 @@ const char* CellKindName(std::int8_t kind) {
     throw std::invalid_argument("invalid JSC::HeapCell::Kind");
 }
 
-}
+}  // namespace
 
 extern "C" {
 
 void APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE(const CellAttributes* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null JSC::CellAttributes");
-    PrintStream& outer = Checked(out);
-    const char* destruction = DestructionModeName(self->destruction);
-    const char* cellKind = CellKindName(self->cellKind);
-    PrintStream& stream = Begin(outer);
-    PrintText(stream, "{");
-    Print(stream, destruction);
-    PrintText(stream, ", ");
-    Print(stream, cellKind);
-    PrintText(stream, "}");
-    End(outer);
+    CellAttributes local{};
+    if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto beginFn = ReadSlot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin, __func__);
+    const auto endFn = ReadSlot<EndFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamEnd, __func__);
+    const char* destruction = DestructionModeName(local.destruction);
+    const char* cellKind = CellKindName(local.cellKind);
+    PrintStream* stream = CheckedBegin(out, beginFn, __func__);
+    PrintText(stream, "{", __func__);
+    Print(stream, destruction, __func__);
+    PrintText(stream, ", ", __func__);
+    Print(stream, cellKind, __func__);
+    PrintText(stream, "}", __func__);
+    endFn(out);
 }
 
 void APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(const HeapRange* self, PrintStream* out) {
     if (!self) throw std::invalid_argument("null JSC::DOMJIT::HeapRange");
-    JscDumpPrintf_nid_no_patch(Checked(out), "0x%x-0x%x", static_cast<unsigned>(self->begin), static_cast<unsigned>(self->end));
+    HeapRange local{};
+    if (!GuestCopyIn_nid_no_patch(&local, self, sizeof(local)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto vprintfFn = ReadSlot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf, __func__);
+    JscDumpPrintf_nid_no_patch(out, vprintfFn, "0x%x-0x%x", static_cast<unsigned>(local.begin), static_cast<unsigned>(local.end));
 }
 
 }
