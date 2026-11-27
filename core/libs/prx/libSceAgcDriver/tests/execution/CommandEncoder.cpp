@@ -243,6 +243,7 @@ void Compare(const std::map<VkCommandBuffer, std::vector<std::string>>& expected
         Require(actual.size() == sequence.size(), std::string(scenario) + ": command buffer " + std::to_string(Raw(commands)) + " recorded " + std::to_string(actual.size()) + " commands, inline records " + std::to_string(sequence.size()));
         for (std::size_t index = 0; index < sequence.size(); ++index) Require(actual[index] == sequence[index], std::string(scenario) + ": command " + std::to_string(index) + " on command buffer " + std::to_string(Raw(commands)) + " is '" + actual[index] + "', inline records '" + sequence[index] + "'");
     }
+    for (const auto& [commands, actual] : recorded) Require(expected.contains(commands) || actual.empty(), std::string(scenario) + ": command buffer " + std::to_string(Raw(commands)) + " recorded " + std::to_string(actual.size()) + " commands, inline records none");
 }
 
 std::map<VkCommandBuffer, CommandEncoder::Recording>& Recordings() {
@@ -263,6 +264,25 @@ void Reset() {
 std::size_t Recorded(VkCommandBuffer commands) {
     std::lock_guard lock(logMutex);
     return recorded[commands].size();
+}
+
+void CompareRejectsDrawsOnOtherBuffers() {
+    const auto expected = Handle<VkCommandBuffer>(0x1c00);
+    const auto stray = Handle<VkCommandBuffer>(0x1c80);
+    Reset();
+    Log(expected, "draw 1 1 0 0");
+    Log(stray, "draw 2 1 0 0");
+    bool rejected = false;
+    try {
+        Compare({{expected, {"draw 1 1 0 0"}}}, "a stray draw");
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected, "the comparison accepted a draw recorded on a command buffer the program never used");
+    Reset();
+    Log(expected, "draw 1 1 0 0");
+    Recorded(stray);
+    Compare({{expected, {"draw 1 1 0 0"}}}, "a command buffer that was only looked up");
 }
 
 std::unique_ptr<CommandEncoder> Attached(VkDevice device, DeviceFunctions& table) {
@@ -1566,6 +1586,7 @@ int main(int argc, char** argv) {
         setenv("APS5_HANDOFF_SPIN_US", "150", 1);
 #endif
         for (std::uint32_t seed = 1; seed <= 6; ++seed) RandomProgramRecordsWhatInlineRecords(seed, seed % 2 == 0);
+        CompareRejectsDrawsOnOtherBuffers();
         OtherThreadsRecordDirectlyWhileAWindowIsOpen();
         HookDuringUnencodedOpsWaits();
         EveryCommandOfTheTableIsInterposed();
