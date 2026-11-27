@@ -529,6 +529,15 @@ static void TestGuestPointers() {
     Require(ThrowsNotImplemented([&] { destroy(handler.get()); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
     Require(handler.get()->state != nullptr);
     handler.get()->completionCallback = nullptr;
+
+    CrossThreadTaskHandler mismatchedOwner{};
+    mismatchedOwner.state = handler.get()->state;
+    mismatchedOwner.completionCallback = nullptr;
+    Require(ThrowsNotImplemented([&] { killHandler(&mismatchedOwner); }, "_ZN3WTF22CrossThreadTaskHandler4killEv"));
+    Require(ThrowsNotImplemented([&] { destroy(&mismatchedOwner); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
+    Require(ThrowsNotImplemented([&] { postTask(&mismatchedOwner, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(&mismatchedOwner, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+
     handler.Sync();
     DrainMain();
     Require(TakeLog().empty());

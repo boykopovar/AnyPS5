@@ -66,7 +66,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 namespace NKWebKit::WtfAbi {
@@ -79,6 +79,7 @@ struct CrossThreadTaskHandlerState {
     std::deque<VoidCallableWrapper*> replies;
     CrossThreadTaskHandler* owner = nullptr;
     bool killed = false;
+    bool destroyed = false;
     bool replyScheduled = false;
 };
 
@@ -112,8 +113,9 @@ std::mutex& LiveStatesLock() {
     return *lock;
 }
 
-std::unordered_set<CrossThreadTaskHandlerState*>& LiveStates() {
-    static std::unordered_set<CrossThreadTaskHandlerState*>* const states = new std::unordered_set<CrossThreadTaskHandlerState*>;
+std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>& LiveStates() {
+    static std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>* const states =
+        new std::unordered_map<CrossThreadTaskHandlerState*, CrossThreadTaskHandler*>;
     return *states;
 }
 
@@ -169,7 +171,8 @@ StateRef AcquireLiveState(CrossThreadTaskHandler* self, const char* function) {
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     if (!state) throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
     std::lock_guard lock(LiveStatesLock());
-    if (LiveStates().find(state) == LiveStates().end())
+    const auto it = LiveStates().find(state);
+    if (it == LiveStates().end() || it->second != self)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     ++state->references;
     return StateRef(state);
@@ -277,16 +280,23 @@ void Construct(CrossThreadTaskHandler* self, const char* function) {
     }
     auto* state = new CrossThreadTaskHandlerState;
     state->owner = self;
+    try {
+        std::lock_guard lock(LiveStatesLock());
+        LiveStates().emplace(state, self);
+    } catch (...) {
+        delete state;
+        throw;
+    }
     Pthread thread = nullptr;
     if (const int error = pthread_create_nid_postfix(&thread, nullptr, &RunTasks, state)) {
+        {
+            std::lock_guard lock(LiveStatesLock());
+            LiveStates().erase(state);
+        }
         delete state;
         throw std::runtime_error("WTF::CrossThreadTaskHandler: pthread_create failed with " + std::to_string(error));
     }
     pthread_detach_nid_postfix(thread);
-    {
-        std::lock_guard lock(LiveStatesLock());
-        LiveStates().insert(state);
-    }
     const CrossThreadTaskHandlerHeader header{&vtable.dispatch, state};
     if (!GuestCopyOut_nid_no_patch(self, &header, sizeof(header))) {
         {
@@ -296,6 +306,7 @@ void Construct(CrossThreadTaskHandler* self, const char* function) {
         {
             std::lock_guard stateLock(state->mutex);
             state->killed = true;
+            state->destroyed = true;
             state->owner = nullptr;
         }
         state->condition.notify_all();
@@ -322,7 +333,8 @@ void Destroy(CrossThreadTaskHandler* self, const char* function) {
     ValidateCallableWrapper(completionCallback, false, function);
     {
         std::lock_guard liveLock(LiveStatesLock());
-        if (LiveStates().find(state) == LiveStates().end())
+        const auto it = LiveStates().find(state);
+        if (it == LiveStates().end() || it->second != self)
             NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     }
     CrossThreadTaskHandlerState* nullState = nullptr;
@@ -345,13 +357,17 @@ void Destroy(CrossThreadTaskHandler* self, const char* function) {
     }
     {
         std::lock_guard liveLock(LiveStatesLock());
-        LiveStates().erase(state);
+        const auto it = LiveStates().find(state);
+        if (it == LiveStates().end() || it->second != self)
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        LiveStates().erase(it);
     }
     std::deque<VoidCallableWrapper*> tasks;
     std::deque<VoidCallableWrapper*> replies;
     {
         std::lock_guard lock(state->mutex);
         state->killed = true;
+        state->destroyed = true;
         tasks.swap(state->tasks);
         replies.swap(state->replies);
         state->owner = nullptr;
@@ -377,6 +393,10 @@ void PostTaskImpl(CrossThreadTaskHandler* self, VoidFunction* task, const char* 
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     {
         std::lock_guard lock(state.ptr->mutex);
+        if (state.ptr->destroyed) {
+            static_cast<void>(GuestCopyOut_nid_no_patch(task, &callable, sizeof(callable)));
+            throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
+        }
         state.ptr->tasks.push_back(callable);
     }
     state.ptr->condition.notify_one();
@@ -397,6 +417,10 @@ void PostTaskReplyImpl(CrossThreadTaskHandler* self, VoidFunction* task, const c
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     {
         std::lock_guard lock(state.ptr->mutex);
+        if (state.ptr->destroyed) {
+            static_cast<void>(GuestCopyOut_nid_no_patch(task, &callable, sizeof(callable)));
+            throw std::invalid_argument("destroyed WTF::CrossThreadTaskHandler");
+        }
         state.ptr->replies.push_back(callable);
         if (state.ptr->replyScheduled) return;
         state.ptr->replyScheduled = true;
