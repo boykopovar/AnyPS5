@@ -160,6 +160,7 @@ struct Ngs2VoiceCustomChannelMixer {
 struct Ngs2SubmixerCompressor {
     bool configured = false;
     Ngs2SubmixerVoiceCompressorParam param{};
+    std::vector<float> keySamples;
     std::array<float, NGS2_MAX_CHANNELS> gain{};
 };
 
@@ -249,6 +250,7 @@ struct Ngs2Voice {
     std::vector<Ngs2VoiceCustomUserFx> customUserFx;
     std::vector<Ngs2VoiceCustomGain> customGain;
     std::vector<Ngs2VoiceCustomChannelMixer> customChannelMixer;
+    std::vector<Ngs2Filter> customFilter;
     Ngs2SubmixerCompressor compressor;
     std::vector<Ngs2PitchShift> customPitchShift;
     Ngs2VoiceTransition outputTransition = Ngs2VoiceTransition::None;
@@ -395,8 +397,10 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param);
 void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& param, float rate);
 void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain);
+void Ngs2FilterChannels(Ngs2Filter& filter, float* samples, std::uint32_t channels, std::uint32_t grain);
 bool Ngs2FilterHasHistory(const Ngs2Filter& filter);
 void Ngs2ResetFilterHistory(Ngs2Voice& voice);
+void Ngs2ResetCustomFilterHistory(Ngs2Voice& voice);
 void Ngs2ApplyMasteringLfe(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block);

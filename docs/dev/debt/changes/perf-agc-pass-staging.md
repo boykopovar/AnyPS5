@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Draw device-local staging]
+
+- [Draw device-local staging](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver) - a recorded draw whose stages use no BDA page tables stages its written and atomic elements like a dispatch; one that ends up synchronous is rebuilt unstaged. Each draw copies a staged element in and back whole, and each copy ends the open render pass, so consecutive draws storing to one buffer each get a pass of their own and several draws writing one large buffer move all of it across the bus (ASTRO BOT: 8 and 12 MiB node buffers in six draws per frame). `APS5_PASS_STAGING` (off by default, measured on Stray only) keeps one device-local copy per range across a pass and copies back when the pass ends; a CPU store the write watch has not collected when a later draw joins is not seen by that draw, a draw with a region that cannot join copies every region as before, and dispatches are not covered. `APS5_NO_DRAW_STAGING` binds draws' elements in place.

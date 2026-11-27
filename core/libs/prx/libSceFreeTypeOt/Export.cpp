@@ -7,6 +7,7 @@
 #include <limits>
 #include "SceTypes.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 
@@ -110,18 +111,8 @@ int APS5_VABI sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch() {
 }
 APS5_EXPORT("ZhtAXOoLNyo", sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("73vg+nRH68g", sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("wBKAYO7yEXw", sceFreeTypeOtGlyphSlotOblique_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box) {
+    FreeTypeGlyphGetCBox_nid_no_patch(glyph, mode, box);
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
@@ -173,11 +164,6 @@ int APS5_VABI sceFreeTypeOtUnknown_g8eLxL9VAhU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("g8eLxL9VAhU", sceFreeTypeOtUnknown_g8eLxL9VAhU_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("OeNH41MA2Vs", sceFreeTypeOtOpenFace_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
                                                        const FreeType::GuestBitmap* bitmap) {
@@ -318,11 +304,37 @@ void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vec
     if (!vector || !matrix) {
         return;
     }
+    FreeType::GuestVector guestVector{};
+    FreeType::GuestMatrix guestMatrix{};
+    const int readErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestVector, vector, sizeof(guestVector)) &&
+                        GuestCopyIn_nid_no_patch(&guestMatrix, matrix, sizeof(guestMatrix));
+    errno = readErrno;
+    if (!copied) {
+        return;
+    }
     const FreeType::GuestVector transformed{
-        ScaledSum(vector->x, matrix->xx, vector->y, matrix->xy, divisor, __func__),
-        ScaledSum(vector->x, matrix->yx, vector->y, matrix->yy, divisor, __func__),
+        ScaledSum(guestVector.x, guestMatrix.xx, guestVector.y, guestMatrix.xy, divisor, __func__),
+        ScaledSum(guestVector.x, guestMatrix.yx, guestVector.y, guestMatrix.yy, divisor, __func__),
     };
-    *vector = transformed;
+    const int writeErrno = errno;
+    GuestCopyOut_nid_no_patch(vector, &transformed, sizeof(transformed));
+    errno = writeErrno;
+}
+
+[[noreturn]] void APS5_VABI ft_validator_error_nid_postfix(void* validator, std::int32_t error) {
+    constexpr std::uintptr_t ErrorOffset = 20;
+    constexpr std::uintptr_t JumpBufferOffset = 24;
+    std::uint64_t jumpBuffer[12];
+    const auto address = reinterpret_cast<std::uintptr_t>(validator);
+    if (!validator || address > std::numeric_limits<std::uintptr_t>::max() - (JumpBufferOffset + sizeof(jumpBuffer) - 1))
+        NotImplemented_nid_no_patch(__func__);
+
+    const auto* guestBuffer = reinterpret_cast<const void*>(address + JumpBufferOffset);
+    auto* guestError = reinterpret_cast<void*>(address + ErrorOffset);
+    if (!GuestCopyIn_nid_no_patch(jumpBuffer, guestBuffer, sizeof(jumpBuffer)) ||
+        !GuestCopyOut_nid_no_patch(guestError, &error, sizeof(error))) NotImplemented_nid_no_patch(__func__);
+    longjmp_nid_postfix(jumpBuffer, 1);
 }
 
 std::int32_t APS5_VABI FT_SqrtFixed_nid_postfix(std::int32_t x) {
@@ -341,20 +353,30 @@ void APS5_VABI ft_synthesize_vertical_metrics_nid_postfix(FreeType::GuestGlyphMe
     if (!metrics) {
         return;
     }
-    std::int64_t height = metrics->height;
-    if (metrics->horiBearingY < 0) {
-        if (height < metrics->horiBearingY) {
-            height = metrics->horiBearingY;
+    FreeType::GuestGlyphMetrics guestMetrics{};
+    const int readErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestMetrics, metrics, sizeof(guestMetrics));
+    errno = readErrno;
+    if (!copied) {
+        return;
+    }
+    std::int64_t height = guestMetrics.height;
+    if (guestMetrics.horiBearingY < 0) {
+        if (height < guestMetrics.horiBearingY) {
+            height = guestMetrics.horiBearingY;
         }
-    } else if (metrics->horiBearingY > 0) {
-        height -= metrics->horiBearingY;
+    } else if (guestMetrics.horiBearingY > 0) {
+        height -= guestMetrics.horiBearingY;
     }
     if (!advance) {
         advance = height * 12 / 10;
     }
-    metrics->vertBearingX = metrics->horiBearingX - metrics->horiAdvance / 2;
-    metrics->vertBearingY = (advance - height) / 2;
-    metrics->vertAdvance = advance;
+    guestMetrics.vertBearingX = guestMetrics.horiBearingX - guestMetrics.horiAdvance / 2;
+    guestMetrics.vertBearingY = (advance - height) / 2;
+    guestMetrics.vertAdvance = advance;
+    const int writeErrno = errno;
+    GuestCopyOut_nid_no_patch(metrics, &guestMetrics, sizeof(guestMetrics));
+    errno = writeErrno;
 }
 
 void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descriptors, const char* service_id) {
@@ -367,10 +389,5 @@ void* APS5_VABI ft_service_list_lookup_nid_postfix(const GuestServiceDesc* descr
     }
     return nullptr;
 }
-
-int APS5_VABI sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("uSNqxrARpEQ", sceFreeTypeOtUnknown_uSNqxrARpEQ_nid_no_patch);
 
 }

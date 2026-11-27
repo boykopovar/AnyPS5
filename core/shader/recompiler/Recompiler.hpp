@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageOverwrite.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -138,7 +139,9 @@ enum class ColorExportPacking : std::uint8_t {
     UintClamp8,
     UintClamp16,
     UintMask8,
-    UintMask16
+    UintMask16,
+    UintClamp10_10_10_2,
+    UintMask10_10_10_2
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -207,6 +210,12 @@ struct TargetMerge {
     bool operator==(const TargetMerge&) const = default;
 };
 
+enum class SingleSampleDither : std::uint8_t {
+    None,
+    E701,
+    Rounded18701
+};
+
 struct ShaderPixelStageInfo {
     std::uint32_t interpolatorCount;
     std::array<std::uint32_t, 32> interpolatorSettings;
@@ -244,6 +253,7 @@ struct ShaderPixelStageInfo {
     bool layerExported = false;
     bool ditheredAlphaToCoverage = false;
     std::uint8_t ditheredAlphaSamples = 8;
+    SingleSampleDither singleSampleDither = SingleSampleDither::None;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     std::uint32_t reversedBlend = 0;
@@ -290,6 +300,8 @@ struct ShaderFloatMode {
     bool operator==(const ShaderFloatMode&) const = default;
 };
 
+inline constexpr std::uint32_t InterpolationFlushResult32 = 0x80u;
+inline constexpr std::uint32_t InterpolationFlushResult16 = 0x100u;
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
 inline constexpr std::uint32_t InterpolationFlush32 = 2u;
 inline constexpr std::uint32_t InterpolationFlush16 = 4u;
@@ -388,13 +400,14 @@ struct SpirvTarget {
     bool float16NarrowNans = false;
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct BindingLayout {
-    std::uint32_t descriptorSet;
-    std::uint32_t firstBinding;
-    std::uint32_t pushConstantOffsetBytes;
-    std::uint32_t pushConstantSizeBytes;
+    std::uint32_t descriptorSet = 0u;
+    std::uint32_t firstBinding = 0u;
+    std::uint32_t pushConstantOffsetBytes = 0u;
+    std::uint32_t pushConstantSizeBytes = 0u;
 };
 
 enum class ProgramRole {
@@ -724,6 +737,7 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<ImageOverwrite> imageOverwrites;
 };
 
 struct ImageTableEntryPoison {
@@ -1010,6 +1024,8 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         return identity;
     }
 };
+
+[[nodiscard]] std::uint64_t MetadataBytes(const RecompileResult& result);
 
 [[nodiscard]] std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment);
 
