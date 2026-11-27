@@ -210,6 +210,9 @@ struct State {
     bool perSampleShading = false;
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
+    bool leadingSamples = false;
+    std::uint32_t depthAnchorSamples = 0;
+    std::array<std::uint32_t, 4> depthAnchorMap{};
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;

@@ -47,7 +47,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 1008, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 1024, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -56,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 19u;
+constexpr std::uint32_t FileFormat = 20u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -240,6 +240,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.perSampleShading);
     writer.Bool(state.mergedCoverage);
     writer.Bool(state.truncatedCoverage);
+    writer.U32(state.depthAnchorSamples);
     for (const auto mask : state.quadSampleMask) writer.Raw(mask);
     writer.U32(state.depthRemap.mode);
     writer.Bool(state.vertexPoints);
@@ -316,6 +317,7 @@ void decodeState(Reader& reader, State& state) {
     state.perSampleShading = reader.Bool();
     state.mergedCoverage = reader.Bool();
     state.truncatedCoverage = reader.Bool();
+    state.depthAnchorSamples = reader.U32();
     for (auto& mask : state.quadSampleMask) mask = reader.Raw<std::uint16_t>();
     state.depthRemap.mode = reader.U32();
     state.vertexPoints = reader.Bool();
@@ -1617,6 +1619,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.perSampleShading = state.perSampleShading;
     canonical.mergedCoverage = state.mergedCoverage;
     canonical.truncatedCoverage = state.truncatedCoverage;
+    canonical.depthAnchorSamples = state.depthAnchorSamples;
     canonical.quadSampleMask = state.quadSampleMask;
     canonical.depthRemap.mode = state.depthRemap.mode;
     canonical.vertexPoints = state.vertexPoints;

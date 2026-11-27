@@ -26,6 +26,8 @@ const char* DepthPlanesObligation(VkDevice device, std::uint64_t address, std::u
 const char* DepthTargetObligation(const Context& context, const DepthTarget& target, bool depthWritten);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
+SampleOrderTarget DepthSurfaceAnchorSource(const Context& context, const DepthTarget& target, std::optional<RenderedSampleLocations>& rendered);
+SampleOrderTarget DepthSurfaceAnchorTwin(const Context& context, const DepthTarget& target, std::uint32_t samples);
 enum class DepthPlaneScope { Overlapped, Whole };
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope = DepthPlaneScope::Overlapped);
 bool DepthPlanesStale();
@@ -37,6 +39,7 @@ struct DepthPlaneStoreStatistics {
 };
 DepthPlaneStoreStatistics DepthPlaneStoreCounts();
 void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target);
+void NoteDepthSurfaceRendered(const Context& context, const DepthTarget& target, const RenderedSampleLocations& rendered);
 bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples);
 std::uint64_t DepthSurfacesSerial();
 std::uint64_t DepthSurfaceStorageScans();

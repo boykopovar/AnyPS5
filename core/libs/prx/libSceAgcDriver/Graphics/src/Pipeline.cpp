@@ -288,7 +288,7 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
 bool ValidateSampleLocations(const Context& context, const State& state) {
     const bool extensionSupportsSamples = (context.sampleLocationSampleCounts & state.samples) != 0;
     Require(!state.customSampleLocations || extensionSupportsSamples, "custom sample locations require VK_EXT_sample_locations support for the draw's sample count");
-    const bool enabled = extensionSupportsSamples && (state.samples > 1 || state.customSampleLocations) && (!state.depth || SampleLocationsCompatibleDepth(context, HostDepthFormat(context, state.depth->format), state.depth->samples));
+    const bool enabled = extensionSupportsSamples && (state.samples > 1 || state.customSampleLocations) && (!state.depth || SampleLocationsCompatibleDepth(context, HostDepthFormat(context, state.depth->format), state.depthAnchorSamples != 0 ? state.samples : state.depth->samples));
     Require(!state.customSampleLocations || enabled, "custom sample locations require a compatible depth format and sample count");
     return enabled;
 }
@@ -335,6 +335,9 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
             case ShaderRecompiler::DescriptorRole::GuestImages:
                 if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && any(binding.imageWritten, binding.count)) return true;
                 break;
+            case ShaderRecompiler::DescriptorRole::ImageStorageTable:
+                if (any(binding.imageWritten, binding.count)) return true;
+                break;
             case ShaderRecompiler::DescriptorRole::Gds:
                 return true;
             case ShaderRecompiler::DescriptorRole::BdaPagetable:
@@ -344,6 +347,9 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
             case ShaderRecompiler::DescriptorRole::FaultBuffer:
             case ShaderRecompiler::DescriptorRole::FlattenedSrt:
             case ShaderRecompiler::DescriptorRole::ShaderData:
+            case ShaderRecompiler::DescriptorRole::ImageTable:
+            case ShaderRecompiler::DescriptorRole::SamplerTable:
+            case ShaderRecompiler::DescriptorRole::ImageTableMap:
                 break;
             }
         }
@@ -363,6 +369,13 @@ void ValidateSampleMask(const Context& context, const State& state, std::span<co
         }
         const bool tested = state.depth.has_value() && (state.depthTest || state.stencilTest || state.depthBoundsTest);
         Require(!state.pixelEarlyZ || !tested || !ShadersWriteMemory(std::span(&shader, 1)), "a sample mask that differs between the pixels of a quad, from a pixel program with early depth or stencil tests that writes memory, is unsupported: the masked pixels are removed in the shader, after the tests");
+    }
+}
+
+void ValidateLeadingSamples(const State& state, std::span<const CompiledShader> shaders) {
+    if (!state.leadingSamples) return;
+    for (const auto& shader : shaders) {
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) Require(!ShadersWriteMemory(std::span(&shader, 1)), "a draw rasterized at the leading samples of a target with fewer samples than the rasterizer is unsupported when its pixel shader writes memory: pixels covered only by the dropped samples would run no pixel shader");
     }
 }
 
