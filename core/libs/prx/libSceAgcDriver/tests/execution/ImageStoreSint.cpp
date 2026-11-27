@@ -322,7 +322,7 @@ int main() {
             CheckTexels(texels, format, StoreWrites, "image_store d16", true);
         }
         RequireRefused(*device, texels, PackedCode, 61u, "storage image descriptor uses an unsupported format", "image_store_pck of 8_8_8_8_SINT");
-        RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
+        RequireRefused(*device, texels, AtomicCode, 19u, "atomic image descriptor uses an unsupported format 19", "image_atomic_add of 8_8_SINT");
         RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
         for (const auto index : {2u, 5u, 7u}) {
             Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));

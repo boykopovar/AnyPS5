@@ -145,7 +145,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 53, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -841,6 +841,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.written);
         out.Value(image.atomic);
         out.Value(image.atomic64);
+        out.Value(image.narrowAtomicCompatible);
         out.Value(image.depthCompare);
         out.Value(image.cube);
         out.Value(image.r128);
@@ -959,6 +960,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.written);
         in.Value(image.atomic);
         in.Value(image.atomic64);
+        in.Value(image.narrowAtomicCompatible);
         in.Value(image.depthCompare);
         in.Value(image.cube);
         in.Value(image.r128);

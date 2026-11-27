@@ -1043,7 +1043,7 @@ DescriptorBindingKind DescriptorBindingForImage(const ImageResource& image) {
             if (image.numericClass != IrTextureNumericClass::Uint) {
                 fail("DescriptorBindingForImage atomic image must be uint");
             }
-            base = image.atomic64 ? atomic64UintBinding : atomicUintBinding;
+            base = image.atomic64 ? atomic64UintBinding : NarrowImageAtomicBits(image) != 0u ? storageUintBinding : atomicUintBinding;
         } else {
             switch (image.numericClass) {
                 case IrTextureNumericClass::Float:

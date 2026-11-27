@@ -370,7 +370,7 @@ void DefineModule(SpirvEmitterState& state) {
         DefineTessellationExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
-    EmitBaseHeader(state.module, state.program, state.stencilReplayLateStore || state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);
+    EmitBaseHeader(state.module, state.program, state.stencilReplayLateStore || state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks || state.requirements.narrowImageAtomicLocks);
     for (const auto capability : state.requirements.capabilities) {
         state.module.EmitCapability(capability);
     }
@@ -399,6 +399,14 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.requirements.ldsBufferInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
+    }
+    if (state.requirements.narrowImageAtomicLocks) {
+        for (const auto capability : {spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageWriteWithoutFormat}) {
+            if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) == state.supportedCapabilities.end()) {
+                FailEmit("8- and 16-bit image atomics need storage image reads and writes without format");
+            }
+            state.module.EmitCapability(capability);
+        }
     }
     if (state.requirements.imageAtomicLocks) {
         state.module.EmitCapability(spv::CapabilityStorageImageExtendedFormats);

@@ -310,7 +310,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
-    if (base.atomic && !base.atomic64 && format != IrBufferFormat::Format32UInt && format != IrBufferFormat::Format32SInt && format != IrBufferFormat::Format32Float) {
+    const bool narrowAtomic = base.atomic && !base.atomic64 && base.narrowAtomicCompatible && (format == IrBufferFormat::Format8UInt || format == IrBufferFormat::Format8SInt || format == IrBufferFormat::Format16UInt || format == IrBufferFormat::Format16SInt);
+    if (base.atomic && !base.atomic64 && !narrowAtomic && format != IrBufferFormat::Format32UInt && format != IrBufferFormat::Format32SInt && format != IrBufferFormat::Format32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
@@ -406,6 +407,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         if ((rawSintStorage || rawFloat16Storage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
             decoded.conversionFormat = format;
         }
+        if (narrowAtomic) decoded.conversionFormat = format;
     } else if (decoded.numericClass == IrTextureNumericClass::Unsupported || (base.depthCompare && decoded.numericClass != IrTextureNumericClass::Float)) {
         char words[96];
         std::snprintf(words, sizeof(words), " (T# %08x %08x %08x %08x %08x %08x %08x %08x)", descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
@@ -2565,6 +2567,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
         }
     }
+    if (storage && image.narrowAtomicCompatible && image.atomic && !image.atomic64 && !table && !image.packed) {
+        for (const auto format : {IrBufferFormat::Format8UInt, IrBufferFormat::Format8SInt, IrBufferFormat::Format16UInt, IrBufferFormat::Format16SInt}) {
+            append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+        }
+    }
     if (storage && !image.packed && image.written && !image.read && !image.atomic) {
         constexpr std::array formats{IrBufferFormat::Format16Float, IrBufferFormat::Format16_16Float, IrBufferFormat::Format16_16_16_16Float};
         for (const auto format : formats) append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
@@ -2741,6 +2748,25 @@ std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, co
 
 std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
     return emulatedCompareState(info, snapshot, index);
+}
+
+void ResourceMaterializer::MarkNarrowImageAtomics(IrProgram& program, bool enabled) {
+    auto& resources = program.Resources();
+    auto& images = resources.info.images;
+    std::vector<bool> blocked(images.size(), !enabled);
+    for (const auto& block : program.Blocks()) {
+        for (const auto* inst : block->Instructions()) {
+            const auto opcode = inst->Opcode();
+            if (ImageOpcodeInfoOf(opcode).access != ImageAccess::Atomic) continue;
+            if (opcode != IrOpcode::ImageAtomicFCmpSwap32 && opcode != IrOpcode::ImageAtomicFMin32 && opcode != IrOpcode::ImageAtomicFMax32 && !IsImageAtomic64Opcode(opcode)) continue;
+            const auto resource = resources.memoryInfo.at(inst->Flags<MemoryFlags>().index).resource;
+            if (resource < blocked.size()) blocked[resource] = true;
+        }
+    }
+    for (std::size_t index = 0; index < images.size(); ++index) {
+        auto& image = images[index];
+        image.narrowAtomicCompatible = !blocked[index] && image.atomic && !image.atomic64 && image.resourceClass == ImageResourceClass::Storage && image.table == NoTable && !image.packed && image.byElements == 0u && image.dimension != RdnaImageDimension::Dim2DMsaa && image.dimension != RdnaImageDimension::Dim2DMsaaArray;
+    }
 }
 
 void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets) const {

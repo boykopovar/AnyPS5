@@ -308,7 +308,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.requirements.bufferAtomicLocks = state.requirements.bufferInt64Atomics && !state.requirements.addressInt64Atomics && !int64Atomics;
     state.requirements.bufferU64View = (state.requirements.bufferInt64Atomics && !state.requirements.bufferAtomicLocks) || (state.requirements.coherentBufferPairs && int64Atomics);
     state.requirements.imageAtomicLocks = state.requirements.imageInt64Atomics && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end();
-    if (state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks) state.requirements.subgroupBallot = true;
+    state.requirements.narrowImageAtomicLocks = std::ranges::any_of(program.Info().images, [](const ImageResource& image) { return image.narrowAtomicCompatible; });
+    if (state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks || state.requirements.narrowImageAtomicLocks) state.requirements.subgroupBallot = true;
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
         state.requirements.subgroupShuffle = false;

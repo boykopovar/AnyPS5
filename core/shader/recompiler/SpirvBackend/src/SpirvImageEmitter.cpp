@@ -1234,7 +1234,8 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
 std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data, bool integer) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
-    const auto sint = SintStorageFormat(access.image);
+    const bool narrowUint = NarrowImageAtomicBits(access.image) != 0u && !NarrowImageAtomicSigned(access.image);
+    const auto sint = narrowUint ? GetImageFormatInfo(access.image.conversionFormat) : SintStorageFormat(access.image);
     const auto storageFormat = GetImageFormatInfo(access.image.conversionFormat);
     const auto float16 = access.image.resourceClass == ImageResourceClass::Storage && access.image.numericClass == IrTextureNumericClass::Uint &&
         (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
@@ -1746,6 +1747,71 @@ std::uint32_t LockedImageAtomic64(SpirvValueEmitContext& ctx, const ImageEmitAcc
     });
 }
 
+std::uint32_t NarrowImageAtomicNext(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t current, std::uint32_t data, std::uint32_t comparator, std::uint32_t bits) {
+    const auto u32 = TypeU32(state);
+    const auto extend = [&](std::uint32_t value) {
+        const auto shift = ConstantU32(state, 32u - bits);
+        return Binary(state, spv::OpShiftRightArithmetic, u32, Binary(state, spv::OpShiftLeftLogical, u32, value, shift), shift);
+    };
+    const auto pick = [&](spv::Op compare, bool signedCompare) {
+        const auto lhs = signedCompare ? extend(data) : data;
+        const auto rhs = signedCompare ? extend(current) : current;
+        return Select(state, u32, Binary(state, compare, TypeBool(state), lhs, rhs), data, current);
+    };
+    std::uint32_t next = 0;
+    switch (opcode) {
+    case IrOpcode::ImageAtomicSwap32: next = data; break;
+    case IrOpcode::ImageAtomicCmpSwap32: next = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), current, comparator), data, current); break;
+    case IrOpcode::ImageAtomicIAdd32: next = Binary(state, spv::OpIAdd, u32, current, data); break;
+    case IrOpcode::ImageAtomicISub32: next = Binary(state, spv::OpISub, u32, current, data); break;
+    case IrOpcode::ImageAtomicSMin32: next = pick(spv::OpSLessThan, true); break;
+    case IrOpcode::ImageAtomicUMin32: next = pick(spv::OpULessThan, false); break;
+    case IrOpcode::ImageAtomicSMax32: next = pick(spv::OpSGreaterThan, true); break;
+    case IrOpcode::ImageAtomicUMax32: next = pick(spv::OpUGreaterThan, false); break;
+    case IrOpcode::ImageAtomicAnd32: next = Binary(state, spv::OpBitwiseAnd, u32, current, data); break;
+    case IrOpcode::ImageAtomicOr32: next = Binary(state, spv::OpBitwiseOr, u32, current, data); break;
+    case IrOpcode::ImageAtomicXor32: next = Binary(state, spv::OpBitwiseXor, u32, current, data); break;
+    case IrOpcode::ImageAtomicInc32: next = AtomicIncrement(state, current, data); break;
+    case IrOpcode::ImageAtomicDec32: next = AtomicDecrement(state, current, data); break;
+    default: FailEmit("opcode is not an integer image atomic an 8- or 16-bit texel can take");
+    }
+    return Binary(state, spv::OpBitwiseAnd, u32, next, ConstantU32(state, (1u << bits) - 1u));
+}
+
+std::uint32_t LockedNarrowImageAtomic(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
+    auto& state = ctx.state;
+    const auto opcode = access.inst.Opcode();
+    const auto bits = NarrowImageAtomicBits(access.image);
+    const auto u32 = TypeU32(state);
+    if (!state.requirements.narrowImageAtomicLocks) ctx.Fail(access.inst, "is an 8- or 16-bit image atomic in a program prepared without its texel locks");
+    if (RdnaImageDimensionInfoFor(access.image.dimension).multisampled != 0u || access.image.table != NoTable) ctx.Fail(access.inst, "is an 8- or 16-bit atomic on a multisampled image or an image table entry, which is not implemented");
+    const auto mask = ConstantU32(state, (1u << bits) - 1u);
+    const auto coord = CoordU32(ctx, access);
+    const auto data = Binary(state, spv::OpBitwiseAnd, u32, ctx.Arg(access.inst, 2), mask);
+    const auto comparator = opcode == IrOpcode::ImageAtomicCmpSwap32 ? Binary(state, spv::OpBitwiseAnd, u32, ctx.Arg(access.inst, 3), mask) : 0u;
+    const auto lock = EmitAtomicLockPointer(state, ImageTexelLockIndex(state, coord, RdnaImageDimensionInfoFor(access.image.dimension).coordinateComponents));
+    return LockedDeviceUpdate(state, lock, u32, ConstantU32(state, 0u), [&]() {
+        const auto image = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, ImageType(state, access.image), image, StorageImageDescriptorPointer(state, access.mem.resource));
+        const auto texel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageRead, TypeU32Vector(state, 4), texel, image, coord);
+        const auto component = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, component, texel, 0u);
+        const auto old = Binary(state, spv::OpBitwiseAnd, u32, component, mask);
+        auto next = NarrowImageAtomicNext(state, opcode, old, data, comparator, bits);
+        if (opcode == IrOpcode::ImageAtomicSwap32) {
+            const auto held = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicLoad, u32, held, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+            next = Binary(state, spv::OpBitwiseOr, u32, next, Binary(state, spv::OpBitwiseAnd, u32, old, Binary(state, spv::OpISub, u32, held, ConstantU32(state, 1u))));
+        }
+        const auto zero = ConstantU32(state, 0u);
+        const auto stored = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), stored, next, zero, zero, zero);
+        state.module.AddFunction(spv::OpImageWrite, image, coord, stored);
+        return old;
+    });
+}
+
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto opcode = access.inst.Opcode();
@@ -1754,6 +1820,10 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
         const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
+    if (NarrowImageAtomicBits(access.image) != 0u) {
+        ctx.Define(access.inst, EmitValueOrZeroIfCondition(state, condition, [&]() { return LockedNarrowImageAtomic(ctx, access); }));
+        return;
     }
     if (IsImageAtomic64Opcode(opcode) && state.requirements.imageAtomicLocks) {
         ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU64(state), ConstantU64(state, 0u), [&]() { return LockedImageAtomic64(ctx, access); }));
@@ -2775,7 +2845,10 @@ bool SameImageModeForInstruction(const IrValue& inst, const MemoryInfo& memory, 
         return false;
     }
     const auto opcode = inst.Opcode();
-    if (ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic || opcode == IrOpcode::ImageQueryDimensions) {
+    if (ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) {
+        return NarrowImageAtomicBits(a) == NarrowImageAtomicBits(b);
+    }
+    if (opcode == IrOpcode::ImageQueryDimensions) {
         return true;
     }
     if (opcode == IrOpcode::ImageQueryLod) {

@@ -88,6 +88,7 @@ struct ImageResource {
     bool written = false;
     bool atomic = false;
     bool atomic64 = false;
+    bool narrowAtomicCompatible = false;
     bool depthCompare = false;
     bool cube = false;
     bool r128 = false;
@@ -130,6 +131,21 @@ struct ImageResource {
 
     bool operator==(const ImageResource& other) const = default;
 };
+
+[[nodiscard]] inline std::uint32_t NarrowImageAtomicBits(const ImageResource& image) {
+    if (!image.atomic || image.atomic64 || image.resourceClass != ImageResourceClass::Storage) return 0u;
+    switch (image.conversionFormat) {
+        case IrBufferFormat::Format8UInt:
+        case IrBufferFormat::Format8SInt: return 8u;
+        case IrBufferFormat::Format16UInt:
+        case IrBufferFormat::Format16SInt: return 16u;
+        default: return 0u;
+    }
+}
+
+[[nodiscard]] inline bool NarrowImageAtomicSigned(const ImageResource& image) {
+    return NarrowImageAtomicBits(image) != 0u && (image.conversionFormat == IrBufferFormat::Format8SInt || image.conversionFormat == IrBufferFormat::Format16SInt);
+}
 
 enum SamplerUse : std::uint16_t {
     SamplerUseExplicitLod = 1u << 0u,
