@@ -6,7 +6,20 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -142,6 +155,8 @@ int main() {
     errno = 71;
     Require(sceRazorCpuInitializeInternal(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x80580004));
     Require(errno == 71);
+    Require(sceRazorCpuInitializeInternal(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - 16)) == static_cast<int>(0x80580004));
+    Require(errno == 71);
 
     std::array<std::uint8_t, 80> initContextWithCallback{};
     const auto nonNullCallback = reinterpret_cast<std::uintptr_t>(&CountMarkerCallback);
@@ -180,6 +195,59 @@ int main() {
     Require(sceRazorCpuInitDataTags(storage, 192) == 0);
     for (std::size_t i = 0; i < 192; ++i) Require(storage[i] == 0);
     for (std::size_t i = 192; i < sizeof(storage); ++i) Require(storage[i] == 0x5a);
+
+    errno = 71;
+    Require(sceRazorCpuInitDataTags(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - 16), 96) == static_cast<int>(0x80580004));
+    Require(errno == 71);
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
+    void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* pages = static_cast<unsigned char*>(mapping);
+#endif
+    std::memset(pages, 0x5a, pageSize * 2);
+    errno = 71;
+    Require(sceRazorCpuInitDataTags(pages, pageSize + 96) == 0);
+    Require(errno == 71);
+    for (std::size_t i = 0; i < pageSize + 96; ++i) Require(pages[i] == 0);
+    for (std::size_t i = pageSize + 96; i < pageSize * 2; ++i) Require(pages[i] == 0x5a);
+
+    std::memset(pages, 0x5a, pageSize);
+#ifdef _WIN32
+    DWORD previousProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_READONLY, &previousProtection) != 0);
+#else
+    Require(mprotect(pages + pageSize, pageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceRazorCpuInitDataTags(pages, pageSize + 96) == static_cast<int>(0x80580004));
+    Require(errno == 71);
+    for (std::size_t i = 0; i < pageSize; ++i) Require(pages[i] == 0x5a);
+
+#ifdef _WIN32
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &previousProtection) != 0);
+#else
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    errno = 71;
+    Require(sceRazorCpuInitDataTags(pages, pageSize + 96) == static_cast<int>(0x80580004));
+    Require(errno == 71);
+    for (std::size_t i = 0; i < pageSize; ++i) Require(pages[i] == 0x5a);
+
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, pageSize * 2);
+#endif
 
     Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x8058000c));
     Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x8058000c));

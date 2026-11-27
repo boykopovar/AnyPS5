@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -118,8 +119,16 @@ int APS5_VABI sceRazorCpuInitDataTags(void* buffer, size_t size) {
  if (size < 96u) {
   return SCE_RAZOR_CPU_ERROR_INSUFFICIENT_BUFFER;
  }
- std::array<std::uint8_t, 256> zeros{};
+ const auto address = reinterpret_cast<std::uintptr_t>(buffer);
+ if (size > std::numeric_limits<std::uintptr_t>::max() - address) {
+  return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
+ }
  const int savedErrno = errno;
+ if (!GuestWritable_nid_no_patch(buffer, size)) {
+  errno = savedErrno;
+  return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
+ }
+ std::array<std::uint8_t, 256> zeros{};
  size_t offset = 0;
  while (offset < size) {
   const size_t chunk = size - offset < zeros.size() ? size - offset : zeros.size();
@@ -219,6 +228,9 @@ int APS5_VABI sceRazorCpuInitializeInternal(void* context) {
   return SCE_RAZOR_CPU_ERROR_ALREADY_INITIALIZED;
  }
  if (context == nullptr) {
+  return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
+ }
+ if (reinterpret_cast<std::uintptr_t>(context) > std::numeric_limits<std::uintptr_t>::max() - 0x48u) {
   return SCE_RAZOR_CPU_ERROR_INVALID_ARGUMENT;
  }
  const int savedErrno = errno;
