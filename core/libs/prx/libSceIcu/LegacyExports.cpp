@@ -8231,10 +8231,6 @@ int APS5_VABI uloc_getDisplayKeywordValue_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_countArrayItems_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6811ReplaceableD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
