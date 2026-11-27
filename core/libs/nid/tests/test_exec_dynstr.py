@@ -231,6 +231,20 @@ class ExecutableDynstrTests(unittest.TestCase):
         self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
         self.assertEqual(after[stale_offset:stale_offset + 2 * 16], original[stale_offset:stale_offset + 2 * 16])
 
+    def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_empty(self):
+        original = bytearray(executable("sce"))
+        struct.pack_into("<Q", original, SHOFF + 4 * 64 + 32, 0)
+
+        result, after = patch(bytes(original))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tags = dict(dynamic_tags(after))
+        dynstr = symbols.sections(after)[2]
+        headers = program_headers(after)
+        dynlib = next(header for header in headers if header[0] == PT_SCE_DYNLIBDATA)
+        dynamic = next(header for header in headers if header[0] == 2)
+        self.assertEqual(dynamic[5], 3 * 16)
+        self.assertEqual(tags[DT_OS_STRSZ], dynstr[5])
+        self.assertEqual(dynlib[2] + tags[DT_OS_STRTAB], dynstr[4])
     def test_sce_dynamic_tags_use_pt_dynamic_when_sht_dynamic_is_out_of_bounds(self):
         original = bytearray(executable("sce"))
         struct.pack_into("<Q", original, SHOFF + 4 * 64 + 24, len(original) + 1)
