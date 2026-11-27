@@ -13219,6 +13219,7 @@ void verifyMultisamplePlaneReadMode() {
     ImageResource image{};
     image.resourceClass = ImageResourceClass::Sampled;
     image.dimension = RdnaImageDimension::Dim2D;
+    image.dimensionQueryOnly = false;
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].dimension == RdnaImageDimension::Dim2D && !modes[selected].cube && modes[selected].numericClass == IrTextureNumericClass::Float, "a 2D read of a 2D MSAA T# (PPSA18216's) did not select a 2D runtime mode");
@@ -13248,6 +13249,32 @@ void verifyMultisamplePlaneReadMode() {
     other.resourceClass = ImageResourceClass::Storage;
     other.written = true;
     refused(other, "a 2D storage access to a 2D MSAA T# was accepted");
+}
+
+void verifyMsaaDimensionQueryModes() {
+    using namespace ShaderRecompiler;
+    const auto msaaDescriptor = [](std::uint32_t log2Fragments) {
+        return DescriptorValue{{0x0002754du, 0xc1600000u, 0x0001c001u, 0xe0000facu | (log2Fragments << 16u) | (log2Fragments != 0u ? 9u << 20u : 0u), 0u, log2Fragments << 4u, 0u, 0u}, 8u};
+    };
+    ImageResource query{};
+    query.resourceClass = ImageResourceClass::Sampled;
+    query.dimension = RdnaImageDimension::Dim2D;
+    query.dimensionQueryOnly = true;
+    query.cubeFaceCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(query);
+    for (const std::uint32_t log2Fragments : {1u, 2u, 3u}) {
+        const auto selected = ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(log2Fragments), modes);
+        require(modes[selected].dimension == RdnaImageDimension::Dim2DMsaa && !modes[selected].cube, "a dimension query of a 2, 4 or 8-fragment 2D MSAA T# under DIM 2D did not select a multisampled 2D runtime mode");
+    }
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(4u), modes)); }, "image descriptor is invalid", "a dimension query of a 16-fragment 2D MSAA T# was accepted");
+    require(modes[ResourceMaterializer::RuntimeImageMode(query, msaaDescriptor(0u), modes)].dimension == RdnaImageDimension::Dim2D, "a dimension query of a one-fragment 2D MSAA T# under DIM 2D did not select the 2D runtime mode");
+    auto read = query;
+    read.dimensionQueryOnly = false;
+    read.read = true;
+    read.cubeFaceCompatible = true;
+    const auto readModes = ResourceMaterializer::RuntimeImageModes(read);
+    require(readModes[ResourceMaterializer::RuntimeImageMode(read, msaaDescriptor(2u), readModes)].dimension == RdnaImageDimension::Dim2D, "a 2D read of a 2D MSAA T# no longer selects the 2D runtime mode");
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(read, msaaDescriptor(4u), readModes)); }, "image descriptor is invalid", "a 2D read of a 16-fragment 2D MSAA T# was accepted");
 }
 
 void verifyOneFragmentMultisampleRead() {
@@ -14013,6 +14040,7 @@ int main(int argc, char** argv) {
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
+        verifyMsaaDimensionQueryModes();
         verifyOneFragmentMultisampleRead();
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();
