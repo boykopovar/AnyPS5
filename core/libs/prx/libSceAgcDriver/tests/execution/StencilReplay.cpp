@@ -557,6 +557,19 @@ int main() {
             Check([](std::uint32_t, std::uint32_t) { return false; }, "indirect records without vertices or instances draw nothing");
             Draw(*device, PlainPixelCode, plain, equal(0x33u));
             Check(all, "indirect records without vertices or instances keep the stencil");
+            alignas(256) const std::array<std::uint32_t, 10> pastBound{3u, 1u, 6u, 0u, 0u, 3u, 1u, 9u, 0u, 0u};
+            Draw(*device, PlainPixelCode, plain, replace(0x33u));
+            ExpectedBinds = 0u;
+            Draw(*device, ordered, exported, replace(), 6u, 0u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                draw.indexed = true;
+                draw.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+                draw.indexSize = 4u;
+                draw.indirect = indirectDraw(pastBound.data(), 0x25u, 20u, 2u);
+            }, indexedVertices);
+            ExpectedBinds = 1u;
+            Require(LastDraws == 0u, "indexed indirect records past the bound index count recorded a draw");
+            Draw(*device, PlainPixelCode, plain, equal(0x33u));
+            Check(all, "indexed indirect records past the bound index count keep the stencil");
         }
         {
             constexpr std::array<std::uint32_t, 12> fullscreen{
@@ -797,6 +810,16 @@ int main() {
                     Draw(*device, ordered, exported, replace(), 0u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(empty.data(), 0x2cu, 16u, 2u); });
                     ExpectedBinds = 1u;
                     Require(!hostWritten(), "indirect records without vertices or instances marked their native multisample depth written");
+                    alignas(256) const std::array<std::uint32_t, 5> pastBound{3u, 1u, 6u, 0u, 0u};
+                    ExpectedBinds = 0u;
+                    Draw(*device, ordered, exported, replace(), 6u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                        draw.indexed = true;
+                        draw.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+                        draw.indexSize = 4u;
+                        draw.indirect = indirectDraw(pastBound.data(), 0x25u, 20u, 1u);
+                    }, indexedVertices);
+                    ExpectedBinds = 1u;
+                    Require(LastDraws == 0u && !hostWritten(), "an indexed indirect record past the bound index count drew or marked its native multisample depth written");
                     alignas(256) const std::array<std::uint32_t, 4> drawn{3u, 1u, 0u, 0u};
                     Draw(*device, ordered, exported, replace(), 0u, 0u, false, native, [&](AgcDriver::Pm4::DrawParameters& draw) { draw.indirect = indirectDraw(drawn.data(), 0x2cu, 16u, 1u); });
                     Require(hostWritten(), "an indirect stencil replay that draws left its native multisample depth unwritten");
