@@ -4,6 +4,8 @@
 #include "unicode/ubrk.h"
 #include "unicode/uenum.h"
 #include "unicode/uloc.h"
+#include <mutex>
+#include <unordered_set>
 
 #undef ubrk_open
 #undef ubrk_close
@@ -20,6 +22,51 @@
 #undef ubrk_countAvailable
 #undef ubrk_getAvailable
 
+namespace {
+
+struct Registry {
+    std::mutex mutex;
+    std::unordered_set<const UBreakIterator*> iterators;
+};
+
+Registry& Iterators() {
+    static Registry registry;
+    return registry;
+}
+
+void Register(UBreakIterator* iterator) {
+    auto& registry = Iterators();
+    const std::lock_guard lock(registry.mutex);
+    registry.iterators.insert(iterator);
+}
+
+bool Unregister(const UBreakIterator* iterator) {
+    auto& registry = Iterators();
+    const std::lock_guard lock(registry.mutex);
+    return registry.iterators.erase(iterator) != 0;
+}
+
+}
+
+namespace Icu::BreakIterator {
+
+void* CloneRegistered(const void* iterator, std::int32_t& status, const char* caller) {
+    if (!iterator) return nullptr;
+    auto& registry = Iterators();
+    const std::lock_guard lock(registry.mutex);
+    if (!registry.iterators.contains(static_cast<const UBreakIterator*>(iterator))) NotImplemented_nid_no_patch(caller);
+    auto code = static_cast<UErrorCode>(status);
+    auto* clone = ubrk_clone_78(static_cast<const UBreakIterator*>(iterator), &code);
+    status = code;
+    return clone;
+}
+
+void CloseClone(void* iterator) {
+    ubrk_close_78(static_cast<UBreakIterator*>(iterator));
+}
+
+}
+
 extern "C" {
 
 void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t* text, std::int32_t length,
@@ -29,10 +76,20 @@ void* APS5_VABI ubrk_open(std::int32_t type, const char* locale, const char16_t*
     if (!locale && U_SUCCESS(status)) locale = Icu::DefaultLocaleName();
     auto* result = ubrk_open_78(static_cast<UBreakIteratorType>(type), locale, text, length, &status);
     *error = status;
+    if (result) {
+        try {
+            Register(result);
+        } catch (...) {
+            ubrk_close_78(result);
+            throw;
+        }
+    }
     return result;
 }
 
 void APS5_VABI ubrk_close(void* iterator) {
+    if (!iterator) return;
+    if (!Unregister(static_cast<UBreakIterator*>(iterator))) NotImplemented_nid_no_patch(__func__);
     ubrk_close_78(static_cast<UBreakIterator*>(iterator));
 }
 

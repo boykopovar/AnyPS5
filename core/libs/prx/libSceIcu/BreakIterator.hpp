@@ -2,6 +2,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
+namespace Icu::BreakIterator {
+
+void* CloneRegistered(const void* iterator, std::int32_t& status, const char* caller);
+void CloseClone(void* iterator);
+
+}
+
 extern "C" {
 void* APS5_VABI ubrk_open(std::int32_t, const char*, const char16_t*, std::int32_t, std::int32_t*);
 void APS5_VABI ubrk_close(void*);

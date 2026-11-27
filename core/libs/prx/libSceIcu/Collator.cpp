@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -19,8 +20,13 @@ constexpr std::size_t LocaleBytes = 4096;
 constexpr std::size_t PageBytes = 4096;
 
 struct Registry {
-    std::mutex mutex;
+    std::shared_mutex mutex;
     std::unordered_set<const void*> collators;
+};
+
+struct RegisteredCollator {
+    std::shared_lock<std::shared_mutex> lock;
+    void* handle;
 };
 
 Registry& Collators() {
@@ -67,23 +73,30 @@ bool CollationKeyword(const char* keyword, const char* caller) {
     return true;
 }
 
-void* Registered(const UCollator* coll, const char* caller) {
+RegisteredCollator Registered(const UCollator* coll, const char* caller) {
     auto& registry = Collators();
-    const std::lock_guard lock(registry.mutex);
+    std::shared_lock lock(registry.mutex);
     if (!registry.collators.contains(coll)) NotImplemented_nid_no_patch(caller);
-    return const_cast<UCollator*>(coll);
+    return {std::move(lock), const_cast<UCollator*>(coll)};
 }
 
 void Register(void* collator) {
     auto& registry = Collators();
-    const std::lock_guard lock(registry.mutex);
+    const std::unique_lock lock(registry.mutex);
     registry.collators.insert(collator);
 }
 
 bool Unregister(const void* collator) {
     auto& registry = Collators();
-    const std::lock_guard lock(registry.mutex);
+    const std::unique_lock lock(registry.mutex);
     return registry.collators.erase(collator) != 0;
+}
+
+void CloseRegistered(void* collator, const char* caller) {
+    auto& registry = Collators();
+    const std::unique_lock lock(registry.mutex);
+    if (registry.collators.erase(collator) == 0) NotImplemented_nid_no_patch(caller);
+    Icu::CollatorHost::Close(collator);
 }
 
 template<class TUnit>
@@ -137,15 +150,15 @@ extern "C" {
 
 void APS5_VABI ucol_close_nid_postfix(UCollator* coll) {
     if (!coll) return;
-    if (!Unregister(coll)) NotImplemented_nid_no_patch(__func__);
-    Icu::CollatorHost::Close(coll);
+    CloseRegistered(coll, __func__);
 }
 
 std::int32_t APS5_VABI ucol_getAttribute_nid_postfix(const UCollator* coll, std::int32_t attr, std::int32_t* status) {
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0 || !coll) return UcolDefault;
     auto outgoing = incoming;
-    const auto value = Icu::CollatorHost::GetAttribute(Registered(coll, __func__), attr, outgoing);
+    const auto registered = Registered(coll, __func__);
+    const auto value = Icu::CollatorHost::GetAttribute(registered.handle, attr, outgoing);
     UpdateStatus(status, incoming, outgoing, __func__);
     return value;
 }
@@ -187,7 +200,8 @@ const char16_t* APS5_VABI ucol_getRules_nid_postfix(const UCollator*, std::int32
 UCollationStrength APS5_VABI ucol_getStrength_nid_postfix(const UCollator* coll) {
     if (!coll) return UCOL_DEFAULT;
     std::int32_t status = 0;
-    return static_cast<UCollationStrength>(Icu::CollatorHost::GetAttribute(Registered(coll, __func__), UCOL_STRENGTH, status));
+    const auto registered = Registered(coll, __func__);
+    return static_cast<UCollationStrength>(Icu::CollatorHost::GetAttribute(registered.handle, UCOL_STRENGTH, status));
 }
 
 USet* APS5_VABI ucol_getTailoredSet_nid_postfix(const UCollator*, std::int32_t* status) {
@@ -228,22 +242,25 @@ void APS5_VABI ucol_setAttribute_nid_postfix(UCollator* coll, UColAttribute attr
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0 || !coll) return;
     auto outgoing = incoming;
-    Icu::CollatorHost::SetAttribute(Registered(coll, __func__), attr, value, outgoing);
+    const auto registered = Registered(coll, __func__);
+    Icu::CollatorHost::SetAttribute(registered.handle, attr, value, outgoing);
     UpdateStatus(status, incoming, outgoing, __func__);
 }
 
 void APS5_VABI ucol_setStrength_nid_postfix(UCollator* coll, UCollationStrength strength) {
     if (!coll) return;
     std::int32_t status = 0;
-    Icu::CollatorHost::SetAttribute(Registered(coll, __func__), UCOL_STRENGTH, strength, status);
+    const auto registered = Registered(coll, __func__);
+    Icu::CollatorHost::SetAttribute(registered.handle, UCOL_STRENGTH, strength, status);
 }
 
 UCollationResult APS5_VABI ucol_strcoll_nid_postfix(const UCollator* coll, const char16_t* source, std::int32_t sourceLength,
                                                    const char16_t* target, std::int32_t targetLength) {
-    const void* handle = Registered(coll, __func__);
+    const auto registered = Registered(coll, __func__);
     const auto left = CopyOperand(source, sourceLength, __func__);
     const auto right = CopyOperand(target, targetLength, __func__);
-    return static_cast<UCollationResult>(Icu::CollatorHost::Compare(handle, left.Data(), left.length, right.Data(), right.length));
+    return static_cast<UCollationResult>(
+        Icu::CollatorHost::Compare(registered.handle, left.Data(), left.length, right.Data(), right.length));
 }
 
 std::int32_t APS5_VABI ucol_strcollIter_nid_postfix(const UCollator* coll, UCharIterator* sIter, UCharIterator* tIter, std::int32_t* status) {
@@ -259,11 +276,12 @@ UCollationResult APS5_VABI ucol_strcollUTF8_nid_postfix(const UCollator* coll, c
                                                        const char* target, std::int32_t targetLength, std::int32_t* status) {
     const auto incoming = ReadStatus(status, __func__);
     if (incoming > 0) return UCOL_EQUAL;
-    const void* handle = Registered(coll, __func__);
+    const auto registered = Registered(coll, __func__);
     const auto left = CopyOperand(source, sourceLength, __func__);
     const auto right = CopyOperand(target, targetLength, __func__);
     auto outgoing = incoming;
-    const auto result = Icu::CollatorHost::CompareUtf8(handle, left.Data(), left.length, right.Data(), right.length, outgoing);
+    const auto result =
+        Icu::CollatorHost::CompareUtf8(registered.handle, left.Data(), left.length, right.Data(), right.length, outgoing);
     UpdateStatus(status, incoming, outgoing, __func__);
     return static_cast<UCollationResult>(result);
 }

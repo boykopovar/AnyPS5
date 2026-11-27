@@ -172,6 +172,15 @@ void Run() {
     Require(Unchanged(storage));
     RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", nullptr, nullptr); });
     GuestPointers(pattern, text);
+
+    status = 0;
+    auto* iterator = ubrk_open(0, "en", u"old", 3, &status);
+    Require(iterator != nullptr && status <= 0);
+    auto* restricted = usearch_open_nid_postfix(u"ana", 3, u"bananas", 7, "en", static_cast<UBreakIterator*>(iterator), &status);
+    Require(restricted != nullptr && status <= 0);
+    Require(ubrk_last(iterator) == 3);
+    ubrk_close(iterator);
+    u_cleanup_nid_postfix();
 }
 
 } // namespace UsearchOpen

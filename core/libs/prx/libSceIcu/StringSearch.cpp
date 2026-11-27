@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/BreakIterator.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libc/include/General.hpp"
@@ -42,11 +43,13 @@ constexpr std::size_t LocaleBytes = 4096;
 struct SearchState {
     std::mutex mutex;
     UStringSearch* search{};
+    void* breakIterator{};
     std::vector<char16_t> pattern;
     std::vector<char16_t> text;
 
     ~SearchState() {
         Icu::StringSearchHost::Close(search);
+        Icu::BreakIterator::CloseClone(breakIterator);
     }
 };
 
@@ -107,6 +110,20 @@ bool Succeeded(const std::int32_t* status, const char* caller) {
 
 }
 
+namespace Icu::StringSearchRegistry {
+
+void Cleanup() {
+    std::unordered_map<const UStringSearch*, std::shared_ptr<SearchState>> searches;
+    auto& registry = Searches();
+    {
+        const std::lock_guard lock(registry.mutex);
+        searches.swap(registry.searches);
+    }
+    searches.clear();
+}
+
+}
+
 extern "C" {
 
 UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search) {
@@ -147,9 +164,14 @@ UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::
     errno = savedErrno;
     if (copied != 0) NotImplemented_nid_no_patch(__func__);
     auto outgoing = incoming;
+    state->breakIterator = Icu::BreakIterator::CloneRegistered(breakIterator, outgoing, __func__);
+    if (breakIterator && !state->breakIterator) {
+        WriteChangedStatus(status, incoming, outgoing, __func__);
+        return nullptr;
+    }
     state->search = static_cast<UStringSearch*>(Icu::StringSearchHost::Open(
         state->pattern.data(), static_cast<std::int32_t>(state->pattern.size()), state->text.data(),
-        static_cast<std::int32_t>(state->text.size()), localeName.c_str(), breakIterator, outgoing));
+        static_cast<std::int32_t>(state->text.size()), localeName.c_str(), state->breakIterator, outgoing));
     WriteChangedStatus(status, incoming, outgoing, __func__);
     if (!state->search) return nullptr;
     Register(state);

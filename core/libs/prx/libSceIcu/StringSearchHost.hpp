@@ -8,3 +8,9 @@ void* Open(const char16_t* pattern, std::int32_t patternLength, const char16_t* 
 void Close(void* search);
 
 }
+
+namespace Icu::StringSearchRegistry {
+
+void Cleanup();
+
+}
