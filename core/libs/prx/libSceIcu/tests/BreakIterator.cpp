@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -211,7 +212,9 @@ void Api() {
     Expect(!ubrk_open(99, "en", u"a", 1, &status), "invalid iterator type");
     Equal(status, 1, "invalid type error");
     status = 15;
-    Expect(!ubrk_open(0, "en", u"a", 1, &status), "input failure prevents open");
+    Expect(!ubrk_open(0, reinterpret_cast<const char*>(std::uintptr_t{1}),
+                      reinterpret_cast<const char16_t*>(std::uintptr_t{1}), 1, &status),
+           "input failure prevents open without reading inputs");
     Equal(status, 15, "open preserves failure");
     status = 0;
     iterator = ubrk_open(0, "zz_ZZ", u"a", 1, &status);
