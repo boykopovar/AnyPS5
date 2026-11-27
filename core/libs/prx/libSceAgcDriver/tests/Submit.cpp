@@ -73,11 +73,16 @@ void check(bool condition, const char* message) {
 std::uint32_t* rootCommandBufferToFlush = nullptr;
 std::size_t rootCommandBufferFlushBytes = 0;
 std::size_t rootCommandBufferFlushCalls = 0;
+std::size_t rootCommandBufferFlushHookCalls = 0;
 
 void flushRootCommandBufferForTest(std::uint64_t address, std::size_t bytes) {
-    ++rootCommandBufferFlushCalls;
     if (rootCommandBufferToFlush == nullptr || address != reinterpret_cast<std::uintptr_t>(rootCommandBufferToFlush) || bytes != rootCommandBufferFlushBytes) return;
+    ++rootCommandBufferFlushCalls;
     *rootCommandBufferToFlush = 0xffff1000u;
+}
+
+void countRootCommandBufferFlushForTest(std::uint64_t, std::size_t) {
+    ++rootCommandBufferFlushHookCalls;
 }
 
 template<typename TAction>
@@ -255,16 +260,16 @@ void testSubmissionFlushesRootCommandBuffer() {
 void testSubmissionChecksRootCopyBeforeFlush() {
     auto* const previous = AgcDriver::GuestMemory::CurrentFlushHook();
     rootCommandBufferToFlush = nullptr;
-    rootCommandBufferFlushCalls = 0;
-    AgcDriver::GuestMemory::SetFlushHook(&flushRootCommandBufferForTest);
+    rootCommandBufferFlushHookCalls = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&countRootCommandBufferFlushForTest);
     try {
         AgcDriver::DriverDetail::Submission submission{};
         const auto* const invalid = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000});
         const auto overBudget = (std::size_t{1} << 26u) + 1u;
         expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, overBudget); });
-        check(rootCommandBufferFlushCalls == 0, "root command-buffer copy budget was checked after the flush hook");
+        check(rootCommandBufferFlushHookCalls == 0, "root command-buffer copy budget was checked after the flush hook");
         expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, 1); });
-        check(rootCommandBufferFlushCalls == 0, "root command-buffer range was checked after the flush hook");
+        check(rootCommandBufferFlushHookCalls == 0, "root command-buffer range was checked after the flush hook");
     } catch (...) {
         AgcDriver::GuestMemory::SetFlushHook(previous);
         rootCommandBufferToFlush = nullptr;
