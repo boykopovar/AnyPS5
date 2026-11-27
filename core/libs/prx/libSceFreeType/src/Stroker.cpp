@@ -228,6 +228,10 @@ void ExportStroke(void* stroker, unsigned borders, GuestOutline* outline, const 
 
 }
 
+extern "C" void* FreeType::FreeTypeHostStroker_nid_no_patch(void* stroker) {
+    return ChangeStroke(stroker);
+}
+
 extern "C" {
 
 int APS5_VABI FT_Stroker_New_nid_postfix(GuestLibrary* library, void** stroker) {

@@ -91,6 +91,8 @@ public:
     std::uint64_t DrainWaits() const { return drainWaits.load(std::memory_order_acquire); }
     void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
     std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
+    void NoteDecodeDrainSkip() { decodeDrainSkips.fetch_add(1, std::memory_order_relaxed); }
+    std::uint64_t DecodeDrainSkips() const { return decodeDrainSkips.load(std::memory_order_relaxed); }
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
     std::uint64_t CommitterThread() const { return committerThread.load(std::memory_order_acquire); }
@@ -177,7 +179,9 @@ private:
     std::atomic<std::uint64_t> committerWakes{0};
     std::atomic<std::uint64_t> producerWakes{0};
     std::atomic<std::uint64_t> decodeDrains{0};
+    std::atomic<std::uint64_t> decodeDrainSkips{0};
     std::uint64_t reportedDecodeDrains = 0;
+    std::uint64_t reportedDecodeDrainSkips = 0;
     std::uint32_t producersWaiting = 0;
     std::uint32_t drainersWaiting = 0;
     bool committerWaiting = false;

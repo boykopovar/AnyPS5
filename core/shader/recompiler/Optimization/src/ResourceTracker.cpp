@@ -31,6 +31,23 @@ namespace {
 constexpr std::uint32_t samplerBorderClampMask = (1u << 2u) | (1u << 5u) | (1u << 8u);
 constexpr std::uint32_t samplerDword3ReservedMask = 0x3ffff000u;
 
+std::uint32_t knownSetBits(const IrValue* value, unsigned depth = 0u) {
+    value = value->Resolve();
+    if (value->HasImmediate()) return value->ImmediateU32();
+    if (depth >= 8u || value->ArgumentCount() != 2u) return 0u;
+    if (value->Opcode() != IrOpcode::BitwiseOr32 && value->Opcode() != IrOpcode::BitwiseAnd32 && value->Opcode() != IrOpcode::ShiftLeftLogical32 && value->Opcode() != IrOpcode::ShiftRightLogical32) return 0u;
+    const auto left = knownSetBits(value->Argument(0), depth + 1u);
+    const auto right = knownSetBits(value->Argument(1), depth + 1u);
+    if (value->Opcode() == IrOpcode::BitwiseOr32) return left | right;
+    if (value->Opcode() == IrOpcode::BitwiseAnd32) return left & right;
+    if (value->Argument(1)->Resolve()->HasImmediate()) {
+        const auto shift = right & 31u;
+        if (value->Opcode() == IrOpcode::ShiftLeftLogical32) return left << shift;
+        if (value->Opcode() == IrOpcode::ShiftRightLogical32) return left >> shift;
+    }
+    return 0u;
+}
+
 [[noreturn]] void fail(const std::string& message) {
     throw std::runtime_error(message);
 }
@@ -914,7 +931,7 @@ private:
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
         if (!MatchAffineOffset(offset, key, stride, addend)) {
-            if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
+            if (!MatchMaskedOffset(SplitImmediateAddend(offset, addend), key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
             masked = true;
@@ -1973,7 +1990,7 @@ private:
             const auto [entry, inserted] = web.resolved.try_emplace(value, value);
             if (inserted) {
                 IrValue* invariant = ResolveInvariantPhi(m_program.Resources(), value);
-                entry->second = invariant == nullptr ? value : invariant->Resolve();
+                entry->second = invariant == nullptr || !AvailableAt(invariant, value->Parent()) ? value : invariant->Resolve();
             }
             value = entry->second;
         }
@@ -2000,7 +2017,15 @@ private:
                 laneOrder = index;
             }
         }
-        if (phi == tuple.end() && lane != nullptr) {
+        std::size_t phiOrder = 0;
+        for (const IrValue* value : tuple) {
+            if (!value->IsPhi()) {
+                continue;
+            }
+            const auto found = web.order.find(value->Parent());
+            phiOrder = std::max(phiOrder, found == web.order.end() ? 0u : found->second);
+        }
+        if (lane != nullptr && (phi == tuple.end() || laneOrder > phiOrder)) {
             return LaneSelector(tuple, *lane, web, position);
         }
         if (phi == tuple.end()) {
@@ -2083,6 +2108,15 @@ private:
         return &selector;
     }
 
+    static bool EarlierPhi(const IrValue& value, const IrBlock* block, const DescriptorWeb& web) {
+        if (!value.IsPhi()) {
+            return false;
+        }
+        const auto phiBlock = web.order.find(value.Parent());
+        const auto laneBlock = web.order.find(block);
+        return phiBlock != web.order.end() && laneBlock != web.order.end() && phiBlock->second < laneBlock->second;
+    }
+
     IrValue* LaneSelector(const std::vector<IrValue*>& tuple, IrValue& first, DescriptorWeb& web, IrValue& position) {
         IrBlock* block = first.Parent();
         const auto op = first.Opcode();
@@ -2102,7 +2136,7 @@ private:
                 if (select) {
                     right.push_back(value->Argument(2u));
                 }
-            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
+            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane) || EarlierPhi(*value, block, web)) {
                 left.push_back(value);
                 if (select) {
                     right.push_back(value);
@@ -2596,6 +2630,13 @@ private:
         const IrValue* handle = inst.Argument(0)->Resolve();
         if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) {
             return false;
+        }
+        auto& scalarMemory = m_program.Resources().memoryInfo[memoryIndex];
+        if (scalarMemory.kind == ResourceKind::ScalarBuffer &&
+            static_cast<std::uint64_t>((knownSetBits(handle->Argument(1)) >> 16u) & 0x3fffu) * knownSetBits(handle->Argument(2)) > std::numeric_limits<std::uint32_t>::max()) {
+            scalarMemory.gpuDescriptor = true;
+            m_info.usesDma = true;
+            return true;
         }
         DescriptorSource descriptor;
         MakeSource(*handle, 4u, false, false, descriptor);

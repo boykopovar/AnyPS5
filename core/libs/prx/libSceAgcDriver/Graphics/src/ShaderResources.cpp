@@ -1334,7 +1334,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         } else {
             entry.texture = createTexture(source, resource, components);
         }
-        entry.accounted = source->Cached() ? 0u : heldBytes(*source);
+        entry.accounted = entry.texture->AllocationBytes();
+        if (!source->Cached()) entry.accounted += heldBytes(*source);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
     } else if (clear) {
         entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
@@ -2993,6 +2994,8 @@ void ShaderResources::buildComplete() {
         for (auto& source : samplerSources) {
             source.singleLevelImage = source.mipmappedImage = false;
             source.pinnedLod.reset();
+            source.opaqueBlackPairings.clear();
+            source.borderMapping.reset();
         }
         for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
         previousSampled = {};
@@ -6149,16 +6152,18 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(ImageRecord& record) {
 
 void ShaderResources::applySamplerVariants() {
     for (std::size_t index = 0; index < samplerSources.size(); ++index) {
-        const auto& source = samplerSources[index];
+        auto& source = samplerSources[index];
+        source.borderMapping = OpaqueBlackBorderMapping(context, source.opaqueBlackPairings);
         const auto variant = SingleLevelSamplerWords(source.words, source.singleLevelImage, source.mipmappedImage);
-        if (!variant.has_value() && !source.pinnedLod.has_value()) continue;
-        const auto words = source.pinnedLod.has_value() ? PinnedLodSamplerWords(variant.has_value() ? *variant : source.words, *source.pinnedLod) : *variant;
+        if (!variant.has_value() && !source.pinnedLod.has_value() && !source.borderMapping.has_value()) continue;
+        const auto variantWords = variant.has_value() ? *variant : source.words;
+        const auto words = source.pinnedLod.has_value() ? PinnedLodSamplerWords(variantWords, *source.pinnedLod) : variantWords;
         if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
-            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder);
+            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder, source.borderMapping);
         } else {
             auto resource = DecodeSamplerResource(words, source.unnormalized, true, source.integerBorder);
             resource.compareEnable = source.compareEnable;
-            samplers[index] = std::make_shared<Sampler>(context, resource);
+            samplers[index] = std::make_shared<Sampler>(context, resource, source.borderMapping);
         }
     }
 }
@@ -6232,12 +6237,14 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             if (forcedSrgb && !texture->HasSrgbView()) Require(false, "a texture of guest format " + std::to_string(resource.format) + ", which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding, which is not implemented");
             if (!shaderSamplers.empty()) {
                 const bool singleLevel = DescriptorSingleLevel(words);
+                const OpaqueBlackPairing pairing{{texture->ViewComponents(), forcedSrgb || IsSrgbViewFormat(texture->ViewFormat())}, {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}};
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
                 for (auto mask = binding.imageSamplers[element]; mask != 0u; mask &= mask - 1u) {
                     const auto sampler = static_cast<std::uint32_t>(std::countr_zero(mask));
                     if (sampler >= shaderSamplers.size()) break;
                     auto& source = samplerSources.at(firstSampler + sampler);
                     (singleLevel ? source.singleLevelImage : source.mipmappedImage) = true;
+                    if (!context.borderColorSwizzleFromImage && shaderSamplers[sampler]->ReadsOpaqueBlackBorder()) source.opaqueBlackPairings.push_back(pairing);
                 }
             }
             if (words.size() == 8) {
@@ -6593,7 +6600,7 @@ void ShaderResources::resolveImageTables() {
         for (std::uint32_t sampler = 0; sampler < table.samplerCount; ++sampler) {
             const auto& source = samplerSources.at(table.firstSampler + sampler);
             samplerKey.insert(samplerKey.end(), source.words.begin(), source.words.end());
-            samplerKey.push_back((source.compareEnable ? 1u : 0u) | (source.unnormalized ? 2u : 0u) | (source.integerBorder ? 4u : 0u));
+            samplerKey.push_back((source.compareEnable ? 1u : 0u) | (source.unnormalized ? 2u : 0u) | (source.integerBorder ? 4u : 0u) | (BorderMappingKey(source.borderMapping) << 4u));
         }
         const auto place = [&](std::uint32_t element, std::shared_ptr<Texture> texture, const GuestTextureResource& resource, std::uint64_t guestBytes, bool firstLayer) {
             textures.push_back(std::move(texture));
@@ -6606,6 +6613,7 @@ void ShaderResources::resolveImageTables() {
             try {
                 RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers.at(element), stageSamplers);
                 RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers.at(element), stageSamplers);
+                static_cast<void>(CheckOpaqueBlackPairing(context, {{texture->ViewComponents(), IsSrgbViewFormat(texture->ViewFormat())}, {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}}, binding.imageSamplers.at(element), stageSamplers));
                 RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers.at(element), stageSamplers);
                 RequireDisablesDegammaOn(resource.format, binding.imageSamplers.at(element), stageSamplers);
                 const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));
@@ -7739,13 +7747,18 @@ bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) con
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
 }
 
-void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const {
+void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out, bool dataWritten) const {
     out.clear();
     guestMemory.RunAccesses(out);
     if (usesBda) out.push_back({0, std::numeric_limits<std::uint64_t>::max(), Recorder::RunAccessWritten});
     for (const auto& [image, written] : StorageImages()) {
         const auto handle = reinterpret_cast<std::uint64_t>(image);
         out.push_back({handle, handle + 1, Recorder::RunAccessImage | (written ? Recorder::RunAccessWritten : 0u)});
+    }
+    for (const auto& allocation : allocations) {
+        if (allocation.guest || allocation.buffer == nullptr) continue;
+        const auto handle = reinterpret_cast<std::uint64_t>(allocation.buffer->Handle());
+        out.push_back({handle, handle + 1, Recorder::RunAccessBuffer | (dataWritten ? Recorder::RunAccessWritten : 0u)});
     }
 }
 
