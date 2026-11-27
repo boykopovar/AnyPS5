@@ -625,7 +625,7 @@ int set_kernel_timeout(int descriptor, int optname, const void* value, std::uint
     KernelTimeval timeout{};
     if (value == nullptr && length != 0) return NET_EFAULT;
     if (length < sizeof(timeout)) return NET_EINVAL;
-    std::memcpy(&timeout, value, sizeof(timeout));
+    if (!GuestCopyIn_nid_no_patch(&timeout, value, sizeof(timeout))) return NET_EFAULT;
     if (timeout.tv_sec < 0 || timeout.tv_usec < 0 || timeout.tv_usec >= 1000000) return NET_EDOM;
     const std::int64_t microseconds = std::min<std::int64_t>(timeout.tv_sec, INT32_MAX) * 1000000 + timeout.tv_usec;
     Sock socket;
