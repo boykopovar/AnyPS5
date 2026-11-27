@@ -40,6 +40,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "ImageTableAbi.hpp"
 #include <cstring>
@@ -2381,7 +2382,7 @@ TableState CurrentTableState() {
 
 constexpr auto NoRepresentative = std::numeric_limits<std::uint32_t>::max();
 
-std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity);
+std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents = nullptr);
 
 struct ReusedTableElement {
     TextureKey key{};
@@ -6487,7 +6488,7 @@ void noteVariantSurface(std::uint64_t address, std::size_t members, const GuestT
     std::fprintf(stderr, "[textures] surface 0x%llx has %zu dynamic-resolution variants in one image table; they share the %ux%u texture (chosen by %s)\n", static_cast<unsigned long long>(address), members, chosen.width, chosen.height, rule);
 }
 
-std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity) {
+std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents) {
     struct Member {
         std::uint32_t element;
         GuestTextureResource resource;
@@ -6509,6 +6510,7 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
         const auto& first = members.front().resource;
         const auto otherExtent = [&](const Member& member) { return member.resource.width != first.width || member.resource.height != first.height; };
         if (std::none_of(members.begin(), members.end(), otherExtent)) continue;
+        if (mixedExtents) *mixedExtents = true;
         const auto withExtent = [&](std::uint32_t width, std::uint32_t height) {
             return std::find_if(members.begin(), members.end(), [&](const Member& member) { return member.resource.width == width && member.resource.height == height; });
         };
@@ -6576,6 +6578,59 @@ std::vector<std::uint32_t> arrayPartners(const ShaderRecompiler::DescriptorBindi
         partners[candidate.element] = found->second;
     }
     return partners;
+}
+
+
+struct ImageTableLayout {
+    std::uint32_t count;
+    std::uint64_t visible;
+    bool gcn;
+    std::vector<std::uint32_t> words;
+    std::vector<ShaderRecompiler::DescriptorImageShape> shapes;
+    ShaderRecompiler::ElementFlags written, depthCompare;
+    bool mixedExtents;
+    std::vector<std::uint32_t> partners;
+};
+
+bool sameLayout(const ImageTableLayout& entry, const ShaderRecompiler::DescriptorBinding& binding,
+                std::uint64_t visible, bool gcn) {
+    return entry.count == binding.count && entry.visible == visible && entry.gcn == gcn &&
+           entry.words == binding.guestDescriptor && entry.shapes == binding.imageShapes &&
+           entry.written == binding.imageWritten && entry.depthCompare == binding.imageDepthCompare;
+}
+
+void resolveTableLayout(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding,
+                        std::uint64_t base, std::uint64_t capacity,
+                        std::vector<std::uint32_t>& representatives, std::vector<std::uint32_t>& partners) {
+    if (binding.count <= 1) return;
+    constexpr std::size_t maxElements = 16384;
+    if (binding.count > maxElements || binding.guestDescriptor.size() > 8 * maxElements ||
+        binding.imageShapes.size() > maxElements || binding.imageWritten.size() > maxElements ||
+        binding.imageDepthCompare.size() > maxElements) {
+        representatives = variantRepresentatives(device, binding, base, capacity);
+        partners = arrayPartners(binding, base, capacity);
+        return;
+    }
+    struct LayoutTag {};
+    auto& entries = HostThreadLocal<std::list<ImageTableLayout>, LayoutTag>();
+    const auto visible = std::min<std::uint64_t>(binding.count, base < capacity ? capacity - base : 0);
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+        return sameLayout(entry, binding, visible, gcn);
+    });
+    if (found != entries.end()) {
+        entries.splice(entries.begin(), entries, found);
+        if (found->mixedExtents) representatives = variantRepresentatives(device, binding, base, capacity);
+        else representatives.clear();
+        partners = found->partners;
+        return;
+    }
+    bool mixedExtents = false;
+    representatives = variantRepresentatives(device, binding, base, capacity, &mixedExtents);
+    partners = arrayPartners(binding, base, capacity);
+    if (entries.size() == 8) entries.pop_back();
+    entries.push_front({binding.count, visible, gcn, binding.guestDescriptor, binding.imageShapes,
+                        binding.imageWritten, binding.imageDepthCompare, mixedExtents, partners});
 }
 
 }
@@ -6791,7 +6846,8 @@ void ShaderResources::resolveImageTables() {
         ReusedTable fresh;
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
-        if (binding.count > 1) table.representatives = variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity);
+        std::vector<std::uint32_t> partners;
+        resolveTableLayout(context.device, binding, table.elementBase, context.imageTableCapacity, table.representatives, partners);
         const auto& representatives = table.representatives;
         std::vector<bool> representativeNeeded(representatives.size(), false);
         for (const auto representative : representatives) {
@@ -6799,7 +6855,6 @@ void ShaderResources::resolveImageTables() {
         }
         std::unordered_map<std::uint32_t, GuestTextureResource> representativeSources;
         std::vector<std::uint32_t> substitutes;
-        const auto partners = binding.count > 1 ? arrayPartners(binding, table.elementBase, context.imageTableCapacity) : std::vector<std::uint32_t>{};
         std::vector<std::uint32_t> order;
         if (!partners.empty()) {
             reusable = false;
