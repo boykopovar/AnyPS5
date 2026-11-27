@@ -437,6 +437,13 @@ void ValidateV3() {
     Require(scePfsValidate(&image, 2) == 0);
     image.table[2].words[0] = 0x30000 + 0x40001;
     Require(scePfsValidate(&image, 2) == InvalidTable);
+    image.index[0].words[1] = 0x80000000ULL << 0x14;
+    Require(scePfsValidate(&image, 2) == InvalidTable);
+    for (const std::uint64_t bound : {0x80000001ULL, 0xffffffffULL, 0ULL, 1ULL}) {
+        image.index[0].words[1] = bound << 0x14;
+        Require(scePfsValidate(&image, 2) == 0);
+    }
+    image.index[0].words[1] = 4ULL << 0x14;
     image.table[2].words[0] = 0x60000;
     image.header.indexCount = 1;
     Require(scePfsValidate(&image, 2) == UnsupportedFormat);
