@@ -4,21 +4,24 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_RAZOR_CPU_ERROR_NOT_INITIALIZED = static_cast<int>(0x80580000);
+
+}
+
 extern "C" {
 
 int APS5_VABI sceRazorCpuStartCapture(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_RAZOR_CPU_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceRazorCpuStopCapture(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_RAZOR_CPU_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceRazorCpuSetLiveServerThreadSettings(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_RAZOR_CPU_ERROR_NOT_INITIALIZED;
 }
 
 }
