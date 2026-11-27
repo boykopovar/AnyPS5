@@ -598,17 +598,13 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
         hash *= 1099511628211ull;
     };
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
-    std::uint64_t keyCursor = 0;
     for (std::size_t sliceIndex = 0; sliceIndex < slices.size(); ++sliceIndex) {
         const auto& slice = slices[sliceIndex];
-        // Pipe-aligned surfaces carry the console DCC extent per slice (DccKeyCount), the slices'
-        // arrays back to back; the rest carry one key per 256 of their own bytes. Either way the
-        // scan never reads past the surface's own key array.
-        const auto count = resource.dccPipeAligned
-            ? DccKeyCount(resource.tileMode, elementBytes, slice.width, slice.height, slice.byteSize)
-            : DccKeyBytes(slice.byteSize);
-        const auto meta = resource.dccAddress + keyCursor;
-        keyCursor += count;
+        // The slice's key array sits where DccSlices put it (the console extent back to back for
+        // the non-chain surfaces, the console chain order for the pipe-aligned mip chains), so
+        // the scan never reads past the surface's own key array.
+        const auto count = slice.keyCount;
+        const auto meta = resource.dccAddress + slice.keyOffset;
         if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return std::nullopt;
         std::vector<std::uint8_t> raw(count);
         GuestMemory::ReadCommitted(meta, std::as_writable_bytes(std::span(raw)));
@@ -657,15 +653,12 @@ std::optional<MixedKeyClear> MixedKeyClearSlices(const GuestTextureResource& res
 
 enum class SliceKeys { Unreadable, Uniform, Differ };
 SliceKeys uniformSliceKeys(const GuestTextureResource& resource, std::span<const DccSlice> slices, std::uint8_t& byte) {
-    const auto elementBytes = BytesPerElement(resource.format);
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
-    std::uint64_t keyCursor = 0;
     bool first = true;
     std::vector<std::uint8_t> raw;
     for (const auto& slice : slices) {
-        const auto count = DccKeyCount(resource.tileMode, elementBytes, slice.width, slice.height, slice.byteSize);
-        const auto meta = resource.dccAddress + keyCursor;
-        keyCursor += count;
+        const auto count = slice.keyCount;
+        const auto meta = resource.dccAddress + slice.keyOffset;
         if (count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(meta), count)) return SliceKeys::Unreadable;
         raw.resize(count);
         GuestMemory::ReadCommitted(meta, std::as_writable_bytes(std::span(raw)));
@@ -913,11 +906,52 @@ std::vector<DccSlice> DccSlices(const GuestTextureResource& resource) {
     auto slices = std::vector<DccSlice>{};
     if (resource.dccAddress == 0 || resource.width == 0 || resource.height == 0) return slices;
     const auto geometry = DescribeSurface(resource);
+    const auto mips = static_cast<std::uint32_t>(geometry.mips.size());
+    // A pipe-aligned R64KBX surface with more than one mip level carries its keys in the
+    // console chain order, per array layer: the shared tail block (4096 keys) first, then the
+    // other levels from the smallest to level 0, each rounded to whole meta blocks (the same
+    // offsets DccMipKeyOffset gives a color target's mips); every tail level reads the shared
+    // block at the chain's start. Other surfaces carry their slices' key arrays back to back,
+    // at the console extent when pipe-aligned, else one key per 256 of the slice's bytes.
+    // Either way a scan of a slice never reads past that slice's own key array.
+    const auto elementBytes = BytesPerElement(resource.format);
+    const bool chain = !geometry.thick && resource.dccPipeAligned && mips > 1 && elementBytes != 0 && resource.tileMode == TextureTileMode::kR64KBX;
+    std::uint32_t firstTail = mips;
+    if (chain) {
+        for (std::uint32_t level = 0; level < mips; ++level) {
+            if (geometry.mips[level].tail) {
+                firstTail = level;
+                break;
+            }
+        }
+    }
+    std::uint64_t chainExtent = 0;
+    if (chain) {
+        if (firstTail < mips) chainExtent = 4096;
+        for (std::uint32_t level = 0; level < firstTail; ++level) chainExtent += DccMipKeySlice(geometry.mips[level].width, geometry.mips[level].height, elementBytes);
+    }
+    std::uint64_t keyCursor = 0;
     for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) {
-        for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+        for (std::uint32_t level = 0; level < mips; ++level) {
             if (!geometry.HasLayer(level, layer)) continue;
             const auto& mip = geometry.mips[level];
-            slices.emplace_back(geometry.GuestOffset(layer, mip), mip.tiledSize, mip.width, mip.height);
+            auto slice = DccSlice{geometry.GuestOffset(layer, mip), mip.tiledSize, mip.width, mip.height};
+            if (chain) {
+                if (firstTail < mips && level >= firstTail) {
+                    slice.keyCount = 4096;
+                } else if (const auto offset = DccMipKeyOffset(resource.width, resource.height, elementBytes, mips, firstTail, level)) {
+                    slice.keyOffset = *offset;
+                    slice.keyCount = DccMipKeySlice(mip.width, mip.height, elementBytes);
+                }
+                slice.keyOffset += static_cast<std::uint64_t>(layer) * chainExtent;
+            } else {
+                slice.keyOffset = keyCursor;
+                slice.keyCount = resource.dccPipeAligned
+                    ? DccKeyCount(resource.tileMode, elementBytes, mip.width, mip.height, mip.tiledSize)
+                    : DccKeyBytes(mip.tiledSize);
+                keyCursor += slice.keyCount;
+            }
+            slices.push_back(slice);
         }
     }
     std::sort(slices.begin(), slices.end(), [](const auto& a, const auto& b) { return a.byteOffset < b.byteOffset; });

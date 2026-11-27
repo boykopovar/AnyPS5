@@ -27,12 +27,17 @@ const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
 std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
-// One slice of the guest surface (one mip level of one array layer) and where it sits in the bytes.
+// One slice of the guest surface (one mip level of one array layer) and where it sits in the
+// bytes, plus where its DCC keys sit in the metadata (keyOffset and keyCount in bytes, one key
+// byte per 256 of surface: the console meta extent where the console rounds the keys, the slice's
+// own bytes otherwise; tail levels of a mip chain share the chain's tail block).
 struct DccSlice {
     std::uint64_t byteOffset = 0;
     std::uint64_t byteSize = 0;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    std::uint64_t keyOffset = 0;
+    std::size_t keyCount = 0;
 };
 // The texture's slices, each array layer's mip levels, in guest-byte order (from its geometry).
 std::vector<DccSlice> DccSlices(const GuestTextureResource& resource);
