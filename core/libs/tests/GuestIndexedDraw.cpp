@@ -47,10 +47,11 @@ int main() {
     draw[1] = 0; draw[4] = 0;
     Require(AgcDriver::Pm4::ResolveDraw({draw,6},queue).indexCount == 0);
     draw[1] = 3; draw[4] = 3;
-    draw[4]=4;
-    Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
-    draw[4]=0xffffffffu;
-    Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
+    for (const std::uint32_t count : {4u,0xffffffffu}) {
+        draw[4]=count;
+        AgcDriver::Pm4::Validate({draw,6},0);
+        Require(AgcDriver::Pm4::ResolveDraw({draw,6},queue).indexCount==3);
+    }
     draw[4]=3;
     draw[5]=2;
     Reject([&]{AgcDriver::Pm4::Validate({draw,6},0);});
@@ -68,10 +69,13 @@ int main() {
     queue.indexBase=0;
     Reject([&]{AgcDriver::Pm4::ResolveDraw(offsetDraw,queue);});
     queue.indexBase=reinterpret_cast<std::uintptr_t>(indices.data());
-    const std::array<std::uint32_t,5> invalidOffsetCount{0xc0033500u,2,1,3,0};
-    Reject([&]{AgcDriver::Pm4::Validate(invalidOffsetCount,0);});
-    const std::array<std::uint32_t,5> maxOffsetCount{0xc0033500u,2,1,0xffffffffu,0};
-    Reject([&]{AgcDriver::Pm4::Validate(maxOffsetCount,0);});
+    const auto unclamped=AgcDriver::Pm4::ResolveDraw(offsetDraw,queue);
+    for (const std::uint32_t count : {3u,0xffffffffu}) {
+        const std::array<std::uint32_t,5> clampedOffsetDraw{0xc0033500u,2,1,count,0};
+        AgcDriver::Pm4::Validate(clampedOffsetDraw,0);
+        const auto clamped=AgcDriver::Pm4::ResolveDraw(clampedOffsetDraw,queue);
+        Require(clamped.indexAddress==unclamped.indexAddress&&clamped.indexCount==2);
+    }
     auto* saved=buffer.cursor_up;
     Reject([&]{sceAgcDcbDrawIndex(&buffer,3,nullptr,0);});
     Require(buffer.cursor_up==saved);
