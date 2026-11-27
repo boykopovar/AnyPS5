@@ -76,6 +76,8 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
             } catch (const Domain::RelinkerException&) {
                 continue;
             }
+            if (type == 2 && !image.IsExecutableRange(symbol.Value, extent))
+                continue;
             exports.emplace(symbolName, rva);
             continue;
         }
