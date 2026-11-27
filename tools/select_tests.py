@@ -69,7 +69,7 @@ class Build:
             current, section = None, None
             for line in self.run("-t", "query", *batch).splitlines():
                 if not line.startswith(" "):
-                    current = line.rstrip(":")
+                    current = line.removesuffix(":")
                     found[current] = {"inputs": [], "phony": False}
                 elif line.startswith("  input: "):
                     section = "inputs"

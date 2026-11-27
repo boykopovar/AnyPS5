@@ -132,6 +132,26 @@ class SelectTests(SelectFixture):
     def test_cmake_file_selects_the_tests_it_registers(self):
         self.assertEqual(self.select("beta/CMakeLists.txt")[1], {"beta", "beta_setup", "script"})
 
+    @unittest.skipIf(os.name == "nt", "Windows filenames cannot end in a colon")
+    def test_source_change_selects_a_target_with_a_trailing_colon(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, build, graph = root / "source", root / "build", root / "graph.json"
+            source.mkdir()
+            (source / "CMakeLists.txt").write_text(
+                'cmake_minimum_required(VERSION 3.20)\nproject(ColonTarget C)\nenable_testing()\n'
+                'add_executable(probe probe.c)\nset_target_properties(probe PROPERTIES OUTPUT_NAME "fixture:")\n'
+                'add_test(NAME colon_target COMMAND probe)\n', encoding="utf-8")
+            (source / "probe.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja"],
+                           capture_output=True, check=True)
+            subprocess.run(["cmake", "--build", str(build)], capture_output=True, check=True)
+            self.tool("dump", build, graph)
+            changed = root / "changed.txt"
+            changed.write_text("probe.c\n", encoding="utf-8")
+            self.tool("select", build, graph, changed)
+            self.assertEqual(json.loads((build / "select.tests").read_text(encoding="utf-8")), {"1": "colon_target"})
+
     def test_file_outside_every_build_selects_its_directory(self):
         self.assertEqual(self.select("alpha/notes.h")[1], {"alpha", "alpha_data", "script"})
         self.assertEqual(self.select("README.md")[1], {"script"})
