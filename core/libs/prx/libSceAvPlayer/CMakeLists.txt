@@ -14,10 +14,25 @@ if(BUILD_TESTING)
     target_include_directories(guest_avplayer_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_avplayer_tests PRIVATE libSceAvPlayer libc)
     configure_windows_unwind(guest_avplayer_tests)
+    add_test_executable(guest_avplayer_trick_speed_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvPlayerTrickSpeed.cpp)
+    target_include_directories(guest_avplayer_trick_speed_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_avplayer_trick_speed_tests PRIVATE libSceAvPlayer libc)
+    configure_windows_unwind(guest_avplayer_trick_speed_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_trick_speed)
+    add_test(NAME guest_avplayer_trick_speed COMMAND guest_avplayer_trick_speed_tests)
+    set_tests_properties(guest_avplayer_trick_speed PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_trick_speed TIMEOUT 30)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer)
     add_test(NAME guest_avplayer COMMAND guest_avplayer_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_buffer_wait_accuracy)
+    add_test(NAME guest_avplayer_buffer_wait_accuracy COMMAND guest_avplayer_tests --buffer-wait-accuracy)
+    set_tests_properties(guest_avplayer_buffer_wait_accuracy PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_buffer_wait_accuracy TIMEOUT 15 RUN_SERIAL TRUE)
     add_test(NAME guest_avplayer_callback_close COMMAND guest_avplayer_tests --callback-close)
     add_test(NAME guest_avplayer_paused_first_video COMMAND guest_avplayer_tests --paused-first-video)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
+    add_test(NAME guest_avplayer_ps4_process COMMAND guest_avplayer_tests --ps4-process
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test_executable(avplayer_http_transport_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpTransport.cpp
@@ -44,7 +59,7 @@ if(BUILD_TESTING)
             endif()
             add_custom_target(avplayer_http_patched_closure)
             add_dependencies(avplayer_http_patched_closure
-                libc libkernel libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
+                libc libkernel libkernel_sys libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
             set(httpPatchedAllocatorArguments)
             if(WIN32 AND TARGET mimalloc)
                 add_dependencies(avplayer_http_patched_closure mimalloc pe_import_first)
@@ -60,6 +75,7 @@ if(BUILD_TESTING)
                 -DPATCHER=$<TARGET_FILE:nid_patcher>
                 -DLIBC=$<TARGET_FILE:libc>
                 -DKERNEL=$<TARGET_FILE:libkernel>
+                -DKERNEL_SYS=$<TARGET_FILE:libkernel_sys>
                 -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
                 -DHTTP=$<TARGET_FILE:libSceHttp>
                 -DAVPLAYER=$<TARGET_FILE:libSceAvPlayer>
@@ -93,9 +109,11 @@ if(BUILD_TESTING)
             set_tests_properties(guest_avplayer_http avplayer_http_transport PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         endif()
-        set_tests_properties(guest_avplayer PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_avplayer_buffer_wait_accuracy guest_avplayer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         set_tests_properties(guest_avplayer_paused_first_video PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
+        set_tests_properties(guest_avplayer_trick_speed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         set_tests_properties(guest_avplayer_callback_close PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")

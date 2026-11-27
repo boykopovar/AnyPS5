@@ -311,6 +311,17 @@ void relativeTableAndWholeFunction() {
     input.Data.push_back(data);
     require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x2000}, "Relative jump-table target was removed");
     input = fixture();
+    ripOperand(input, 0, {0x48, 0x8D, 0x05}, 0x1060);
+    emit(input, 7, {0xFF, 0xE0});
+    importThunk(input, 32, 0x2000);
+    importThunk(input, 64, 0x2008);
+    write<std::int32_t>(input.Text, 96, 0x1020 - 0x1060);
+    write<std::int32_t>(input.Text, 100, 0);
+    write<std::int32_t>(input.Text, 104, 0x1040 - 0x1060);
+    const auto codeTable = AnalyzeStrictReachability(input).ImportSlots;
+    require(codeTable.contains(0x2000), "Relative jump-table target in the code segment was removed");
+    require(!codeTable.contains(0x2008), "Relative jump table in the code segment was read past an entry pointing into itself");
+    input = fixture();
     emit(input, 0, {0xFF, 0xE0});
     importThunk(input, 32, 0x2000);
     input.Functions = {{0x1000, 0x1026, {}}};
@@ -726,6 +737,21 @@ void relativeTableTargetsBounds() {
     const auto modularWrap = ReadRelativeTableTargets(wrapData, std::numeric_limits<std::uint64_t>::max() - 0x7F, 0x1000, 0x200);
     require(modularWrap == std::vector<std::uint64_t>{0x1000},
             "Modular two's-complement displacement wrapping across the address boundary was lost");
+
+    std::vector<std::uint8_t> code(0x20, 0xCC);
+    write<std::int32_t>(code, 0x10, -0x10);
+    write<std::int32_t>(code, 0x14, 0);
+    write<std::int32_t>(code, 0x18, -0x8);
+    require(ReadRelativeTableTargets(code, 0x1010, 0x1000) == std::vector<std::uint64_t>{0x1000},
+            "Relative table reading in the code did not terminate at an entry pointing into the table");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(std::vector<std::uint8_t>{}, 0x1000, 0x1000);
+    }, "Empty code was accepted by relative table reader");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(code, std::numeric_limits<std::uint64_t>::max() - 0x10, std::numeric_limits<std::uint64_t>::max() - 0x10);
+    }, "Wrapping code range was accepted by relative table reader");
 }
 
 void pltCompactorBounds() {
@@ -1443,10 +1469,240 @@ void absoluteFunctionSymbols() {
                    "Strict filter accepted an SHN_ABS IFUNC symbol");
 }
 
+void sysvHashSymbolBounds() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x60);
+    write<std::uint64_t>(bytes, 216, 0x60);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+
+    write<std::int64_t>(bytes, 0x300, 0x61000039);
+    write<std::uint64_t>(bytes, 0x308, 0x100);
+    write<std::int64_t>(bytes, 0x310, 0x6100003B);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 4);
+    write<std::uint64_t>(bytes, 0x328, 0x2060);
+    write<std::int64_t>(bytes, 0x330, 0);
+    write<std::uint64_t>(bytes, 0x338, 0);
+
+    write<std::uint8_t>(bytes, 0x61C, 0x12);
+    write<std::uint16_t>(bytes, 0x61E, 1);
+    write<std::uint64_t>(bytes, 0x620, 0x1010);
+
+    write<std::uint32_t>(bytes, 0x360, 1);
+    write<std::uint32_t>(bytes, 0x364, 2);
+    write<std::uint32_t>(bytes, 0x368, 1);
+    write<std::uint32_t>(bytes, 0x36C, 0);
+    write<std::uint32_t>(bytes, 0x370, 0);
+
+    const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x900, 0x2000, 0}};
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Valid SysV hash table was rejected by strict filter");
+
+    auto badHeader = bytes;
+    write<std::uint32_t>(badHeader, 0x360, 0);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badHeader, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash header", "SysV hash with zero bucket count was accepted");
+
+    auto badBucket = bytes;
+    write<std::uint32_t>(badBucket, 0x368, 2);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badBucket, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash bucket index", "SysV hash with out of bounds bucket was accepted");
+
+    auto badChain = bytes;
+    write<std::uint32_t>(badChain, 0x370, 2);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badChain, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash chain index", "SysV hash with out of bounds chain was accepted");
+
+    auto badGeometry = bytes;
+    write<std::uint32_t>(badGeometry, 0x360, 0x40000000);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badGeometry, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash geometry", "SysV hash with overflowing geometry was accepted");
+}
+
+void gnuHashSymbolBounds() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x60);
+    write<std::uint64_t>(bytes, 216, 0x60);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+
+    write<std::int64_t>(bytes, 0x300, 0x61000039);
+    write<std::uint64_t>(bytes, 0x308, 0x100);
+    write<std::int64_t>(bytes, 0x310, 0x6100003B);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 0x6ffffef5);
+    write<std::uint64_t>(bytes, 0x328, 0x2060);
+    write<std::int64_t>(bytes, 0x330, 0);
+    write<std::uint64_t>(bytes, 0x338, 0);
+
+    write<std::uint8_t>(bytes, 0x61C, 0x12);
+    write<std::uint16_t>(bytes, 0x61E, 1);
+    write<std::uint64_t>(bytes, 0x620, 0x1010);
+
+    write<std::uint32_t>(bytes, 0x360, 1);
+    write<std::uint32_t>(bytes, 0x364, 1);
+    write<std::uint32_t>(bytes, 0x368, 1);
+    write<std::uint32_t>(bytes, 0x36C, 6);
+    write<std::uint64_t>(bytes, 0x370, 0);
+    write<std::uint32_t>(bytes, 0x378, 1);
+    write<std::uint32_t>(bytes, 0x37C, 1);
+
+    const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x900, 0x2000, 0}};
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Valid GNU hash table was rejected by strict filter");
+
+    auto badHeader = bytes;
+    write<std::uint32_t>(badHeader, 0x360, 0);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badHeader, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid GNU hash header", "GNU hash with zero bucket count was accepted");
+
+    auto badFirstSym = bytes;
+    write<std::uint32_t>(badFirstSym, 0x364, 0);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badFirstSym, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid GNU hash header", "GNU hash with zero firstSymbol was accepted");
+
+    auto badBucket = bytes;
+    write<std::uint32_t>(badBucket, 0x364, 2);
+    write<std::uint32_t>(badBucket, 0x378, 1);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badBucket, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid GNU hash bucket", "GNU hash with bucket index below firstSymbol was accepted");
+
+    auto badGeometry = bytes;
+    write<std::uint32_t>(badGeometry, 0x368, 0x20000000);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badGeometry, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid GNU hash geometry", "GNU hash with overflowing bloom geometry was accepted");
+}
+
+void importedSlotOverflow() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    auto bytes = elfFixture(input);
+    const std::vector<Relinker::NidReference> references = {
+        {"live", {}, 6, 0x300, std::numeric_limits<std::uint64_t>::max() - 4, 0}
+    };
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+    }, "Strict filter: imported slot address overflow", "Overflowing imported slot address was accepted");
+}
+
+void unusedNidFilterTextRangeBounds() {
+    const std::vector<std::uint8_t> emptyText;
+    const std::vector<Relinker::NidReference> references = {
+        {"live", {}, 6, 0x300, 0x2000, 0}
+    };
+    auto filter = Relinker::MakeUnusedNidFilter();
+    requireFailureMessage([&] {
+        filter->Filter(references, {}, emptyText, 0x1000);
+    }, "Cannot filter NIDs: text section is empty", "Empty text section was accepted by MakeUnusedNidFilter");
+
+    const std::vector<std::uint8_t> text(64, 0x90);
+    requireFailureMessage([&] {
+        filter->Filter(references, {}, text, std::numeric_limits<std::uint64_t>::max() - 10);
+    }, "Cannot filter NIDs: text section range exceeds the address space", "Overflowing text section address was accepted by MakeUnusedNidFilter");
+
+    const std::vector<Relinker::NidReference> overflowRefs = {
+        {"live", {}, 6, 0x300, std::numeric_limits<std::uint64_t>::max() - 4, 0}
+    };
+    requireFailureMessage([&] {
+        filter->Filter(overflowRefs, {}, text, 0x1000);
+    }, "Cannot filter NIDs: relocation slot address overflow", "Overflowing relocation slot was accepted by MakeUnusedNidFilter");
+}
+
+void pltCompactorSlotOverflow() {
+    const std::vector<std::uint8_t> text(64, 0x90);
+    const std::vector<Relinker::NidReference> references = {
+        {"live", {}, 7, 0x300, std::numeric_limits<std::uint64_t>::max() - 4, 0}
+    };
+    requireFailureMessage([&] {
+        Relinker::UnusedNidFilter::CompactPlt(references, references, text, 0x1000, 0, 0x300);
+    }, "Strict filter: PLT relocation slot address overflow", "Overflowing PLT relocation slot address was accepted");
+}
+
+void symbolCountApproachingUint32MaxBounds() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 3);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x40);
+    write<std::uint64_t>(bytes, 216, 0x40);
+    write<std::uint64_t>(bytes, 224, 8);
+
+    write<std::int64_t>(bytes, 0x300, 0x61000039);
+    write<std::uint64_t>(bytes, 0x308, 0x100);
+    write<std::int64_t>(bytes, 0x310, 0x6100003B);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 0x6100003F);
+    write<std::uint64_t>(bytes, 0x328, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) * 24);
+    write<std::int64_t>(bytes, 0x330, 0);
+    write<std::uint64_t>(bytes, 0x338, 0);
+
+    const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x900, 0x2000, 0}};
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+    }, "Strict filter: symbol count exceeds image size", "Symbol count approaching UINT32_MAX without overflow was incorrectly accepted");
+}
+
+void defaultFilterExtraLandingPadRoots() {
+    auto input = fixture();
+    emit(input, 0, {0x0F, 0x0B});
+    importThunk(input, 64, 0x2000);
+    const auto bytes = elfFixture(input);
+    const std::vector<Relinker::NidReference> references = {{"target", {}, 6, 0x300, 0x2000, 0}};
+    const auto filter = Relinker::MakeUnusedNidFilter();
+    const auto pruned = filter->Filter(references, bytes, input.Text, input.TextVaddr, {});
+    require(pruned.empty(), "Default filter kept import in unreachable landing pad without extra root");
+    const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr, {input.TextVaddr + 64});
+    require(kept.size() == 1, "Default filter dropped import in landing pad added as extra root");
+}
+
 }
 
 int main() {
     try {
+        defaultFilterExtraLandingPadRoots();
         deadTailAndExplicitEntry();
         ud1DeadTail();
         conditionalTailCall();
@@ -1476,6 +1732,12 @@ int main() {
         constructorArrayBounds();
         negativeRelativeRelocationTarget();
         absoluteFunctionSymbols();
+        sysvHashSymbolBounds();
+        gnuHashSymbolBounds();
+        importedSlotOverflow();
+        unusedNidFilterTextRangeBounds();
+        pltCompactorSlotOverflow();
+        symbolCountApproachingUint32MaxBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

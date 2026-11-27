@@ -10,18 +10,6 @@
 extern "C" {
 
 
-int APS5_VABI UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813BreakIterator23createCharacterInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35,10 +23,6 @@ int APS5_VABI _ZN6icu_6813BreakIterator18createLineInstanceERKNS_6LocaleER10UErr
 }
 
 int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -91,22 +75,6 @@ int APS5_VABI u_charName_nid_postfix() {
 }
 
 int APS5_VABI u_enumCharNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_flushDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_getDefaultConverter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_getFC_NFKC_Closure_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -187,10 +155,6 @@ int APS5_VABI ucnv_fromUnicode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_getCanonicalName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_getName() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -232,58 +196,6 @@ int APS5_VABI ucurr_getName() {
 }
 
 int APS5_VABI ucurr_openISOCurrencies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_setCommonData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_setFileAccess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_addLikelySubtags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_countAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getCharacterOrientation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_getDefault() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_minimizeSubtags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_setKeywordValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_toLanguageTag() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_toUnicodeLocaleType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFKCInstance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI unorm2_getNFKDInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 

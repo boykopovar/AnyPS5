@@ -1,5 +1,6 @@
 #include "Pm4Analysis.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/LabelStores.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <limits>
@@ -113,7 +114,9 @@ std::string describe(std::span<const std::uint32_t> p) {
         }
         case 0x45: {
             const auto write = Pm4::DecodeConditionalWrite(p);
-            return format("[%s] %s 0x%x mask 0x%x: store 0x%x to %s", hex(write.compared).c_str(), CompareNames[p[1] & 7u], p[4], p[5], write.value, hex(write.destination).c_str());
+            const auto polled = (p[1] & 0x10u) != 0 ? hex(write.compared) : format("register 0x%x", p[2]);
+            const auto target = ((p[1] >> 8u) & 3u) == 0 ? format("register 0x%x", p[6]) : hex(write.destination);
+            return format("[%s] %s 0x%x mask 0x%x: store 0x%x to %s", polled.c_str(), CompareNames[p[1] & 7u], p[4], p[5], write.value, target.c_str());
         }
         case 0x83: {
             const auto dump = Pm4::DecodeConstantRamDump(p);
@@ -539,7 +542,19 @@ void printPackets(std::FILE* output, const std::vector<DecodedPacket>& packets, 
     }
 }
 
+class PacketForms {
+public:
+    explicit PacketForms(bool gcn) : previous(ShaderRecompiler::GcnGuestShaders()) { ShaderRecompiler::SetGcnGuestShaders(gcn); }
+    ~PacketForms() { ShaderRecompiler::SetGcnGuestShaders(previous); }
+    PacketForms(const PacketForms&) = delete;
+    PacketForms& operator=(const PacketForms&) = delete;
+
+private:
+    bool previous;
+};
+
 std::vector<DecodedPacket> decodePackets(const CapturedSubmission& submission, bool text) {
+    const PacketForms forms(submission.gcn);
     const std::span<const std::uint32_t> commands = submission.commands;
     require(commands.size() == submission.dwords, "the commands do not hold the dword count of the index");
     std::vector<DecodedPacket> packets;

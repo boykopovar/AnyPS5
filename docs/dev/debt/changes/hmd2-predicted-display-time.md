@@ -1,0 +1,5 @@
+# libSceHmd2
+
+## change [sceHmd2ReprojectionEnableMirroring, sceHmd2ReprojectionGetPredictedDisplayTime and sceHmd2ReprojectionSetRenderConfig]
+
+- [sceHmd2ReprojectionEnableMirroring, sceHmd2ReprojectionGetPredictedDisplayTime and sceHmd2ReprojectionSetRenderConfig](../../../core/libs/prx/libSceHmd2/Export.cpp) (libSceHmd2) - headset timing requires a PS VR2 runtime. In a session, GetPredictedDisplayTime returns 0x8a720019 without writing, or 0x8a720008 for a null output, as [measured without a headset](https://github.com/boykopovar/AnyPS5/pull/7658#issuecomment-6408246816) on firmware 13.40 in PPSA01317 for frames 0, 1 and 0x123456789. EnableMirroring throws inside a session. SetRenderConfig returns 0x8a720009 if a flag other than bit 0 or 32 is set or a reserved argument is nonzero, and throws otherwise. Without a session all three return 0x8a72000b and write nothing, as [measured before sceHmd2Initialize](https://github.com/boykopovar/AnyPS5/pull/7798#issuecomment-6262489180) on firmware 13.60.

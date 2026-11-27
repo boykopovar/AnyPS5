@@ -22,8 +22,16 @@ void* operator new(std::size_t bytes) {
     if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
     throw std::bad_alloc();
 }
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes != 0 && failHostAllocationOfSize == bytes) {
+        failHostAllocationOfSize = 0;
+        return nullptr;
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
 #endif
 
 using Bn = Bignum;
@@ -257,6 +265,16 @@ static void CheckHostAllocationFault(bool provided, bool freeThrows) {
     BN_free_nid_postfix(original);
     Require(heapBlocks == std::array<HeapBlock, 16>{});
 }
+
+static void CheckNothrowAllocationFault() {
+    ResetTracking();
+    failHostAllocationOfSize = sizeof(BnCtx);
+    BnCtx* const ctx = BN_CTX_new_nid_postfix();
+    const bool consumed = failHostAllocationOfSize == 0;
+    failHostAllocationOfSize = 0;
+    Require(!ctx && consumed && callocCalls == 0);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
+}
 #endif
 
 static void CleanupFailures() {
@@ -269,7 +287,15 @@ static void CleanupFailures() {
     CheckHostAllocationFault(false, false);
     CheckHostAllocationFault(false, true);
     CheckHostAllocationFault(true, false);
+    CheckNothrowAllocationFault();
 #endif
+    ResetTracking();
+    BnCtx* const ctx = BN_CTX_new_nid_postfix();
+    Require(ctx != nullptr);
+    BN_CTX_start_nid_postfix(ctx);
+    BN_CTX_end_nid_postfix(ctx);
+    BN_CTX_free_nid_postfix(ctx);
+    Require(heapBlocks == std::array<HeapBlock, 16>{});
     for (Operation operation : {Operation::Binary, Operation::Hexadecimal, Operation::Inverse}) {
         for (bool throwing : {false, true}) {
             CheckFault(operation, false, 1, throwing, false);
@@ -288,6 +314,49 @@ static void CleanupFailures() {
             Require(heapBlocks == std::array<HeapBlock, 16>{});
         }
     }
+}
+
+static void NegativeZero() {
+    const unsigned char bytes[] = {0x00, 0x2a};
+    for (const char* start : {"-5", "-0", "-", "-FFFFFFFFFFFFFFFFFF"}) {
+        Bn* value = FromHex(start);
+        Require(value->neg == 1);
+        const auto* storage = value->d;
+        const int capacity = value->dmax;
+        Require(BN_bin2bn_nid_postfix(bytes, 0, value) == value);
+        Require(value->d == storage && value->dmax == capacity);
+        Require(value->neg == 1 && value->top == 0 && BN_num_bits_nid_postfix(value) == 0 && Printed(value) == "-0");
+        Require(BN_bin2bn_nid_postfix(nullptr, 0, value) == value && value->neg == 1 && value->top == 0);
+        Require(BN_bin2bn_nid_postfix(bytes, 2, value) == value && value->neg == 0 && Printed(value) == "2A");
+        BN_free_nid_postfix(value);
+    }
+    Bn* allocated = BN_bin2bn_nid_postfix(bytes, 0, nullptr);
+    Require(allocated && allocated->neg == 0 && allocated->top == 0 && Printed(allocated) == "0");
+    BN_free_nid_postfix(allocated);
+
+    for (const char* start : {"-0", "-", "-00"}) {
+        Bn* added = FromHex(start);
+        Require(BN_add_word_nid_postfix(added, 0) == 1 && added->neg == 1 && added->top == 0 && Printed(added) == "-0");
+        Require(BN_add_word_nid_postfix(added, 3) == 1 && added->neg == 0 && Printed(added) == "3");
+        Bn* subtracted = FromHex(start);
+        Require(BN_sub_word_nid_postfix(subtracted, 0) == 1 && subtracted->neg == 1 && subtracted->top == 0 && Printed(subtracted) == "-0");
+        Require(BN_sub_word_nid_postfix(subtracted, 3) == 1 && subtracted->neg == 1 && Printed(subtracted) == "-3");
+        Bn* set = FromHex(start);
+        Require(BN_set_word_nid_postfix(set, 0) == 1 && set->neg == 0 && Printed(set) == "0");
+        BN_free_nid_postfix(added);
+        BN_free_nid_postfix(subtracted);
+        BN_free_nid_postfix(set);
+    }
+
+    std::uint64_t limbs[] = {0x2a, 0};
+    Bn padded{limbs, 2, 2, 1, 2};
+    Require(BN_add_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 1);
+    Require(BN_sub_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 1);
+    Require(limbs[0] == 0x2a && limbs[1] == 0);
+    padded.neg = 0;
+    Require(BN_add_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 0);
+    Require(BN_sub_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 0);
+    Require(limbs[0] == 0x2a && limbs[1] == 0);
 }
 
 int main(int argc, char** argv) {
@@ -471,6 +540,20 @@ int main(int argc, char** argv) {
             BN_free_nid_postfix(operand);
             BN_free_nid_postfix(modulus);
         }
+        constexpr std::uint64_t divisionByZero = ((3u & 0xffu) << 24) | ((0xfffu & 0xfffu) << 12) | (103u & 0xfffu);
+        Bn* zero = FromHex("0");
+        for (const char* text : {"3", "0", "-3"}) {
+            Bn* operand = FromHex(text);
+            for (bool supplied : {false, true}) {
+                Require(BN_set_word_nid_postfix(r, 0x1234) == 1);
+                Require(BN_mod_inverse_nid_postfix(supplied ? r : nullptr, operand, zero, ctx) == nullptr);
+                Require(Hex(r) == "1234");
+                Require(ERR_get_error_nid_postfix() == divisionByZero);
+                Require(ERR_get_error_nid_postfix() == 0);
+            }
+            BN_free_nid_postfix(operand);
+        }
+        BN_free_nid_postfix(zero);
         Bn* allocated = BN_mod_inverse_nid_postfix(nullptr, three, eleven, ctx);
         Require(allocated && Hex(allocated) == "4");
         Bn* minusThree = FromHex("-3");
@@ -498,5 +581,6 @@ int main(int argc, char** argv) {
     }
     BN_CTX_free_nid_postfix(ctx);
     Print();
+    NegativeZero();
     return 0;
 }

@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -46,6 +48,12 @@ constexpr std::uint32_t BlendClamp = 1u << 15u;
 constexpr std::uint32_t FastClear = 1u << 13u;
 constexpr std::uint32_t Compression = 1u << 14u;
 constexpr std::uint32_t Thin1D = 13u;
+constexpr std::uint32_t Display2D = 10u;
+constexpr std::uint32_t Thin2D = 14u;
+constexpr std::uint32_t TiledWidth = 128;
+constexpr std::uint32_t TiledHeight = 64;
+constexpr std::size_t TiledSliceBytes = TiledWidth * TiledHeight * 4u;
+constexpr std::size_t SliceMemoryBytes = 4u * TiledSliceBytes;
 
 constexpr std::size_t ColorBytes = Width * Height * 4u;
 constexpr std::size_t CmaskBytes = 512u;
@@ -69,12 +77,20 @@ std::byte* LowMemory(std::size_t bytes) {
 #else
 #ifdef ANYPS5_ENABLE_ASAN
     constexpr std::uintptr_t FirstHint = 0x60000000;
+    constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 12u;
 #else
     constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
+    constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 32u;
 #endif
-    for (std::uintptr_t hint = FirstHint; hint < (std::uintptr_t{1} << 40u); hint += std::uintptr_t{1} << 32u) {
+    const std::uintptr_t rounded = (bytes + 0xfffu) & ~std::uintptr_t{0xfffu};
+    const std::uintptr_t stride = rounded < MinimumStride ? MinimumStride : rounded;
+    static std::uintptr_t next = FirstHint;
+    for (std::uintptr_t hint = next; hint < (std::uintptr_t{1} << 40u); hint += stride) {
         void* mapped = mmap(reinterpret_cast<void*>(hint), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (mapped != MAP_FAILED) return static_cast<std::byte*>(mapped);
+        if (mapped != MAP_FAILED) {
+            next = hint + stride;
+            return static_cast<std::byte*>(mapped);
+        }
     }
     return nullptr;
 #endif
@@ -188,6 +204,81 @@ std::string FmaskDecompress(std::uint32_t visibleHeight) {
     });
 }
 
+AgcDriver::Graphics::ColorTarget DecodeSlice(std::uint64_t base, std::uint32_t tileIndex, std::uint32_t slice, std::uint32_t samples) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    cx[0x319] = TiledWidth / 8u - 1u;
+    cx[0x31a] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x31b] = slice | (slice << 13u);
+    cx[0x31c] = (Format8888 << 2u) | BlendClamp;
+    const auto log2Samples = static_cast<std::uint32_t>(std::countr_zero(samples));
+    cx[0x31d] = tileIndex | (log2Samples << 12u) | (log2Samples << 15u);
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void LaterSlicesDecode() {
+    using AgcDriver::Graphics::GcnLayerBankXor;
+    using AgcDriver::Graphics::GcnTiling;
+    using AgcDriver::Graphics::TextureTileMode;
+    static std::byte* const sliceMemory = LowMemory(SliceMemoryBytes);
+    const auto base = AddressOf(sliceMemory);
+    if (sliceMemory == nullptr || base + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate array slice test memory below 1 TiB");
+        return;
+    }
+    const auto third = DecodeSlice(base, Thin2D, 3u, 1u);
+    Check(third.surfaceAddress == base + 3u * TiledSliceBytes && third.address == third.surfaceAddress && third.bytes == TiledSliceBytes, "slice 3 of a 2D-tiled GCN array is not at the array base plus three slices");
+    Check(third.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnThin2D, 4u), 3u) && third.pipeBankXor == (5u << 11u), "slice 3 of a 2D-tiled GCN array does not take the bank rotation the texture path gives array layer 3, (16 / 2 - 1) * 3 modulo 16 on the bank bits");
+    const auto display = DecodeSlice(base, Display2D, 1u, 1u);
+    Check(display.surfaceAddress == base + TiledSliceBytes && display.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnDisplay2D, 4u), 1u) && display.pipeBankXor == (7u << 11u), "slice 1 of a display 2D-tiled GCN array does not take the bank rotation of array layer 1");
+    Check(DecodeSlice(base, Thin2D, 0u, 1u).pipeBankXor == 0u, "slice 0 of a 2D-tiled GCN array has a bank XOR");
+    const auto micro = DecodeSlice(base, Thin1D, 2u, 1u);
+    Check(micro.surfaceAddress == base + 2u * TiledSliceBytes && micro.pipeBankXor == 0u, "slice 2 of a 1D-tiled GCN array is not at the base plus two slices without a bank XOR");
+    Check(DecodeSlice(base, Thin2D, 0u, 4u).samples == 4u, "slice 0 of a 2D-tiled 4x GCN array did not decode");
+    Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
+}
+
+AgcDriver::Graphics::ColorTarget DecodeTiled(std::uint64_t base, std::uint32_t tileIndex, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags) {
+    AgcDriver::Registers cx;
+    SetTarget(cx, samples, fragments, flags, true, AddressOf(fmaskMemory));
+    cx[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    cx[0x319] = TiledWidth / 8u - 1u;
+    cx[0x31a] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x322] = TiledWidth * TiledHeight / 64u - 1u;
+    cx[0x31d] = tileIndex | (static_cast<std::uint32_t>(std::countr_zero(samples)) << 12u) | (static_cast<std::uint32_t>(std::countr_zero(fragments)) << 15u);
+    return AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+}
+
+void MultisampledFootprintsAndFills() {
+    using AgcDriver::Graphics::MultisampledColorBytes;
+    using AgcDriver::Graphics::MultisampledColorFill;
+    Check(MultisampledColorBytes(Decode(4u, 4u, 0u)) == 0u, "a 1D-tiled 4x GCN target, whose multisampled layout is not modeled, has a color footprint");
+    static std::byte* const tiledMemory = LowMemory(SliceMemoryBytes);
+    if (tiledMemory == nullptr || AddressOf(tiledMemory) + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate 2D-tiled multisampled test memory below 1 TiB");
+        return;
+    }
+    const auto base = AddressOf(tiledMemory);
+    const auto two = DecodeTiled(base, Thin2D, 2u, 2u, 0u);
+    Check(two.bytes == TiledSliceBytes && MultisampledColorBytes(two) == 2u * TiledSliceBytes, "the color memory of a thin 2D 2x GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    const auto display = DecodeTiled(base, Display2D, 2u, 2u, 0u);
+    Check(MultisampledColorBytes(display) == 2u * TiledSliceBytes, "the color memory of a display 2D 2x GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    const auto four = DecodeTiled(base, Thin2D, 4u, 4u, 0u);
+    Check(MultisampledColorBytes(four) == 4u * TiledSliceBytes, "the color memory of a thin 2D 4x GCN target is not 4 times the size CB_COLOR_SLICE gives");
+    const auto eqaa = DecodeTiled(base, Thin2D, 4u, 2u, Compression);
+    Check(eqaa.eqaaFragments == 2u && MultisampledColorBytes(eqaa) == 2u * TiledSliceBytes, "the color memory of a thin 2D 4-sample 2-fragment GCN target is not 2 times the size CB_COLOR_SLICE gives");
+    MultisampledColorFill whole(four);
+    whole.NoteFill(four.address, 4u * TiledSliceBytes, 0x3c003c00u);
+    const auto cleared = whole.TakeFill();
+    Check(cleared && *cleared == 0x3c003c00u, "a fill of the whole color memory of a 4x GCN target was not taken as a clear");
+    MultisampledColorFill firstQuarter(four);
+    firstQuarter.NoteFill(four.address, TiledSliceBytes, 0u);
+    Check(Failure([&] { firstQuarter.TakeFill(); }).find("partly covers") != std::string::npos, "a fill of the first quarter of the color memory of a 4x GCN target was taken as a clear of all its samples");
+    MultisampledColorFill inside(four);
+    inside.NoteFill(four.address + TiledSliceBytes, TiledSliceBytes, 0u);
+    Check(Failure([&] { inside.TakeFill(); }).find("partly covers") != std::string::npos, "a fill inside the color memory of a 4x GCN target was not refused as partial");
+}
+
 void PaddedTargetsAreCovered() {
     Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
@@ -211,6 +302,8 @@ int main() {
         FewerFragmentsDecode();
         MultisampledSlicesDecode();
         PaddedTargetsAreCovered();
+        LaterSlicesDecode();
+        MultisampledFootprintsAndFills();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

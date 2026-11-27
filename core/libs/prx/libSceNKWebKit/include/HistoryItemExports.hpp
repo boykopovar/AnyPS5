@@ -34,5 +34,13 @@ void APS5_VABI _ZN7WebCore11HistoryItem18setPageScaleFactorEf(NKWebKit::WebCoreA
 void APS5_VABI _ZN7WebCore11HistoryItem15setIsTargetItemEb(NKWebKit::WebCoreAbi::HistoryItem* self, bool value);
 void APS5_VABI _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(NKWebKit::WebCoreAbi::HistoryItem* self, bool value);
 void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(NKWebKit::WebCoreAbi::HistoryItem* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* value);
+NKWebKit::WebCoreAbi::HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* target);
+void APS5_VABI _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title, const NKWebKit::WtfAbi::String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier);
+void APS5_VABI _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title, const NKWebKit::WtfAbi::String* alternateTitle, NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier);
+void APS5_VABI _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WebCoreAbi::HistoryItemVectorStorage* state);
+void APS5_VABI _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(NKWebKit::WebCoreAbi::HistoryItem* self, NKWebKit::WebCoreAbi::HistoryItem** child);
+void APS5_VABI _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::HistoryItem* self, void** object);
+void APS5_VABI _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::HistoryItem* self, void** formData);
 
 }

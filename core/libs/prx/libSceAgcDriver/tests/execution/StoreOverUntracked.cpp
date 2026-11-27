@@ -27,6 +27,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -141,7 +142,7 @@ void ReadImage(const std::uint32_t* texels, std::uint32_t* output) {
 
 class Surface {
 public:
-    explicit Surface(bool watched = false, std::size_t lead = 0) : watched(watched), regionBytes(lead == 0 ? SurfaceBytes : SurfaceBytes + Block) {
+    explicit Surface(bool watched = false, std::size_t lead = 0, std::size_t trailing = 0) : watched(watched), regionBytes((lead == 0 ? SurfaceBytes : SurfaceBytes + Block) + trailing) {
         if (watched) {
 #ifdef _WIN32
             region = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(regionBytes, Block));
@@ -279,22 +280,13 @@ struct Case {
 
 enum class Outcome { Kept, Lost, Missed };
 
-// The surface is outside the write watch from the start. Its first results are stored, which
-// leaves their bytes saved for the next store to compare with; the CPU writes another block, then
-// the next results land and are stored: the CPU's block was written after the first store, so it
-// keeps the CPU's bytes as the write watch would keep them.
 Outcome RunSecondStore(const char* name) {
-    Surface surface(true);
+    Surface surface;
     struct WaitForWork {
         ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
     } waitForWork;
     const auto address = surface.Address();
-    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes)) {
-        std::fprintf(stderr, "[store over untracked] %s: not run, the surface is not write-watched\n", name);
-        return Outcome::Kept;
-    }
-    AgcDriver::GuestMemory::Unwatch(address, SurfaceBytes);
-    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the surface is still write-watched");
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the second-store surface is write-watched");
     std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
     const auto heldLive = [&](std::uint32_t result) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -318,6 +310,7 @@ Outcome RunSecondStore(const char* name) {
     }
     Require(static_cast<const volatile std::uint32_t*>(surface.Texels())[0] == Stored, "store over untracked: the first result was not stored");
     hold.lock();
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the surface regained the write watch after its first store");
     const auto image = StorageTexture::FindLive(address, SurfaceBytes);
     const bool saved = image != nullptr && image->GuestSnapshotValid();
     hold.unlock();
@@ -341,6 +334,55 @@ Outcome RunSecondStore(const char* name) {
     return Outcome::Lost;
 }
 
+Outcome RunStoredThenLeftWatch(const char* name, bool cpuWrites, bool landed) {
+    Surface surface(true, 0, 16 * Block);
+    struct WaitForWork {
+        ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
+    } waitForWork;
+    const auto address = surface.Address();
+    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes)) {
+        std::fprintf(stderr, "[store over untracked] %s: not run, the surface is not write-watched\n", name);
+        return Outcome::Kept;
+    }
+    std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
+    Store(surface.Texels());
+    if (!HoldPending(hold, surface, Stored)) return Outcome::Missed;
+    StorageTexture::FlushAllPending("store over untracked fixture");
+    if (landed) {
+        hold.unlock();
+        std::vector<std::byte> stored(SurfaceBytes);
+        AgcDriver::GuestMemory::Read(address, stored);
+        Require(static_cast<const volatile std::uint32_t*>(surface.Texels())[0] == Stored, "store over untracked: the first result was not stored");
+        hold.lock();
+    }
+    const auto image = StorageTexture::FindLive(address, SurfaceBytes);
+    Require(image != nullptr, "store over untracked: the surface has no storage image");
+    if (!AgcDriver::GuestMemory::Watched(address, SurfaceBytes) || image->GuestSnapshotValid()) {
+        std::fprintf(stderr, "[store over untracked] %s: not run, the store did not stay in write-watched memory\n", name);
+        return Outcome::Kept;
+    }
+    AgcDriver::GuestMemory::Unwatch(address, SurfaceBytes);
+    Require(!AgcDriver::GuestMemory::Watched(address, SurfaceBytes), "store over untracked: the surface is still write-watched");
+    image->MarkDirty();
+    Require(StorageTexture::FindPending(address, SurfaceBytes) == image, "store over untracked: the results are not pending");
+    hold.unlock();
+    auto* written = surface.Bytes() + 2 * Block;
+    if (cpuWrites) {
+        for (std::size_t offset = 0; offset < Page; ++offset) static_cast<volatile std::uint8_t*>(written)[offset] = Pattern(offset);
+    }
+    hold.lock();
+    StorageTexture::FlushAllPending("store over untracked fixture");
+    hold.unlock();
+    std::vector<std::byte> whole(SurfaceBytes);
+    AgcDriver::GuestMemory::Read(address, whole);
+    Require(static_cast<const volatile std::uint32_t*>(surface.Texels())[0] == Stored, "store over untracked: the results did not reach a block the CPU left alone");
+    if (!cpuWrites) return Outcome::Kept;
+    const auto lost = LostBytes(written);
+    if (lost == 0) return Outcome::Kept;
+    std::fprintf(stderr, "[store over untracked] %s: of 0x%zx bytes the CPU wrote while the results were pending, %zu were lost\n", name, Page, lost);
+    return Outcome::Lost;
+}
+
 Outcome Run(const Case& test) {
     std::optional<Surface> output;
     std::optional<Surface> source;
@@ -348,7 +390,7 @@ Outcome Run(const Case& test) {
     const bool neighbour = test.kind == Kind::NeighbourLeftWatch;
     const bool leaves = test.kind == Kind::LeftWatch || test.kind == Kind::WrittenThenLeftWatch || test.kind == Kind::ImportLeftWatch || neighbour;
     surfaceTile = neighbour ? TileLinear : TileR64KBX;
-    Surface surface(leaves, neighbour ? Page : 0);
+    Surface surface(leaves, neighbour ? Page : 0, leaves ? 16 * Block : 0);
     struct WaitForWork {
         ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
     } waitForWork;
@@ -517,6 +559,16 @@ int main(int argc, char** argv) {
             for (std::uint32_t attempt = 0; attempt < 256u && outcome == Outcome::Missed; ++attempt) outcome = RunSecondStore(name);
             Require(outcome != Outcome::Missed, "store over untracked: the result was never held pending");
             kept = outcome == Outcome::Kept && kept;
+        }
+        for (const auto tile : {TileR64KBX, TileLinear}) {
+            for (const auto& [cpuWrites, landed] : {std::pair{false, true}, std::pair{true, true}, std::pair{false, false}}) {
+                surfaceTile = tile;
+                const auto name = std::string(tile == TileLinear ? "a linear surface" : "a tiled surface") + " stored while watched that left the watch before its next results" + (cpuWrites ? ", the CPU writing a block while they were pending" : "") + (landed ? "" : ", its store still in flight");
+                auto outcome = Outcome::Missed;
+                for (std::uint32_t attempt = 0; attempt < 256u && outcome == Outcome::Missed; ++attempt) outcome = RunStoredThenLeftWatch(name.c_str(), cpuWrites, landed);
+                Require(outcome != Outcome::Missed, "store over untracked: the result was never held pending");
+                kept = outcome == Outcome::Kept && kept;
+            }
         }
         Require(kept, "a pending storage result was stored over bytes the CPU wrote to untracked memory");
         AgcDriverShutdown_nid_postfix();

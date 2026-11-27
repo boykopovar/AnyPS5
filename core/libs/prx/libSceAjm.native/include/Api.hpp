@@ -28,14 +28,17 @@ struct WVorbisSetupPacketParameter {
     std::size_t outputSize;
 };
 
+constexpr int SCE_AJM_PRIORITY_MIN = 20;
+constexpr int SCE_AJM_PRIORITY_MAX = 100;
+
 extern "C" {
 
 int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const void* pcmInput, size_t pcmInputSize, void* bitstreamOutput, size_t bitstreamOutputSize, void* result);
 const char* APS5_VABI sceAjmStrError(int error);
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param);
 int APS5_VABI sceAjmDecWVorbisCreateSetupPacket(WVorbisSetupPacketParameter* parameter);
-int APS5_VABI sceAjmBatchGetLog();
-int APS5_VABI sceAjmInstanceAvailable();
+int APS5_VABI sceAjmBatchGetLog(uint32_t context, uint32_t size, void* buffer, void* out);
+int APS5_VABI sceAjmInstanceAvailable(uint32_t context, uint32_t codec, uint64_t flags);
 uint32_t APS5_VABI sceAjmInstanceCodecType(uint32_t instanceId);
 int APS5_VABI sceAjmInstanceExtend(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance);
 int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance);

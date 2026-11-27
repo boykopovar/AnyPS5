@@ -15,6 +15,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #endif
 
 namespace {
@@ -44,9 +45,9 @@ std::filesystem::path StatusPath(const std::filesystem::path& path) {
     const auto native = path.native();
     if (native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return path;
     std::error_code error;
-    const auto absolute = std::filesystem::absolute(path, error);
+    const auto absolute = WindowsAbsolutePath_nid_no_patch(path, error);
     if (error) return path;
-    const auto normalized = absolute.lexically_normal().make_preferred().native();
+    const auto& normalized = absolute.native();
     if (normalized.size() < MAX_PATH) return absolute;
     return normalized.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + normalized.substr(2))
                                           : std::filesystem::path(L"\\\\?\\" + normalized);
@@ -117,9 +118,11 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle
 }
 
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target) {
-    target[0] = '/';
-    target[1] = '\0';
-    return true;
+    constexpr char root[] = "/";
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(target, root, sizeof(root));
+    errno = savedErrno;
+    return written;
 }
 
 }

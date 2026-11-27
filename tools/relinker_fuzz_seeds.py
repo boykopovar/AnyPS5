@@ -2,6 +2,7 @@ import argparse
 import importlib
 import inspect
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,8 +14,8 @@ SELECTORS = (0, 1, 2, 4)
 
 def without_arguments(function):
     for parameter in inspect.signature(function).parameters.values():
-        positional = parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
-        if positional and parameter.default is inspect.Parameter.empty:
+        variadic = parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
+        if not variadic and parameter.default is inspect.Parameter.empty:
             return False
     return True
 
@@ -61,7 +62,10 @@ def main(argv=None):
     try:
         for name, data in images():
             for selector in selectors:
-                (arguments.output / f"{name}-{selector}").write_bytes(bytes([selector]) + data)
+                with tempfile.TemporaryDirectory(dir=arguments.output) as temporary:
+                    seed = Path(temporary) / "seed"
+                    seed.write_bytes(bytes([selector]) + data)
+                    seed.replace(arguments.output / f"{name}-{selector}")
                 count += 1
     except OSError as error:
         parser.error(str(error))
@@ -70,4 +74,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     sys.exit(main())

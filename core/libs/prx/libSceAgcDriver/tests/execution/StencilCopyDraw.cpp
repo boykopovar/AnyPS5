@@ -1,6 +1,8 @@
+#include <string_view>
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -181,9 +183,14 @@ void CopyHoldsTheDrawnStencil(std::uint32_t renderControl, std::uint32_t samples
 
 int main() {
     try {
+        bool twoSamplePlanes = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            const auto context = device->graphicsContext();
+            constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            VkImageFormatProperties properties{};
+            twoSamplePlanes = context.imageFormatProperties(context.physical, AgcDriver::Graphics::HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) == VK_SUCCESS && (properties.sampleCounts & VK_SAMPLE_COUNT_2_BIT) != 0u;
         }
         Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Registered(PixelHeader, WhitePixelCode.data(), sizeof(WhitePixelCode), 1);
@@ -191,6 +198,20 @@ int main() {
         AgcDriverResolveShaderAbi_nid_postfix(&PixelHeader.shader, pixelContext, {});
         CopyHoldsTheDrawnStencil(0x88u, 1, "a centroid stencil copy of a one-sample plane");
         CopyHoldsTheDrawnStencil(0x08u, 1, "a sample 0 stencil copy of a one-sample plane");
+        if (!twoSamplePlanes) {
+            try {
+                CopyHoldsTheDrawnStencil(0x88u, 2, "a centroid stencil copy of a two-sample plane the device cannot hold");
+            } catch (const std::exception& error) {
+                try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
+                if (std::string_view(error.what()).find("cannot hold 2 samples on this device") == std::string_view::npos) {
+                    std::cerr << "a two-sample stencil plane the device cannot hold was not refused for its sample count: " << error.what() << '\n';
+                    return 1;
+                }
+                std::puts("skipped, the device lacks two-sample D32_SFLOAT_S8_UINT depth/stencil attachments");
+                return VulkanTestSkipped;
+            }
+            Require(false, "a two-sample stencil plane the device cannot hold was drawn");
+        }
         CopyHoldsTheDrawnStencil(0x88u, 2, "a centroid stencil copy of a two-sample plane");
         CopyHoldsTheDrawnStencil(0x108u, 2, "a sample 1 stencil copy of a two-sample plane");
         CopyHoldsTheDrawnStencil(0x88u, 2, "a centroid stencil copy of a two-sample plane into an alternate-swap target written through green", R8UintAlternate, 2);
@@ -199,8 +220,12 @@ int main() {
         std::puts("the DB stencil copy wrote both drawn stencil values exactly where its draw rasterized");
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
         try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
+        if (std::string_view(error.what()).find("custom sample locations require VK_EXT_sample_locations support") != std::string_view::npos) {
+            std::puts("skipped, the device lacks VK_EXT_sample_locations for the draw's sample count");
+            return VulkanTestSkipped;
+        }
+        std::cerr << error.what() << '\n';
         return 1;
     }
 }

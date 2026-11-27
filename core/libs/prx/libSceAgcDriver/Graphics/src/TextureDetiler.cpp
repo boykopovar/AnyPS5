@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetile_spv.h"
@@ -8,11 +10,14 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureRepack_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImageWords_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileWords_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/Bc1Decode_spv.h"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -67,6 +72,39 @@ std::uint32_t PipelineKey(TextureTileMode tileMode, std::uint32_t elementBytes, 
     return (image ? 1u << 18 : 0u) | (thick ? 1u << 17 : 0u) | (retile ? 1u << 16 : 0u) | (static_cast<std::uint32_t>(tileMode) << 8) | elementBytes;
 }
 
+std::vector<DetileWindow> OversizedBands(const Context& context, TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, bool thick, bool linearBuffer, const DetileWindow& window) {
+    const bool whole = window.rangeBegin == 0 && window.rangeEnd == 0xffffffffu && window.tiledBase == 0 && window.linearBase == 0 && window.linearBytes == 0 && window.columnBegin == 0 && window.columnEnd == 0 && window.rowBegin == 0 && window.rowEnd == 0;
+    if (!whole || layout.tail || thick || layout.gcnMicroTiled || layout.gcnSplitStride != 0 || IsGcnTiled(tileMode) || layout.height == 0 || layout.tiledSize > UINT32_MAX || (linearBuffer && layout.linearSize > UINT32_MAX)) return {};
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const std::uint64_t limit = context.limits.maxStorageBufferRange;
+    if (limit <= alignment + 4u) return {};
+    const auto budget = limit - alignment - 4u;
+    const bool linear = tileMode == TextureTileMode::kLinear;
+    const auto block = linear ? std::array<std::uint32_t, 3>{0u, 0u, 1u} : ThinBlockLayout(tileMode, elementBytes);
+    const std::uint64_t rowHeight = block[2];
+    const std::uint64_t tiledPerRow = linear ? layout.pitchBytes : static_cast<std::uint64_t>(layout.blocksPerRow) * block[0];
+    const std::uint64_t linearPerRow = rowHeight * layout.pitchBytes;
+    if (rowHeight == 0 || tiledPerRow == 0) return {};
+    const auto rowsPerBand = budget / std::max(tiledPerRow, linearBuffer ? linearPerRow : std::uint64_t{0});
+    if (rowsPerBand == 0) return {};
+    std::vector<DetileWindow> bands;
+    const auto blockRows = (layout.height + rowHeight - 1u) / rowHeight;
+    for (std::uint64_t row = 0; row < blockRows; row += rowsPerBand) {
+        const auto rows = std::min(rowsPerBand, blockRows - row);
+        DetileWindow band{};
+        band.rangeBegin = static_cast<std::uint32_t>(row * tiledPerRow);
+        band.rangeEnd = static_cast<std::uint32_t>(std::min<std::uint64_t>(layout.tiledSize, (row + rows) * tiledPerRow));
+        band.tiledBase = band.rangeBegin;
+        band.rowBegin = static_cast<std::uint32_t>(row * rowHeight);
+        band.rowEnd = static_cast<std::uint32_t>(std::min<std::uint64_t>(layout.height, (row + rows) * rowHeight));
+        band.linearBase = linearBuffer ? band.rowBegin * layout.pitchBytes : 0u;
+        band.linearBytes = linearBuffer ? std::min<std::uint64_t>(layout.linearSize - band.linearBase, static_cast<std::uint64_t>(band.rowEnd - band.rowBegin) * layout.pitchBytes) : 0u;
+        band.pipeBankXor = window.pipeBankXor;
+        if (band.rangeBegin < band.rangeEnd) bands.push_back(band);
+    }
+    return bands;
+}
+
 }
 
 TextureDetiler::TextureDetiler(const Context& context) : context(context) {
@@ -103,11 +141,65 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
     }
 }
 
+TextureDetiler::TextureDetiler(const Context& context, Retired) : context(context) {
+}
+
 TextureDetiler::~TextureDetiler() {
+    if (!recorders.empty() && retireToRecorders()) return;
     release();
 }
 
+bool TextureDetiler::retireToRecorders() noexcept {
+    try {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        std::vector<Recorder*> busy;
+        for (const auto& [recorder, id] : recorders) {
+            if (Recorder::Alive(id) && !recorder->Idle()) busy.push_back(recorder);
+        }
+        if (busy.empty()) return false;
+        std::shared_ptr<TextureDetiler> retired(new TextureDetiler(context, Retired{}));
+        retired->adopt(*this);
+        for (auto* recorder : busy) {
+            if (!recorder->KeepWithOutstanding(retired)) {
+                static_cast<void>(new (std::nothrow) std::shared_ptr<TextureDetiler>(retired));
+                break;
+            }
+        }
+        return true;
+    } catch (...) {
+        return true;
+    }
+}
+
+void TextureDetiler::adopt(TextureDetiler& other) noexcept {
+    descriptorLayout = std::exchange(other.descriptorLayout, VK_NULL_HANDLE);
+    pipelineLayout = std::exchange(other.pipelineLayout, VK_NULL_HANDLE);
+    module = std::exchange(other.module, VK_NULL_HANDLE);
+    pipelines = std::exchange(other.pipelines, {});
+    descriptorSets = std::exchange(other.descriptorSets, {});
+    cmaskDescriptorLayout = std::exchange(other.cmaskDescriptorLayout, VK_NULL_HANDLE);
+    cmaskPipelineLayout = std::exchange(other.cmaskPipelineLayout, VK_NULL_HANDLE);
+    cmaskPipeline = std::exchange(other.cmaskPipeline, VK_NULL_HANDLE);
+    cmaskDescriptorSets = std::exchange(other.cmaskDescriptorSets, {});
+    cmaskErrors = std::move(other.cmaskErrors);
+    imageDescriptorLayout = std::exchange(other.imageDescriptorLayout, VK_NULL_HANDLE);
+    imagePipelineLayout = std::exchange(other.imagePipelineLayout, VK_NULL_HANDLE);
+    imageModule = std::exchange(other.imageModule, VK_NULL_HANDLE);
+    repackModule = std::exchange(other.repackModule, VK_NULL_HANDLE);
+    repackPipeline = std::exchange(other.repackPipeline, VK_NULL_HANDLE);
+    imageWordModule = std::exchange(other.imageWordModule, VK_NULL_HANDLE);
+    wordModule = std::exchange(other.wordModule, VK_NULL_HANDLE);
+    imageDescriptorSets = std::exchange(other.imageDescriptorSets, {});
+    readbackDescriptorLayout = std::exchange(other.readbackDescriptorLayout, VK_NULL_HANDLE);
+    readbackPipelineLayout = std::exchange(other.readbackPipelineLayout, VK_NULL_HANDLE);
+    readbackModules = std::exchange(other.readbackModules, {});
+    readbackPipelines = std::exchange(other.readbackPipelines, {});
+    readbackDescriptorSets = std::exchange(other.readbackDescriptorSets, {});
+    multisampleUploadModule = std::exchange(other.multisampleUploadModule, VK_NULL_HANDLE);
+}
+
 void TextureDetiler::release() noexcept {
+    if (bc1DecodePipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, bc1DecodePipeline, nullptr);
     for (const auto pool : readbackDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
     for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
@@ -247,6 +339,11 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     const std::uint64_t linearBytes = window.linearBytes != 0 ? window.linearBytes : layout.linearSize - std::min<std::uint64_t>(window.linearBase, layout.linearSize);
     const auto sourceRange = (sourceBase + (retile ? linearBytes : tiledBytes) + 3) / 4 * 4;
     const auto destinationRange = (destinationBase + (retile ? tiledBytes : linearBytes) + 3) / 4 * 4;
+    if (sourceRange > context.limits.maxStorageBufferRange || destinationRange > context.limits.maxStorageBufferRange) {
+        const auto bands = OversizedBands(context, tileMode, elementBytes, layout, thick, true, window);
+        for (const auto& band : bands) Dispatch(commands, tileMode, elementBytes, source, sourceOffset + (retile ? band.linearBase : band.tiledBase), destination, destinationOffset + (retile ? band.tiledBase : band.linearBase), layout, retile, slice, thick, band);
+        if (!bands.empty()) return;
+    }
     Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet();
     const VkDescriptorBufferInfo sourceInfo{source, sourceDescriptorOffset, sourceRange};
@@ -438,6 +535,11 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     Require(base <= UINT32_MAX, "texture detiling buffer offset exceeds addressable range");
     const std::uint64_t tiledBytes = window.rangeEnd == 0xffffffffu ? layout.tiledSize : std::min<std::uint64_t>(layout.tiledSize, window.rangeEnd) - window.tiledBase;
     const auto range = (base + tiledBytes + 3) / 4 * 4;
+    if (range > context.limits.maxStorageBufferRange) {
+        const auto bands = OversizedBands(context, tileMode, elementBytes, layout, false, false, window);
+        for (const auto& band : bands) DispatchImage(commands, tileMode, elementBytes, tiled, tiledOffset + band.tiledBase, view, layout, retile, slice, band);
+        if (!bands.empty()) return;
+    }
     Require(range <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet(true);
     const VkDescriptorBufferInfo bufferInfo{tiled, descriptorOffset, range};
@@ -482,6 +584,53 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
+}
+
+void TextureDetiler::DispatchBc1Decode(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout) {
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "BC1 decode needs a command buffer and both buffers");
+    Require(sourceOffset % 4u == 0u && destinationOffset % 4u == 0u, "BC1 decode needs word-aligned buffers");
+    const auto pitch = static_cast<std::uint64_t>(layout.pitchBytes);
+    const auto decodedPitch = pitch * 8u;
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto range = context.limits.maxStorageBufferRange;
+    Require(pitch % 8u == 0 && layout.width != 0 && layout.width <= pitch / 8u && layout.height != 0, "BC1 decode needs a valid block layout");
+    Require(decodedPitch + alignment - 1u <= range, "a decoded BC1 block row exceeds the device's storage buffer range");
+    const auto maxRows = static_cast<std::uint32_t>(std::min<VkDeviceSize>((range - alignment + 1u) / decodedPitch, context.limits.maxComputeWorkGroupCount[1]));
+
+    if (bc1DecodePipeline == VK_NULL_HANDLE) {
+        const auto create = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
+        const auto destroy = context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule");
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        const auto shader = CreateShaderModule(context, BC1_DECODE_SPV, sizeof(BC1_DECODE_SPV), "vkCreateShaderModule BC1 decode");
+        VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, shader, "main", nullptr};
+        info.layout = pipelineLayout;
+        const auto result = create(context.device, context.pipelineCache, 1, &info, nullptr, &bc1DecodePipeline);
+        destroy(context.device, shader, nullptr);
+        Check(result, "vkCreateComputePipelines BC1 decode");
+    }
+
+    context.BindComputePipeline(commands, bc1DecodePipeline);
+    for (std::uint32_t row = 0; row < layout.height;) {
+        const auto rows = std::min(layout.height - row, maxRows);
+        const auto src = sourceOffset + row * pitch;
+        const auto dst = destinationOffset + row * decodedPitch;
+        const std::array<VkDescriptorBufferInfo, 2> buffers{{
+            {source, src - src % alignment, src % alignment + rows * pitch},
+            {destination, dst - dst % alignment, dst % alignment + rows * decodedPitch},
+        }};
+        const auto set = allocateSet();
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (std::uint32_t index = 0; index < writes.size(); ++index) {
+            writes[index] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, index, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffers[index], nullptr};
+        }
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+        const std::array<std::uint32_t, 4> push{static_cast<std::uint32_t>(src % alignment), static_cast<std::uint32_t>(dst % alignment), layout.width, layout.pitchBytes / 8u};
+        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+        context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (layout.width + 63u) / 64u, rows, 1);
+        row += rows;
+    }
 }
 
 }

@@ -24,7 +24,7 @@ RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
 
-def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12, preinit=False):
+def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12, preinit=False, sce_lifecycle=False, init=None, fini=None):
     image = module_with_symbol(exported)
     image[0x89c] = symbol_info
     image.extend(bytes(0xE00 - len(image)))
@@ -35,6 +35,10 @@ def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, expor
             (7, 0x2300), (8, len(rela) * 24), (9, 24)]
     if plt:
         tags += [(23, 0x2400), (2, len(plt) * 24), (20, 7), (3, TARGET)]
+    if init is not None:
+        tags.append((12, init))
+    if fini is not None:
+        tags.append((13, fini))
     if lifecycle:
         tags += [(25, TARGET), (27, 8), (26, TARGET), (28, 8)]
     if preinit:
@@ -45,6 +49,11 @@ def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, expor
         variants = {5: 0x61000035, 10: 0x61000037, 6: 0x61000039, 11: 0x6100003b,
                     7: 0x6100002f, 8: 0x61000031, 9: 0x61000033,
                     23: 0x61000029, 2: 0x6100002d, 20: 0x6100002b, 3: 0x61000027}
+        if sce_lifecycle:
+            variants.update({12: 0x6000000c, 13: 0x6000000d,
+                             25: 0x60000019, 27: 0x6000001b,
+                             26: 0x6000001a, 28: 0x6000001c,
+                             32: 0x60000020, 33: 0x60000021})
         tags = [(variants.get(tag, tag), value - 0x2200 if tag in (5, 6, 7, 23) else value)
                 for tag, value in tags]
     tags.append((0, 0))
@@ -260,6 +269,8 @@ def check_output(data, system, rela, plt, initial, addend=FUNCTION):
 
 
 def valid_cases(sce):
+    for value in (0, 123):
+        yield f"symbolic-{value}", insert_dynamic_tag(module([RELATIVE], sce=sce), 16, value), [RELATIVE], [], UNCHANGED, FUNCTION
     for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
         for encoding in ("rela", "repeated", "relr"):
             image, initial = relative_module(addend, sce, encoding)
@@ -276,6 +287,8 @@ def valid_cases(sce):
     for name, rela, plt, lifecycle, initial in cases:
         symbol_info = 0x11 if name == "relative-defined-object" else 0x12
         yield name, module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info), rela, plt, initial, FUNCTION
+    if sce:
+        yield "lifecycle-os-tags", module([(TARGET, 0, -1), RELATIVE, OVERLAP], [], sce=True, lifecycle=True, initial=0, sce_lifecycle=True), [(TARGET, 0, -1), RELATIVE, OVERLAP], [], 0, FUNCTION
     for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
         yield name, module(rela, sce=sce), [RELATIVE], [], UNCHANGED, FUNCTION
     for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
@@ -293,7 +306,6 @@ def invalid_cases(sce):
     yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
-    yield "invalid-guest-symbol-addend", module([(TARGET, (1 << 32) | 6, 1)], sce=sce), "Invalid guest symbol relocation"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
     yield "overlapping-partial", module([NOOP, RELATIVE, (TARGET + 4, 8, FUNCTION)], sce=sce), "Overlapping guest relocations"
     yield "relative-over-symbol", module([SYMBOL_POINTER, RELATIVE], sce=sce), "Overlapping guest relocations"
@@ -317,16 +329,34 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "preinit-without-address", change_tag(module([NOOP], sce=sce, preinit=True, init=FUNCTION), 32, replacement=0x61000001), "Incomplete guest lifecycle array"
+    yield "preinit-without-size", change_tag(module([NOOP], sce=sce, preinit=True, init=FUNCTION), 33, replacement=0x61000001), "Incomplete guest lifecycle array"
     yield "preinit-without-init", module([NOOP], sce=sce, preinit=True), "Guest PREINIT_ARRAY has no module initializer"
+    if sce:
+        yield "ambiguous-init", insert_dynamic_tag(module([NOOP], sce=True, init=FUNCTION), 0x6000000c, FUNCTION), "Missing or ambiguous dynamic tag 12"
+        yield "ambiguous-fini", insert_dynamic_tag(module([NOOP], sce=True, fini=FUNCTION), 0x6000000d, FUNCTION), "Missing or ambiguous dynamic tag 13"
+        yield "ambiguous-init-array", insert_dynamic_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0), 0x60000019, TARGET), "Missing or ambiguous dynamic tag 25"
+        yield "ambiguous-init-arraysz", insert_dynamic_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0), 0x6000001b, 8), "Missing or ambiguous dynamic tag 27"
+        yield "ambiguous-fini-array", insert_dynamic_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0), 0x6000001a, TARGET), "Missing or ambiguous dynamic tag 26"
+        yield "ambiguous-fini-arraysz", insert_dynamic_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0), 0x6000001c, 8), "Missing or ambiguous dynamic tag 28"
+        yield "ambiguous-preinit-array", insert_dynamic_tag(module([NOOP], sce=True, preinit=True, init=FUNCTION), 0x60000020, TARGET), "Missing or ambiguous dynamic tag 32"
+        yield "ambiguous-preinit-arraysz", insert_dynamic_tag(module([NOOP], sce=True, preinit=True, init=FUNCTION), 0x60000021, 8), "Missing or ambiguous dynamic tag 33"
+        yield "ambiguous-pltgot", insert_dynamic_tag(module(plt=[NOOP], sce=True), 3, TARGET), "Missing or ambiguous dynamic tag 3"
+        yield "os-lifecycle-without-address", change_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0, sce_lifecycle=True), 0x60000019, replacement=0x61000001), "Incomplete guest lifecycle array"
+        yield "os-unaligned-lifecycle-size", change_tag(module([RELATIVE], sce=True, lifecycle=True, initial=0, sce_lifecycle=True), 0x6000001b, 4), "Unaligned guest lifecycle array size"
+        yield "os-preinit-without-address", change_tag(module([NOOP], sce=True, preinit=True, sce_lifecycle=True, init=FUNCTION), 0x60000020, replacement=0x61000001), "Incomplete guest lifecycle array"
+        yield "os-preinit-without-size", change_tag(module([NOOP], sce=True, preinit=True, sce_lifecycle=True, init=FUNCTION), 0x60000021, replacement=0x61000001), "Incomplete guest lifecycle array"
+        yield "os-preinit-without-init", module([NOOP], sce=True, preinit=True, sce_lifecycle=True), "Guest PREINIT_ARRAY has no module initializer"
+        yield "os-unmapped-init", module([NOOP], sce=True, init=0xffffffffffffffff, sce_lifecycle=True), "Unmapped or inaccessible guest address"
+        yield "os-unmapped-fini", module([NOOP], sce=True, fini=0xffffffffffffffff, sce_lifecycle=True), "Unmapped or inaccessible guest address"
     yield "unsupported-dynamic-flags", insert_dynamic_tag(module([NOOP], sce=sce), 30, 1), "Unsupported guest dynamic flags"
     yield "unsupported-dynamic-tag-rpath", insert_dynamic_tag(module([NOOP], sce=sce), 15, 0), "Unsupported dynamic tag 15"
-    yield "unsupported-dynamic-tag-symbolic", insert_dynamic_tag(module([NOOP], sce=sce), 16, 0), "Unsupported dynamic tag 16"
     yield "unsupported-dynamic-tag-rel", insert_dynamic_tag(module([NOOP], sce=sce), 17, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-rela", insert_dynamic_tag(module([NOOP], sce=sce), 18, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-unused", insert_dynamic_tag(module([NOOP], sce=sce), 19, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-textrel", insert_dynamic_tag(module([NOOP], sce=sce), 22, 0), "Unsupported dynamic tag 22"
     strtab = 0x61000035 if sce else 5
-    yield "duplicate-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 0), f"Duplicate dynamic tag {strtab}"
+    yield "conflicting-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 1), f"Conflicting duplicate dynamic tag {strtab}"
     yield "unterminated-dynamic-segment", truncate_dynamic_terminator(module([NOOP], sce=sce)), "Unterminated dynamic segment"
     yield "duplicate-dynamic-segment", duplicate_dynamic_segment(module([NOOP], sce=sce)), "Duplicate dynamic segment"
     yield "duplicate-sce-dynamic-data", duplicate_sce_dynamic_data(module([NOOP], sce=sce)), "Duplicate SCE dynamic data"
@@ -396,6 +426,8 @@ def main():
                     artifact = artifacts / f"{name}.prx.guest.prx"
                     try:
                         check_output(artifact.read_bytes(), system, rela, plt, initial, addend=addend)
+                        if name.startswith("symbolic-") and system == "linux":
+                            assert dynamic_tags(artifact.read_bytes())[30] & 2
                     except AssertionError as error:
                         raise AssertionError((sce, name, system, *error.args)) from error
                     if name in ("mixed", "plt-mixed"):
@@ -418,6 +450,12 @@ def main():
                     result, artifact, output = convert(f"{sce}-{name}", "windows", image)
                     assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
                     assert not artifact.exists() and not output.exists(), name
+            if "linux" in systems:
+                strtab, value = (0x61000035, 0) if sce else (5, 0x2200)
+                image = insert_dynamic_tag(module([RELATIVE], sce=sce), strtab, value)
+                result, artifact, output = convert(f"{sce}-identical-dynamic-tag-strtab", "linux", image)
+                assert result.returncode == 0, (sce, result.stdout, result.stderr)
+                check_output(artifact.read_bytes(), "linux", [RELATIVE], [], UNCHANGED)
     print(f"Guest no-op relocation {group} tests passed")
 
 

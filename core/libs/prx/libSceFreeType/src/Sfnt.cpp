@@ -1,17 +1,41 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 
 #include FT_TRUETYPE_TABLES_H
 
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 using namespace FreeType;
 
 namespace {
+
+bool GuestWritablePreservingErrno(void* destination, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestCopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestCopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
 
 FT_Error QueryTableLength(FT_Face face, std::uint64_t tag, FT_ULong& length) {
     length = 0;
@@ -49,11 +73,11 @@ int APS5_VABI FT_Load_Sfnt_Table_nid_postfix(GuestFaceRec* face, std::uint64_t t
     FT_ULong tableSize = 0;
     const auto error = QueryTableLength(native, tag, tableSize);
     if (error != 0) return error;
-    const std::uint64_t requested = length ? *length : tableSize;
+    std::uint64_t requested = tableSize;
+    if (length && !GuestCopyInPreservingErrno(&requested, length, sizeof(requested))) return FT_Err_Invalid_Argument;
     if (length && requested == 0) {
-        GuestArena::HostWrite write(length, sizeof(*length));
-        if (!write.Open()) return FT_Err_Invalid_Argument;
-        *length = tableSize;
+        const std::uint64_t guestTableSize = tableSize;
+        if (!GuestCopyOutPreservingErrno(length, &guestTableSize, sizeof(guestTableSize))) return FT_Err_Invalid_Argument;
         return 0;
     }
     FT_ULong fileSize = tableSize;
@@ -84,9 +108,16 @@ int APS5_VABI FT_Load_Sfnt_Table_nid_postfix(GuestFaceRec* face, std::uint64_t t
         nativeOffset = static_cast<FT_Long>(offset);
     }
     FT_ULong nativeLength = static_cast<FT_ULong>(std::min(requested, static_cast<std::uint64_t>(std::numeric_limits<FT_ULong>::max())));
-    GuestArena::HostWrite write(buffer, static_cast<std::size_t>(std::min<std::uint64_t>(nativeLength, fileSize)));
-    if (buffer && !write.Open()) return FT_Err_Invalid_Argument;
-    const auto readError = FT_Load_Sfnt_Table(native, nativeTag, nativeOffset, buffer, &nativeLength);
+    const std::size_t writableBytes = static_cast<std::size_t>(std::min<std::uint64_t>(nativeLength, fileSize));
+    if (buffer && !GuestWritablePreservingErrno(buffer, writableBytes)) return FT_Err_Invalid_Argument;
+    std::vector<unsigned char> staging(buffer ? writableBytes : 0);
+    if (buffer && writableBytes > 0 && !GuestCopyInPreservingErrno(staging.data(), buffer, writableBytes)) {
+        return FT_Err_Invalid_Argument;
+    }
+    const auto readError = FT_Load_Sfnt_Table(native, nativeTag, nativeOffset, buffer ? staging.data() : nullptr, &nativeLength);
+    if (buffer && writableBytes > 0 && !GuestCopyOutPreservingErrno(buffer, staging.data(), writableBytes)) {
+        return FT_Err_Invalid_Argument;
+    }
     if (readError == 0 && requested > std::numeric_limits<FT_ULong>::max()) return FT_Err_Invalid_Stream_Operation;
     return readError;
 }

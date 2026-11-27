@@ -67,7 +67,9 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -224,10 +226,7 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
     }
     buffer[length] = '\0';
 
-    char* endPtr = nullptr;
-    double val = std::strtod(buffer.data(), &endPtr);
-    parsedLength = static_cast<std::size_t>(endPtr - buffer.data());
-    return val;
+    return _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(buffer.data(), length, &parsedLength);
 }
 
 }
@@ -271,8 +270,13 @@ using NKWebKit::WtfAbi::StringView;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::CString;
 using NKWebKit::WtfAbi::CStringBuffer;
+using NKWebKit::WtfAbi::ExpectedCString;
 
 constexpr unsigned MaxStringLength = 0x7FFFFFFF;
+constexpr std::uint32_t Utf8ConversionNone = 0;
+constexpr std::uint32_t Utf8ConversionOutOfMemory = 1;
+constexpr std::uint32_t Utf8ConversionIllegalSource = 2;
+constexpr std::uint32_t Utf8ConversionSourceExhausted = 3;
 constexpr std::size_t NotFound = std::numeric_limits<std::size_t>::max();
 
 template<typename T> T& Checked(T* value) {
@@ -493,7 +497,7 @@ CString ToUTF8(StringView view, unsigned mode) {
                 cp = 0x10000 + ((cp - 0xD800) << 10) + Unit(view, i + 1) - 0xDC00;
                 ++i;
             } else if (mode == 1) throw std::invalid_argument("unpaired WTF UTF-16 surrogate");
-            else if (mode == 2) cp = 0xFFFD;
+            else if (mode == 2 || cp > 0xDBFF || i + 1 < view.length) cp = 0xFFFD;
         }
         if (cp < 0x80) bytes.push_back(static_cast<char>(cp));
         else if (cp < 0x800) {
@@ -511,6 +515,23 @@ CString ToUTF8(StringView view, unsigned mode) {
         }
     }
     return CopyCString(bytes.data(), bytes.size());
+}
+
+std::uint32_t StrictConversionError(const char16_t* characters, unsigned length) {
+    for (unsigned i = 0; i < length; ++i) {
+        const unsigned unit = characters[i];
+        if (unit < 0xD800 || unit > 0xDFFF) continue;
+        if (unit <= 0xDBFF) {
+            if (i + 1 == length) return Utf8ConversionSourceExhausted;
+            const unsigned next = characters[i + 1];
+            if (next >= 0xDC00 && next <= 0xDFFF) {
+                ++i;
+                continue;
+            }
+        }
+        return Utf8ConversionIllegalSource;
+    }
+    return Utf8ConversionNone;
 }
 
 String Substring(const StringImpl* original, unsigned start, unsigned length) {
@@ -782,6 +803,22 @@ String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseEv(const StringImpl
 
 CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const StringImpl* self, unsigned mode) {
     return ToUTF8(View(&Checked(self)), mode);
+}
+
+ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode) {
+    if (!characters && length) throw std::invalid_argument("null WTF UTF-16 character buffer");
+    if (length > MaxStringLength / 3) return ExpectedCString(Utf8ConversionOutOfMemory);
+    if (mode == 1) {
+        const std::uint32_t error = StrictConversionError(characters, length);
+        if (error != Utf8ConversionNone) return ExpectedCString(error);
+    }
+    return ExpectedCString(ToUTF8({characters, length, false}, mode));
+}
+
+ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length) {
+    if (!characters && length) throw std::invalid_argument("null WTF Latin-1 character buffer");
+    if (length > MaxStringLength / 3) return ExpectedCString(Utf8ConversionOutOfMemory);
+    return ExpectedCString(ToUTF8({characters, length, true}, 0));
 }
 
 String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const String* self) {
@@ -1524,6 +1561,41 @@ String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSla
     return Substring(string.impl, static_cast<unsigned>(position + 1), static_cast<unsigned>(end - position));
 }
 
+CString APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE(const String* path) {
+    return _ZNK3WTF6String4utf8ENS_14ConversionModeE(&Checked(path), 0);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc(const char* path) {
+    if (!path) return String();
+    return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(path));
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(StringView path, const NKWebKit::WtfAbi::Vector<StringView>* components) {
+    const auto& parts = Checked(components);
+    if (parts.size && !parts.buffer) throw std::invalid_argument("WTF::FileSystemImpl::pathByAppendingComponents: null component storage");
+    std::uint64_t length = path.length;
+    for (unsigned i = 0; i < parts.size; ++i) length += 1 + std::uint64_t{parts.buffer[i].length};
+    if (length > MaxStringLength) throw std::length_error("WTF::StringBuilder overflowed");
+    std::u16string output;
+    output.reserve(static_cast<std::size_t>(length));
+    bool is8Bit = true;
+    auto append = [&](const StringView& view) {
+        if (view.length && !view.data) throw std::invalid_argument("WTF::FileSystemImpl::pathByAppendingComponents: null characters");
+        for (unsigned i = 0; i < view.length; ++i) output.push_back(Unit(view, i));
+    };
+    append(path);
+    if (path.length && !path.is8Bit && !(path.length == 1 && output[0] <= 0xFF)) is8Bit = false;
+    for (unsigned i = 0; i < parts.size; ++i) {
+        const StringView& component = parts.buffer[i];
+        if (!component.is8Bit) is8Bit = false;
+        output.push_back(u'/');
+        append(component);
+    }
+    if (!is8Bit) return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}));
+    std::string narrow(output.begin(), output.end());
+    return String(CopyImpl({narrow.data(), static_cast<unsigned>(narrow.size()), true}));
+}
+
 }
 
 namespace NKWebKit::WtfAbi {
@@ -1534,6 +1606,10 @@ StringView ViewOf(const StringImpl* impl) {
 
 char16_t CodeUnitAt(const StringView& view, unsigned index) {
     return Unit(view, index);
+}
+
+std::optional<std::uint16_t> PortOf(const URL& url) {
+    return URLPort(url);
 }
 
 }  // namespace NKWebKit::WtfAbi

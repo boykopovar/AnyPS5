@@ -47,7 +47,7 @@ static void SetTimeZone(const char* zone) {
 }
 
 static bool OmittedResolutionSucceeds() {
-    constexpr int clocks[] = {0, 1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 3, 6, 9999, -1, INT_MIN, INT_MAX};
+    constexpr int clocks[] = {0, 1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 3, 6, 9999, -1, INT_MIN, INT_MAX};
     for (const int clock : clocks) {
         *__error_nid_postfix() = 77;
         try {
@@ -60,19 +60,18 @@ static bool OmittedResolutionSucceeds() {
     return true;
 }
 
-static void UnsupportedResolutionStillThrows() {
-    KernelTimespec resolution{-1, -1};
-    bool rejected = false;
-    try {
-        clock_getres_nid_postfix(3, &resolution);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
+static void OutOfRangeResolutionIsInvalid() {
+    constexpr int einval = static_cast<int>(0x80020016u);
+    for (const int clockId : {32, 100, INT_MAX}) {
+        KernelTimespec resolution{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, &resolution) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelClockGetres(clockId, &resolution) == einval);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
     }
-    Require(rejected && resolution.tv_sec == -1 && resolution.tv_nsec == -1);
     constexpr int fault = static_cast<int>(0x8002000eu);
     Require(sceKernelClockGetres(GUEST_CLOCK_REALTIME, nullptr) == fault);
-    Require(sceKernelClockGetres(3, nullptr) == fault);
+    Require(sceKernelClockGetres(32, nullptr) == fault);
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
@@ -136,17 +135,6 @@ static std::int64_t Nanos(int clockId) {
     return time.tv_sec * NANOS_PER_SECOND + time.tv_nsec;
 }
 
-static std::int64_t ResolutionNanos(int clockId) {
-    KernelTimespec resolution{-1, -1};
-    Require(clock_getres_nid_postfix(clockId, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 0);
-    Require(resolution.tv_nsec > 0 && resolution.tv_nsec < NANOS_PER_SECOND);
-    KernelTimespec sceResolution{-1, -1};
-    Require(sceKernelClockGetres(clockId, &sceResolution) == SCE_OK);
-    Require(sceResolution.tv_sec == resolution.tv_sec && sceResolution.tv_nsec == resolution.tv_nsec);
-    return resolution.tv_nsec;
-}
-
 static void RequireNeverDecreases(int clockId) {
     std::int64_t previous = Nanos(clockId);
     for (int i = 0; i < 10000; ++i) {
@@ -154,6 +142,38 @@ static void RequireNeverDecreases(int clockId) {
         Require(current >= previous);
         previous = current;
     }
+}
+
+static void RequireResolution(int clockId, std::int64_t seconds, std::int64_t nanoseconds) {
+    KernelTimespec resolution{-1, -1};
+    *__error_nid_postfix() = 77;
+    Require(clock_getres_nid_postfix(clockId, &resolution) == SCE_OK && *__error_nid_postfix() == 77);
+    Require(resolution.tv_sec == seconds && resolution.tv_nsec == nanoseconds);
+    resolution = {-1, -1};
+    Require(sceKernelClockGetres(clockId, &resolution) == SCE_OK);
+    Require(resolution.tv_sec == seconds && resolution.tv_nsec == nanoseconds);
+}
+
+static void ResolutionsAreTheConsoles() {
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE, GUEST_CLOCK_UPTIME_FAST,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST})
+        RequireResolution(clockId, 0, 81);
+    RequireResolution(GUEST_CLOCK_VIRTUAL, 0, NANOS_PER_MILLISECOND);
+    RequireResolution(GUEST_CLOCK_PROF, 0, NANOS_PER_MILLISECOND);
+    RequireResolution(GUEST_CLOCK_SECOND, 1, 0);
+    RequireResolution(GUEST_CLOCK_THREAD_CPUTIME_ID, 0, 1000);
+    RequireResolution(21, 0, 1000);
+    constexpr int einval = static_cast<int>(0x80020016u);
+    for (int clockId = 3; clockId < 32; ++clockId) {
+        if (clockId == 4 || clockId == 5 || (clockId >= 7 && clockId <= 14) || clockId == 21) continue;
+        KernelTimespec resolution{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, &resolution) == -1 && *__error_nid_postfix() == 22);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+        Require(sceKernelClockGetres(clockId, &resolution) == einval);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
+    }
+    Read(GUEST_CLOCK_PROCESS_CPUTIME_ID);
 }
 
 static void Clock20UsesScaledMonotonicTime() {
@@ -170,21 +190,7 @@ static void Clock20UsesScaledMonotonicTime() {
     Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 
-static void WallAndUptimeClocksReportSubsecondResolutions() {
-    const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
-                          GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
-                          GUEST_CLOCK_UPTIME_FAST};
-    for (const int clockId : clocks) ResolutionNanos(clockId);
-}
-
 static void SecondClockReportsWholeSeconds() {
-    KernelTimespec resolution{-1, -1};
-    Require(clock_getres_nid_postfix(GUEST_CLOCK_SECOND, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 1 && resolution.tv_nsec == 0);
-    resolution = {-1, -1};
-    Require(sceKernelClockGetres(GUEST_CLOCK_SECOND, &resolution) == SCE_OK);
-    Require(resolution.tv_sec == 1 && resolution.tv_nsec == 0);
-
     KernelTimespec sceSecond{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_SECOND, &sceSecond) == SCE_OK);
     Require(sceSecond.tv_sec > 0 && sceSecond.tv_nsec == 0);
@@ -214,15 +220,52 @@ static void Clock21TracksProcessCpuTime() {
 }
 
 static void ProcessClocksAreOrdered() {
-    const std::int64_t profResolution = ResolutionNanos(GUEST_CLOCK_PROF);
-    Require(ResolutionNanos(GUEST_CLOCK_VIRTUAL) == profResolution);
     for (int i = 0; i < 1000; ++i) {
         const std::int64_t user = Nanos(GUEST_CLOCK_VIRTUAL);
         const std::int64_t userAndSystem = Nanos(GUEST_CLOCK_PROF);
-        const std::int64_t execution = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
         Require(user <= userAndSystem);
-        Require(userAndSystem <= execution + profResolution);
     }
+}
+
+static std::int64_t ResourceUsageMicros(bool countSystem) {
+    GuestResourceUsage usage{};
+    Require(getrusage_nid_postfix(0, &usage) == SCE_OK);
+    const auto toMicros = [](const KernelTimeval& time) { return time.tv_sec * 1000000LL + time.tv_usec; };
+    return toMicros(usage.ru_utime) + (countSystem ? toMicros(usage.ru_stime) : 0LL);
+}
+
+static void ProcessClocksCarryResourceUsageMicroseconds() {
+    const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    volatile std::uint64_t work = 0;
+    while (Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < 30 * NANOS_PER_MILLISECOND)
+        for (int i = 0; i < 100000; ++i) work = work + 1;
+    for (int i = 0; i < 1000; ++i) {
+        const std::int64_t userBefore = ResourceUsageMicros(false);
+        const std::int64_t user = Nanos(GUEST_CLOCK_VIRTUAL);
+        const std::int64_t userAfter = ResourceUsageMicros(false);
+        Require(userBefore * 1000 <= user && user < (userAfter + 1) * 1000);
+        const std::int64_t bothBefore = ResourceUsageMicros(true);
+        const std::int64_t both = Nanos(GUEST_CLOCK_PROF);
+        KernelTimespec sceTime{-1, -1};
+        Require(sceKernelClockGettime(GUEST_CLOCK_PROF, &sceTime) == SCE_OK);
+        const std::int64_t sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
+        const std::int64_t clock21 = Nanos(21);
+        const std::int64_t bothAfter = ResourceUsageMicros(true);
+        Require(bothBefore * 1000 <= both && both <= sce && sce < (bothAfter + 2) * 1000);
+        Require(bothBefore * 1000 <= clock21 && clock21 < (bothAfter + 2) * 1000);
+    }
+}
+
+static void ProcessElapsedClockAdvancesWhileSleeping() {
+    const auto beforeStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    const auto elapsedStart = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const auto afterStart = Nanos(GUEST_CLOCK_MONOTONIC);
+    Require(sceKernelUsleep_nid_postfix(100000) == SCE_OK);
+    const auto beforeEnd = Nanos(GUEST_CLOCK_MONOTONIC);
+    const auto elapsedEnd = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const auto afterEnd = Nanos(GUEST_CLOCK_MONOTONIC);
+    Require(beforeEnd - afterStart <= elapsedEnd - elapsedStart);
+    Require(elapsedEnd - elapsedStart <= afterEnd - beforeStart);
 }
 
 static void BusyProcessAccumulatesUserTime() {
@@ -437,7 +480,7 @@ static void KernelTimezoneIsUtc() {
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
     KernelTimezoneIsUtc();
-    UnsupportedResolutionStillThrows();
+    OutOfRangeResolutionIsInvalid();
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
@@ -450,7 +493,7 @@ int main() {
 #endif
     TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
-    WallAndUptimeClocksReportSubsecondResolutions();
+    ResolutionsAreTheConsoles();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
@@ -480,6 +523,8 @@ int main() {
     RequireNeverDecreases(GUEST_CLOCK_PROF);
     Clock21TracksProcessCpuTime();
     ProcessClocksAreOrdered();
+    ProcessClocksCarryResourceUsageMicroseconds();
+    ProcessElapsedClockAdvancesWhileSleeping();
     BusyProcessAccumulatesUserTime();
     IdleProcessAccumulatesNone();
     XtimeTicksAreGettimeofdayMicroseconds();

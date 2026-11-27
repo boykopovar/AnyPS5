@@ -22,7 +22,8 @@ bool isAnisoFilter(std::uint32_t raw) {
 
 VkSamplerReductionMode toVkReductionMode(std::uint32_t raw) {
     switch (raw) {
-        case 0: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
+        case 0:
+        case 3: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
         case 1: return VK_SAMPLER_REDUCTION_MODE_MIN_EXT;
         case 2: return VK_SAMPLER_REDUCTION_MODE_MAX_EXT;
         default: throw std::runtime_error("AGC graphics: guest sampler descriptor uses an unknown reduction filter mode " + std::to_string(raw));
@@ -91,8 +92,8 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     Require(!forceUnormCoords || unnormalizedProven, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
     if (forceUnormCoords) {
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
-        Require(clampX <= 3u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
-        Require(clampY <= 3u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
+        Require(clampX <= 3u || clampX >= 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once, clamp-to-border and mirror-once-border are implemented");
+        Require(clampY <= 3u || clampY >= 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only wrap, mirror, clamp-to-last-texel, mirror-once, clamp-to-border and mirror-once-border are implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
@@ -162,8 +163,8 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         result.unnormalizedCoordinates = true;
         result.minFilter = result.magFilter;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        result.addressModeU = clampX == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        result.addressModeV = clampY == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        result.addressModeU = clampX >= 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        result.addressModeV = clampY >= 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         result.minLod = 0.0f;
         result.maxLod = 0.0f;
         result.lodBias = 0.0f;

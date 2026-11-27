@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <functional>
 #include <initializer_list>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -29,6 +31,8 @@ enum Id : std::uint32_t {
     StoragePointer,
     Storage,
     PhysicalPointer,
+    Snapshot,
+    Writable,
     First = 100u,
 };
 
@@ -59,6 +63,9 @@ public:
         emit(spv::OpTypePointer, {StoragePointer, spv::StorageClassStorageBuffer, Uint});
         emit(spv::OpVariable, {StoragePointer, Storage, spv::StorageClassStorageBuffer});
         emit(spv::OpTypePointer, {PhysicalPointer, spv::StorageClassPhysicalStorageBuffer, Uint});
+        emit(spv::OpVariable, {StoragePointer, Snapshot, spv::StorageClassStorageBuffer});
+        emit(spv::OpDecorate, {Snapshot, spv::DecorationNonWritable});
+        emit(spv::OpVariable, {StoragePointer, Writable, spv::StorageClassStorageBuffer});
     }
 
     void emit(spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -88,10 +95,17 @@ public:
 
 bool failed = false;
 
-void expect(const char* name, const Module& module, bool rejected) {
-    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words);
+void expect(const char* name, const Module& module, bool rejected, std::span<const std::uint32_t> snapshots = {}) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots);
     if (reason.has_value() == rejected) return;
     std::fprintf(stderr, "%s: expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+void expectReason(const char* name, const Module& module, const char* part) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, {});
+    if (reason.has_value() && reason->find(part) != std::string::npos) return;
+    std::fprintf(stderr, "%s: expected a rejection naming \"%s\", got %s\n", name, part, reason ? reason->c_str() : "none");
     failed = true;
 }
 
@@ -235,6 +249,38 @@ void laneSplit(Module& module, std::uint32_t merge) {
 
 int main() {
     expect("a barrier under a lane comparison", selection(true), true);
+    expectReason("a barrier under a lane comparison names the built-in", selection(true), "the branch at the end of block %100 on %102 decides it, and %102 comes from a load of the LocalInvocationIndex built-in");
+    expectReason("a barrier under a phi joining a per-lane selection names the phi", joined([](Module& module) {
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpPhi, {Bool, First + 8u, True, First + 3u, True, First});
+    }), "comes from a phi of block %104, where divergent flow merges");
+    expectReason("a barrier under a variable stored on one side of a per-lane selection names the store's block", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, Two});
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpStore, {First + 20u, Three});
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored in divergent flow in block %103");
+    expectReason("a barrier under a variable stored a lane value names the value's root", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, First + 1u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored %101, which comes from a load of the LocalInvocationIndex built-in");
+    expectReason("a barrier under an atomic result names the atomic", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpAtomicIAdd, {Uint, First + 6u, First + 5u, Two, Semantics, Three});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "comes from an atomic or subgroup instruction");
+    expectReason("a barrier under a workgroup word read after a store names the unfenced load", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpStore, {First + 5u, Three});
+        module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "with no barrier before the load");
     expect("a barrier under a constant comparison", selection(false), false);
     expect("a barrier in a loop a lane value leaves", loop(true, false), true);
     expect("a barrier in a uniform loop after a per-lane selection", loop(false, true), false);
@@ -310,5 +356,31 @@ int main() {
         module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
         module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
     }), true);
+    const std::uint32_t listedSnapshot[] = {Snapshot};
+    const std::uint32_t listedWritable[] = {Writable};
+    const auto snapshotRead = [](std::uint32_t variable) {
+        return [variable](Module& module) {
+            module.emit(spv::OpConvertUToPtr, {PhysicalPointer, First + 10u, Two});
+            module.emit(spv::OpStore, {First + 10u, Three});
+            module.emit(spv::OpLoad, {Uint, First + 6u, variable});
+            module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+        };
+    };
+    expect("a barrier under a listed snapshot word read at a uniform index after a device-address store", joined(snapshotRead(Snapshot)), false, listedSnapshot);
+    expect("a barrier under an unlisted snapshot word read at a uniform index after a device-address store", joined(snapshotRead(Snapshot)), true);
+    expect("a barrier under a listed word of a writable buffer", joined(snapshotRead(Writable)), true, listedWritable);
+    expect("a barrier under a snapshot list naming another buffer", joined(snapshotRead(Writable)), true, listedSnapshot);
+    expect("a barrier under a listed snapshot word read at a lane index", joined([](Module& module) {
+        module.emit(spv::OpConvertUToPtr, {PhysicalPointer, First + 10u, Two});
+        module.emit(spv::OpStore, {First + 10u, Three});
+        module.emit(spv::OpAccessChain, {StoragePointer, First + 5u, Snapshot, First + 1u});
+        module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), true, listedSnapshot);
+    const auto snapshotsFor = [&](const char* optOut) {
+        return ShaderRecompiler::SpannedSnapshotLoadsEnabled(optOut) ? std::span<const std::uint32_t>(listedSnapshot) : std::span<const std::uint32_t>();
+    };
+    expect("a barrier under a snapshot word read at a uniform index with the default", joined(snapshotRead(Snapshot)), false, snapshotsFor(nullptr));
+    expect("a barrier under a snapshot word read at a uniform index with the opt-out set", joined(snapshotRead(Snapshot)), true, snapshotsFor("1"));
     return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

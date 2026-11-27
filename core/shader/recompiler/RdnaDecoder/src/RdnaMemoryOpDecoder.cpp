@@ -9,6 +9,18 @@ namespace ShaderRecompiler {
 
 namespace {
 
+bool supportsMubufLds(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::BufferLoadFormatX:
+        case RdnaOpcode::BufferLoadUbyte:
+        case RdnaOpcode::BufferLoadSbyte:
+        case RdnaOpcode::BufferLoadUshort:
+        case RdnaOpcode::BufferLoadSshort:
+        case RdnaOpcode::BufferLoadDword: return true;
+        default: return false;
+    }
+}
+
 RdnaOperand d16Half(RdnaOperand operand, RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::BufferLoadUbyteD16:
@@ -781,6 +793,7 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     instruction.family = RdnaInstructionFamily::SMEM;
     instruction.opcodeId = opcode;
     instruction.glc = ((word0 >> 16u) & 1u) != 0u;
+    instruction.dlc = ((word0 >> 14u) & 1u) != 0u;
     instruction.memoryOffset = signExtend(word1 & 0x1FFFFFu, 21u);
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
@@ -816,18 +829,21 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     const auto vaddr = word1 & 0xFFu;
     const auto srsrc = (word1 >> 16u) & 0x1Fu;
     const auto soffsetCode = (word1 >> 24u) & 0xFFu;
+    const bool lds = ((word0 >> 16u) & 1u) != 0u;
     if (const auto cacheOp = cacheControlOpcode(RdnaInstructionFamily::MUBUF, opcode); cacheOp != RdnaOpcode::Invalid) {
+        if (lds) throw std::runtime_error("unsupported MUBUF lds modifier on cache control");
         return cacheControlInstruction(RdnaInstructionFamily::MUBUF, cacheOp, opcode, programCounter, code, wordIndex);
     }
     const auto& info = lookupOpcode(mubufOpcodes, opcode, "MUBUF opcode is not supported");
-    if (((word0 >> 16u) & 1u) != 0u) {
-        throw std::runtime_error("unsupported MUBUF lds modifier");
+    if (lds && (!supportsMubufLds(info.opcode) || (word0 & (1u << 17u)) != 0u || (word1 & ((1u << 23u) | (1u << 21u))) != 0u)) {
+        throw std::runtime_error("unsupported MUBUF lds modifier: requires an untyped byte, short or dword load or format_x, no TFE or reserved bits");
     }
 
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::MUBUF;
     instruction.opcodeId = opcode;
+    instruction.lds = lds;
     instruction.memoryOffset = word0 & 0xFFFu;
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
@@ -837,7 +853,7 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = d16Half(vectorRegister(vdata), instruction.op);
+    instruction.destination = lds ? RdnaOperand{} : d16Half(vectorRegister(vdata), instruction.op);
     instruction.source0 = vectorRegister(vaddr);
     instruction.source1 = scalarDescriptorBase(srsrc * 4u, 4u, "MUBUF resource descriptor register range overflow");
     instruction.source2 = scalarSource(soffsetCode);
@@ -995,9 +1011,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
     if (info.opcode == RdnaOpcode::DsWrxchg2RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2RtnB64 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB64) {
-        if (offset0 == offset1) {
-            throw std::runtime_error("DS write exchange of one location through both offsets is not supported");
-        }
         if (vdst + info.dataDwords > 256u) {
             throw std::runtime_error("DS write exchange destination register range overflow");
         }

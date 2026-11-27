@@ -16,19 +16,33 @@ namespace {
 
 struct Case {
     VkDriverId driver;
+    std::uint32_t driverVersion;
     bool controlBarrier;
     bool workgroupFence;
 };
 
+constexpr std::uint32_t NvidiaVersion(std::uint32_t major, std::uint32_t minor) {
+    return major << 22u | minor << 14u;
+}
+
 constexpr Case Cases[]{
-    {VK_DRIVER_ID_AMD_PROPRIETARY, false, false},
-    {VK_DRIVER_ID_AMD_OPEN_SOURCE, true, true},
-    {VK_DRIVER_ID_MESA_RADV, true, true},
-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, true, true},
-    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, true, true},
-    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, true, true},
-    {VK_DRIVER_ID_MESA_LLVMPIPE, true, true},
-    {VK_DRIVER_ID_MOLTENVK, false, true},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0u, false, false},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0xffffffffu, false, false},
+    {VK_DRIVER_ID_AMD_OPEN_SOURCE, 0u, true, true},
+    {VK_DRIVER_ID_MESA_RADV, 0u, true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(560, 94), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(572, 16), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(580, 178), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 0) - 1u, false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 0), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 36), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(610, 88), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(617, 42), true, true},
+    {VK_DRIVER_ID_MESA_NVK, VK_MAKE_API_VERSION(0, 25, 2, 0), true, true},
+    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0u, true, true},
+    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, 0u, true, true},
+    {VK_DRIVER_ID_MESA_LLVMPIPE, 0u, true, true},
+    {VK_DRIVER_ID_MOLTENVK, 0u, false, true},
 };
 
 constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
@@ -40,6 +54,8 @@ constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
 constexpr std::array<std::uint32_t, 5> LdsHalfStore{0x34040082u, 0xd87c0400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> LdsAtomicAdd{0x34040082u, 0xd8000400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> LdsAtomicMax{0x34040082u, 0xd84c0400u, 0x00000102u, 0xbf8cc07fu, 0xbf810000u};
+constexpr std::array<std::uint32_t, 8> BufferAtomicAdd{0x34040082u, 0x7e020281u, 0xe0c85000u, 0x80000102u, 0xbf8c3f70u, 0xe0701000u, 0x80000102u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 8> BufferAtomicFMin{0x34040082u, 0x7e020300u, 0xe0fc5000u, 0x80000102u, 0xbf8c3f70u, 0xe0701000u, 0x80000102u, 0xbf810000u};
 
 struct Barriers {
     std::uint32_t subgroupControl = 0;
@@ -55,13 +71,14 @@ struct MemoryBarriers {
     std::uint32_t device = 0;
 };
 
-ShaderRecompiler::RecompileResult recompileProgram(std::span<const std::uint32_t> code, std::uint32_t threads, bool waveLdsMemoryBarriers, bool deviceScopeLdsMemoryBarriers) {
+ShaderRecompiler::RecompileResult recompileProgram(std::span<const std::uint32_t> code, std::uint32_t threads, bool waveLdsMemoryBarriers, bool deviceScopeLdsMemoryBarriers, bool deviceAtomicWorkgroupMemoryBarriers = false, std::span<const std::uint32_t> userData = {}) {
     using namespace ShaderRecompiler;
-    const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform};
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
     request.context.waveSize = 32;
+    request.context.userData = userData;
     request.context.compute = ShaderComputeStageInfo{{threads, 1u, 1u}, 512u, {false, false, false}, false, 1u};
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
@@ -74,6 +91,7 @@ ShaderRecompiler::RecompileResult recompileProgram(std::span<const std::uint32_t
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
     request.target.waveLdsMemoryBarriers = waveLdsMemoryBarriers;
     request.target.deviceScopeLdsMemoryBarriers = deviceScopeLdsMemoryBarriers;
+    request.target.deviceAtomicWorkgroupMemoryBarriers = deviceAtomicWorkgroupMemoryBarriers;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     return Recompile(request);
@@ -121,7 +139,7 @@ Barriers recompile(std::uint32_t threads, bool waveLdsMemoryBarriers) {
 
 void verifyDriverQuirk() {
     for (const auto& item : Cases) {
-        require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
+        require(AgcDriver::SubgroupControlBarrierUsable(item.driver, item.driverVersion) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + " version " + std::to_string(item.driverVersion) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
         require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.workgroupFence, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.workgroupFence ? "usable" : "unusable"));
     }
 }
@@ -148,6 +166,35 @@ void verifyEmittedBarriers() {
 void verifyLdsLockFenceDrivers() {
     for (const auto& item : Cases) {
         require(AgcDriver::LdsLockFencesRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected LDS lock fences only on MoltenVK");
+        require(AgcDriver::DeviceAtomicWorkgroupMemoryBarriersRequired(item.driver) == (item.driver == VK_DRIVER_ID_AMD_PROPRIETARY), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-memory device atomic barriers only on AMD proprietary");
+    }
+}
+
+void verifyDeviceAtomicMemoryBarrierSemantics() {
+    const std::array<std::uint32_t, 4> descriptor{0x1000u, 0u, 256u, 0x31016facu};
+    const std::array<std::pair<const char*, std::span<const std::uint32_t>>, 2> programs{{{"buffer_atomic_add", BufferAtomicAdd}, {"buffer_atomic_fmin", BufferAtomicFMin}}};
+    const auto inspect = [&](std::span<const std::uint32_t> code, bool workgroupSemantics) {
+        const auto result = recompileProgram(code, 64, false, false, workgroupSemantics, descriptor);
+        const auto& words = result.spirv.Words();
+        const auto constants = constantsOf(words);
+        std::uint32_t uniformCount = 0;
+        std::uint32_t workgroupCount = 0;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpMemoryBarrier) continue;
+            const auto scope = constants.find(words[at + 1]);
+            const auto semantics = constants.find(words[at + 2]);
+            require(scope != constants.end() && semantics != constants.end(), "device atomic barrier operands are not 32-bit constants");
+            require(scope->second == spv::ScopeDevice, "device atomic barrier did not use device scope");
+            if (semantics->second == (spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask)) ++uniformCount;
+            if (semantics->second == (spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask)) ++workgroupCount;
+        }
+        return std::pair{uniformCount, workgroupCount};
+    };
+    for (const auto& [name, code] : programs) {
+        const auto uniform = inspect(code, false);
+        require(uniform.first == 1 && uniform.second == 0, std::string(name) + " did not emit UniformMemory barrier by default");
+        const auto workgroup = inspect(code, true);
+        require(workgroup.first == 0 && workgroup.second == 1, std::string(name) + " with workgroup-memory barrier flag did not emit WorkgroupMemory barrier");
     }
 }
 
@@ -159,6 +206,7 @@ int main() {
         verifyLdsLockFenceDrivers();
         verifyEmittedBarriers();
         verifyLdsMemoryBarrierScope();
+        verifyDeviceAtomicMemoryBarrierSemantics();
         std::puts("subgroup barrier tests passed");
         return 0;
     } catch (const std::exception& error) {

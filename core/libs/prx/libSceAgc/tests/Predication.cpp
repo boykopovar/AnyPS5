@@ -3,6 +3,7 @@
 #include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -40,6 +41,28 @@ void testSizes() {
     check(sceAgcDcbSetBoolPredicationEnableGetSize() == bytes, "bool predication size");
 }
 
+void testConsoleArguments() {
+    struct Case {
+        std::uint8_t condition;
+        std::uint8_t operation;
+        std::uint8_t waitOperation;
+        std::uintptr_t address;
+        std::uint32_t count;
+        std::array<std::uint32_t, 4> words;
+    };
+    const std::array<Case, 3> cases{{
+        {0x11, 0x22, 0x33, 0x44444444u, 0x55555555u, {0xc0022000u, 0x00021100u, 0x44444440u, 0u}},
+        {1, 2, 3, 4u, 5u, {0xc0022000u, 0x00021100u, 0u, 0u}},
+        {0x22, 0x44, 0, 0u, 0u, {0xc0022000u, 0x00040000u, 0u, 0u}},
+    }};
+    for (const auto& item : cases) {
+        Storage storage;
+        const auto* packet = sceAgcDcbSetPredication(&storage.buffer, item.condition, item.operation, item.waitOperation, reinterpret_cast<const volatile void*>(item.address), item.count);
+        check(packet == storage.words.data() && std::equal(item.words.begin(), item.words.end(), packet), "SET_PREDICATION does not match the console's packet");
+        check(storage.buffer.cursor_up == storage.words.data() + item.words.size(), "SET_PREDICATION cursor mismatch");
+    }
+}
+
 void testPacket() {
     Storage storage;
     auto* packet = sceAgcDcbSetIndexCount(&storage.buffer, 7);
@@ -51,6 +74,10 @@ void testPacket() {
     std::uint32_t filler = 0x80000000u;
     expectFailure([&] { sceAgcSetPacketPredication(&filler, 1); });
     check(packet[0] == header && filler == 0x80000000u, "rejected calls modified a packet");
+    expectFailure([&] { sceAgcSetPacketPredication(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 1); });
+    static const std::uint32_t readOnly = 0xc0001000u;
+    expectFailure([&] { sceAgcSetPacketPredication(const_cast<std::uint32_t*>(&readOnly), 1); });
+    check(readOnly == 0xc0001000u, "a predication patch of a read-only packet changed it");
 }
 
 void testRange() {
@@ -78,6 +105,7 @@ void testRange() {
 int main() {
     try {
         testSizes();
+        testConsoleArguments();
         testPacket();
         testRange();
         std::puts("agc predication tests passed");

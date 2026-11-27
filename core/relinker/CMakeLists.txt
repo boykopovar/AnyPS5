@@ -72,6 +72,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CodeInstructionCollector.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SceCodeExtent.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/RelativeJumpTables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ReplacedPltStubs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/StrictNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/StrictReachability.cpp
@@ -192,6 +193,9 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp)
     target_include_directories(native_path_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    if(WIN32)
+        target_link_libraries(native_path_tests PRIVATE advapi32)
+    endif()
     add_test(NAME native_path COMMAND native_path_tests)
     set_tests_properties(native_path PROPERTIES TIMEOUT 20)
 
@@ -204,6 +208,11 @@ if(BUILD_TESTING)
     target_link_libraries(call_registry_writer_tests PRIVATE relinker_core)
     add_test(NAME call_registry_writer COMMAND call_registry_writer_tests)
     set_tests_properties(call_registry_writer PROPERTIES TIMEOUT 20)
+
+    add_test_executable(code_instruction_collector_address_size_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeInstructionCollectorAddressSizeTests.cpp)
+    target_link_libraries(code_instruction_collector_address_size_tests PRIVATE relinker_core)
+    add_test(NAME code_instruction_collector_address_size COMMAND code_instruction_collector_address_size_tests)
+    set_tests_properties(code_instruction_collector_address_size PROPERTIES TIMEOUT 20)
 endif()
 
 if(ANYPS5_BUILD_FUZZERS)
@@ -235,6 +244,9 @@ add_executable(relinker
     ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/NativeModules.cpp)
 target_link_libraries(relinker PRIVATE relinker_core)
+if(WIN32)
+    target_link_libraries(relinker PRIVATE advapi32)
+endif()
 target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
 
@@ -394,6 +406,17 @@ if(BUILD_TESTING)
     add_test(NAME sdk_mman_syscall COMMAND sdk_mman_syscall_tests)
     set_tests_properties(sdk_mman_syscall PROPERTIES TIMEOUT 20)
 
+    add_test_executable(replaced_plt_stubs_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ReplacedPltStubsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ReplacedPltStubs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp)
+    target_include_directories(replaced_plt_stubs_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
+    add_test(NAME replaced_plt_stubs COMMAND replaced_plt_stubs_tests)
+    set_tests_properties(replaced_plt_stubs PROPERTIES TIMEOUT 20)
+
     add_test_executable(code_data_scanning_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeDataScanningTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -530,9 +553,22 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
             ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         )
+        target_link_libraries(windows_file_writer_tests PRIVATE advapi32)
         add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
         add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
         set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+        add_test_executable(windows_file_writer_failure_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterFailureTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_failure_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        target_link_libraries(windows_file_writer_failure_tests PRIVATE advapi32)
+        add_test(NAME windows_file_writer_failure_binary COMMAND windows_file_writer_failure_tests binary)
+        add_test(NAME windows_file_writer_failure_text COMMAND windows_file_writer_failure_tests text)
+        set_tests_properties(windows_file_writer_failure_binary windows_file_writer_failure_text PROPERTIES TIMEOUT 20)
     endif()
 
     if(UNIX)
@@ -826,6 +862,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_program_header_order.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_input_program_headers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_input_program_headers.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_empty_load_page COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_empty_load_page.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_gui COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_gui.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_working_directory COMMAND ${Python3_EXECUTABLE}
@@ -858,8 +896,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_trampolines.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_syscall_trap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_trap.py $<TARGET_FILE:relinker>)
+        add_test(NAME replaced_plt_stubs_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_replaced_plt_stubs.py $<TARGET_FILE:relinker>)
         add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_syscall_route COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_route.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
@@ -921,6 +963,12 @@ if(BUILD_TESTING)
         add_test(NAME macos_gs_traps COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_gs_traps.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_gs_traps PROPERTIES TIMEOUT 60)
+        add_test(NAME macos_guest_gs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_gs.py $<TARGET_FILE:relinker>)
+        set_tests_properties(macos_guest_gs PROPERTIES TIMEOUT 60)
+        if(APPLE)
+            set_tests_properties(macos_guest_gs PROPERTIES RUN_SERIAL TRUE)
+        endif()
         add_test(NAME macos_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_fixed_base.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}
@@ -950,6 +998,11 @@ if(BUILD_TESTING)
         set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)
         set_tests_properties(linux_guest_qualified_imports PROPERTIES TIMEOUT 30)
         add_asan_test_options(linux_guest_qualified_imports verify_asan_link_order=0)
+        add_test(NAME linux_guest_relro COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_relro.py $<TARGET_FILE:relinker>)
+        set_property(TEST linux_guest_relro APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_relro PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_relro verify_asan_link_order=0)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
@@ -1082,6 +1135,12 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME import_slot_addends COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_import_slot_addends.py $<TARGET_FILE:relinker>)
+        set_tests_properties(import_slot_addends PROPERTIES TIMEOUT 20)
+        add_test(NAME guest_import_slot_addends COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_import_slot_addends.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_import_slot_addends PROPERTIES TIMEOUT 60)
         foreach(symbolInput IN ITEMS executable guest)
             foreach(symbolRelocation IN ITEMS 1 6 7)
                 add_test(NAME restricted_undefined_symbols_${symbolInput}_${symbolRelocation} COMMAND ${Python3_EXECUTABLE}
@@ -1131,6 +1190,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
+        add_test(NAME linux_guest_congruent_loads COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_congruent_loads.py $<TARGET_FILE:relinker>)
+        set_tests_properties(linux_guest_congruent_loads PROPERTIES TIMEOUT 30)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)
@@ -1294,6 +1356,9 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    add_test(NAME macos_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_qualified_imports.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_guest_qualified_imports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)

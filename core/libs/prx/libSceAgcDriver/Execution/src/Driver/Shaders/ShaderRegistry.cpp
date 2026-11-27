@@ -4,12 +4,13 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "CacheKey.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "CompiledVariant.hpp"
@@ -960,6 +961,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 }
 
 struct UserDataCallSites {
+    std::shared_ptr<const std::vector<std::uint32_t>> code;
     ShaderRecompiler::RdnaProgram program;
     std::vector<ShaderRecompiler::UserDataCall> calls;
     std::vector<ShaderRecompiler::TableCall> tableCalls;
@@ -971,7 +973,7 @@ constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
+    if ((request.shader.stage != Stage::Vertex && request.shader.stage != Stage::Fragment && request.shader.stage != Stage::Mesh) || !request.shader.header.empty() || !snapshot.userDataTailRegister) return {};
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
     const auto tail = ShaderRecompiler::FindUserDataTail(program, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()));
     if (!tail) return {};
@@ -985,14 +987,59 @@ std::string hexText(std::uint64_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister, bool allowGetpc = false) {
+void RecordLinkDependency(std::shared_ptr<ShaderRecompiler::SrtGuestWords> block, std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>& dependencies) {
+    if (block->runs.empty()) return;
+    for (const auto& kept : dependencies) {
+        if (kept->runs == block->runs && kept->words == block->words) return;
+    }
+    block->low = block->runs.front().first;
+    block->high = block->runs.back().first + block->runs.back().second * sizeof(std::uint32_t);
+    block->ordered = true;
+    block->stamp = std::make_shared<ShaderRecompiler::SrtStampCell>();
+    PreparedShaderState::UserDataLink::Restamp(*block, &Driver::QueryPendingSpan);
+    dependencies.push_back(std::move(block));
+}
+
+void RecordLinkDependency(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>& dependencies) {
+    bytes = bytes.first(bytes.size() / sizeof(std::uint32_t) * sizeof(std::uint32_t));
+    if (bytes.empty()) return;
+    auto block = std::make_shared<ShaderRecompiler::SrtGuestWords>();
+    block->words.resize(bytes.size() / sizeof(std::uint32_t));
+    std::memcpy(block->words.data(), bytes.data(), bytes.size());
+    block->runs.emplace_back(address, static_cast<std::uint32_t>(block->words.size()));
+    RecordLinkDependency(std::move(block), dependencies);
+}
+
+std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister, std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>& dependencies, bool allowGetpc = false) {
     constexpr std::uint64_t page = 4096u;
     constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
+    static std::mutex knownMutex;
+    static std::map<std::tuple<std::uint64_t, std::uint32_t, bool>, std::shared_ptr<const std::vector<std::uint32_t>>> known;
+    const auto key = std::make_tuple(address, linkRegister, allowGetpc);
+    std::shared_ptr<const std::vector<std::uint32_t>> cached;
+    {
+        std::lock_guard lock(knownMutex);
+        if (const auto found = known.find(key); found != known.end()) cached = found->second;
+    }
+    if (cached != nullptr && GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), cached->size() * 4u)) {
+        std::vector<std::uint32_t> current(cached->size());
+        GuestMemory::Read(address, std::as_writable_bytes(std::span(current)));
+        if (current == *cached) {
+            RecordLinkDependency(address, std::as_bytes(std::span(current)), dependencies);
+            return current;
+        }
+    }
     std::vector<std::uint32_t> words;
     const auto finish = [&] {
         const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister, allowGetpc);
-        if (length) words.resize(*length);
+        if (length) {
+            words.resize(*length);
+            RecordLinkDependency(address, std::as_bytes(std::span(words)), dependencies);
+            std::lock_guard lock(knownMutex);
+            if (known.size() >= 4096u) known.clear();
+            known.insert_or_assign(key, std::make_shared<const std::vector<std::uint32_t>>(words));
+        }
         return length.has_value();
     };
     std::size_t nextCheck = 0;
@@ -1013,17 +1060,19 @@ std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32
     throw std::runtime_error("its callee at " + hexText(address) + " does not return within " + std::to_string(limitWords * 4u) + " bytes");
 }
 
-std::vector<std::uint8_t> ReadGuestBytes(std::uint64_t address, std::uint64_t bytes, const char* what) {
+std::vector<std::uint8_t> ReadGuestBytes(std::uint64_t address, std::uint64_t bytes, const char* what, std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>& dependencies, bool record = true) {
     if (address > UINTPTR_MAX - bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), static_cast<std::size_t>(bytes))) {
         throw std::runtime_error(std::string("its ") + what + " at " + hexText(address) + " + " + hexText(bytes) + " is not readable");
     }
     std::vector<std::uint8_t> data(static_cast<std::size_t>(bytes));
     GuestMemory::Read(address, std::as_writable_bytes(std::span(data)));
+    if (record) RecordLinkDependency(address, std::as_bytes(std::span(data)), dependencies);
     return data;
 }
 
-std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCall& call) {
+std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCall& call, std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>>& dependencies, bool split = false) {
     constexpr std::uint64_t limitBytes = 64u << 20u;
+    constexpr std::size_t splitCallees = 1024u;
     constexpr std::size_t limitCallees = 64u;
     const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
     ShaderRecompiler::ShaderBufferResource descriptor{};
@@ -1034,31 +1083,81 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
         std::memcpy(descriptor.fields.data(), words, sizeof(words));
     } else {
         const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-        const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
+        const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor", dependencies);
         std::memcpy(descriptor.fields.data(), words.data(), words.size());
     }
     if (call.nestedDescriptorOffset) {
         if (*call.nestedDescriptorOffset + 16ull > descriptor.GetSize()) throw std::runtime_error("the buffer holding its call table descriptor has " + std::to_string(descriptor.GetSize()) + " bytes, too few for offset " + hexText(*call.nestedDescriptorOffset));
-        const auto nested = ReadGuestBytes(descriptor.Base48() + *call.nestedDescriptorOffset, 16u, "nested call table descriptor");
+        const auto nested = ReadGuestBytes(descriptor.Base48() + *call.nestedDescriptorOffset, 16u, "nested call table descriptor", dependencies);
         std::memcpy(descriptor.fields.data(), nested.data(), nested.size());
     }
     const auto bytes = descriptor.GetSize();
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
-    const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table");
+    const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table", dependencies, false);
+    auto dependency = std::make_shared<ShaderRecompiler::SrtGuestWords>();
     std::set<std::uint64_t> targets;
     for (std::uint64_t offset = call.entryOffset; offset + 8u <= bytes; offset += call.entryStride) {
         std::uint64_t target = 0;
         std::memcpy(&target, table.data() + offset, sizeof(target));
+        const auto address = descriptor.Base48() + offset;
+        if (!dependency->runs.empty() && address <= dependency->runs.back().first + dependency->runs.back().second * sizeof(std::uint32_t)) {
+            auto& run = dependency->runs.back();
+            run.second = static_cast<std::uint32_t>((address + sizeof(target) - run.first) / sizeof(std::uint32_t));
+        } else {
+            dependency->runs.emplace_back(address, 2u);
+        }
         if (target != 0u) targets.insert(target);
         if (call.entryStride == 0u) break;
     }
-    if (targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
+    for (const auto& [address, count] : dependency->runs) {
+        const auto offset = dependency->words.size();
+        dependency->words.resize(offset + count);
+        std::memcpy(dependency->words.data() + offset, table.data() + address - descriptor.Base48(), count * sizeof(std::uint32_t));
+    }
+    RecordLinkDependency(std::move(dependency), dependencies);
+    if (split && targets.size() > splitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(splitCallees) + " are split");
+    if (!split && targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
     std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, true)});
+    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, dependencies, true)});
     return callees;
 }
 
-std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+void ReportTableCallSplit(std::uint64_t address, const ShaderRecompiler::RdnaProgram& program, const ShaderRecompiler::TableCall& call, std::span<const ShaderRecompiler::TableCallee> callees, std::uint32_t waveSize) {
+    static std::mutex mutex;
+    static std::set<std::pair<std::uint64_t, std::uint32_t>> reported;
+    {
+        std::lock_guard lock(mutex);
+        if (!reported.insert({address, call.programCounter}).second) return;
+    }
+    std::string refusal;
+    const auto split = ShaderRecompiler::SplitTableCall(program, call, callees, waveSize, refusal);
+    if (split) {
+        std::fprintf(stderr, "[gpu] compute shader 0x%llx: its table call at program counter 0x%x sits in a waterfall loop from 0x%x to 0x%x, so each of its %zu callees could run as its own pipeline\n", static_cast<unsigned long long>(address), call.programCounter,
+            split->loopProgramCounter, split->exitProgramCounter, callees.size());
+        return;
+    }
+    std::fprintf(stderr, "[gpu] compute shader 0x%llx: its table call at program counter 0x%x cannot run its callees as their own pipelines: %s\n", static_cast<unsigned long long>(address), call.programCounter, refusal.c_str());
+}
+
+#ifdef __APPLE__
+std::optional<std::vector<std::uint32_t>> RetargetDriverBlockPointers(std::span<const std::uint32_t> code, const ShaderRecompiler::RdnaProgram& program, const std::vector<ShaderRecompiler::TableCall>& calls) {
+    std::vector<std::uint32_t> words(code.begin(), code.end());
+    bool retargeted = false;
+    for (const auto& call : calls) {
+        if (!call.constantPointer) continue;
+        const auto address = DriverDetail::RetargetPs5DriverMemory(*call.constantPointer);
+        if (address == *call.constantPointer) continue;
+        const auto rewritten = ShaderRecompiler::RetargetTableCallPointer(words, program, call, address);
+        if (!rewritten) continue;
+        words = std::move(*rewritten);
+        retargeted = true;
+    }
+    if (!retargeted) return std::nullopt;
+    return words;
+}
+#endif
+
+std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
     if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
     const auto code = request.shader.code;
@@ -1071,16 +1170,16 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
     const auto sameProgram = [&](const PreparedShaderState::UserDataLink& link) {
         return link.codeOffset == codeOffset && link.userDataBaseRegister == swappc.userDataBaseRegister && link.userDataCount == swappc.userDataCount && link.waveSize == swappc.waveSize;
     };
-    std::vector<std::uint32_t> current;
     const auto unchanged = [&](const PreparedShaderState::UserDataLink& link) {
         for (std::size_t index = 0; index < link.callees.size(); ++index) {
             const auto address = addressOf(link.sites->calls[index]);
-            const auto& words = link.code[index];
-            if (address != link.callees[index] || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * 4u)) return false;
-            current.resize(words.size());
-            GuestMemory::Read(address, std::as_writable_bytes(std::span(current)));
-            if (current != words) return false;
+            if (address != link.callees[index]) return false;
+            const auto bytes = std::as_bytes(std::span(link.code[index]));
+            GuestMemory::GuardRead(address, bytes.size());
+            GuestMemory::FlushGpuWrites(address, bytes.size());
+            if (GuestMemory::CompareMapped(address, bytes) != GuestMemory::Compare::Equal) return false;
         }
+        if (!link.sites->tableCalls.empty() && !std::ranges::equal(link.tableUserData, request.context.userData)) return false;
         return true;
     };
     auto& prepared = *snapshot.prepared;
@@ -1092,36 +1191,51 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
     std::shared_ptr<const UserDataCallSites> sites;
     for (auto candidate = candidates.rbegin(); candidate != candidates.rend(); ++candidate) {
         sites = candidate->sites;
-        if (candidate->linked != nullptr && unchanged(*candidate)) return candidate->linked;
+        if (candidate->linked != nullptr && unchanged(*candidate)) {
+            auto reused = std::make_shared<PreparedShaderState::UserDataLink>(*candidate);
+            for (std::size_t index = 0; index < reused->callees.size(); ++index) RecordLinkDependency(reused->callees[index], std::as_bytes(std::span(reused->code[index])), reused->dependencies);
+            return reused;
+        }
     }
     if (sites == nullptr) {
         auto found = std::make_shared<UserDataCallSites>();
         found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
         found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
         found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+#ifdef __APPLE__
+        const auto patched = RetargetDriverBlockPointers(code, found->program, found->tableCalls);
+        if (patched) {
+            found->code = std::make_shared<const std::vector<std::uint32_t>>(std::move(*patched));
+            found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(*found->code);
+            found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+            found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        }
+#endif
         sites = std::move(found);
     }
     const auto& program = sites->program;
     const auto& calls = sites->calls;
     const auto& tableCalls = sites->tableCalls;
     PreparedShaderState::UserDataLink link{codeOffset, swappc.userDataBaseRegister, swappc.userDataCount, swappc.waveSize, sites, {}, {}, nullptr};
-    const auto remember = [&] {
+    const auto remember = [&](const PreparedShaderState::UserDataLink& retained) {
         std::lock_guard lock(prepared.mutex);
         auto& links = prepared.userDataLinks;
-        if (link.linked == nullptr && std::any_of(links.begin(), links.end(), sameProgram)) return;
+        if (retained.linked == nullptr && std::any_of(links.begin(), links.end(), sameProgram)) return;
         if (std::count_if(links.begin(), links.end(), sameProgram) >= static_cast<std::ptrdiff_t>(UserDataLinksPerProgram)) links.erase(std::find_if(links.begin(), links.end(), sameProgram));
-        links.push_back(link);
+        auto memo = retained;
+        memo.dependencies = decltype(memo.dependencies){};
+        links.push_back(std::move(memo));
     };
     if (calls.empty() && tableCalls.empty()) {
         link.linked = std::make_shared<const ShaderRecompiler::LinkedCalls>();
-        remember();
-        return link.linked;
+        remember(link);
+        return std::make_shared<const PreparedShaderState::UserDataLink>(std::move(link));
     }
     std::vector<std::vector<std::uint32_t>> callees;
     for (const auto& call : calls) {
         const auto address = addressOf(call);
         try {
-            callees.push_back(ReadUserDataCallee(address, call.linkRegister));
+            callees.push_back(ReadUserDataCallee(address, call.linkRegister, link.dependencies));
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls user data s[" + std::to_string(call.userDataRegister) + ":" +
                 std::to_string(call.userDataRegister + 1u) + "] at program counter " + hexText(call.programCounter) + ", but " + error.what());
@@ -1130,23 +1244,81 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
     std::vector<std::vector<ShaderRecompiler::TableCallee>> tableCallees;
     for (const auto& call : tableCalls) {
         try {
-            tableCallees.push_back(ReadTableCallees(request, call));
+            tableCallees.push_back(ReadTableCallees(request, call, link.dependencies));
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls a target loaded from a table at program counter " + hexText(call.programCounter) + ", but " + error.what());
         }
     }
+    for (std::size_t index = 0; index < tableCalls.size(); ++index) ReportTableCallSplit(request.shader.codeAddress, program, tableCalls[index], tableCallees[index], request.context.waveSize);
     auto linked = std::make_shared<const ShaderRecompiler::LinkedCalls>(ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees));
-    if (!tableCalls.empty()) {
-        remember();
-        return linked;
-    }
+    if (!tableCalls.empty()) link.tableUserData.assign(request.context.userData.begin(), request.context.userData.end());
     for (const auto& call : calls) link.callees.push_back(addressOf(call));
     link.code = std::move(callees);
     link.linked = linked;
-    remember();
-    return linked;
+    if (tableCalls.empty()) remember(link);
+    else remember({codeOffset, swappc.userDataBaseRegister, swappc.userDataCount, swappc.waveSize, sites});
+    return std::make_shared<const PreparedShaderState::UserDataLink>(std::move(link));
 }
 
+}
+
+void PreparedShaderState::UserDataLink::AppendRegions(std::vector<ShaderRecompiler::MemoryRegion>& regions) const {
+    for (const auto& dependency : dependencies) {
+        std::size_t offset = 0;
+        for (const auto& [address, count] : dependency->runs) {
+            regions.push_back({address, std::as_bytes(std::span(dependency->words).subspan(offset, count))});
+            offset += count;
+        }
+    }
+}
+
+void PreparedShaderState::UserDataLink::VouchRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::vector<VouchedRegions>& vouched) const {
+    const auto publish = Graphics::Recorder::PublishGeneration();
+    const auto pending = Graphics::StorageTexture::PendingSerial();
+    const auto forget = GuestMemory::ForgetSerial();
+    const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    vouched.clear();
+    if ((forget & 1u) != 0) return;
+    std::vector<SharedWords> shared;
+    std::size_t first = 0;
+    for (std::size_t index = 0; index < regions.size(); ++index) {
+        AppendSharedWords(shared, index, first, regions[index].bytes, dependencies);
+        first += regions[index].bytes.size() / sizeof(std::uint32_t);
+    }
+    VouchSharedRegions(shared, regions.size(), &Driver::QueryPendingSpan, vouched, dependencies, &Restamp);
+    if (Graphics::Recorder::PublishGeneration() != publish || Graphics::StorageTexture::PendingSerial() != pending || GuestMemory::ForgetSerial() != forget || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != layout) vouched.clear();
+}
+
+bool PreparedShaderState::UserDataLink::Restamp(const ShaderRecompiler::SrtGuestWords& block, ShaderMemory::PendingWriteQuery pending) {
+    if (block.stamp == nullptr || block.runs.empty() || block.low >= block.high) return false;
+    const auto bytes = static_cast<std::size_t>(block.high - block.low);
+    if (pending != nullptr && pending(block.low, bytes, {}) != ShaderMemory::PendingWrite::None) return false;
+    GuestMemory::GuardRead(block.low, bytes);
+    GuestMemory::FlushGpuWrites(block.low, bytes);
+    const auto publish = Graphics::Recorder::PublishGeneration();
+    const auto pendingSerial = Graphics::StorageTexture::PendingSerial();
+    const auto forget = GuestMemory::ForgetSerial();
+    const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto generation = GuestMemory::CollectWritesUncached(block.low, bytes);
+    if (generation == 0 || (forget & 1u) != 0) return false;
+    std::size_t offset = 0;
+    for (const auto& [address, count] : block.runs) {
+        const auto words = std::span(block.words).subspan(offset, count);
+        if (GuestMemory::CompareMapped(address, std::as_bytes(words)) != GuestMemory::Compare::Equal) return false;
+        offset += count;
+    }
+    if (offset != block.words.size()) return false;
+    if (GuestMemory::CollectWritesUncached(block.low, bytes) == 0 || !GuestMemory::UnchangedSince(block.low, bytes, generation)) return false;
+    if (pending != nullptr && pending(block.low, bytes, {}) != ShaderMemory::PendingWrite::None) return false;
+    if (Graphics::Recorder::PublishGeneration() != publish || Graphics::StorageTexture::PendingSerial() != pendingSerial || GuestMemory::ForgetSerial() != forget || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != layout) return false;
+    ShaderRecompiler::StoreStamp(block, {generation, layout});
+    return true;
+}
+
+bool PreparedShaderState::UserDataLink::Overlaps(std::uint64_t address, std::size_t bytes) const {
+    return std::any_of(dependencies.begin(), dependencies.end(), [&](const auto& dependency) {
+        return std::any_of(dependency->runs.begin(), dependency->runs.end(), [&](const auto& run) { return address < run.first + run.second * sizeof(std::uint32_t) && run.first < address + bytes; });
+    });
 }
 
 bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
@@ -1192,11 +1364,300 @@ std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompile
     return owned;
 }
 
+struct SplitTableCallParts {
+    std::vector<ShaderRecompiler::SplitTableCallProgram> programs;
+    std::uint32_t vectorCount = 0;
+    bool continuation = false;
+    std::vector<std::uint64_t> targets;
+    std::mutex mutex;
+    std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>> handles;
+    std::vector<std::pair<bool, bool>> samples;
+};
+
+namespace {
+
+bool SplitTableCallsEnabled() {
+    static const bool enabled = std::getenv("APS5_SPLIT_TABLE_CALLS") != nullptr;
+    return enabled;
+}
+
+std::uint64_t HashWords(std::uint64_t hash, std::span<const std::uint32_t> words) {
+    for (const auto word : words) {
+        hash ^= word;
+        hash *= 0x100000001b3ull;
+    }
+    return hash;
+}
+
+}
+
+std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompiler::RecompileRequest& request, std::uint32_t vectorCount) {
+    if (!SplitTableCallsEnabled() || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return nullptr;
+    const auto code = request.shader.code;
+    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return nullptr;
+    const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
+    const auto codeHash = HashWords(0xcbf29ce484222325ull, code);
+    struct Site {
+        ShaderRecompiler::RdnaProgram program;
+        std::optional<ShaderRecompiler::TableCall> call;
+    };
+    static std::mutex sitesMutex;
+    static std::map<std::array<std::uint64_t, 5>, std::shared_ptr<const Site>> sites;
+    const std::array<std::uint64_t, 5> siteKey{request.shader.codeAddress, codeHash, code.size(), static_cast<std::uint64_t>(swappc.userDataBaseRegister) << 32u | swappc.userDataCount, swappc.waveSize};
+    std::shared_ptr<const Site> site;
+    {
+        std::lock_guard lock(sitesMutex);
+        if (const auto found = sites.find(siteKey); found != sites.end()) site = found->second;
+    }
+    if (site == nullptr) {
+        auto decoded = std::make_shared<Site>();
+        decoded->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        if (ShaderRecompiler::FindUserDataCalls(decoded->program, swappc).empty()) {
+            auto tableCalls = ShaderRecompiler::FindTableCalls(decoded->program, swappc);
+            if (tableCalls.size() == 1u) decoded->call = std::move(tableCalls[0]);
+        }
+        std::lock_guard lock(sitesMutex);
+        if (sites.size() >= 1024u) sites.clear();
+        site = sites.emplace(siteKey, std::move(decoded)).first->second;
+    }
+    if (!site->call.has_value()) return nullptr;
+    const auto& program = site->program;
+    const auto& call = *site->call;
+    std::vector<ShaderRecompiler::TableCallee> callees;
+    try {
+        std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;
+        callees = ReadTableCallees(request, call, dependencies, true);
+    } catch (const std::exception& error) {
+        return nullptr;
+    }
+    ReportTableCallSplit(request.shader.codeAddress, program, call, callees, request.context.waveSize);
+    std::vector<std::uint64_t> key{request.shader.codeAddress, codeHash, vectorCount, request.context.waveSize};
+    for (const auto& callee : callees) {
+        key.push_back(callee.target);
+        key.push_back(HashWords(0xcbf29ce484222325ull, callee.code));
+    }
+    static std::mutex mutex;
+    static std::map<std::vector<std::uint64_t>, std::shared_ptr<SplitTableCallParts>> known;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = known.find(key); found != known.end()) return found->second;
+        for (const auto& [built, builtParts] : known) {
+            if (built.size() < key.size() || !std::equal(key.begin(), key.begin() + 4, built.begin())) continue;
+            std::set<std::pair<std::uint64_t, std::uint64_t>> held;
+            for (std::size_t index = 4; index + 1 < built.size(); index += 2) held.emplace(built[index], built[index + 1]);
+            bool covered = true;
+            for (std::size_t index = 4; covered && index + 1 < key.size(); index += 2) covered = held.contains({key[index], key[index + 1]});
+            if (covered) return builtParts;
+        }
+    }
+    std::string refusal;
+    const auto split = ShaderRecompiler::SplitTableCall(program, call, callees, request.context.waveSize, refusal);
+    ShaderRecompiler::SplitTableCallPrograms built;
+    if (split) {
+        built = ShaderRecompiler::BuildSplitTableCallPrograms(program, call, callees, *split, vectorCount);
+    } else {
+        std::string continuationRefusal;
+        const auto continuation = ShaderRecompiler::ContinueTableCall(program, call, callees, vectorCount, continuationRefusal);
+        static std::mutex reportMutex;
+        static std::set<std::uint64_t> reported;
+        {
+            std::lock_guard reportLock(reportMutex);
+            if (reported.insert(request.shader.codeAddress).second) {
+                if (continuation) {
+                    std::fprintf(stderr, "[gpu] compute shader 0x%llx: table call at pc 0x%x continues across dispatches from the loop at pc 0x%x, replaying from pc 0x%x, %zu callees, %u state slots\n", static_cast<unsigned long long>(request.shader.codeAddress), call.programCounter, continuation->headerProgramCounter, continuation->replayProgramCounter, callees.size(), ShaderRecompiler::SplitStateAbi::SlotCount(continuation->registers));
+                } else {
+                    std::fprintf(stderr, "[gpu] compute shader 0x%llx: table call at pc 0x%x neither splits (%s) nor continues (%s)\n", static_cast<unsigned long long>(request.shader.codeAddress), call.programCounter, refusal.c_str(), continuationRefusal.c_str());
+                }
+            }
+        }
+        if (!continuation) return nullptr;
+        built = ShaderRecompiler::BuildTableCallContinuation(program, call, callees, *continuation);
+    }
+    auto parts = std::make_shared<SplitTableCallParts>();
+    parts->continuation = built.continuation;
+    for (const auto& callee : callees) parts->targets.push_back(callee.target);
+    parts->programs.push_back(std::move(built.entry));
+    for (auto& callee : built.callees) parts->programs.push_back(std::move(callee));
+    parts->programs.push_back(std::move(built.resume));
+    parts->vectorCount = built.stateVectors;
+    parts->handles.resize(parts->programs.size());
+    parts->samples.resize(parts->programs.size());
+    std::lock_guard lock(mutex);
+    if (known.size() >= 256u) known.clear();
+    return known.emplace(std::move(key), std::move(parts)).first->second;
+}
+
+std::size_t SplitTableCallPartCount(const SplitTableCallParts& parts) {
+    return parts.programs.size();
+}
+
+bool SplitTableCallContinues(const SplitTableCallParts& parts) {
+    return parts.continuation;
+}
+
+std::optional<std::size_t> SplitTableCallPartOf(const SplitTableCallParts& parts, std::uint64_t target) {
+    const auto found = std::ranges::find(parts.targets, target);
+    if (found == parts.targets.end()) return std::nullopt;
+    return static_cast<std::size_t>(found - parts.targets.begin()) + 1u;
+}
+
+std::uint32_t SplitTableCallTargetSlot(const SplitTableCallParts& parts) {
+    return ShaderRecompiler::SplitStateAbi::TargetSlot(parts.vectorCount);
+}
+
+std::uint32_t SplitTableCallStateSlots(const SplitTableCallParts& parts) {
+    return ShaderRecompiler::SplitStateAbi::TotalSlots(parts.vectorCount);
+}
+
+namespace {
+
+ShaderRecompiler::PreparedShaderInvocation SplitTableCallPartInvocation(SplitTableCallParts& parts, std::size_t part, const ShaderRecompiler::RecompileRequest& request) {
+    require(part < parts.programs.size(), "split table call part is out of range");
+    auto source = request;
+    source.shader.code = parts.programs[part].code;
+    source.context.splitState = parts.programs[part].plan;
+    source.context.linkedCallFallbacks = {};
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+    {
+        std::lock_guard lock(parts.mutex);
+        source.context.convertedSamples = parts.samples[part].first;
+        source.context.layerRowSamples = parts.samples[part].second;
+        handle = parts.handles[part];
+    }
+    if (handle == nullptr) {
+        handle = PrepareShaderWithDiagnostics(source);
+        std::lock_guard lock(parts.mutex);
+        parts.handles[part] = handle;
+    }
+    auto invocationRequest = source;
+    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle);
+    if (!invocation.has_value()) throw std::runtime_error("AGC driver: a split table call part does not match its prepared shader");
+    return std::move(*invocation);
+}
+
+constexpr std::size_t ParallelStackBytes = 64u << 20u;
+
+struct ParallelRun {
+    std::function<void(std::size_t)> work;
+    std::size_t count = 0;
+    std::atomic<std::size_t> next{0};
+};
+
+void* RunParallelWorker(void* argument) {
+    auto& run = *static_cast<ParallelRun*>(argument);
+    for (auto index = run.next.fetch_add(1); index < run.count; index = run.next.fetch_add(1)) run.work(index);
+    return nullptr;
+}
+
+#ifdef _WIN32
+unsigned __stdcall RunParallelWindowsWorker(void* argument) {
+    RunParallelWorker(argument);
+    return 0;
+}
+#endif
+
+void RunParallel(std::size_t count, const std::function<void(std::size_t)>& work) {
+    ParallelRun run{work, count};
+    const auto helpers = std::min<std::size_t>(count, std::max(1u, std::thread::hardware_concurrency() / 2u)) - (count != 0 ? 1u : 0u);
+#ifdef _WIN32
+    std::vector<HANDLE> threads;
+    for (std::size_t index = 0; index < helpers; ++index) {
+        const auto thread = _beginthreadex(nullptr, static_cast<unsigned>(ParallelStackBytes), &RunParallelWindowsWorker, &run, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+        if (thread != 0) threads.push_back(reinterpret_cast<HANDLE>(thread));
+    }
+    RunParallelWorker(&run);
+    for (const auto thread : threads) {
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+    }
+#else
+    std::vector<pthread_t> threads;
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, ParallelStackBytes);
+    for (std::size_t index = 0; index < helpers; ++index) {
+        pthread_t thread;
+        if (pthread_create(&thread, &attributes, &RunParallelWorker, &run) == 0) threads.push_back(thread);
+    }
+    pthread_attr_destroy(&attributes);
+    RunParallelWorker(&run);
+    for (const auto thread : threads) pthread_join(thread, nullptr);
+#endif
+}
+
+}
+
+SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCallParts& parts, std::size_t part, const ShaderRecompiler::RecompileRequest& request) {
+    while (true) {
+        auto invocation = SplitTableCallPartInvocation(parts, part, request);
+        try {
+            auto capture = memory.Capture(invocation);
+            return {capture, invocation.Materialize(*capture)};
+        } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
+            std::lock_guard lock(parts.mutex);
+            if (parts.samples[part].first) throw;
+            parts.samples[part].first = true;
+            parts.handles[part] = nullptr;
+        } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            std::lock_guard lock(parts.mutex);
+            if (parts.samples[part].second) throw;
+            parts.samples[part].second = true;
+            parts.handles[part] = nullptr;
+        }
+    }
+}
+
+std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemory* const> memories, SplitTableCallParts& parts, std::span<const std::size_t> which, const ShaderRecompiler::RecompileRequest& request) {
+    require(memories.size() == which.size(), "split table call parts and their memories differ in count");
+    std::vector<SplitTableCallPart> compiled(memories.size());
+    std::vector<std::optional<ShaderRecompiler::PreparedShaderInvocation>> invocations(memories.size());
+    std::vector<char> retry(memories.size(), 0);
+    std::vector<std::exception_ptr> failures(memories.size());
+    std::vector<char> sampled(memories.size(), 0);
+    const bool pipelined = DrawPipeline::Active();
+    RunParallel(memories.size(), [&](std::size_t part) {
+        DrawPipeline::Active() = pipelined;
+        try {
+            invocations[part] = SplitTableCallPartInvocation(parts, which[part], request);
+            compiled[part].capture = memories[part]->Capture(*invocations[part]);
+        } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
+            retry[part] = 1;
+            return;
+        } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            retry[part] = 1;
+            return;
+        } catch (...) {
+            failures[part] = std::current_exception();
+            return;
+        }
+        try {
+            compiled[part].result = invocations[part]->Materialize(*compiled[part].capture);
+        } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
+            sampled[part] = 1;
+        } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            sampled[part] = 1;
+        } catch (...) {
+            failures[part] = std::current_exception();
+        }
+    });
+    for (std::size_t part = 0; part < memories.size(); ++part) {
+        if (failures[part] != nullptr) std::rethrow_exception(failures[part]);
+        if (retry[part] != 0 || sampled[part] != 0) compiled[part] = CompileSplitTableCallPart(*memories[part], parts, which[part], request);
+    }
+    return compiled;
+}
+
+void ForEachSplitTableCallPart(std::size_t count, const std::function<void(std::size_t)>& work) {
+    RunParallel(count, work);
+}
+
 namespace {
 
 struct PendingPreparation {
     std::mutex mutex;
     bool finished = false;
+    bool waited = false;
     std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
     std::exception_ptr failure;
 };
@@ -1243,6 +1704,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const 
             job->finished = true;
         });
     }
+    AwaitBackgroundJob(job->mutex, job->finished, job->waited);
     {
         std::lock_guard lock(job->mutex);
         if (!job->finished) throw DrawCompilePending("the draw's shader is still being prepared in the background");
@@ -1257,11 +1719,13 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const 
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    const auto shared = LinkUserDataCallees(request, snapshot, codeOffset);
+    const auto link = LinkUserDataCallees(request, snapshot, codeOffset);
+    if (linking != nullptr) *linking = link != nullptr && !link->dependencies.empty() ? link : nullptr;
+    const auto shared = link != nullptr ? link->linked : nullptr;
     ShaderRecompiler::LinkedCalls tail;
     if (shared == nullptr || shared->code.empty()) tail.code = LinkGraphicsUserDataTail(request, snapshot);
     const auto& linked = shared != nullptr && tail.code.empty() ? *shared : tail;
@@ -1305,22 +1769,36 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     return std::move(*invocation);
 }
 
-std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation) {
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking) {
     const auto record = [&](std::vector<std::size_t>& offsets) {
         std::lock_guard lock(snapshot.prepared->mutex);
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
     };
+    ShaderRecompiler::NanSpeculationRetryScope retry(request.shader.codeAddress, static_cast<std::uint32_t>(request.shader.stage));
+    const auto abandon = [&] { retry.Abandoned(); };
     while (true) {
         try {
-            return memory.Capture(invocation);
+            auto capture = memory.Capture(invocation);
+            retry.Succeeded();
+            return capture;
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-            if (invocation.Request().context.convertedSamples) throw;
+            if (invocation.Request().context.convertedSamples) { abandon(); throw; }
             record(snapshot.prepared->convertedSamples);
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
-            if (invocation.Request().context.layerRowSamples) throw;
+            if (invocation.Request().context.layerRowSamples) { abandon(); throw; }
             record(snapshot.prepared->layerRowSamples);
+        } catch (const ShaderRecompiler::NanSpeculationRetry&) {
+            retry.Retried();
+        } catch (...) {
+            abandon();
+            throw;
         }
-        invocation = InvocationFor(snapshot, codeOffset, request);
+        try {
+            invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
+        } catch (...) {
+            abandon();
+            throw;
+        }
     }
 }
 namespace {
@@ -1440,7 +1918,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     case 1: stage = Stage::Fragment; programRegister = 0x008; resourceRegister = 0x00b; break;
     case 2: stage = Stage::Vertex; programRegister = 0x0c8; resourceRegister = 0x08b; firstUser = 8; break;
     case 4: stage = Stage::Mesh; programRegister = 0x0c8; resourceRegister = 0x08b; break;
-    case 3: case 5: return {};
+    case 3: case 5: case 8: return {};
     case 6: stage = Stage::Mesh; programRegister = 0x088; resourceRegister = 0x08b; break;
     case 7: stage = Stage::TessellationControl; programRegister = 0x108; resourceRegister = 0x10b; break;
     default:
@@ -1541,16 +2019,16 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     return plan;
 }
 
-bool LibraryPrebuildDisabled() {
-    static const bool disabled = [] {
-        const auto* value = std::getenv("APS5_NO_LIBRARY_PREBUILD");
+bool LibraryPrebuildEnabled() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("APS5_LIBRARY_PREBUILD");
         return value != nullptr && std::strcmp(value, "1") == 0;
     }();
-    return disabled;
+    return enabled;
 }
 
 void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Graphics::ShaderStages& stages, ShaderRecompiler::ShaderStage stage, std::shared_ptr<const ShaderRecompiler::RecompileResult> result, std::uint32_t pushOffset, std::uint64_t program) {
-    if (LibraryPrebuildDisabled() || result == nullptr || (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Fragment)) return;
+    if (!LibraryPrebuildEnabled() || result == nullptr || (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Fragment)) return;
     SubmitLibraryPrebuild([device, stages, stage, result = std::move(result), pushOffset] {
         const std::array<Graphics::CompiledShader, 1> shaders{{{stage, result.get(), pushOffset}}};
         try {
@@ -1570,7 +2048,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
         entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(request, &preparation)});
     };
     append();
-    if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && !LibraryPrebuildDisabled()) {
+    if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && LibraryPrebuildEnabled()) {
         try {
             PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes, plan.program);
         } catch (const std::exception& error) {
@@ -2199,7 +2677,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     std::vector<PreparedGraphicsStage> prepared;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
-    const auto capacity = Graphics::StagePushLimit(decoded.state.stages, 0, decoded.state.depthRemap.mode != 0u);
+    const bool hasFragment = !decoded.roles.empty() && decoded.roles.back() == ShaderRecompiler::ProgramRole::Fragment;
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
         if (decoded.roles[index] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
         const auto& program = decoded.programs[index];
@@ -2207,10 +2685,8 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         const auto wave = Graphics::StageWaveSize(decoded.state.stages, program.binary.stage);
         pushOffset = Graphics::StagePushOffset(pushOffset, program.binary.stage, fixedSlots);
         const auto offset = pushOffset;
-        auto room = (fixedSlots && fragment ? Graphics::PipelinePushSlotBytes : capacity) - pushOffset % Graphics::PipelinePushSlotBytes;
-        if (decoded.state.depthRemap.mode != 0u && offset < Graphics::PipelinePushSlotBytes) {
-            room = std::min(room, ShaderRecompiler::DepthRemapPushOffsetBytes - offset);
-        }
+        require(pushOffset <= Graphics::PushBlockBytes(fixedSlots), "prepared stage push constant offset exceeds the pipeline push constant block");
+        const auto room = Graphics::StagePushBudget(Graphics::StagePushLimit(decoded.state.stages, pushOffset, decoded.state.depthRemap.mode != 0u), pushOffset, program.binary.stage, fixedSlots, hasFragment);
         if (deferUnprepared && DeferFailedRegistration(*program.snapshot)) {
             prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
             continue;
@@ -2225,7 +2701,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             continue;
         }
         if (vertex) {
-            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports;
+            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports | decoded.state.viewportExports;
             vertex->depthRemapMode = decoded.state.depthRemap.mode;
             Graphics::ApplyPointSize(decoded.state, *vertex);
         }
@@ -2253,7 +2729,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         const auto bytes = handle->artifact->bindings.pushConstantSizeBytes;
         require(bytes <= room, "prepared graphics stages exceed the push constant block");
         std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
-        if (target.registrationModules && !LibraryPrebuildDisabled()) {
+        if (target.registrationModules && LibraryPrebuildEnabled()) {
             try {
                 registration = ShaderRecompiler::RegistrationResult(request, *handle);
             } catch (const std::exception& error) {
@@ -2423,6 +2899,18 @@ std::array<std::uint64_t, 4> Driver::PrebuiltLibraries() {
     const auto localDevice = device.Load();
     if (localDevice == nullptr) return {};
     return Graphics::PipelineLibraryCountersOf(localDevice->Device()).built;
+}
+
+std::uint64_t Driver::SettledPipelineLibraryWork() {
+    AwaitRegistrationPreparation();
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild()) pool->AwaitSubmitted();
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return 0;
+    Graphics::WaitForOptimizedPipelines(localDevice->Device());
+    const auto counters = Graphics::PipelineLibraryCountersOf(localDevice->Device());
+    std::uint64_t work = counters.linked + counters.optimized;
+    for (const auto parts : counters.built) work += parts;
+    return work;
 }
 
 void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {

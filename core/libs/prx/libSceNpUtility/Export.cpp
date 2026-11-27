@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "SceTypes.hpp"
@@ -45,12 +46,20 @@ static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND = static_cas
 static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AD0B);
 static constexpr int SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AA03);
 static constexpr int SCE_NP_TITLE_METADATA_ERROR_TOO_LONG = static_cast<int>(0x8055AA04);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_OUT_OF_MEMORY = static_cast<int>(0x8055AA05);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055AA09);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
 static constexpr std::size_t MAX_REQUESTS = 32;
 static constexpr std::size_t MAX_SERVICE_CHECKER2_REQUESTS = 0x1000;
 static constexpr std::uint32_t MAX_SERVICE_CHECKER2_REQUEST_ID = 0x7FFFFFFF;
+static constexpr std::size_t MAX_TITLE_METADATA_REQUESTS = 0x1000;
+static constexpr std::uint32_t MAX_TITLE_METADATA_REQUEST_ID = 0xFFFFFF;
+static constexpr std::size_t MAX_APP_LAUNCH_LINK_REQUESTS = 0x1000;
+static constexpr std::uint32_t MAX_APP_LAUNCH_LINK_REQUEST_ID = 0x7FFFFFFF;
+static constexpr std::size_t MAX_SERVICE_CHECKER_REQUESTS = 0x1000;
+static constexpr std::uint32_t MAX_SERVICE_CHECKER_REQUEST_ID = 0x7FFFFFFF;
 static constexpr int WORD_FILTER_TITLE_CTX_ID_OFFSET = 0x01000000;
 static constexpr int WORD_FILTER_REQUEST_ID_OFFSET = 0x02000000;
 static constexpr std::size_t WORD_FILTER_COMMENT_MAX_LENGTH = 0x400;
@@ -109,7 +118,7 @@ struct FamilyState {
     std::mutex mutex;
     bool initialized = false;
     std::unordered_set<int> requests;
-    std::int32_t nextRequest = 1;
+    std::uint32_t nextRequest = 1;
     std::int32_t currentRequest = 0;
 };
 
@@ -127,21 +136,22 @@ bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
     return copied;
 }
 
+int AllocateRequestId(std::unordered_set<int>& requests, std::uint32_t& nextRequest, std::size_t maxRequests, std::uint32_t maxRequestId, std::int32_t* requestId, int invalidArgument) {
+    if (requests.size() >= maxRequests) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
+    std::uint32_t id = nextRequest;
+    while (requests.contains(static_cast<int>(id))) id = id >= maxRequestId ? 1 : id + 1;
+    const std::int32_t value = static_cast<std::int32_t>(id);
+    if (!CopyOutPreservingErrno(requestId, &value, sizeof(value))) return invalidArgument;
+    nextRequest = id >= maxRequestId ? 1 : id + 1;
+    requests.insert(value);
+    return 0;
+}
+
 int AppLaunchLinkCreateRequest(FamilyState& state, std::int32_t userId, const void* param, std::int32_t* requestId, int notInitialized, int invalidArgument) {
     if (userId == -1 || !param || !requestId) return invalidArgument;
     std::lock_guard lock(state.mutex);
     if (!state.initialized) return notInitialized;
-    const std::int32_t id = state.nextRequest++;
-    state.requests.insert(id);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
-    if (!copied) {
-        state.requests.erase(id);
-        --state.nextRequest;
-        return invalidArgument;
-    }
-    return 0;
+    return AllocateRequestId(state.requests, state.nextRequest, MAX_APP_LAUNCH_LINK_REQUESTS, MAX_APP_LAUNCH_LINK_REQUEST_ID, requestId, invalidArgument);
 }
 
 int AppLaunchLinkDestroyRequest(FamilyState& state, std::int32_t requestId, int notInitialized) {
@@ -187,9 +197,16 @@ struct ServiceChecker1 {
     std::mutex mutex;
     bool initialized = false;
     std::unordered_set<int> requests;
-    std::int32_t nextRequest = 1;
+    std::uint32_t nextRequest = 1;
 };
 ServiceChecker1 serviceChecker1;
+
+struct TitleMetadataState {
+    std::mutex mutex;
+    std::unordered_set<std::int32_t> requests;
+    std::uint32_t nextRequest = 1;
+};
+TitleMetadataState titleMetadata;
 
 int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
@@ -301,7 +318,11 @@ int SetTimeout(Service& service, int id, int resolveRetry, std::uint32_t resolve
 }
 
 int CheckComment(const char* comment) {
-    return strnlen(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1) > WORD_FILTER_COMMENT_MAX_LENGTH ? SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT : 0;
+    std::string copy;
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(comment, WORD_FILTER_COMMENT_MAX_LENGTH + 1, copy);
+    errno = savedErrno;
+    return status == 0 ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
 }
 }
 
@@ -404,15 +425,17 @@ int APS5_VABI sceNpAppInfoIntCreateRequest(std::int32_t* requestId) {
     if (!requestId) return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(appInfo.mutex);
     if (!appInfo.initialized) return SCE_NP_APP_INFO_ERROR_NOT_INITIALIZED;
-    const std::int32_t id = appInfo.nextRequest++;
+    const std::uint32_t previousNext = appInfo.nextRequest;
+    const std::int32_t id = static_cast<std::int32_t>(previousNext);
     const std::int32_t previousRequest = appInfo.currentRequest;
     appInfo.currentRequest = id;
+    appInfo.nextRequest = previousNext >= MAX_APP_LAUNCH_LINK_REQUEST_ID ? 1 : previousNext + 1;
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
     errno = savedErrno;
     if (!copied) {
         appInfo.currentRequest = previousRequest;
-        --appInfo.nextRequest;
+        appInfo.nextRequest = previousNext;
         return SCE_NP_APP_INFO_ERROR_INVALID_ARGUMENT;
     }
     return 0;
@@ -502,14 +525,16 @@ int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
     return AddTitleContext(lookup);
 }
 int APS5_VABI sceNpLookupNetAbortRequest(std::int32_t requestId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return AbortRequest(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetCensorComment(std::int32_t requestId, const void* npId, const char* comment, const void* option) {
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckComment(comment)) return error;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
@@ -522,21 +547,25 @@ int APS5_VABI sceNpLookupNetConvertNpIdToJid() {
     return 0;
 }
 int APS5_VABI sceNpLookupNetCreateRequest(std::int32_t titleCtxId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return CreateRequest(lookupNet, titleCtxId, false);
 }
 int APS5_VABI sceNpLookupNetCreateTitleCtx(const void* selfNpId, const void* npId) {
     (void)selfNpId;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return AddTitleContext(lookupNet);
 }
 int APS5_VABI sceNpLookupNetDeleteRequest(std::int32_t requestId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return DeleteRequest(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetDeleteTitleCtx(std::int32_t titleCtxId) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     return DeleteTitleContext(lookupNet, titleCtxId);
 }
 int APS5_VABI sceNpLookupNetInit(void) {
@@ -561,8 +590,9 @@ int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out) {
     return 0;
 }
 int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option) {
-    (void)option;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!onlineId || !npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
@@ -570,21 +600,22 @@ int APS5_VABI sceNpLookupNetSanitizeComment(std::int32_t requestId, const void* 
     if (!comment || !sanitizedComment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckComment(comment)) return error;
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
     if (!npId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     return StartOffline(lookupNet, requestId);
 }
 int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetry, std::int32_t resolveTimeout, std::int32_t connectTimeout, std::int32_t sendTimeout, std::int32_t receiveTimeout) {
-    if (!LookupNetIsInitialized()) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    std::lock_guard stateLock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (resolveTimeout < 0 || connectTimeout < 0 || sendTimeout < 0 || receiveTimeout < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return SetTimeout(lookupNet, id, resolveRetry, static_cast<std::uint32_t>(resolveTimeout), static_cast<std::uint32_t>(connectTimeout), static_cast<std::uint32_t>(sendTimeout), static_cast<std::uint32_t>(receiveTimeout));
 }
 int APS5_VABI sceNpLookupNetTerm(void) {
-    {
-        std::lock_guard lock(lookupNetStateMutex);
-        if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
-        if (--lookupNetRefCount > 0) return 0;
-        lookupNetInitialized = false;
-    }
+    std::lock_guard lock(lookupNetStateMutex);
+    if (!lookupNetInitialized) return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (--lookupNetRefCount > 0) return 0;
+    lookupNetInitialized = false;
     LookupNetReset();
     return 0;
 }
@@ -661,17 +692,7 @@ int APS5_VABI sceNpServiceCheckerIntCreateRequest(const void* npId, std::int32_t
     if (!npId || !requestId) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(serviceChecker1.mutex);
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
-    const std::int32_t id = serviceChecker1.nextRequest++;
-    serviceChecker1.requests.insert(id);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
-    errno = savedErrno;
-    if (!copied) {
-        serviceChecker1.requests.erase(id);
-        --serviceChecker1.nextRequest;
-        return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
-    }
-    return 0;
+    return AllocateRequestId(serviceChecker1.requests, serviceChecker1.nextRequest, MAX_SERVICE_CHECKER_REQUESTS, MAX_SERVICE_CHECKER_REQUEST_ID, requestId, SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT);
 }
 int APS5_VABI sceNpServiceCheckerIntDestroyRequest(std::int32_t requestId) {
     std::lock_guard lock(serviceChecker1.mutex);
@@ -716,16 +737,32 @@ int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_
     if (!CopyOutPreservingErrno(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTitleMetadataIntAbortRequest(std::int32_t requestId) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.empty() || !titleMetadata.requests.contains(requestId)) {
+        return SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND;
+    }
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTitleMetadataIntCreateRequest(void) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.size() >= MAX_TITLE_METADATA_REQUESTS) {
+        return SCE_NP_TITLE_METADATA_ERROR_OUT_OF_MEMORY;
+    }
+    std::uint32_t id = titleMetadata.nextRequest;
+    while (titleMetadata.requests.contains(static_cast<std::int32_t>(id))) {
+        id = id >= MAX_TITLE_METADATA_REQUEST_ID ? 1 : id + 1;
+    }
+    const std::int32_t value = static_cast<std::int32_t>(id);
+    titleMetadata.nextRequest = id >= MAX_TITLE_METADATA_REQUEST_ID ? 1 : id + 1;
+    titleMetadata.requests.insert(value);
+    return value;
 }
-int APS5_VABI sceNpTitleMetadataIntDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTitleMetadataIntDeleteRequest(std::int32_t requestId) {
+    std::lock_guard lock(titleMetadata.mutex);
+    if (titleMetadata.requests.empty() || !titleMetadata.requests.erase(requestId)) {
+        return SCE_NP_TITLE_METADATA_ERROR_REQUEST_NOT_FOUND;
+    }
     return 0;
 }
 int APS5_VABI sceNpTitleMetadataIntGetInfo(std::uint32_t argument1, void* argument2, void* argument3) {

@@ -33,11 +33,13 @@ void CheckUninitialized() {
         Require(Failed(sceNetSetDnsInfoToKernel(&info, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(&info6, flags), kEnotinit));
         Require(Failed(sceNetSetDns6Info(&info6, flags), kEnotinit));
+        Require(Failed(sceNetSetDns6InfoToKernel(&info6, flags), kEnotinit));
         Require(Failed(sceNetGetDnsInfo(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDnsInfo(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDnsInfoToKernel(nullptr, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDns6Info(nullptr, flags), kEnotinit));
+        Require(Failed(sceNetSetDns6InfoToKernel(nullptr, flags), kEnotinit));
         Require(std::memcmp(&info, &before, sizeof(info)) == 0);
         Require(std::memcmp(&info6, &before6, sizeof(info6)) == 0);
     }
@@ -133,6 +135,13 @@ void CheckUnreadableInfo() {
     NetDns6Info read6{};
     Require(sceNetGetDns6Info(&read6, 0) == 1 && std::memcmp(&read6, &info6, sizeof(info6)) == 0);
     Require(sceNetSetDns6Info(nullptr, 0) == 0);
+    Require(Failed(sceNetSetDns6InfoToKernel(static_cast<const NetDns6Info*>(page), 1), kEinval));
+    Require(Failed(sceNetSetDns6InfoToKernel(static_cast<const NetDns6Info*>(page), 0), kEfault));
+    NetDns6Info kernel6{};
+    kernel6.primaryAddress.bytes[0] = 0x26;
+    Require(sceNetSetDns6InfoToKernel(&kernel6, 0) == 0);
+    Require(sceNetGetDns6Info(&read6, 0) == 1 && std::memcmp(&read6, &kernel6, sizeof(kernel6)) == 0);
+    Require(sceNetSetDns6InfoToKernel(nullptr, 0) == 0);
 #ifdef _WIN32
     Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
 #else
@@ -140,26 +149,12 @@ void CheckUnreadableInfo() {
 #endif
 }
 
-void CheckKernelDnsThrows() {
-    NetDns6Info info6{};
-    bool threwV6 = false;
-    try {
-        sceNetSetDns6InfoToKernel(&info6, 0);
-    } catch (const std::runtime_error&) {
-        threwV6 = true;
-    }
-    Require(threwV6);
-}
-
 int main() {
     CheckUninitialized();
-    CheckKernelDnsThrows();
     Require(sceNetInit_nid_postfix() == 0);
     CheckDns();
-    CheckKernelDnsThrows();
     CheckUnreadableInfo();
     Require(sceNetTerm() == 0);
     CheckUninitialized();
-    CheckKernelDnsThrows();
     return 0;
 }

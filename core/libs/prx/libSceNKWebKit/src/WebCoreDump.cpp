@@ -1,10 +1,120 @@
+// Derived from Source/WebCore/editing/VisiblePosition.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/dom/Position.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/editing/VisibleSelection.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/page/scrolling/ScrollingCoordinatorTypes.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2014 Google Inc. All rights reserved.
+ * Portions Copyright (c) 2011 Motorola Mobility, Inc.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+/*
+ * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Google Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+/*
+ * Copyright (C) 2004, 2005, 2006, 2015 Apple Inc.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+/*
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
+#include "prx/libSceNKWebKit/src/WtfVector.hpp"
 
-#include <climits>
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -54,20 +164,13 @@ float ToFloat(WebCore::LayoutUnit value) {
     return static_cast<float>(value.m_value) / FixedPointDenominator;
 }
 
-int SaturatedSum(int a, int b) {
-    long long sum = static_cast<long long>(a) + b;
-    if (sum > INT_MAX) return INT_MAX;
-    if (sum < INT_MIN) return INT_MIN;
-    return static_cast<int>(sum);
-}
-
 int Round(WebCore::LayoutUnit value) {
-    return SaturatedSum(value.m_value, FixedPointDenominator / 2) >> LayoutUnitFractionalBits;
+    return WebCore::SaturatedSum(value.m_value, FixedPointDenominator / 2) >> LayoutUnitFractionalBits;
 }
 
 int SnapSize(WebCore::LayoutUnit size, WebCore::LayoutUnit location) {
     WebCore::LayoutUnit fraction{location.m_value % FixedPointDenominator};
-    return Round(WebCore::LayoutUnit{SaturatedSum(fraction.m_value, size.m_value)}) - Round(fraction);
+    return Round(WebCore::LayoutUnit{WebCore::SaturatedSum(fraction.m_value, size.m_value)}) - Round(fraction);
 }
 
 const char* const kCompositeOperatorNames[] = {
@@ -79,6 +182,110 @@ const char* const kBlendModeNames[] = {
     "normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light",
     "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity", "plus-darker", "plus-lighter"
 };
+
+void DumpValue(TextStream& stream, int value) {
+    Int(stream, value);
+}
+
+void DumpValue(TextStream& stream, bool value) {
+    _ZN3WTF10TextStreamlsEb(&stream, value);
+}
+
+void DumpValue(TextStream& stream, const void* value) {
+    _ZN3WTF10TextStreamlsEPKv(&stream, value);
+}
+
+void DumpValue(TextStream& stream, WebCore::ScrollElasticity value) {
+    switch (value) {
+    case WebCore::ScrollElasticity::Automatic:
+        Int(stream, 0);
+        break;
+    case WebCore::ScrollElasticity::None:
+        Int(stream, 1);
+        break;
+    case WebCore::ScrollElasticity::Allowed:
+        Int(stream, 2);
+        break;
+    }
+}
+
+void DumpValue(TextStream& stream, WebCore::ScrollbarMode value) {
+    switch (value) {
+    case WebCore::ScrollbarMode::Auto:
+        Int(stream, 0);
+        break;
+    case WebCore::ScrollbarMode::AlwaysOff:
+        Int(stream, 1);
+        break;
+    case WebCore::ScrollbarMode::AlwaysOn:
+        Int(stream, 2);
+        break;
+    }
+}
+
+void DumpValue(TextStream& stream, WebCore::NativeScrollbarVisibility value) {
+    switch (value) {
+    case WebCore::NativeScrollbarVisibility::Visible:
+        Int(stream, 0);
+        break;
+    case WebCore::NativeScrollbarVisibility::HiddenByStyle:
+        Int(stream, 1);
+        break;
+    case WebCore::NativeScrollbarVisibility::ReplacedByCustomScrollbar:
+        Int(stream, 2);
+        break;
+    }
+}
+
+void DumpValue(TextStream& stream, const WebCore::Position& value);
+
+template<typename T> void DumpProperty(TextStream& stream, const char* name, const T& value) {
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, name);
+    Text(stream, " ");
+    DumpValue(stream, value);
+    _ZN3WTF10TextStream8endGroupEv(&stream);
+}
+
+void DumpValue(TextStream& stream, const WebCore::Position& value) {
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, "Position ");
+    _ZN3WTF10TextStreamlsEPKv(&stream, &value);
+    DumpProperty(stream, "anchor node", value.m_anchorNode);
+    DumpProperty(stream, "offset", static_cast<int>(value.m_offset));
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, "anchor type ");
+    switch (value.m_anchorTypeBits & 0x7u) {
+    case 0:
+        Text(stream, "offset in anchor");
+        break;
+    case 1:
+        Text(stream, "before anchor");
+        break;
+    case 2:
+        Text(stream, "after anchor");
+        break;
+    case 3:
+        Text(stream, "before children");
+        break;
+    case 4:
+        Text(stream, "after children");
+        break;
+    }
+    _ZN3WTF10TextStream8endGroupEv(&stream);
+    _ZN3WTF10TextStream8endGroupEv(&stream);
+}
+
+void DumpAffinity(TextStream& stream, std::uint8_t affinity) {
+    switch (affinity) {
+    case 0:
+        Text(stream, "upstream");
+        break;
+    case 1:
+        Text(stream, "downstream");
+        break;
+    }
+}
 
 }  // namespace
 
@@ -448,6 +655,66 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_13
     case GraphicsLayer::CustomAppearance::ScrollingOverhang: return Text(stream, "scrolling-overhang");
     case GraphicsLayer::CustomAppearance::ScrollingShadow: return Text(stream, "scrolling-shadow");
     }
+    return stream;
+}
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS0_6VectorImLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(TextStream& stream, const NKWebKit::WtfAbi::Vector<std::uint64_t>& vector) {
+    std::vector<std::uint64_t> items(vector.size);
+    for (unsigned index = 0; index < vector.size;) {
+        unsigned chunk = vector.size - index;
+        if (chunk > 64) chunk = 64;
+        if (!GuestCopyIn_nid_no_patch(items.data() + index, vector.buffer + index, chunk * sizeof(items[0]))) APS5_INVALID_ARG_EX;
+        index += chunk;
+    }
+    Text(stream, "[");
+    unsigned count = 0;
+    for (unsigned index = 0; index < vector.size; ++index) {
+        if (count) Text(stream, ", ");
+        _ZN3WTF10TextStreamlsEm(&stream, items[index]);
+        ++count;
+        if (count == stream.containerSizeLimit) break;
+    }
+    if (count != vector.size) Text(stream, ", ...");
+    return Text(stream, "]");
+}
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(TextStream& stream, WebCore::ScrollableAreaParameters value) {
+    DumpProperty(stream, "horizontal scroll elasticity", value.horizontalScrollElasticity);
+    DumpProperty(stream, "vertical scroll elasticity", value.verticalScrollElasticity);
+    DumpProperty(stream, "horizontal scrollbar mode", value.horizontalScrollbarMode);
+    DumpProperty(stream, "vertical scrollbar mode", value.verticalScrollbarMode);
+    if (value.allowsHorizontalScrolling) DumpProperty(stream, "allows horizontal scrolling", value.allowsHorizontalScrolling);
+    if (value.allowsVerticalScrolling) DumpProperty(stream, "allows vertical scrolling", value.allowsVerticalScrolling);
+    if (value.horizontalNativeScrollbarVisibility == WebCore::NativeScrollbarVisibility::HiddenByStyle)
+        DumpProperty(stream, "horizontal scrollbar hidden by style", value.horizontalNativeScrollbarVisibility);
+    if (value.verticalNativeScrollbarVisibility == WebCore::NativeScrollbarVisibility::HiddenByStyle)
+        DumpProperty(stream, "vertical scrollbar hidden by style", value.verticalNativeScrollbarVisibility);
+    return stream;
+}
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE(TextStream& stream, const WebCore::VisiblePosition& visiblePosition) {
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, "VisiblePosition ");
+    _ZN3WTF10TextStreamlsEPKv(&stream, &visiblePosition);
+    WebCore::Position position = visiblePosition.m_deepPosition;
+    DumpProperty(stream, "position", position);
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, "affinity ");
+    DumpAffinity(stream, visiblePosition.m_affinity);
+    _ZN3WTF10TextStream8endGroupEv(&stream);
+    _ZN3WTF10TextStream8endGroupEv(&stream);
+    return stream;
+}
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16VisibleSelectionE(TextStream& stream, const WebCore::VisibleSelection& selection) {
+    _ZN3WTF10TextStream10startGroupEv(&stream);
+    Text(stream, "VisibleSelection ");
+    _ZN3WTF10TextStreamlsEPKv(&stream, &selection);
+    DumpProperty(stream, "base", selection.m_base);
+    DumpProperty(stream, "extent", selection.m_extent);
+    DumpProperty(stream, "start", selection.m_start);
+    DumpProperty(stream, "end", selection.m_end);
+    _ZN3WTF10TextStream8endGroupEv(&stream);
     return stream;
 }
 }
