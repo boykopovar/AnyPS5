@@ -337,6 +337,9 @@ def main(argv=None):
     parser.add_argument("--author", metavar="LOGIN", help="print what blocks each open pull request of one author and write nothing")
     parser.add_argument("--issue", type=int, help="issue whose body lists the queue")
     args = parser.parse_args(argv)
+    for option, number in (("--explain", args.explain), ("--issue", args.issue)):
+        if number is not None and number < 1:
+            parser.error(f"{option} must be positive")
     if args.explain is not None and args.author is not None:
         parser.error("--explain and --author cannot be combined")
     try:

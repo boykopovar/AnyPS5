@@ -369,6 +369,18 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot be combined", err)
 
+    def test_nonpositive_numbers_are_rejected_before_any_request(self):
+        for option in ("--explain", "--issue"):
+            for number in ("0", "-3"):
+                with self.subTest(option=option, number=number):
+                    errors = io.StringIO()
+                    with patch("pr_ready.pr_labels.repository") as repository, patch("pr_ready.pr_labels.gh") as gh,                             contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                        pr_ready.main([option, number])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(f"{option} must be positive", errors.getvalue())
+                    repository.assert_not_called()
+                    gh.assert_not_called()
+
     def test_a_dry_run_writes_nothing(self):
         calls = []
         _, out, _ = self.run_main(["--dry-run", "--issue", "3"], [node(number=7)], calls)
