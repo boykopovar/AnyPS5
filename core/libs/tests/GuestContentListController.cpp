@@ -136,6 +136,13 @@ std::int32_t APS5_VABI MockGetdentsRead(std::int32_t fd, void* buffer, std::uint
     return 0;
 }
 
+std::int32_t APS5_VABI MockGetdentsReadOversized(std::int32_t fd, void* buffer, std::uint64_t bufferSize, std::uint64_t* bytesRead) {
+    (void)buffer;
+    if (fd != 55) return static_cast<int>(0x80f40002u);
+    *bytesRead = bufferSize + 1;
+    return 0;
+}
+
 std::int32_t APS5_VABI MockGetdentsClose(std::int32_t fd) {
     return fd == 55 ? 0 : static_cast<int>(0x80f40002u);
 }
@@ -145,7 +152,11 @@ std::int32_t APS5_VABI MockRequestMap(std::uint32_t deviceId, const char* direct
     std::filesystem::path hostDir = g_usbRoot;
     std::string dirStr(directory);
     if (!dirStr.empty() && dirStr[0] == '/') dirStr.erase(0, 1);
-    if (!dirStr.empty()) hostDir /= dirStr;
+    if (dirStr.rfind("fit_", 0) == 0) {
+        hostDir /= "fit_test";
+    } else if (!dirStr.empty()) {
+        hostDir /= dirStr;
+    }
     AddPathAlias_nid_no_patch("/clc_mnt7", hostDir.string().c_str());
     std::strcpy(mountPoint, "/clc_mnt7");
     *mountId = 100;
@@ -717,12 +728,14 @@ int main() {
         Require(sceCLCGetDeviceList(oneDev, &preservedCount) == kErrInvalidArg && errno == 71);
         Require(preservedCount == 99);
         Require(*oneDev == 0xA5A5A5A5u);
-        Require(sceCLCGetDeviceInfo(7, &devInfo) == 0);
+        Require(sceCLCGetDeviceInfo(7, &devInfo) == kErrDeviceNotFound);
         Require(sceCLCGetDeviceInfo(8, &devInfo) == kErrDeviceNotFound);
 
         Require(sceCLCSetUsbStorageCallback(&fullCb) == 0);
+        Require(sceCLCGetDeviceInfo(7, &devInfo) == kErrDeviceNotFound);
         Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
         Require(deviceCount == 1 && devices[0] == 7);
+        Require(sceCLCGetDeviceInfo(7, &devInfo) == 0);
     }
 
     {
@@ -771,13 +784,23 @@ int main() {
         inner.insert(inner.end(), {'u', 'd', 't', 'a'});
         AppendBe32(inner, 0xffffffffu);
         AppendBe32(inner, 0xffffffffu);
-        std::vector<std::uint8_t> box = std::move(inner);
+        WriteBytes(musicDir / "malformed_extsize.m4a", MakeBox("moov", inner));
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/music/malformed_extsize.m4a", &fileInfo) == 0);
+        Require(fileInfo.title[0] == '\0');
+
+        auto deepName = MakeIlstDataItem(0xa9, "nam", {'D', 'e', 'e', 'p'});
+        auto deepIlst = MakeBox("ilst", deepName);
+        std::vector<std::uint8_t> deepMetaBody(4, 0);
+        deepMetaBody.insert(deepMetaBody.end(), deepIlst.begin(), deepIlst.end());
+        auto deepBox = MakeBox("udta", MakeBox("meta", deepMetaBody));
         for (int d = 0; d < 40; ++d) {
-            box = MakeBox("moov", box);
+            deepBox = MakeBox("moov", deepBox);
         }
-        WriteBytes(musicDir / "malformed_deep.m4a", box);
+        WriteBytes(musicDir / "malformed_deep.m4a", deepBox);
         std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
         Require(sceCLCGetFileInfo(7, "/music/malformed_deep.m4a", &fileInfo) == 0);
+        Require(fileInfo.title[0] == '\0');
 
         std::vector<std::uint8_t> badPic1(32, 0);
         badPic1[4] = 0xff;
@@ -842,6 +865,56 @@ int main() {
         Require(sceCLCGetTrackList(0, 10, &listOut) == 0);
         Require(listOut.totalCount == 0 && listOut.returnedCount == 0);
         Require(sceCLCGetTrackInfo(0, &fileInfo) == kErrInvalidArg);
+    }
+
+    {
+        std::array<char, 512> unterminated{};
+        unterminated.fill('a');
+        unterminated[0] = '/';
+        Require(sceCLCGetFolderInfo(7, unterminated.data(), &counts) == kErrInvalidArg);
+        Require(sceCLCGetFileInfo(7, unterminated.data(), &fileInfo) == kErrInvalidArg);
+
+        std::string utf8Title(254, 'a');
+        utf8Title += "\xf0\x9f\x98\x80";
+        std::vector<std::uint8_t> frame;
+        frame.insert(frame.end(), {'T', 'I', 'T', '2'});
+        AppendSynchsafe32(frame, static_cast<std::uint32_t>(1 + utf8Title.size()));
+        AppendBe16(frame, 0);
+        frame.push_back(3);
+        frame.insert(frame.end(), utf8Title.begin(), utf8Title.end());
+        std::vector<std::uint8_t> mp3 = {'I', 'D', '3', 4, 0, 0};
+        AppendSynchsafe32(mp3, static_cast<std::uint32_t>(frame.size()));
+        mp3.insert(mp3.end(), frame.begin(), frame.end());
+        WriteBytes(musicDir / "utf8_boundary.mp3", mp3);
+
+        std::memset(&fileInfo, 0xA5, sizeof(fileInfo));
+        Require(sceCLCGetFileInfo(7, "/music/utf8_boundary.mp3", &fileInfo) == 0);
+        Require(std::strlen(fileInfo.title) == 254);
+        Require(std::string_view(fileInfo.title) == std::string(254, 'a'));
+
+        const std::filesystem::path fitDir = g_usbRoot / "fit_test";
+        std::filesystem::create_directories(fitDir, ec);
+        Require(!ec);
+        for (int i = 0; i < 4005; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "longname_%04d.mp3", i);
+            WriteBytes(fitDir / name, {0xff, 0xfb, 0x90, 0x00});
+        }
+        WriteBytes(fitDir / "z.mp3", {0xff, 0xfb, 0x90, 0x00});
+        std::string longGuestDir = "/fit_" + std::string(500, 'p');
+        Require(longGuestDir.size() == 505);
+        Require(sceCLCGetFolderInfo(7, longGuestDir.c_str(), &counts) == 0);
+        Require(static_cast<std::int32_t>(counts & 0xffffffffu) == 0);
+        Require(static_cast<std::int32_t>(counts >> 32) == 1);
+
+        SceCLCUsbStorageCallback oversizedCb = fullCb;
+        oversizedCb.getdentsRead = &MockGetdentsReadOversized;
+        Require(sceCLCSetUsbStorageCallback(&oversizedCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
+        Require(sceCLCGetFolderInfo(7, "/", &counts) == kErrInvalidArg);
+
+        Require(sceCLCSetUsbStorageCallback(&fullCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
     }
 
     return 0;

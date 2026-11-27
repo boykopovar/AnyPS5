@@ -199,8 +199,8 @@ bool CopyGuestCString(const char* src, char* dst, std::size_t maxBytes) {
         dst[i] = ch;
         if (ch == '\0') return true;
     }
-    dst[maxBytes - 1] = '\0';
-    return true;
+    std::memset(dst, 0, maxBytes);
+    return false;
 }
 
 bool IsDeviceKnown(const ControllerState& state, std::uint32_t deviceId) {
@@ -287,6 +287,22 @@ void CopyFixedString(char* dst, std::size_t dstSize, const char* src, std::size_
     dst[len] = '\0';
 }
 
+void CopyFixedUtf8String(char* dst, std::size_t dstSize, const char* src, std::size_t srcMax) {
+    std::memset(dst, 0, dstSize);
+    if (src == nullptr || dstSize == 0) return;
+    std::size_t len = 0;
+    while (len < srcMax && len + 1 < dstSize && src[len] != '\0') {
+        ++len;
+    }
+    if (len < srcMax && src[len] != '\0') {
+        while (len > 0 && (static_cast<unsigned char>(src[len]) & 0xc0u) == 0x80u) {
+            --len;
+        }
+    }
+    std::memcpy(dst, src, len);
+    dst[len] = '\0';
+}
+
 bool EqualsIgnoreCase(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i) {
@@ -322,7 +338,12 @@ bool MatchesExcludePattern(const char* pattern, std::string_view name) {
     }
 }
 
-void AppendDirentsFromBuffer(const char* buf, std::size_t bytes, const char* excludePattern, std::vector<ScannedEntry>& entries) {
+void AppendDirentsFromBuffer(
+    const char* buf,
+    std::size_t bytes,
+    std::size_t dirPathLen,
+    const char* excludePattern,
+    std::vector<ScannedEntry>& entries) {
     std::size_t offset = 0;
     while (offset + 8 <= bytes && entries.size() < MaxEntries) {
         std::uint16_t reclen = 0;
@@ -335,7 +356,8 @@ void AppendDirentsFromBuffer(const char* buf, std::size_t bytes, const char* exc
         if (const std::size_t nul = name.find('\0'); nul != std::string_view::npos) {
             name = name.substr(0, nul);
         }
-        if (!name.empty() && name != "." && name != ".." && name.size() < EntryNameSize) {
+        if (!name.empty() && name != "." && name != ".." && name.size() < EntryNameSize &&
+            dirPathLen + name.size() < PathBufferSize) {
             if (type == DirentTypeDir) {
                 if (name.front() != '.') {
                     ScannedEntry entry{};
@@ -491,12 +513,12 @@ std::string DecodeId3Text(const std::uint8_t* data, std::size_t size) {
 
 void SetFieldIfEmpty(char* dst, std::size_t dstSize, std::string_view value) {
     if (dst[0] != '\0' || value.empty()) return;
-    CopyFixedString(dst, dstSize, value.data(), value.size());
+    CopyFixedUtf8String(dst, dstSize, value.data(), value.size());
 }
 
 void SetFieldOverwrite(char* dst, std::size_t dstSize, std::string_view value) {
     if (value.empty()) return;
-    CopyFixedString(dst, dstSize, value.data(), value.size());
+    CopyFixedUtf8String(dst, dstSize, value.data(), value.size());
 }
 
 std::size_t SkipNullTerminatedString(const std::uint8_t* p, std::size_t size, std::uint8_t encoding) {
@@ -916,8 +938,7 @@ int GetFileInfoUnlocked(const SceCLCUsbStorageCallback& callbacks, std::uint32_t
 
     const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
     if (mountLen >= sizeof(mountPoint)) {
-        const int unmapResult = callbacks.requestUnmap(deviceId, mountPoint);
-        return unmapResult < 0 ? unmapResult : SceClcErrorInvalidArg;
+        return SceClcErrorInvalidArg;
     }
     if (mountLen > 0 && mountPoint[mountLen - 1] == '/' && suffix[0] == '/') {
         ++suffix;
@@ -967,6 +988,8 @@ int APS5_VABI sceCLCSetUsbStorageCallback(const SceCLCUsbStorageCallback* callba
         std::lock_guard lock(state.mutex);
         g_callbackShadow = local;
         state.callbacks = local;
+        state.deviceCount = 0;
+        std::memset(state.deviceIds, 0, sizeof(state.deviceIds));
         ++state.providerGeneration;
     }
     if (local.registerCallback != nullptr) {
@@ -1024,6 +1047,11 @@ int APS5_VABI sceCLCGetDeviceList(std::uint32_t* devices, std::int32_t* count) {
         return SceClcErrorInvalidArg;
     }
 
+    if (localCount > 0 && !SafeCopyOut(devices, guardedDevices.ptr, static_cast<std::size_t>(localCount) * sizeof(std::uint32_t))) {
+        return SceClcErrorInvalidArg;
+    }
+    if (!SafeCopyOut(count, &localCount, sizeof(localCount))) return SceClcErrorInvalidArg;
+
     {
         std::lock_guard lock(state.mutex);
         if (state.providerGeneration == snapshotGeneration) {
@@ -1034,11 +1062,6 @@ int APS5_VABI sceCLCGetDeviceList(std::uint32_t* devices, std::int32_t* count) {
             }
         }
     }
-
-    if (localCount > 0 && !SafeCopyOut(devices, guardedDevices.ptr, static_cast<std::size_t>(localCount) * sizeof(std::uint32_t))) {
-        return SceClcErrorInvalidArg;
-    }
-    if (!SafeCopyOut(count, &localCount, sizeof(localCount))) return SceClcErrorInvalidArg;
     return 0;
 }
 
@@ -1121,7 +1144,11 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
                 return readRes;
             }
             if (bytesRead == 0) break;
-            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(bytesRead), excludePattern, scanned);
+            if (bytesRead > bufferSize) {
+                callbacks.getdentsClose(fd);
+                return SceClcErrorInvalidArg;
+            }
+            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(bytesRead), pathLen, excludePattern, scanned);
             if (scanned.size() >= MaxEntries) break;
         }
         callbacks.getdentsClose(fd);
@@ -1139,8 +1166,7 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
 
         const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
         if (mountLen >= sizeof(mountPoint)) {
-            const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
-            return unmapRes < 0 ? unmapRes : SceClcErrorInvalidArg;
+            return SceClcErrorInvalidArg;
         }
         const char* suffix = (mountLen > 0 && mountPoint[mountLen - 1] == '/' && secondSlash[0] == '/')
             ? (secondSlash + 1)
@@ -1173,7 +1199,7 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
                 return unmapRes < 0 ? unmapRes : readBytes;
             }
             if (readBytes == 0) break;
-            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(readBytes), excludePattern, scanned);
+            AppendDirentsFromBuffer(buffer.data(), static_cast<std::size_t>(readBytes), pathLen, excludePattern, scanned);
             if (scanned.size() >= MaxEntries) break;
         }
         sceKernelClose(fd);
@@ -1181,20 +1207,12 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
         if (unmapRes < 0) return unmapRes;
     }
 
-    std::vector<ScannedEntry> fitted;
-    fitted.reserve(scanned.size());
-    for (const auto& entry : scanned) {
-        const std::size_t entryLen = BoundedStrlen(entry.name, EntryNameSize);
-        if (pathLen + entryLen < PathBufferSize) {
-            fitted.push_back(entry);
-        }
-    }
-    SortScannedEntries(fitted);
+    SortScannedEntries(scanned);
 
     std::int32_t folderCount = 0;
     std::int32_t fileCount = 0;
-    for (std::size_t i = 0; i < fitted.size() && i < MaxEntries; ++i) {
-        if (fitted[i].isFile) {
+    for (std::size_t i = 0; i < scanned.size() && i < MaxEntries; ++i) {
+        if (scanned[i].isFile) {
             ++fileCount;
         } else {
             ++folderCount;
@@ -1204,16 +1222,15 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
     {
         std::lock_guard lock(state.mutex);
         if (state.fileEntries == nullptr) return SceClcErrorListNotAllocated;
-        if (state.providerGeneration == snapshotGeneration) {
-            std::memset(state.fileEntries, 0, MaxEntries * EntryNameSize);
-            for (std::size_t i = 0; i < fitted.size() && i < MaxEntries; ++i) {
-                std::memcpy(state.fileEntries + i * EntryNameSize, fitted[i].name, EntryNameSize);
-            }
-            state.fileDeviceId = static_cast<std::int32_t>(deviceId);
-            CopyFixedString(state.fileDir, sizeof(state.fileDir), localPath, pathLen);
-            state.fileFolderCount = folderCount;
-            state.fileFileCount = fileCount;
+        if (state.providerGeneration != snapshotGeneration) return SceClcErrorInvalidArg;
+        std::memset(state.fileEntries, 0, MaxEntries * EntryNameSize);
+        for (std::size_t i = 0; i < scanned.size() && i < MaxEntries; ++i) {
+            std::memcpy(state.fileEntries + i * EntryNameSize, scanned[i].name, EntryNameSize);
         }
+        state.fileDeviceId = static_cast<std::int32_t>(deviceId);
+        CopyFixedString(state.fileDir, sizeof(state.fileDir), localPath, pathLen);
+        state.fileFolderCount = folderCount;
+        state.fileFileCount = fileCount;
     }
 
     const std::uint64_t packedCounts =
