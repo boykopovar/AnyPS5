@@ -3,11 +3,22 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+template <typename Callable>
+bool Throws(Callable&& callable) {
+    try {
+        callable();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -30,6 +41,17 @@ int main() {
     Require(sceVisionManagerGetNumOfRegisterUserDataSlot(version, &count) == 0 && count == 30);
     errno = 71;
     Require(sceVisionManagerGetNumOfRegisterUserDataSlot(version, reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == invalidArg && errno == 71);
+    unsigned char userDataBlock[64] = {};
+    std::uint64_t dataSize = 0;
+    Require(sceVisionManagerGetRegisterUserDataSize(version, &dataSize) == 0 && dataSize == 0x79e0);
+    Require(sceVisionManagerGetRegisterUserDataSize(0x1017000014043000ull, &dataSize) == 0 && dataSize == 0x2200);
+    errno = 71;
+    Require(sceVisionManagerGetRegisterUserDataSize(0, &dataSize) == invalidArg && errno == 71);
+    errno = 71;
+    Require(sceVisionManagerGetRegisterUserDataSize(version, reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(0x10))) == invalidArg && errno == 71);
+    Require(sceVisionManagerGenerateRegisterUserDataInitialize(nullptr, 0x100000) == invalidArg);
+    Require(sceVisionManagerGenerateRegisterUserDataInitialize(userDataBlock, 0xfffff) == invalidArg);
+    Require(Throws([&] { sceVisionManagerGenerateRegisterUserDataInitialize(userDataBlock, 0x100000); }));
     int ctx = 1;
     errno = 71;
     Require(sceVisionManagerRequestFindPad(&ctx, reinterpret_cast<const std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == invalidArg && errno == 71);
