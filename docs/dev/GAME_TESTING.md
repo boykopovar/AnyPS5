@@ -6,8 +6,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 
 ## Before a run
 
-- Build `main` or the PR head in a clean worktree, including the `libs` target (it is not in the default build). If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
-- `tools/check_main_sync.py --fetch` in the worktree reports whether the branch is in step with upstream `main`, so a result isn't taken on an old base by mistake.
+- Build `main` or the PR head in a clean worktree. With `BUILD_TESTING=OFF`, build the `libs` target explicitly. With `BUILD_TESTING=ON`, the default build includes it. If a new test breaks the build, `cmake --build build --target libs relinker` is enough to convert and run a title.
+- In the worktree, run `python3 tools/check_main_sync.py --fetch` on Linux or `py -3 tools/check_main_sync.py --fetch` on Windows. The command reports whether the branch is in step with upstream `main`.
   Add `--strict` to reject a branch that is behind the base even when the test merge is clean.
   A conflict or a strict-mode rejection exits with status 1. Use `--json` to inspect the counts in scripts.
 - Convert the title from plain ELF files (`tools/unwrap_self.py` unwraps a dump's `eboot.bin` and `.prx`):
