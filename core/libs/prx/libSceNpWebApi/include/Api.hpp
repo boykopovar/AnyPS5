@@ -103,7 +103,7 @@ int APS5_VABI sceNpWebApiSendMultipartRequest(std::int64_t requestId, int partIn
 int APS5_VABI sceNpWebApiSendMultipartRequest2(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSendRequest2(std::int64_t requestId, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSetHandleTimeout(int libCtxId, int handleId, std::uint32_t timeout);
-int APS5_VABI sceNpWebApiSetMaxConnection();
+int APS5_VABI sceNpWebApiSetMaxConnection(int libCtxId, int maxConnection);
 int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const char* typeName, const char* boundary);
 int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout);
 int APS5_VABI sceNpWebApiUnregisterNotificationCallback(int titleUserCtxId);

@@ -4,6 +4,7 @@
 #include "DecodeCallbacks.h"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -199,13 +200,26 @@ std::int64_t APS5_VABI PKFormatConverter_Initialize_nid_postfix(JxrGuestFormatCo
 
 std::int64_t APS5_VABI PKAllocAligned_nid_postfix(void** memory, std::size_t size, std::size_t alignment) {
     if (!memory) throw std::invalid_argument("PKAllocAligned requires an output pointer");
-    *memory = nullptr;
+    void* cleared = nullptr;
+    const int clearErrno = errno;
+    const bool clearedOk = GuestCopyOut_nid_no_patch(memory, &cleared, sizeof(cleared));
+    errno = clearErrno;
+    if (!clearedOk) throw std::invalid_argument("PKAllocAligned requires a writable output pointer");
     if (alignment < sizeof(void*))
         throw std::invalid_argument("PKAllocAligned: alignments below 8 can leave no room for the original pointer");
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
     if (size > maximum - sizeof(void*) || alignment - 1 > maximum - sizeof(void*) - size)
         throw std::length_error("PKAllocAligned: block size overflows size_t");
-    return JxrAllocAligned_nid_no_patch(memory, size, alignment);
+    void* allocated = nullptr;
+    const std::int64_t result = JxrAllocAligned_nid_no_patch(&allocated, size, alignment);
+    const int outErrno = errno;
+    const bool outOk = GuestCopyOut_nid_no_patch(memory, &allocated, sizeof(allocated));
+    errno = outErrno;
+    if (!outOk) {
+        if (allocated) JxrFreeAligned_nid_no_patch(&allocated);
+        throw std::invalid_argument("PKAllocAligned requires a writable output pointer");
+    }
+    return result;
 }
 
 std::int64_t APS5_VABI PKFreeAligned_nid_postfix(void** memory) {
@@ -272,9 +286,19 @@ std::int64_t APS5_VABI PKImageDecode_GetDescriptiveMetadata_nid_postfix(void* de
 }
 
 std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder) {
-    if (!decoder || !*decoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
-    if (!JxrDecodeHasClose_nid_no_patch(*decoder)) throw std::invalid_argument("PKImageDecode_Release requires a stream Close callback when the decoder owns its stream");
-    return JxrDecodeRelease_nid_no_patch(decoder);
+    if (!decoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
+    void* guestDecoder = nullptr;
+    const int readErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&guestDecoder, decoder, sizeof(guestDecoder));
+    errno = readErrno;
+    if (!copied || !guestDecoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
+    if (!JxrDecodeHasClose_nid_no_patch(guestDecoder)) throw std::invalid_argument("PKImageDecode_Release requires a stream Close callback when the decoder owns its stream");
+    void* cleared = nullptr;
+    const int writeErrno = errno;
+    const bool clearedOk = GuestCopyOut_nid_no_patch(decoder, &cleared, sizeof(cleared));
+    errno = writeErrno;
+    if (!clearedOk) throw std::invalid_argument("PKImageDecode_Release requires a writable decoder pointer");
+    return JxrDecodeRelease_nid_no_patch(&guestDecoder);
 }
 
 std::int64_t APS5_VABI PKImageDecode_Create_nid_postfix(void** decoder) {

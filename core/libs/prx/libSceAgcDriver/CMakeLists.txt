@@ -62,6 +62,19 @@ if(BUILD_TESTING AND WIN32)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(agc_aspect_fit_tests tests/AspectFit.cpp Execution/src/AspectFit.cpp)
+    target_include_directories(agc_aspect_fit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_aspect_fit_tests PRIVATE libc)
+    configure_windows_unwind(agc_aspect_fit_tests)
+    add_test(NAME agc_aspect_fit COMMAND agc_aspect_fit_tests)
+    set_tests_properties(agc_aspect_fit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_aspect_fit PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 set(agcTextureDetileShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureDetile.comp)
 set(agcTextureDetileGeneratedRoot ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(agcTextureDetileGeneratedDir ${agcTextureDetileGeneratedRoot}/prx/libSceAgcDriver/Graphics/shaders)
@@ -213,6 +226,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcBc1DecodeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/Bc1Decode.comp)
+set(agcBc1DecodeShaderSpv ${agcTextureDetileGeneratedDir}/Bc1Decode.spv)
+set(agcBc1DecodeShaderHeader ${agcTextureDetileGeneratedDir}/Bc1Decode_spv.h)
+add_custom_command(
+        OUTPUT "${agcBc1DecodeShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcBc1DecodeShaderSpv}" "${agcBc1DecodeShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcBc1DecodeShaderSpv} -DOUTPUT=${agcBc1DecodeShaderHeader}
+        -DSYMBOL=BC1_DECODE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcBc1DecodeShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcDispatchArgumentsShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/DispatchArguments.comp)
 set(agcDispatchArgumentsShaderSpv ${agcTextureDetileGeneratedDir}/DispatchArguments.spv)
 set(agcDispatchArgumentsShaderHeader ${agcTextureDetileGeneratedDir}/DispatchArguments_spv.h)
@@ -236,6 +262,19 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSplitSelectShaderSpv} -DOUTPUT=${agcSplitSelectShaderHeader}
         -DSYMBOL=SPLIT_SELECT_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
         DEPENDS "${agcSplitSelectShaderSource}" glslang-standalone
+        VERBATIM
+)
+
+set(agcStorePageGatherShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StorePageGather.comp)
+set(agcStorePageGatherShaderSpv ${agcTextureDetileGeneratedDir}/StorePageGather.spv)
+set(agcStorePageGatherShaderHeader ${agcTextureDetileGeneratedDir}/StorePageGather_spv.h)
+add_custom_command(
+        OUTPUT "${agcStorePageGatherShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcStorePageGatherShaderSpv}" "${agcStorePageGatherShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcStorePageGatherShaderSpv} -DOUTPUT=${agcStorePageGatherShaderHeader}
+        -DSYMBOL=STORE_PAGE_GATHER_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcStorePageGatherShaderSource}" glslang-standalone
         VERBATIM
 )
 
@@ -445,6 +484,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportVulkan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/NanSpeculationCounters.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
@@ -501,6 +541,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleUpload.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RecordingPool.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
@@ -519,6 +560,7 @@ set(agcDriverSources
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
         ${agcSplitSelectShaderHeader}
+        ${agcStorePageGatherShaderHeader}
         ${agcTextureDetileWordsShaderHeader}
         ${agcTextureDetileImageWordsShaderHeader}
         ${agcSampleCounterShaderHeader}
@@ -526,6 +568,7 @@ set(agcDriverSources
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
         ${agcStagingCopyBackBoundShaderHeaders}
+        ${agcBc1DecodeShaderHeader}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -728,8 +771,10 @@ set(ANYPS5_AGC_EXECUTION_TESTS "" CACHE STRING "tests/execution sources to build
 
 file(GLOB agcExecutionTestSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/*.cpp)
 set(agcExecutionTests)
+set(agcExecutionTestNames)
 foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     get_filename_component(agcExecutionTestName ${agcExecutionTestSource} NAME_WE)
+    list(APPEND agcExecutionTestNames "${agcExecutionTestName}")
     if(NOT WIN32 AND agcExecutionTestName STREQUAL "CommittedReadMapping")
         continue()
     endif()
@@ -848,8 +893,8 @@ if(BUILD_TESTING)
 endif()
 
 foreach(agcExecutionTestName IN LISTS ANYPS5_AGC_EXECUTION_TESTS)
-    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/${agcExecutionTestName}.cpp)
-        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which has no source in tests/execution")
+    if(NOT agcExecutionTestName IN_LIST agcExecutionTestNames)
+        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which does not match a tests/execution source name")
     endif()
 endforeach()
 option(ANYPS5_REQUIRE_CPU_LEAD_TEST "Register agc_driver_sparse_dma_buf_cpu_lead, which fails instead of skipping when the nonzero-lead dma-buf CPU publish cannot run (bench only)" OFF)

@@ -112,6 +112,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
     endif()
 
+    add_test_executable(guest_fiber_switch_register_canary_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestFiberSwitchRegisterCanaryBounds.cpp)
+    target_include_directories(guest_fiber_switch_register_canary_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fiber_switch_register_canary_bounds_tests PRIVATE libSceFiber libc)
+    configure_windows_unwind(guest_fiber_switch_register_canary_bounds_tests)
+    add_test(NAME guest_fiber_switch_register_canary_bounds COMMAND guest_fiber_switch_register_canary_bounds_tests)
+    add_asan_test_options(guest_fiber_switch_register_canary_bounds detect_stack_use_after_return=0)
+    if(WIN32)
+        set_tests_properties(guest_fiber_switch_register_canary_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
+    endif()
+
     add_test_executable(guest_fiber_state_transitions_invalidation_tests ${LIBS_INCLUDE_DIR}/tests/GuestFiberStateTransitionsInvalidation.cpp)
     target_include_directories(guest_fiber_state_transitions_invalidation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_fiber_state_transitions_invalidation_tests PRIVATE libSceFiber libc)

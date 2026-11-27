@@ -180,4 +180,7 @@ debt entry, never in code or test names.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
   For lookups using an existing database, pass `tools/nid_names.py --offline --db <database> --nid <nid>` to prevent downloads.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
+  The `code` ranges are half-open and use RVAs, as do the symbol addresses. Add `image_base` for the preferred
+  virtual address. `symbol_source` identifies the COFF table or the export fallback and can name the fallback
+  even when no code symbols were found.
 - `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.

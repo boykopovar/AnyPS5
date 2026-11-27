@@ -113,7 +113,8 @@ class SelectFixture(unittest.TestCase):
         if not tests.exists():
             self.assertFalse((self.build / "select.ninja").exists())
             return output, None
-        shown = subprocess.run(["ctest", "--test-dir", str(self.build), "-N", "-I", tests.read_text(encoding="utf-8").strip()],
+        indices = "0,0,0," + ",".join(json.loads(tests.read_text(encoding="utf-8")))
+        shown = subprocess.run(["ctest", "--test-dir", str(self.build), "-N", "-I", indices],
                                check=True, capture_output=True, text=True).stdout
         return output, set(re.findall(r"Test +#\d+: (\S+)", shown))
 
@@ -196,10 +197,8 @@ class SelectGraphStateTests(SelectFixture):
         changed = self.build / "changed-nul.txt"
         changed.write_bytes(b"alpha/alpha.h\0")
         self.tool("select", self.build, self.graph, changed)
-        indices = (self.build / "select.tests").read_text(encoding="utf-8").strip()
-        shown = subprocess.run(["ctest", "--test-dir", str(self.build), "-N", "-I", indices],
-                               check=True, capture_output=True, text=True).stdout
-        self.assertEqual(set(re.findall(r"Test +#\d+: (\S+)", shown)), {"alpha", "alpha_data", "script"})
+        selected = json.loads((self.build / "select.tests").read_text(encoding="utf-8"))
+        self.assertEqual(set(selected.values()), {"alpha", "alpha_data", "script"})
 
     def test_missing_graph_runs_everything(self):
         self.assertIsNone(self.select("alpha/alpha.h", graph=self.build / "missing.json")[1])
@@ -233,6 +232,25 @@ class SelectGraphStateTests(SelectFixture):
         self.assertNotIn("invalid test graph", result.stderr)
         self.assertFalse((self.build / "select.tests").exists())
         self.assertFalse((self.build / "select.ninja").exists())
+
+    def test_reordered_ctest_registrations_invalidate_the_saved_selection(self):
+        _, selected = self.select("alpha/alpha.h")
+        self.assertEqual(selected, {"alpha", "alpha_data", "script"})
+        registration = self.build / "CTestTestfile.cmake"
+        original = registration.read_bytes()
+        alpha, beta = b'subdirs("alpha")', b'subdirs("beta")'
+        self.assertIn(alpha, original)
+        self.assertIn(beta, original)
+        reordered = re.sub(rb'subdirs\("(alpha|beta)"\)', lambda match: beta if match[1] == b"alpha" else alpha, original)
+        registration.write_bytes(reordered)
+        try:
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", str(self.build), "-N"],
+                                    capture_output=True, text=True)
+        finally:
+            registration.write_bytes(original)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Run select again and rebuild the selected targets", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_test_missing_from_the_graph_runs(self):
         graph = json.loads(self.graph.read_text(encoding="utf-8"))
@@ -322,6 +340,19 @@ class TargetsTests(SelectFixture):
         finally:
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+
+    def test_uses_configured_ctest_without_path_lookup(self):
+        calls = (
+            (["ctest", str(self.build), "-N", "-R", "^alpha$"], "Total Tests: 1"),
+            (["targets", str(self.build), "^alpha$"], "alpha_tests"),
+        )
+        for arguments, expected in calls:
+            with self.subTest(command=arguments[0]):
+                result = subprocess.run([sys.executable, str(TOOL), *arguments],
+                                        env={**os.environ, "PATH": ""}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout)
+
 
 
 class SelectArgumentTests(SelectFixture):
@@ -945,10 +976,10 @@ class CTestIndexFileTests(unittest.TestCase):
             root = Path(directory)
             (root / "CTestTestfile.cmake").write_text(
                 f'add_test(available "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
-            (root / "select.tests").write_text("0,0,0,2\n", encoding="utf-8")
+            (root / "select.tests").write_text('{"2": "available"}\n', encoding="utf-8")
             result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
                                     capture_output=True, text=True)
-            self.assertIn("No tests were found", result.stderr)
+            self.assertIn("Run select again", result.stderr)
             self.assertNotEqual(result.returncode, 0)
 
     def test_empty_selection_can_succeed_with_registered_tests(self):
@@ -957,10 +988,33 @@ class CTestIndexFileTests(unittest.TestCase):
             (root / "CTestTestfile.cmake").write_text(
                 f'add_test(should_not_run "{Path(sys.executable).as_posix()}" -c "raise SystemExit(1)")\n',
                 encoding="utf-8")
-            (root / "select.tests").write_text("0,0,0,\n", encoding="utf-8")
-            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+            for selection in ("{}\n", "0,0,0,\n"):
+                (root / "select.tests").write_text(selection, encoding="utf-8")
+                result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_legacy_nonempty_selection_must_be_regenerated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(other "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,1\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
                                     capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("Run select again", result.stderr)
+
+    def test_selection_past_the_registered_tests_must_be_regenerated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(other "{Path(sys.executable).as_posix()}" --version)\n', encoding="utf-8")
+            (root / "select.tests").write_text(json.dumps({"2": "wanted"}), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("Run select again", result.stderr)
 
     def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -969,8 +1023,8 @@ class CTestIndexFileTests(unittest.TestCase):
             (root / "CTestTestfile.cmake").write_text(
                 "".join(f'add_test(test_{i} "{Path(sys.executable).as_posix()}" --version)\n'
                         for i in range(1, count + 2)), encoding="utf-8")
-            (root / "select.tests").write_text(
-                "0,0,0," + ",".join(map(str, range(1, count + 1))), encoding="utf-8-sig")
+            expected = {i: f"test_{i}" for i in range(1, count + 1)}
+            (root / "select.tests").write_text(json.dumps(expected), encoding="utf-8-sig")
             result = subprocess.run([sys.executable, str(TOOL), "ctest", directory, "-N"],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -979,13 +1033,14 @@ class CTestIndexFileTests(unittest.TestCase):
 
             build = object.__new__(select_tests.Build)
             build.path = str(root)
+            build.ctest = "ctest"
             build.source = str(root)
             graph = {"tests": {f"test_{i}": {} for i in range(1, count + 2)}}
             picked = set(graph["tests"]) - {f"test_{count + 1}"}
             with mock.patch.object(build, "leaves", return_value=[]), \
                     mock.patch.object(build, "outputs", return_value=[]):
                 run, targets, total = select_tests.plan(build, graph, picked)
-            self.assertEqual(run, list(range(1, count + 1)))
+            self.assertEqual(run, expected)
             self.assertEqual(targets, [])
             self.assertEqual(total, count + 1)
 
@@ -998,7 +1053,7 @@ class PlanTests(unittest.TestCase):
         build.leaves.return_value = ["tests/shared_tests", "helper"]
         build.target.side_effect = lambda test: "tests/shared_tests" if test.get("command") else None
         graph = {"tests": {"selected": {}, "other": {}}}
-        self.assertEqual(select_tests.plan(build, graph, {"selected"}), ([1], ["tests/shared_tests", "helper"], 2))
+        self.assertEqual(select_tests.plan(build, graph, {"selected"}), ({1: "selected"}, ["tests/shared_tests", "helper"], 2))
 
     def test_plan_empty_run_avoids_invoking_ctest(self):
         build = mock.Mock()
@@ -1007,7 +1062,7 @@ class PlanTests(unittest.TestCase):
         build.target.side_effect = lambda t: "tests/alpha_tests"
         graph = {"tests": {"alpha": {}}}
         run, leaves, count = select_tests.plan(build, graph, set())
-        self.assertEqual(run, [])
+        self.assertEqual(run, {})
         self.assertEqual(leaves, [])
         self.assertEqual(count, 1)
         build.tests.assert_called_once_with()
@@ -1021,9 +1076,10 @@ class PlanTests(unittest.TestCase):
             build = object.__new__(select_tests.Build)
             build.path = str(root)
             build.source = str(root)
+            build.ctest = "ctest"
             with mock.patch.object(build, "leaves", return_value=[]):
                 run, targets, total = select_tests.plan(build, {"tests": {"off": {}}}, {"off"})
-            self.assertEqual((run, targets, total), ([], [], 1))
+            self.assertEqual((run, targets, total), ({}, [], 1))
             (root / "select.tests").write_text(select_tests.CTEST_INDEX_PREFIX + "\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
                                     capture_output=True, text=True)
@@ -1053,6 +1109,7 @@ class MissingCommandTests(unittest.TestCase):
             listed[4]["command"] = [helper]
             build = object.__new__(select_tests.Build)
             build.path = str(root)
+            build.ctest = "ctest"
             with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps({"tests": listed}))) as run:
                 _, recovered = build.tests()
             self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")

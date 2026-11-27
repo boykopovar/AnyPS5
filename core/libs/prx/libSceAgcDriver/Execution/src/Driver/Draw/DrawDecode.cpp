@@ -45,6 +45,10 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<c
     auto watch = queue.WatchWrites();
     auto info = decode();
     if (watch.items == 0 && !queue.Busy() && queue.Retired() == watch.retired) return info;
+    if (reads.empty()) {
+        queue.NoteDecodeDrainSkip();
+        return info;
+    }
     struct RangesStorage {};
     auto& ranges = HostThreadLocal<std::vector<DrawPipeline::Range>, RangesStorage>();
     ranges.clear();
@@ -225,7 +229,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         const auto localDevice = device.Load();
         if (localDevice != nullptr) product->pixel.sampleOrder = localDevice->HostSampleOrder(product->state);
     }
-    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder);
+    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder, context.staticSampleMaskStopsShading);
     if (product->pixel.stencilRefExportEnable && Graphics::StencilReferenceUnused(product->state)) {
         const auto localDevice = device.Load();
         const auto capabilities = localDevice == nullptr ? std::vector<std::uint32_t>{} : localDevice->Target().supportedCapabilities;

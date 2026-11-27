@@ -21,6 +21,10 @@ inline LegacyEncoding ReadLegacyEncoding(const std::uint8_t* data, const std::si
     std::size_t index = 0;
     for (; index < length; ++index) {
         const auto value = data[index];
+        if ((value & 0xF0) == 0x40) {
+            encoding.Rex = value;
+            continue;
+        }
         if (value == 0x66)
             encoding.OperandSize = true;
         else if (value == 0xF3)
@@ -31,9 +35,8 @@ inline LegacyEncoding ReadLegacyEncoding(const std::uint8_t* data, const std::si
             encoding.Segment.push_back(value);
         else
             break;
+        encoding.Rex = 0;
     }
-    if (index < length && (data[index] & 0xF0) == 0x40)
-        encoding.Rex = data[index++];
     encoding.Opcode = index;
     return encoding;
 }

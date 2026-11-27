@@ -304,8 +304,7 @@ int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void) {
 
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param) {
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingSendCommand(int cmd, const void* param) {
