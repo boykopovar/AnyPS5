@@ -692,6 +692,17 @@ void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* c
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef);
 const void* APS5_VABI WKContextGetIconDatabase(const void* contextRef);
 void APS5_VABI WKContextSetIconDatabasePath(const void* contextRef, const void* iconDatabasePathRef);
+using WKContextInvalidMessageFunction = void (APS5_VABI*)(const void* messageNameRef);
+void APS5_VABI WKContextStartMemorySampler(const void* contextRef, const void* sampleIntervalRef);
+void APS5_VABI WKContextStopMemorySampler(const void* contextRef);
+void APS5_VABI WKContextSetInvalidMessageFunction(WKContextInvalidMessageFunction function);
+void APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextSetAllowsAnySSLCertificateForServiceWorkerTesting(const void* contextRef, bool allows);
+void APS5_VABI WKContextSetAllowsAnySSLCertificateForWebSocketTesting(const void* contextRef, bool allows);
+void APS5_VABI WKContextSetServiceWorkerFetchTimeoutForTesting(const void* contextRef, double seconds);
+void APS5_VABI WKContextResetServiceWorkerFetchTimeoutForTesting(const void* contextRef);
+void APS5_VABI WKContextUseTestingNetworkSession(const void* contextRef);
+void APS5_VABI WKContextSetPrivilegedNetworkBandwidth(const void* contextRef, std::uint32_t bandwidth);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback);

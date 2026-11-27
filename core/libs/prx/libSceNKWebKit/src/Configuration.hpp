@@ -199,6 +199,14 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     std::uint32_t terminatedNetworkProcessesCount = 0;
 mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    bool allowsAnySSLCertificateForServiceWorkerTesting = false;
+    bool allowsAnySSLCertificateForWebSocketTesting = false;
+    std::optional<double> serviceWorkerFetchTimeout;
+    bool usesTestingNetworkSession = false;
+    std::uint32_t privilegedNetworkBandwidth = 0;
+    bool memorySamplerRunning = false;
+    double memorySamplerInterval = 0.0;
+    std::vector<std::string> domainRelaxationForbiddenSchemes;
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
