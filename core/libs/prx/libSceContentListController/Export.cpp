@@ -57,6 +57,8 @@ constexpr std::size_t PathBufferSize = 0x200;
 constexpr std::uint8_t DirentTypeDir = 4;
 constexpr std::uint8_t DirentTypeReg = 8;
 constexpr int MaxMp4Depth = 32;
+constexpr std::uint64_t DefaultGetdentsBufferSize = 0x8000;
+constexpr std::uint64_t MaxGetdentsBufferSize = 1024 * 1024;
 
 struct GuardedDeviceBuffer {
     std::uint8_t* mapping = nullptr;
@@ -356,17 +358,18 @@ void AppendDirentsFromBuffer(
         if (const std::size_t nul = name.find('\0'); nul != std::string_view::npos) {
             name = name.substr(0, nul);
         }
-        if (!name.empty() && name != "." && name != ".." && name.size() < EntryNameSize &&
-            dirPathLen + name.size() < PathBufferSize) {
+        if (!name.empty() && name != "." && name != ".." && name.size() < EntryNameSize) {
             if (type == DirentTypeDir) {
-                if (name.front() != '.') {
+                if (name.front() != '.' && dirPathLen + name.size() + 1 < PathBufferSize) {
                     ScannedEntry entry{};
                     CopyFixedString(entry.name, sizeof(entry.name), name.data(), name.size());
                     entry.isFile = false;
                     entries.push_back(entry);
                 }
             } else if (type == DirentTypeReg || type == 0) {
-                if (DetectAudioFormat(name) != 0 && !MatchesExcludePattern(excludePattern, name)) {
+                if (dirPathLen + name.size() < PathBufferSize &&
+                    DetectAudioFormat(name) != 0 &&
+                    !MatchesExcludePattern(excludePattern, name)) {
                     ScannedEntry entry{};
                     CopyFixedString(entry.name, sizeof(entry.name), name.data(), name.size());
                     entry.isFile = true;
@@ -931,14 +934,16 @@ int GetFileInfoUnlocked(const SceCLCUsbStorageCallback& callbacks, std::uint32_t
         suffix = secondSlash;
     }
 
-    char mountPoint[PathBufferSize]{};
+    char mountPoint[PathBufferSize + 1]{};
     std::uint64_t mountId = 0;
     const int mapResult = callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
     if (mapResult < 0) return mapResult;
 
-    const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
-    if (mountLen >= sizeof(mountPoint)) {
-        return SceClcErrorInvalidArg;
+    mountPoint[PathBufferSize] = '\0';
+    const std::size_t mountLen = BoundedStrlen(mountPoint, PathBufferSize);
+    if (mountLen >= PathBufferSize) {
+        const int unmapResult = callbacks.requestUnmap(deviceId, mountPoint);
+        return unmapResult < 0 ? unmapResult : SceClcErrorInvalidArg;
     }
     if (mountLen > 0 && mountPoint[mountLen - 1] == '/' && suffix[0] == '/') {
         ++suffix;
@@ -1134,7 +1139,12 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
         std::uint64_t bufferSize = 0;
         const int openRes = callbacks.getdentsOpen(deviceId, &fd, &bufferSize);
         if (openRes < 0) return openRes;
-        if (bufferSize == 0) bufferSize = 0x8000;
+        if (bufferSize == 0) {
+            bufferSize = DefaultGetdentsBufferSize;
+        } else if (bufferSize > MaxGetdentsBufferSize) {
+            callbacks.getdentsClose(fd);
+            return SceClcErrorInvalidArg;
+        }
         std::vector<char> buffer(static_cast<std::size_t>(bufferSize));
         for (;;) {
             std::uint64_t bytesRead = 0;
@@ -1159,14 +1169,16 @@ int APS5_VABI sceCLCGetFolderInfo(std::uint32_t deviceId, const char* path, std:
         const std::size_t topLen = std::min<std::size_t>(static_cast<std::size_t>(secondSlash - localPath), sizeof(topDir) - 1);
         std::memcpy(topDir, localPath, topLen);
 
-        char mountPoint[PathBufferSize]{};
+        char mountPoint[PathBufferSize + 1]{};
         std::uint64_t mountId = 0;
         const int mapRes = callbacks.requestMap(deviceId, topDir, 3, 0, mountPoint, &mountId);
         if (mapRes < 0) return mapRes;
 
-        const std::size_t mountLen = BoundedStrlen(mountPoint, sizeof(mountPoint));
-        if (mountLen >= sizeof(mountPoint)) {
-            return SceClcErrorInvalidArg;
+        mountPoint[PathBufferSize] = '\0';
+        const std::size_t mountLen = BoundedStrlen(mountPoint, PathBufferSize);
+        if (mountLen >= PathBufferSize) {
+            const int unmapRes = callbacks.requestUnmap(deviceId, mountPoint);
+            return unmapRes < 0 ? unmapRes : SceClcErrorInvalidArg;
         }
         const char* suffix = (mountLen > 0 && mountPoint[mountLen - 1] == '/' && secondSlash[0] == '/')
             ? (secondSlash + 1)

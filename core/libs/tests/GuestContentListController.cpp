@@ -33,6 +33,12 @@ int g_mountCount = 0;
 int g_unmountCount = 0;
 int g_unmapResult = 0;
 std::int32_t g_getdentsReadStep = 0;
+int g_untermUnmapCount = 0;
+int g_untermUnmapResult = 0;
+std::size_t g_untermLastMountLen = 0;
+int g_hugeGetdentsCloseCount = 0;
+int g_hugeGetdentsReadCount = 0;
+std::uint64_t g_hugeGetdentsBufferSize = 0;
 
 struct RegisteredHook {
     std::int32_t eventType = 0;
@@ -154,6 +160,8 @@ std::int32_t APS5_VABI MockRequestMap(std::uint32_t deviceId, const char* direct
     if (!dirStr.empty() && dirStr[0] == '/') dirStr.erase(0, 1);
     if (dirStr.rfind("fit_", 0) == 0) {
         hostDir /= "fit_test";
+    } else if (dirStr.rfind("dfit_", 0) == 0) {
+        hostDir /= "dir_fit_test";
     } else if (!dirStr.empty()) {
         hostDir /= dirStr;
     }
@@ -169,6 +177,45 @@ std::int32_t APS5_VABI MockRequestUnmap(std::uint32_t deviceId, const char* moun
     RemovePathAlias_nid_no_patch("/clc_mnt7");
     ++g_unmountCount;
     return g_unmapResult;
+}
+
+std::int32_t APS5_VABI MockRequestMapUnterminated(std::uint32_t deviceId, const char* directory, std::int32_t flags, std::uint64_t volumeSize, char* mountPoint, std::uint64_t* mountId) {
+    (void)directory;
+    if (deviceId != 7 || flags != 3 || volumeSize != 0) return static_cast<int>(0x80f40002u);
+    std::memset(mountPoint, 'm', 0x200);
+    *mountId = 101;
+    ++g_mountCount;
+    return 0;
+}
+
+std::int32_t APS5_VABI MockRequestUnmapUnterminated(std::uint32_t deviceId, const char* mountPoint) {
+    if (deviceId != 7 || mountPoint == nullptr) return static_cast<int>(0x80f40002u);
+    g_untermLastMountLen = std::strlen(mountPoint);
+    ++g_untermUnmapCount;
+    ++g_unmountCount;
+    return g_untermUnmapResult;
+}
+
+std::int32_t APS5_VABI MockGetdentsOpenHuge(std::uint32_t deviceId, std::int32_t* fd, std::uint64_t* bufferSize) {
+    if (deviceId != 7) return static_cast<int>(0x80f40004u);
+    *fd = 77;
+    *bufferSize = g_hugeGetdentsBufferSize;
+    return 0;
+}
+
+std::int32_t APS5_VABI MockGetdentsReadTrack(std::int32_t fd, void* buffer, std::uint64_t bufferSize, std::uint64_t* bytesRead) {
+    (void)buffer;
+    (void)bufferSize;
+    if (fd != 77) return static_cast<int>(0x80f40002u);
+    ++g_hugeGetdentsReadCount;
+    *bytesRead = 0;
+    return 0;
+}
+
+std::int32_t APS5_VABI MockGetdentsCloseTrack(std::int32_t fd) {
+    if (fd != 77) return static_cast<int>(0x80f40002u);
+    ++g_hugeGetdentsCloseCount;
+    return 0;
 }
 
 std::int32_t APS5_VABI MockRegisterCallback(std::int32_t eventType, UsbStorageCallback callback, void* userData) {
@@ -912,6 +959,74 @@ int main() {
         Require(sceCLCSetUsbStorageCallback(&oversizedCb) == 0);
         Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
         Require(sceCLCGetFolderInfo(7, "/", &counts) == kErrInvalidArg);
+
+        const std::filesystem::path dirFitDir = g_usbRoot / "dir_fit_test";
+        std::filesystem::create_directories(dirFitDir / "dddd", ec);
+        Require(!ec);
+        std::filesystem::create_directories(dirFitDir / "ddddd", ec);
+        Require(!ec);
+        WriteBytes(dirFitDir / "z.mp3", {0xff, 0xfb, 0x90, 0x00});
+        Require(sceCLCSetUsbStorageCallback(&fullCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
+        const std::string longDirFit = "/dfit_" + std::string(499, 'p');
+        Require(longDirFit.size() == 505);
+        Require(sceCLCGetFolderInfo(7, longDirFit.c_str(), &counts) == 0);
+        Require(static_cast<std::int32_t>(counts & 0xffffffffu) == 1);
+        Require(static_cast<std::int32_t>(counts >> 32) == 1);
+        Require(sceCLCGetFileList(0, 0, 0, 0, 10, &listOut) == 0);
+        Require(listOut.returnedCount == 2);
+        Require(entryBuf[0].isFile == 0 && entryBuf[0].name == longDirFit + "/dddd");
+        Require(entryBuf[1].isFile == 1 && entryBuf[1].name == longDirFit + "/z.mp3");
+        Require(sceCLCGetFolderInfo(7, entryBuf[0].name, &counts) == 0);
+        Require(g_mountCount == g_unmountCount);
+
+        SceCLCUsbStorageCallback untermCb = fullCb;
+        untermCb.requestMap = &MockRequestMapUnterminated;
+        untermCb.requestUnmap = &MockRequestUnmapUnterminated;
+        Require(sceCLCSetUsbStorageCallback(&untermCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
+        g_untermUnmapCount = 0;
+        g_untermUnmapResult = 0;
+        g_untermLastMountLen = 0;
+        Require(sceCLCGetFolderInfo(7, "/music", &counts) == kErrInvalidArg);
+        Require(g_untermUnmapCount == 1 && g_untermLastMountLen == 0x200);
+        Require(g_mountCount == g_unmountCount);
+        g_untermLastMountLen = 0;
+        Require(sceCLCGetFileInfo(7, "/music/a_track.mp3", &fileInfo) == kErrInvalidArg);
+        Require(g_untermUnmapCount == 2 && g_untermLastMountLen == 0x200);
+        Require(g_mountCount == g_unmountCount);
+        g_untermUnmapResult = static_cast<int>(0x80f40099u);
+        Require(sceCLCGetFolderInfo(7, "/music", &counts) == g_untermUnmapResult);
+        Require(g_untermUnmapCount == 3);
+        Require(sceCLCGetFileInfo(7, "/music/a_track.mp3", &fileInfo) == g_untermUnmapResult);
+        Require(g_untermUnmapCount == 4);
+        Require(g_mountCount == g_unmountCount);
+        g_untermUnmapResult = 0;
+
+        SceCLCUsbStorageCallback hugeCb = fullCb;
+        hugeCb.getdentsOpen = &MockGetdentsOpenHuge;
+        hugeCb.getdentsRead = &MockGetdentsReadTrack;
+        hugeCb.getdentsClose = &MockGetdentsCloseTrack;
+        Require(sceCLCSetUsbStorageCallback(&hugeCb) == 0);
+        Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
+
+        g_hugeGetdentsBufferSize = 1024ULL * 1024ULL + 1ULL;
+        g_hugeGetdentsReadCount = 0;
+        g_hugeGetdentsCloseCount = 0;
+        Require(sceCLCGetFolderInfo(7, "/", &counts) == kErrInvalidArg);
+        Require(g_hugeGetdentsReadCount == 0 && g_hugeGetdentsCloseCount == 1);
+
+        g_hugeGetdentsBufferSize = 0xffffffff00000000ULL;
+        g_hugeGetdentsReadCount = 0;
+        g_hugeGetdentsCloseCount = 0;
+        Require(sceCLCGetFolderInfo(7, "/", &counts) == kErrInvalidArg);
+        Require(g_hugeGetdentsReadCount == 0 && g_hugeGetdentsCloseCount == 1);
+
+        g_hugeGetdentsBufferSize = 1024ULL * 1024ULL;
+        g_hugeGetdentsReadCount = 0;
+        g_hugeGetdentsCloseCount = 0;
+        Require(sceCLCGetFolderInfo(7, "/", &counts) == 0);
+        Require(g_hugeGetdentsReadCount == 1 && g_hugeGetdentsCloseCount == 1);
 
         Require(sceCLCSetUsbStorageCallback(&fullCb) == 0);
         Require(sceCLCGetDeviceList(devices, &deviceCount) == 0);
