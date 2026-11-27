@@ -290,6 +290,108 @@ std::vector<std::size_t> DynamicEntryOffsets(const std::vector<std::uint8_t>& el
     return offsets;
 }
 
+void ValidateExecutableDynamicStringTable(
+    const std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr,
+    std::uint64_t dynStrOffset,
+    std::uint64_t dynStrSize
+) {
+    using namespace Internal;
+
+    std::size_t standardAddressCount = 0u;
+    std::size_t standardSizeCount = 0u;
+    std::size_t sceAddressCount = 0u;
+    std::size_t sceSizeCount = 0u;
+    std::uint64_t standardAddress = 0u;
+    std::uint64_t standardSize = 0u;
+    std::uint64_t sceAddress = 0u;
+    std::uint64_t sceSize = 0u;
+    const auto dynamicEntries = DynamicEntryOffsets(elf, ehdr);
+    for (const auto entryOffset : dynamicEntries) {
+        const auto entry = Read<Elf64_Dyn>(elf, entryOffset);
+        if (entry.d_tag == 5) {
+            ++standardAddressCount;
+            standardAddress = entry.d_val;
+        }
+        if (entry.d_tag == 10) {
+            ++standardSizeCount;
+            standardSize = entry.d_val;
+        }
+        if (entry.d_tag == kDtOsStrtab) {
+            ++sceAddressCount;
+            sceAddress = entry.d_val;
+        }
+        if (entry.d_tag == kDtOsStrsz) {
+            ++sceSizeCount;
+            sceSize = entry.d_val;
+        }
+    }
+
+    const bool hasStandardPair = standardAddressCount == 1u && standardSizeCount == 1u;
+    const bool hasScePair = sceAddressCount == 1u && sceSizeCount == 1u;
+    const bool hasAnyStandardTag = standardAddressCount != 0u || standardSizeCount != 0u;
+    const bool hasAnySceTag = sceAddressCount != 0u || sceSizeCount != 0u;
+    if (!hasAnyStandardTag && !hasAnySceTag) return;
+    if (!hasStandardPair && hasAnyStandardTag)
+        throw std::runtime_error("ELF executable requires exactly one complete DT_STRTAB/DT_STRSZ pair");
+    if (!hasScePair && hasAnySceTag)
+        throw std::runtime_error("ELF executable requires exactly one complete DT_OS_STRTAB/DT_OS_STRSZ pair");
+    if (hasStandardPair && hasScePair)
+        throw std::runtime_error("ELF executable has ambiguous dynamic string table tags");
+
+    if (ehdr.e_phoff == 0u || ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0u) {
+        throw std::runtime_error("ELF executable dynamic string table has no valid program header table");
+    }
+    RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+    std::vector<Elf64_Phdr> segments;
+    segments.reserve(ehdr.e_phnum);
+    for (std::uint16_t index = 0u; index < ehdr.e_phnum; ++index) {
+        segments.push_back(Read<Elf64_Phdr>(elf, static_cast<std::size_t>(ehdr.e_phoff) + index * sizeof(Elf64_Phdr)));
+    }
+
+    if (hasScePair) {
+        constexpr std::uint32_t kPtSceDynlibData = 0x61000000u;
+        const Elf64_Phdr* sceDynlib = nullptr;
+        for (const auto& segment : segments) {
+            if (segment.p_type != kPtSceDynlibData) continue;
+            if (sceDynlib) throw std::runtime_error("multiple PT_SCE_DYNLIBDATA segments for executable string table");
+            sceDynlib = &segment;
+        }
+        if (!sceDynlib) throw std::runtime_error("missing PT_SCE_DYNLIBDATA for SCE executable string table");
+        RequireElfRange(elf, sceDynlib->p_offset, sceDynlib->p_filesz, "SCE dynamic data");
+        if (sceAddress > sceDynlib->p_filesz || sceSize > sceDynlib->p_filesz - sceAddress ||
+            sceSize != dynStrSize || sceDynlib->p_offset > UINT64_MAX - sceAddress ||
+            sceDynlib->p_offset + sceAddress != dynStrOffset) {
+            throw std::runtime_error("DT_OS_STRTAB does not match .dynstr section");
+        }
+        RequireElfRange(elf, sceDynlib->p_offset + sceAddress, sceSize, "SCE dynamic string table");
+        return;
+    }
+
+    if (standardSize != dynStrSize)
+        throw std::runtime_error("DT_STRTAB does not match .dynstr section");
+
+    bool mapped = false;
+    std::uint64_t mappedOffset = 0u;
+    for (const auto& segment : segments) {
+        if (segment.p_type != 1u || (segment.p_flags & 4u) == 0u || standardAddress < segment.p_vaddr)
+            continue;
+        const auto relativeOffset = standardAddress - segment.p_vaddr;
+        if (relativeOffset >= segment.p_filesz || standardSize > segment.p_filesz - relativeOffset)
+            continue;
+        if (segment.p_offset > UINT64_MAX - relativeOffset)
+            throw std::runtime_error("DT_STRTAB file offset overflow");
+        const auto candidateOffset = segment.p_offset + relativeOffset;
+        if (mapped && candidateOffset != mappedOffset)
+            throw std::runtime_error("DT_STRTAB maps to ambiguous file ranges");
+        mapped = true;
+        mappedOffset = candidateOffset;
+    }
+    if (!mapped || mappedOffset != dynStrOffset)
+        throw std::runtime_error("DT_STRTAB does not match .dynstr section");
+    RequireElfRange(elf, mappedOffset, standardSize, "dynamic string table");
+}
+
 void RemapDynamicNameOffsets(
     std::vector<std::uint8_t>& elf,
     const Elf64_Ehdr& ehdr,
@@ -507,6 +609,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     }
 
     if (dynStrOffset == 0u) throw std::runtime_error("no .dynstr section");
+    if (options.executable) ValidateExecutableDynamicStringTable(elf, ehdr, dynStrOffset, dynStrSize);
 
     const std::vector<std::uint8_t> origDynStr(
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),

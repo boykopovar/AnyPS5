@@ -131,6 +131,37 @@ def executable_without_dynamic_section():
     struct.pack_into("<H", image, 60, 4)
     return bytes(image)
 
+def mismatched_executable(tag_family):
+    image = bytearray(
+        executable_without_dynamic_section()
+        if tag_family == "sce"
+        else executable("standard", include_dynlib=False)
+    )
+    dynstr = symbols.sections(image)[2]
+    runtime_offset = 0x5A0
+    runtime_strings = bytearray(image[dynstr[4]:dynstr[4] + dynstr[5]])
+    old_name, runtime_name = (
+        (b"libSceExample.prx", b"libSceInvalid.prx")
+        if tag_family == "sce"
+        else (b"sceA", b"sceX")
+    )
+    if len(old_name) != len(runtime_name):
+        raise AssertionError("runtime string replacement must preserve fixture geometry")
+    name_offset = runtime_strings.index(old_name)
+    runtime_strings[name_offset:name_offset + len(old_name)] = runtime_name
+    image[runtime_offset:runtime_offset + len(runtime_strings)] = runtime_strings
+
+    for index, (tag, _) in enumerate(dynamic_tags(image)):
+        if tag == DT_OS_STRTAB:
+            value = runtime_offset - DYNLIB_OFFSET
+        elif tag == 5:
+            value = 0x400000 + runtime_offset
+        else:
+            continue
+        struct.pack_into("<Q", image, DYNAMIC_OFFSET + index * 16 + 8, value)
+    return bytes(image)
+
+
 def patch(image):
     with tempfile.TemporaryDirectory(prefix="anyps5-exec-dynstr-") as directory:
         path = Path(directory) / "executable.elf"
@@ -175,6 +206,20 @@ class PatcherArgumentTests(unittest.TestCase):
 
 @unittest.skipUnless(PATCHER is not None and Path(PATCHER).is_file(), "nid_patcher executable required")
 class ExecutableDynstrTests(unittest.TestCase):
+    def test_standard_runtime_string_table_must_match_dynstr_section(self):
+        original = mismatched_executable("standard")
+        result, after = patch(original)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b"DT_STRTAB does not match .dynstr section", result.stderr)
+        self.assertEqual(after, original)
+
+    def test_sce_runtime_string_table_must_match_dynstr_section(self):
+        original = mismatched_executable("sce")
+        result, after = patch(original)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b"DT_OS_STRTAB does not match .dynstr section", result.stderr)
+        self.assertEqual(after, original)
+
     def test_standard_dynamic_string_tags_follow_relocated_table(self):
         result, after = patch(executable("standard", include_dynlib=False))
         self.assertEqual(result.returncode, 0, result.stderr)
