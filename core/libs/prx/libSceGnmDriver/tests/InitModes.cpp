@@ -116,6 +116,13 @@ void TestContext400(bool neo) {
     Require(contextEb == neo && context2aa != neo && uconfig258 == neo, "400 mode-specific registers differ");
 }
 
+void TestQueries(bool neo) {
+    Require(sceGnmGetGpuCoreClockFrequency_nid_disambig1() == (neo ? 911000000 : 800000000), "GPU core clock differs");
+    Require(sceGnmGetPhysicalCounterFromVirtualized_nid_disambig1() == static_cast<int>(0x8eee00ffu), "physical counter answer differs");
+    Require(sceGnmLogicalTcaUnitToPhysical_nid_disambig1(0) == 0 && sceGnmLogicalTcaUnitToPhysical_nid_disambig1(1) == 1 &&
+        sceGnmLogicalTcaUnitToPhysical_nid_disambig1(2) == 0 && sceGnmLogicalTcaUnitToPhysical_nid_disambig1(9) == 1, "TCA unit map differs");
+}
+
 int RunSelf(const std::filesystem::path& program, const char* mode) {
     const std::string arguments = "\"" + program.string() + "\" " + mode;
 #ifdef _WIN32
@@ -135,6 +142,7 @@ int main(int argc, char** argv) {
             Require(sceKernelIsNeoMode() == neo, "mode fixture did not set sceKernelIsNeoMode");
             TestHardware350(neo);
             TestContext400(neo);
+            TestQueries(neo);
             return 0;
         }
         const auto program = std::filesystem::absolute(argv[0]);

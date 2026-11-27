@@ -68,13 +68,16 @@ int APS5_VABI sceGnmDingDongForWorkload_nid_disambig1(std::uint32_t vqueueId, st
 int APS5_VABI sceGnmDrawIndexMultiInstanced_nid_disambig1(void);
 int APS5_VABI sceGnmDrawOpaqueAuto_nid_disambig1(void);
 int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void);
+int APS5_VABI sceGnmGetGpuCoreClockFrequency_nid_disambig1(void);
 int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void);
 int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void);
 int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void);
+int APS5_VABI sceGnmGetPhysicalCounterFromVirtualized_nid_disambig1(void);
 int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void);
 int APS5_VABI sceGnmGetShaderProgramBaseAddress_nid_disambig1(void);
 int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void);
 int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void);
+int APS5_VABI sceGnmLogicalTcaUnitToPhysical_nid_disambig1(std::uint32_t unit);
 int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void);
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload_nid_disambig1(void);
 int APS5_VABI sceGnmSetWaveLimitMultipliers_nid_disambig1(void);
@@ -83,6 +86,8 @@ int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::ui
 int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t workload, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
 
 
+int APS5_VABI sceGnmComputeWaitOnAddress_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference);
+int APS5_VABI sceGnmComputeWaitSemaphore_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags);
 int APS5_VABI sceGnmDispatchDirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags);
 int APS5_VABI sceGnmDispatchIndirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags);
 int APS5_VABI sceGnmDispatchIndirectOnMec_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier);

@@ -93,6 +93,7 @@ constexpr int GNM_ERROR_CAPTURE_FAILED_INTERNAL = static_cast<int>(0x80d1500fu);
 using RegisterValue = std::pair<std::uint32_t, std::uint32_t>;
 
 constexpr int Failure = static_cast<int>(0x8EEE00FFu);
+constexpr std::uint32_t TcaUnitMap = 0x10;
 
 std::uint32_t AddressLo(const void* code) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8);
@@ -926,6 +927,10 @@ int APS5_VABI sceGnmGetGpuBlockStatus_nid_disambig1(void) {
     return 0;
 }
 
+int APS5_VABI sceGnmGetGpuCoreClockFrequency_nid_disambig1(void) {
+    return sceKernelIsNeoMode() != 0 ? 911000000 : 800000000;
+}
+
 int APS5_VABI sceGnmGetGpuInfoStatus_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -939,6 +944,10 @@ int APS5_VABI sceGnmGetLastWaitedAddress_nid_disambig1(void) {
 int APS5_VABI sceGnmGetNumTcaUnits_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceGnmGetPhysicalCounterFromVirtualized_nid_disambig1(void) {
+    return Failure;
 }
 
 int APS5_VABI sceGnmGetProtectionFaultTimeStamp_nid_disambig1(void) {
@@ -959,6 +968,10 @@ int APS5_VABI sceGnmGetShaderStatus_nid_disambig1(void) {
 int APS5_VABI sceGnmInsertThreadTraceMarker_nid_disambig1(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceGnmLogicalTcaUnitToPhysical_nid_disambig1(std::uint32_t unit) {
+    return static_cast<int>((TcaUnitMap >> ((unit * 4) & 31)) & 0xf);
 }
 
 int APS5_VABI sceGnmMapComputeQueueWithPriority_nid_disambig1(void) {
@@ -1007,6 +1020,16 @@ bool ReadSharedShaderRegs(const std::uint32_t* regs, std::array<std::uint32_t, W
 }
 
 extern "C" {
+
+int APS5_VABI sceGnmComputeWaitOnAddress_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference) {
+    if (!cmdbuf || size != 14) return -1;
+    return WriteSharedCommandBuffer<14>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::ComputeWaitOnAddress(buffer, size, address, mask, compare, reference); });
+}
+
+int APS5_VABI sceGnmComputeWaitSemaphore_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags) {
+    if (!cmdbuf || size != 10) return -1;
+    return WriteSharedCommandBuffer<10>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::ComputeWaitSemaphore(buffer, size, semaphoreAddress, flags); });
+}
 
 int APS5_VABI sceGnmDispatchDirect_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags) {
     if (!cmdbuf || size != 9 || static_cast<std::int32_t>(threadsX | threadsY | threadsZ) < 0) return -1;

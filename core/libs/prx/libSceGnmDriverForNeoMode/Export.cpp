@@ -177,29 +177,12 @@ int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload)
 
 int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference) {
     if (!cmdbuf || size != 14) return CommandFailed;
-    return WriteCommandBuffer<14>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = Nop(buf, 3);
-        const bool memory = address > 0xffff;
-        at[0] = Header(0x3c, 6);
-        at[1] = (memory ? 1u << 4 : 0u) | (compare & 7);
-        at[2] = static_cast<std::uint32_t>(address & (memory ? 0xfffffffcu : 0xffffu));
-        at[3] = static_cast<std::uint32_t>(address >> 32);
-        at[4] = reference;
-        at[5] = mask;
-        at[6] = 10;
-        Nop(at + 7, 2);
-    });
+    return WriteSharedCommandBuffer<14>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::ComputeWaitOnAddress(buf, size, address, mask, compare, reference); });
 }
 
 int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags) {
     if (!cmdbuf || size != 10) return CommandFailed;
-    return WriteCommandBuffer<10>(cmdbuf, [&](std::uint32_t* buf) {
-        auto* at = Nop(buf, 3);
-        at[0] = Header(0x39, 2);
-        at[1] = static_cast<std::uint32_t>(semaphoreAddress);
-        at[2] = (flags == 1 ? 0x100000u : 0u) - 0x20000000u + static_cast<std::uint32_t>(semaphoreAddress >> 32);
-        Nop(at + 3, 2);
-    });
+    return WriteSharedCommandBuffer<10>(cmdbuf, [&](std::uint32_t* buf) { return GnmCommandWriters::ComputeWaitSemaphore(buf, size, semaphoreAddress, flags); });
 }
 
 int APS5_VABI sceGnmCreateWorkloadStream(std::uint64_t name, std::uint32_t* stream) {
