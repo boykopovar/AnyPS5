@@ -53,15 +53,49 @@
 #include <stdexcept>
 #include <string>
 
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstddef>
+#include <type_traits>
+
 using NKWebKit::WebCoreAbi::OptionalFourCC;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 
 namespace {
 
+static_assert(sizeof(bool) == 1);
+static_assert(std::is_trivially_copyable_v<OptionalFourCC>);
+
 void RequireCopied(bool copied, int savedErrno, const char* what) {
     errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string("FourCC::fromString: unreadable ") + what);
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, int savedErrno, const char* function) {
+    if (!size) return;
+    if (!pointer) {
+        errno = savedErrno;
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    const bool ok = GuestReadable_nid_no_patch(pointer, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, int savedErrno, const char* function) {
+    if (!size) return;
+    if (!pointer) {
+        errno = savedErrno;
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 }
@@ -69,13 +103,26 @@ void RequireCopied(bool copied, int savedErrno, const char* what) {
 extern "C" OptionalFourCC* APS5_VABI _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE(OptionalFourCC* result, const String* string) {
     if (!result || !string) throw std::invalid_argument("null FourCC result or String reference");
     const int savedErrno = errno;
+    RequireReadableGuestBytes(result, sizeof(OptionalFourCC), savedErrno, __func__);
+    RequireWritableGuestBytes(result, sizeof(OptionalFourCC), savedErrno, __func__);
+    unsigned char previousRaw[sizeof(OptionalFourCC)]{};
+    if (!GuestCopyIn_nid_no_patch(previousRaw, result, sizeof(previousRaw))) {
+        errno = savedErrno;
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     const StringImpl* guestImpl = nullptr;
-    RequireCopied(GuestCopyIn_nid_no_patch(&guestImpl, &string->impl, sizeof(guestImpl)), savedErrno, "string");
+    RequireCopied(GuestCopyIn_nid_no_patch(&guestImpl, reinterpret_cast<const unsigned char*>(string) + offsetof(String, impl), sizeof(guestImpl)), savedErrno, "string");
     StringImpl impl{};
     if (guestImpl) RequireCopied(GuestCopyIn_nid_no_patch(&impl, guestImpl, sizeof(impl)), savedErrno, "string implementation");
-    if (guestImpl && impl.length && !impl.data) throw std::invalid_argument("null WTF::StringImpl characters");
+    if (guestImpl && impl.length && !impl.data) {
+        errno = savedErrno;
+        throw std::invalid_argument("null WTF::StringImpl characters");
+    }
     if (!guestImpl || impl.length != 4) {
-        result->engaged = false;
+        const unsigned char engagedFalse = 0;
+        const bool ok = GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(result) + offsetof(OptionalFourCC, engaged), &engagedFalse, sizeof(engagedFalse));
+        errno = savedErrno;
+        if (!ok) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return result;
     }
     const bool is8Bit = impl.hashAndFlags & 4;
@@ -88,7 +135,16 @@ extern "C" OptionalFourCC* APS5_VABI _ZN7WebCore6FourCC10fromStringERKN3WTF6Stri
         const auto byte = ch && (ch < 0x20 || ch > 0x7f) ? '?' : ch;
         value = (value << 8) | byte;
     }
-    result->engaged = true;
-    result->value = value;
+    unsigned char updatedRaw[sizeof(OptionalFourCC)]{};
+    std::memcpy(updatedRaw, previousRaw, sizeof(updatedRaw));
+    const unsigned char engagedTrue = 1;
+    std::memcpy(updatedRaw + offsetof(OptionalFourCC, engaged), &engagedTrue, sizeof(engagedTrue));
+    std::memcpy(updatedRaw + offsetof(OptionalFourCC, value), &value, sizeof(value));
+    if (!GuestCopyOut_nid_no_patch(result, updatedRaw, sizeof(updatedRaw))) {
+        static_cast<void>(GuestCopyOut_nid_no_patch(result, previousRaw, sizeof(previousRaw)));
+        errno = savedErrno;
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    errno = savedErrno;
     return result;
 }

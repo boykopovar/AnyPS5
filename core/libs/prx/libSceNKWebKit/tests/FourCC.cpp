@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include <array>
 #include <cerrno>
@@ -115,6 +116,39 @@ static void TestGuestPointers() {
     std::memcpy(pages + 4096 - 8, wide, 8);
     impl.data = pages + 4096 - 8;
     Check(string, true, 0x6d703461);
+
+    auto requireNotImplemented = [](auto&& fn) {
+        errno = 73;
+        const auto before = NotImplementedCalls_nid_no_patch();
+        bool threw = false;
+        try {
+            fn();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 73 && NotImplementedCalls_nid_no_patch() == before + 1);
+    };
+
+    requireNotImplemented([&] {
+        _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE(reinterpret_cast<OptionalFourCC*>(pages + 4096), &string);
+    });
+    unsigned char* const splitResult = pages + 4096 - 4;
+    std::memset(splitResult, 0x5A, 4);
+    requireNotImplemented([&] {
+        _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE(reinterpret_cast<OptionalFourCC*>(splitResult), &string);
+    });
+    for (std::size_t i = 0; i < 4; ++i) Require(splitResult[i] == 0x5A);
+
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(pages, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(pages, 4096, PROT_READ) == 0);
+#endif
+    requireNotImplemented([&] {
+        _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE(reinterpret_cast<OptionalFourCC*>(pages), &string);
+    });
+
     UnmapGuardedPage(pages);
     string.impl = nullptr;
     std::puts("FourCC::fromString: unreadable strings throw and keep errno, reads stay within the four characters");
