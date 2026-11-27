@@ -5437,7 +5437,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         Require(!ColorTileModeIsLinear(destination.tileMode) && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
-        ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));
+        ResolveMultisampleTarget(context, *pass.source, *resident, destination.format, destination.mip);
         return;
     }
     if (pass.mode == ColorMetadataPass::Mode::FmaskDecompress) {

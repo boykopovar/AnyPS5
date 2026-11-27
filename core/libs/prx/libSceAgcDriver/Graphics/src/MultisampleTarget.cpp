@@ -40,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -801,6 +802,46 @@ public:
         return *packedResolve;
     }
 
+    const Allocation& ResolveCopy(VkFormat format) {
+        auto& copy = resolveCopies[format];
+        if (copy.image != VK_NULL_HANDLE) return copy;
+        Allocation created;
+        try {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = {target.extent.width, target.extent.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &created.image), "vkCreateImage multisampled resolve copy");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, created.image, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            created.bytes = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            created.memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory multisampled resolve copy");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, created.image, created.memory, 0), "vkBindImageMemory multisampled resolve copy");
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = created.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created.view), "vkCreateImageView multisampled resolve copy");
+            recordCommands(context, [&](VkCommandBuffer commands, Recorder*) { recordToGeneral(commands, created.image, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT); });
+        } catch (...) {
+            destroy(created);
+            throw;
+        }
+        copy = created;
+        return copy;
+    }
+
     VkImageView View(VkFormat format) {
         if (format == target.format) return view;
         Require(twinFormat != VK_FORMAT_UNDEFINED && format == twinFormat, "a multisampled color target is only viewed in its own format or its sRGB twin");
@@ -972,6 +1013,7 @@ private:
         std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
     };
     std::map<VkFormat, ReinterpretCopy> reinterpretCopies;
+    std::map<VkFormat, Allocation> resolveCopies;
     std::map<VkFormat, bool> reinterpretable;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
     struct DccCopy {
@@ -1205,6 +1247,8 @@ private:
             destroy(copy.allocation);
         }
         reinterpretCopies.clear();
+        for (const auto& [format, copy] : resolveCopies) destroy(copy);
+        resolveCopies.clear();
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (uploadView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uploadView, nullptr);
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
@@ -2142,14 +2186,177 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
     });
 }
 
-void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+namespace {
+
+bool probeResolveFollowsView(const Context& context, VkFormat viewFormat, VkFormat imageFormat, std::uint32_t samples, std::uint32_t elementBytes, std::string& failure) {
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) recorder->Sync();
+    bool follows = false;
+    std::array<VkImageView, 2> sourceViews{};
+    std::array<VkImageView, 2> resolveViews{};
+    VkRenderPass pass = VK_NULL_HANDLE;
+    std::array<VkFramebuffer, 2> framebuffers{};
+    std::array<std::shared_ptr<OwnedImage>, 2> sources;
+    std::array<std::shared_ptr<OwnedImage>, 2> resolved;
+    try {
+        constexpr VkExtent3D extent{8u, 8u, 1u};
+        const auto make = [&](VkFormat format, std::uint32_t count, VkImageUsageFlags usage, VkImageCreateFlags flags) {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.flags = flags;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = extent;
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = static_cast<VkSampleCountFlagBits>(count);
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            auto owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
+            VkImage image = VK_NULL_HANDLE;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage resolve view probe");
+            owned->image = image;
+            owned->Allocate(context, info, "vkAllocateMemory resolve view probe");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory resolve view probe");
+            return owned;
+        };
+        const auto view = [&](VkImage image, VkImageView& created) {
+            VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+            usage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            info.pNext = &usage;
+            info.image = image;
+            info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            info.format = viewFormat;
+            info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &created), "vkCreateImageView resolve view probe");
+        };
+        for (auto& source : sources) source = make(viewFormat, samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0);
+        resolved[0] = make(imageFormat, 1u, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
+        resolved[1] = make(viewFormat, 1u, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0);
+        for (std::size_t index = 0; index < resolved.size(); ++index) {
+            view(sources[index]->image, sourceViews[index]);
+            view(resolved[index]->image, resolveViews[index]);
+        }
+        std::array<VkAttachmentDescription, 2> attachments{};
+        attachments[0].format = viewFormat;
+        attachments[0].samples = static_cast<VkSampleCountFlagBits>(samples);
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].format = viewFormat;
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        for (auto& attachment : attachments) {
+            attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachment.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+        const VkAttachmentReference color{0, VK_IMAGE_LAYOUT_GENERAL};
+        const VkAttachmentReference resolve{1, VK_IMAGE_LAYOUT_GENERAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color;
+        subpass.pResolveAttachments = &resolve;
+        VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        passInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+        passInfo.pAttachments = attachments.data();
+        passInfo.subpassCount = 1;
+        passInfo.pSubpasses = &subpass;
+        Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &pass), "vkCreateRenderPass resolve view probe");
+        const auto texels = static_cast<std::size_t>(extent.width) * extent.height * elementBytes;
+        Buffer linear(context, texels * resolved.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        for (std::size_t index = 0; index < resolved.size(); ++index) {
+            const std::array<VkImageView, 2> views{sourceViews[index], resolveViews[index]};
+            VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            framebufferInfo.renderPass = pass;
+            framebufferInfo.attachmentCount = static_cast<std::uint32_t>(views.size());
+            framebufferInfo.pAttachments = views.data();
+            framebufferInfo.width = extent.width;
+            framebufferInfo.height = extent.height;
+            framebufferInfo.layers = 1;
+            Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffers[index]), "vkCreateFramebuffer resolve view probe");
+            std::array<VkClearValue, 2> clears{};
+            clears[0].color.float32[0] = 1.0f;
+            clears[0].color.float32[3] = 1.0f;
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = pass;
+            begin.framebuffer = framebuffers[index];
+            begin.renderArea = {{0, 0}, {extent.width, extent.height}};
+            begin.clearValueCount = static_cast<std::uint32_t>(clears.size());
+            begin.pClearValues = clears.data();
+            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+            context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            VkBufferImageCopy region{};
+            region.bufferOffset = texels * index;
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent = extent;
+            context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, resolved[index]->image, VK_IMAGE_LAYOUT_GENERAL, linear.Handle(), 1, &region);
+        }
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        linear.Invalidate();
+        follows = std::memcmp(linear.Bytes().data(), linear.Bytes().data() + texels, texels) == 0;
+    } catch (const std::exception& error) {
+        failure = error.what();
+        if (failure.empty()) failure = "no reason given";
+    } catch (...) {
+        failure = "not a standard exception";
+    }
+    if (!failure.empty()) follows = false;
+    for (const auto framebuffer : framebuffers) {
+        if (framebuffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+    }
+    if (pass != VK_NULL_HANDLE) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, pass, nullptr);
+    for (const auto created : resolveViews) {
+        if (created != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, created, nullptr);
+    }
+    for (const auto created : sourceViews) {
+        if (created != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, created, nullptr);
+    }
+    return follows;
+}
+
+bool resolveFollowsView(const Context& context, VkFormat viewFormat, VkFormat imageFormat, std::uint32_t samples, std::uint32_t elementBytes) {
+    static const bool staged = std::getenv("APS5_STAGED_RESOLVE") != nullptr;
+    if (staged) return false;
+    static std::mutex mutex;
+    static std::vector<std::pair<std::tuple<VkPhysicalDevice, VkFormat, VkFormat, std::uint32_t>, bool>> probes;
+    const std::tuple key{context.physical, viewFormat, imageFormat, samples};
+    {
+        std::lock_guard lock(mutex);
+        const auto cached = std::find_if(probes.begin(), probes.end(), [&](const auto& entry) { return entry.first == key; });
+        if (cached != probes.end()) return cached->second;
+    }
+    std::string failure;
+    const bool follows = probeResolveFollowsView(context, viewFormat, imageFormat, samples, elementBytes, failure);
+    std::lock_guard lock(mutex);
+    probes.emplace_back(key, follows);
+    const std::string outcome = !failure.empty() ? "the probe failed (" + failure + "), resolved through a copy" : follows ? "follows the view, resolved directly" : "does not follow the view, resolved through a copy";
+    std::fprintf(stderr, "[gpu] render-pass resolve of %u samples into a format %d view of a format %d image: %s\n", samples, static_cast<int>(viewFormat), static_cast<int>(imageFormat), outcome.c_str());
+    return follows;
+}
+
+}
+
+void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkFormat format, std::uint32_t mip) {
     storeEarlierStorageResults(source);
+    const bool packed = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10;
+    const auto imageFormat = destination.ImageFormat();
+    const bool stage = !packed && imageFormat != format && colorTwinFormat(context, imageFormat) != format && !resolveFollowsView(context, source.format, imageFormat, source.samples, source.elementBytes);
     const DccPublication publication(source);
     TargetsLock lock;
     auto& target = acquire(context, source);
     target.Keep();
+    auto* averaging = packed ? &target.PackedResolve() : nullptr;
+    const auto* staged = stage ? &target.ResolveCopy(source.format) : nullptr;
+    const auto destinationView = staged != nullptr ? staged->view : destination.AttachmentView(format, mip);
     const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
-    auto* averaging = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? &target.PackedResolve() : nullptr;
     auto framebuffer = averaging != nullptr ? nullptr : std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
     std::shared_ptr<void> averaged;
     recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
@@ -2164,9 +2371,18 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
             context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
             context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
         }
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        if (staged != nullptr) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            const auto& descriptor = destination.Descriptor();
+            VkImageCopy region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, descriptor.dimension == TextureDimension::k3D ? 0u : descriptor.baseArray, 1};
+            region.extent = {source.extent.width, source.extent.height, 1};
+            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, staged->image, VK_IMAGE_LAYOUT_GENERAL, destination.Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+        }
+        RecordMemoryBarrier(context, commands, staged != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, staged != nullptr ? VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
         if (recorder != nullptr) {
-            Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+            Recorder::CountBarriers(Recorder::CommandClass::Draw, staged != nullptr ? 3 : 2);
             if (framebuffer != nullptr) recorder->Keep(framebuffer);
         }
     });
