@@ -1,12 +1,21 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
+#include <vector>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -14,6 +23,11 @@ constexpr std::size_t Size = 0x10000;
 constexpr int Read = 0x1;
 constexpr int Write = 0x2;
 constexpr int Execute = 0x4;
+bool g_mappingObserved = false;
+
+void ObserveMapping(std::uintptr_t, std::size_t) {
+    g_mappingObserved = true;
+}
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -179,6 +193,109 @@ void InvalidArgumentsAreRejected() {
     Require(close_nid_postfix(shared) == 0);
 }
 
+void OversizedAndWritablePrechecks() {
+    int oversizedFd = -1;
+    errno = 789;
+    Require(sceKernelJitCreateSharedMemory("oversized", ~static_cast<std::size_t>(0x3fff), Read | Write | Execute, &oversizedFd) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(oversizedFd == -1);
+    Require(errno == 789);
+
+    if constexpr (sizeof(std::size_t) >= 8) {
+        const auto aboveInt64 = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) + 1;
+        errno = 790;
+        Require(sceKernelJitCreateSharedMemory("above-int64", aboveInt64, Read | Write | Execute, &oversizedFd) == SCE_KERNEL_ERROR_ENOMEM);
+        Require(oversizedFd == -1);
+        Require(errno == 790);
+    }
+
+    const int fd = Create(nullptr, Read | Execute);
+
+    void* roPage = mmap_nid_postfix(nullptr, 0x4000, Read | Write, 0x1002, -1, 0);
+    Require(roPage != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    auto* roFdOut = static_cast<int*>(roPage);
+    auto* roStartOut = static_cast<void**>(roPage);
+    *roStartOut = nullptr;
+    Require(mprotect_nid_postfix(roPage, 0x4000, Read) == 0);
+
+    errno = 101;
+    Require(sceKernelJitCreateSharedMemory("oversized-ro", ~static_cast<std::size_t>(0x3fff), Read | Write | Execute, roFdOut) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(errno == 101);
+
+    errno = 102;
+    Require(sceKernelJitCreateAliasOfSharedMemory(-1, Read, roFdOut) == SCE_KERNEL_ERROR_EBADF);
+    Require(errno == 102);
+
+    errno = 103;
+    Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read | Write, roFdOut) == SCE_KERNEL_ERROR_EACCES);
+    Require(errno == 103);
+
+    errno = 104;
+    Require(sceKernelJitMapSharedMemory(-1, Read, roStartOut) == SCE_KERNEL_ERROR_EBADF);
+    Require(errno == 104);
+
+    errno = 105;
+    Require(sceKernelJitMapSharedMemory(fd, Read | Write, roStartOut) == SCE_KERNEL_ERROR_EACCES);
+    Require(errno == 105);
+
+    errno = 106;
+    Require(sceKernelJitMapSharedMemory(-1, Read, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 106);
+
+#ifdef _WIN32
+    const int seed = shm_open_nid_postfix(reinterpret_cast<const char*>(1), 0x2, 0600);
+    Require(seed >= 0);
+    std::vector<int> exhausted;
+    while (exhausted.size() < 16384) {
+        const int dup = dup_nid_postfix(seed);
+        if (dup < 0) break;
+        exhausted.push_back(dup);
+    }
+    Require(exhausted.size() < 16384);
+
+    errno = 201;
+    Require(sceKernelJitCreateSharedMemory("efault-ro", Size, Read | Write | Execute, roFdOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 201);
+
+    errno = 202;
+    Require(sceKernelJitCreateAliasOfSharedMemory(fd, Read, roFdOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 202);
+
+    for (const int extra : exhausted) Require(close_nid_postfix(extra) == 0);
+    Require(close_nid_postfix(seed) == 0);
+#else
+    rlimit previous{};
+    Require(::getrlimit(RLIMIT_NOFILE, &previous) == 0);
+    const int lowest = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    Require(lowest >= 0);
+    Require(::close(lowest) == 0);
+    rlimit limited = previous;
+    limited.rlim_cur = static_cast<rlim_t>(lowest);
+    Require(::setrlimit(RLIMIT_NOFILE, &limited) == 0);
+
+    errno = 201;
+    const int createResult = sceKernelJitCreateSharedMemory("efault-ro", Size, Read | Write | Execute, roFdOut);
+    const int createErrno = errno;
+    errno = 202;
+    const int aliasResult = sceKernelJitCreateAliasOfSharedMemory(fd, Read, roFdOut);
+    const int aliasErrno = errno;
+
+    Require(::setrlimit(RLIMIT_NOFILE, &previous) == 0);
+    Require(createResult == SCE_KERNEL_ERROR_EFAULT && createErrno == 201);
+    Require(aliasResult == SCE_KERNEL_ERROR_EFAULT && aliasErrno == 202);
+#endif
+
+    g_mappingObserved = false;
+    GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ObserveMapping);
+    errno = 333;
+    Require(sceKernelJitMapSharedMemory(fd, Read, roStartOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 333);
+    GuestArena::GuestArenaSetAccessObserver_nid_postfix(nullptr);
+    Require(!g_mappingObserved);
+
+    Require(munmap_nid_postfix(roPage, 0x4000) == 0);
+    Require(close_nid_postfix(fd) == 0);
+}
+
 }
 
 int main() {
@@ -189,4 +306,5 @@ int main() {
     MmapOfTheDescriptorSharesTheObject();
 #endif
     InvalidArgumentsAreRejected();
+    OversizedAndWritablePrechecks();
 }

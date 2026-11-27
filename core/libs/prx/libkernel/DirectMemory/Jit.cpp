@@ -43,6 +43,34 @@ int Granted(int protection) {
     return (protection & (CpuWrite | CpuExecute)) != 0 ? protection | CpuRead : protection;
 }
 
+struct PreserveErrno {
+    int saved = errno;
+    ~PreserveErrno() { errno = saved; }
+};
+
+std::uint64_t MaxBackingBytes() {
+#ifdef _WIN32
+    return static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+#else
+    return static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
+#endif
+}
+
+bool PreservedGuestWritable(void* address, std::size_t bytes) {
+    const PreserveErrno preserve;
+    return GuestWritable_nid_no_patch(address, bytes);
+}
+
+bool PreservedGuestCopyIn(void* destination, const void* source, std::size_t bytes) {
+    const PreserveErrno preserve;
+    return GuestCopyIn_nid_no_patch(destination, source, bytes);
+}
+
+bool PreservedGuestCopyOut(void* destination, const void* source, std::size_t bytes) {
+    const PreserveErrno preserve;
+    return GuestCopyOut_nid_no_patch(destination, source, bytes);
+}
+
 int KernelError(int error) {
     switch (error) {
     case EMFILE:
@@ -117,6 +145,7 @@ std::filesystem::path BackingPath() {
 }
 
 int CreateBacking(std::size_t bytes, int* descriptor, std::shared_ptr<JitObject>* object) {
+    if (static_cast<std::uint64_t>(bytes) > MaxBackingBytes()) return SCE_KERNEL_ERROR_ENOMEM;
     HANDLE file = CreateFileW(BackingPath().c_str(), GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
                               FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
     if (file == INVALID_HANDLE_VALUE) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "create JIT shared memory file");
@@ -198,6 +227,8 @@ extern "C" {
 int APS5_VABI sceKernelJitCreateSharedMemory(const char* name, std::size_t len, int maxProt, int* fdOut) {
     static_cast<void>(name);
     if (fdOut == nullptr || len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || (maxProt & ~CpuProtection) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (static_cast<std::uint64_t>(len) > MaxBackingBytes()) return SCE_KERNEL_ERROR_ENOMEM;
+    if (!PreservedGuestWritable(fdOut, sizeof(*fdOut))) return SCE_KERNEL_ERROR_EFAULT;
     int descriptor = -1;
     std::shared_ptr<JitObject> object;
     if (const int result = CreateBacking(len, &descriptor, &object)) return result;
@@ -205,7 +236,8 @@ int APS5_VABI sceKernelJitCreateSharedMemory(const char* name, std::size_t len, 
         std::lock_guard lock(g_jitLock);
         g_jitDescriptors.insert_or_assign(descriptor, JitDescriptor{std::move(object), maxProt});
     }
-    if (!GuestCopyOut_nid_no_patch(fdOut, &descriptor, sizeof(descriptor))) {
+    if (!PreservedGuestCopyOut(fdOut, &descriptor, sizeof(descriptor))) {
+        const PreserveErrno preserve;
         close_nid_postfix(descriptor);
         return SCE_KERNEL_ERROR_EFAULT;
     }
@@ -220,11 +252,13 @@ int APS5_VABI sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int* fd
         const auto source = g_jitDescriptors.find(fd);
         if (source == g_jitDescriptors.end()) return SCE_KERNEL_ERROR_EBADF;
         if ((Granted(maxProt) & ~Granted(source->second.maxProtection)) != 0) return SCE_KERNEL_ERROR_EACCES;
+        if (!PreservedGuestWritable(fdOut, sizeof(*fdOut))) return SCE_KERNEL_ERROR_EFAULT;
         alias = DuplicateDescriptor(fd);
         if (alias < 0) return HostFailure("duplicate JIT shared memory descriptor", errno);
         g_jitDescriptors.insert_or_assign(alias, JitDescriptor{source->second.object, maxProt});
     }
-    if (!GuestCopyOut_nid_no_patch(fdOut, &alias, sizeof(alias))) {
+    if (!PreservedGuestCopyOut(fdOut, &alias, sizeof(alias))) {
+        const PreserveErrno preserve;
         close_nid_postfix(alias);
         return SCE_KERNEL_ERROR_EFAULT;
     }
@@ -234,13 +268,14 @@ int APS5_VABI sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int* fd
 int APS5_VABI sceKernelJitMapSharedMemory(int fd, int prot, void** startOut) {
     if (startOut == nullptr || (prot & ~CpuProtection) != 0) return SCE_KERNEL_ERROR_EINVAL;
     void* address = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&address, startOut, sizeof(address))) return SCE_KERNEL_ERROR_EFAULT;
+    if (!PreservedGuestCopyIn(&address, startOut, sizeof(address))) return SCE_KERNEL_ERROR_EFAULT;
     std::size_t bytes = 0;
     {
         std::lock_guard lock(g_jitLock);
         const auto found = g_jitDescriptors.find(fd);
         if (found == g_jitDescriptors.end()) return SCE_KERNEL_ERROR_EBADF;
         if ((Granted(prot) & ~Granted(found->second.maxProtection)) != 0) return SCE_KERNEL_ERROR_EACCES;
+        if (!PreservedGuestWritable(startOut, sizeof(*startOut))) return SCE_KERNEL_ERROR_EFAULT;
         const auto& object = *found->second.object;
         std::uintptr_t arenaBase = 0;
         std::size_t arenaBytes = 0;
@@ -249,7 +284,8 @@ int APS5_VABI sceKernelJitMapSharedMemory(int fd, int prot, void** startOut) {
         if (const int result = DoMapShared(&address, object.Bytes(), prot, object.Host(fd))) return result;
         bytes = object.Bytes();
     }
-    if (!GuestCopyOut_nid_no_patch(startOut, &address, sizeof(address))) {
+    if (!PreservedGuestCopyOut(startOut, &address, sizeof(address))) {
+        const PreserveErrno preserve;
         sceKernelMunmap(reinterpret_cast<std::uint64_t>(address), bytes);
         return SCE_KERNEL_ERROR_EFAULT;
     }
