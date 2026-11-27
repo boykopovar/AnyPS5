@@ -378,6 +378,45 @@ void AttachStream(const std::filesystem::path& root) {
         pair.Matches();
     }
     {
+        AttachPair pair(Type1Fixture::Font());
+        auto* data = reinterpret_cast<std::uint8_t*>(const_cast<char*>(afm.data()));
+        std::vector<std::uint8_t> decoy(afm.size());
+        GuestStreamRec stream{};
+        stream.size = afm.size();
+        stream.close = GuestStreamClose;
+        stream.cursor = data;
+        stream.limit = data + afm.size();
+        GuestOpenArgs guest{};
+        guest.flags = FT_OPEN_STREAM;
+        guest.stream = &stream;
+        closes = 0;
+        Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }) && closes == 0);
+        GuestFaceRec* opened = nullptr;
+        Require(Throws([&] { FT_Open_Face_nid_postfix(pair.library, &guest, 0, &opened); }) && !opened && closes == 0);
+        pair.Matches();
+        FT_StreamRec nativeStream{};
+        nativeStream.close = NativeStreamClose;
+        FT_Open_Args native{};
+        native.flags = FT_OPEN_STREAM;
+        native.stream = &nativeStream;
+        stream.size = 0;
+        closes = nativeCloses = 0;
+        const int empty = FT_Attach_Stream(pair.oracle, &native);
+        Require(empty != 0 && FT_Attach_Stream_nid_postfix(pair.face, &guest) == empty && closes == nativeCloses);
+        pair.Matches();
+        stream.base = data;
+        stream.size = afm.size();
+        stream.cursor = decoy.data();
+        stream.limit = decoy.data() + decoy.size();
+        nativeStream.base = data;
+        nativeStream.size = afm.size();
+        closes = nativeCloses = 0;
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == 0 && FT_Attach_Stream(pair.oracle, &native) == 0);
+        Require(closes == 1 && nativeCloses == 1 && stream.pos == nativeStream.pos);
+        Require(pair.face->face_flags & FT_FACE_FLAG_KERNING);
+        pair.Matches();
+    }
+    {
         AttachPair pair(FontFixture::BuildFont(3, {}));
         GuestOpenArgs guest{};
         FT_Open_Args native{};

@@ -150,6 +150,9 @@ void* HostRealloc(FT_Memory, long, long size, void* block) {
 
 bool BindGuestStream(GuestStreamBridge& bridge, GuestStreamRec* guest) {
     if (guest->size > std::numeric_limits<FT_ULong>::max() || guest->pos > std::numeric_limits<FT_ULong>::max()) return false;
+    if (!guest->read && !guest->base && guest->size != 0) {
+        throw std::runtime_error("FreeType: a guest stream with no read callback, a null base and a nonzero size is not implemented");
+    }
     bridge.guest = guest;
     bridge.host.base = guest->base;
     bridge.host.size = static_cast<FT_ULong>(guest->size);
