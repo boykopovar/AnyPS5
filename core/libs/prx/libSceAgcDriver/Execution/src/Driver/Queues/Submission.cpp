@@ -196,25 +196,38 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     submission.conditionalEnds.clear();
     submission.indirectSegments.clear();
     std::size_t budget = std::size_t{1} << 26u;
-    copySegment(submission, guest, words, budget, 0);
+    require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
+    budget -= words;
+    if (words != 0) {
+        const auto bytes = words * sizeof(std::uint32_t);
+        // The root command buffer is read directly by copySegment. Unlike GuestMemory::Read,
+        // that copy does not pass through the host-read hook; land any earlier GPU writes
+        // (notably labels) before snapshotting the words the guest just submitted.
+        GuestMemory::CheckRange(guest, bytes, alignof(std::uint32_t));
+        GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest), bytes);
+    }
+    copySegment(submission, guest, words, budget, 0, false);
     std::ranges::sort(submission.indirectSegments, {}, &Submission::IndirectSegment::start);
 }
 
-bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth) {
+bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, bool chargeBudget) {
     require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
     for (;;) {
         const std::uint32_t* chained = nullptr;
         std::size_t chainedWords = 0;
-        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords)) return true;
+        if (copyLink(submission, guest, words, budget, depth, chargeBudget, chained, chainedWords)) return true;
         if (chained == nullptr) return false;
         guest = chained;
         words = chainedWords;
+        chargeBudget = true;
     }
 }
 
-bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords) {
-    require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
-    budget -= words;
+bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, bool chargeBudget, const std::uint32_t*& chained, std::size_t& chainedWords) {
+    if (chargeBudget) {
+        require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
+        budget -= words;
+    }
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
     const auto reach = [&](std::size_t cursor, std::size_t next) {
         std::erase_if(guarded, [&](const auto& range) {
@@ -845,7 +858,6 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (descriptor.dw_num != 0) {
         require(descriptor.dw_num <= std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t), "command size overflow");
-        GuestMemory::CheckRange(descriptor.addr, static_cast<std::size_t>(descriptor.dw_num) * sizeof(std::uint32_t), alignof(std::uint32_t));
         copyCommands(submission, descriptor.addr, descriptor.dw_num);
     }
     const auto copied = profile ? std::chrono::steady_clock::now() : start;

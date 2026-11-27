@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
@@ -48,6 +49,9 @@ struct DriverTestAccess {
         std::lock_guard lock(driver.labelStoresMutex);
         return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
     }
+    static void CopyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
+        Driver::copyCommands(submission, guest, words);
+    }
     static bool FindWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token) {
         return Driver::Get().findWaitProducer(address, bytes, token);
     }
@@ -64,6 +68,21 @@ namespace {
 
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+std::uint32_t* rootCommandBufferToFlush = nullptr;
+std::size_t rootCommandBufferFlushBytes = 0;
+std::size_t rootCommandBufferFlushCalls = 0;
+std::size_t rootCommandBufferFlushHookCalls = 0;
+
+void flushRootCommandBufferForTest(std::uint64_t address, std::size_t bytes) {
+    if (rootCommandBufferToFlush == nullptr || address != reinterpret_cast<std::uintptr_t>(rootCommandBufferToFlush) || bytes != rootCommandBufferFlushBytes) return;
+    ++rootCommandBufferFlushCalls;
+    *rootCommandBufferToFlush = 0xffff1000u;
+}
+
+void countRootCommandBufferFlushForTest(std::uint64_t, std::size_t) {
+    ++rootCommandBufferFlushHookCalls;
 }
 
 template<typename TAction>
@@ -215,6 +234,49 @@ void testClearState() {
         check(sceAgcDriverSubmitDcb(&packet) == 0, "CLEAR_STATE submit failed");
     }
     AgcDriverWaitIdle_nid_postfix();
+}
+
+void testSubmissionFlushesRootCommandBuffer() {
+    std::array<std::uint32_t, 1> commands{0x00000001u};
+    auto* const previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    rootCommandBufferToFlush = commands.data();
+    rootCommandBufferFlushBytes = sizeof(commands);
+    rootCommandBufferFlushCalls = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&flushRootCommandBufferForTest);
+    try {
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        check(sceAgcDriverSubmitDcb(&packet) == 0, "root command-buffer submission failed after the flush-hook mutation");
+        AgcDriverWaitIdle_nid_postfix();
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        rootCommandBufferToFlush = nullptr;
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    rootCommandBufferToFlush = nullptr;
+    check(rootCommandBufferFlushCalls == 1, "root command-buffer copy did not flush exactly its submitted guest range");
+}
+
+void testSubmissionChecksRootCopyBeforeFlush() {
+    auto* const previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    rootCommandBufferToFlush = nullptr;
+    rootCommandBufferFlushHookCalls = 0;
+    AgcDriver::GuestMemory::SetFlushHook(&countRootCommandBufferFlushForTest);
+    try {
+        AgcDriver::DriverDetail::Submission submission{};
+        const auto* const invalid = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000});
+        const auto overBudget = (std::size_t{1} << 26u) + 1u;
+        expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, overBudget); });
+        check(rootCommandBufferFlushHookCalls == 0, "root command-buffer copy budget was checked after the flush hook");
+        expectFailure([&] { AgcDriver::DriverDetail::DriverTestAccess::CopyCommands(submission, invalid, 1); });
+        check(rootCommandBufferFlushHookCalls == 0, "root command-buffer range was checked after the flush hook");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        rootCommandBufferToFlush = nullptr;
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    rootCommandBufferToFlush = nullptr;
 }
 
 void testSubmissions() {
@@ -1342,6 +1404,8 @@ int main(int argc, char** argv) {
         testChainedIndirectBuffers();
         testClearState();
         testSubmissions();
+        testSubmissionFlushesRootCommandBuffer();
+        testSubmissionChecksRootCopyBeforeFlush();
         testEndOfPipeInterrupts();
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
