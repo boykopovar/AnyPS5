@@ -47,6 +47,7 @@ constexpr int SYSTEM_SERVICE_PARAM_LANG_ARABIC = 21;
 constexpr int SYSTEM_SERVICE_PARAM_LANG_UKRAINIAN = 30;
 constexpr int SYSTEM_SERVICE_PARAM_DATE_FORMAT_DDMMYYYY = 1;
 constexpr int SYSTEM_SERVICE_PARAM_TIME_FORMAT_24HOUR = 1;
+constexpr int SYSTEM_SERVICE_PARAM_ENTER_BUTTON_ASSIGN_CROSS = 1;
 
 inline int SystemServiceHostLanguage() {
     static const int language = SystemServiceLocale::ResolveHostLanguage(

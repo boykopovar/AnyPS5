@@ -1116,6 +1116,38 @@ long double APS5_VABI expl_nid_postfix(long double x) {
     if (kind != NotANumber) ExtendedExp(&x, 1.0L, 0);
     return x;
 }
+
+long double APS5_VABI expm1l_nid_postfix(long double x) {
+    static constexpr long double Numerator[] = {0xd604ba2248d1f283p-87L, 0x8c644368eb68debap-81L, 0xa5fd526b77ad1728p-76L, 0x839385147e87dc88p-73L,
+                                                0xf148c91f229b672ep-69L, 0x87add5d3a52caaf7p-68L, 0xec187027092759ecp-64L};
+    static constexpr long double Denominator[] = {0xd3d1dbe234e341eap-84L, -0x9c869fafd283aadfp-78L, 0xd990d690d0ca448bp-74L, -0xb39c668b5bbb81c0p-70L,
+                                                  0xb7cc5cece575eafdp-67L, -0xdb22b56c9481c48ep-65L, 0xec187027092759ecp-64L};
+    constexpr long double Tiny = 0x1p-66L;
+    constexpr long double Ln2 = 0xb17217f7d1cf79acp-64L;
+    constexpr long double Ln1Point5 = 0xcf991f65fcc25f96p-65L;
+    constexpr long double Ln3 = 0x8c9f53d5681854bbp-63L;
+    constexpr long double Ln5 = 0xce020fbf6c699b58p-63L;
+    const auto ratio = [](long double reduced) {
+        long double top = Numerator[0];
+        long double bottom = Denominator[0];
+        for (int index = 1; index < 7; ++index) {
+            top = top * reduced + Numerator[index];
+            bottom = bottom * reduced + Denominator[index];
+        }
+        return top * reduced / bottom;
+    };
+    const short kind = TestExtended(Bits(x));
+    if (kind == Infinite) return std::signbit(x) ? -1.0L : x;
+    if (kind != Finite) return x;
+    if (!(x < -Tiny) && !(Tiny < x)) return x;
+    if (-Ln2 > x || !(Ln5 > x)) return expl_nid_postfix(x) + -1.0L;
+    if (Ln1Point5 > x) return ratio(x);
+    if (Ln3 > x) {
+        const long double half = ratio(x + -Ln2);
+        return half + half + 1.0L;
+    }
+    return ratio(x + -(Ln2 + Ln2)) * 4.0L + 3.0L;
+}
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }

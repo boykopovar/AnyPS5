@@ -72,6 +72,11 @@ private:
 void SharePositionedTransfer(int from, int to);
 #ifdef _WIN32
 std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);
+inline std::size_t TransferPartBytes(std::size_t total, std::size_t done) {
+    constexpr std::size_t singleCallBytes = 0x7ffff000;
+    constexpr std::size_t partBytes = std::size_t{1} << 30;
+    return total <= singleCallBytes ? total : total - done < partBytes ? total - done : partBytes;
+}
 #elif defined(__APPLE__)
 std::int64_t WritevAtEnd(int descriptor, const iovec* iov, int iovcnt);
 #endif

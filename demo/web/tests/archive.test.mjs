@@ -15,8 +15,9 @@ const native = await createRelinker();
 const executable = new Uint8Array(await readFile(path.join(process.argv[3], "main.elf")));
 const module = new Uint8Array(await readFile(path.join(process.argv[3], "module.elf")));
 const resource = new Uint8Array(2 * 1024 * 1024).fill(65);
+const originalReceipt = new TextEncoder().encode('{"original":true}');
 
-for (const directory of ["sce_modules", "prx"]) {
+for (const directory of ["sce_modules", "prx", "Media/Modules", "Media/Plugins"]) {
   const archive = new Archive([{path: "app/main.elf", file: new Blob([executable])},
                                {path: `app/${directory}/library.prx`, file: new Blob([module])}]);
   try {
@@ -26,6 +27,20 @@ for (const directory of ["sce_modules", "prx"]) {
       const output = native.Convert(input, () => {});
       assert.equal(output.ok, true, output.error);
       assert.deepEqual(output.modules.map(item => item.name), [`app0/${directory}/library.prx.guest.prx`]);
+      if (directory.startsWith("Media/")) {
+        const archives = [];
+        const libraries = await zip([["libs/provider.prx", new Uint8Array([1])]]);
+        await packageArchive(archive, output, input.outputName, libraries, new WritableStream({ write(chunk) { archives.push(chunk.slice()); } }), () => {});
+        const reader = new ZipReader(new BlobReader(new Blob(archives)));
+        try {
+          const entries = new Map((await reader.getEntries()).map(entry => [entry.filename, entry]));
+          const original = await entries.get(`app0/${directory}/library.prx`).getData(new Uint8ArrayWriter());
+          const converted = await entries.get(output.modules[0].name).getData(new Uint8ArrayWriter());
+          assert.deepEqual(original, module);
+          assert.deepEqual(converted, output.modules[0].bytes);
+          if (target === "windows") assert(Buffer.from(converted).includes(Buffer.from("__aps5_guest_initialize\0")));
+        } finally { await reader.close(); }
+      }
     }
   } finally { await archive.close(); }
 }
@@ -37,15 +52,17 @@ async function zip(entries) {
   return writer.close();
 }
 
-const source = await zip([["title/", null, { directory: true }], ["title/program.dat", executable], ["title/sce_module/library.prx.esbak", module], ["title/sce_module/library.prx", new Uint8Array([79, 21, 61, 29])], ["title/sce_module/library.prx.esbak.guest.prx", new Uint8Array([77, 90, 0, 0])], ["title/sce_sys/param.json", new TextEncoder().encode("{}")], ["title/shaders/example.frag", executable], ["title/content/resource.bin", resource]]);
+const source = await zip([["title/", null, { directory: true }], ["title/program.dat", executable], ["title/sce_module/library.prx.esbak", module], ["title/sce_module/library.prx", new Uint8Array([79, 21, 61, 29])], ["title/sce_module/library.prx.esbak.guest.prx", new Uint8Array([77, 90, 0, 0])], ["title/sce_sys/param.json", new TextEncoder().encode("{}")], ["title/sce_module/assets/helper.elf", executable], ["title/shaders/example.frag", executable], ["title/content/resource.bin", resource]]);
 const folder = [
   { path: "title/program.dat", file: new Blob([executable]) },
   { path: "title/sce_module/library.prx.esbak", file: new Blob([module]) },
   { path: "title/sce_module/library.prx", file: new Blob([new Uint8Array([79, 21, 61, 29])]) },
   { path: "title/sce_module/library.prx.esbak.guest.prx", file: new Blob([new Uint8Array([77, 90, 0, 0])]) },
   { path: "title/sce_sys/param.json", file: new Blob(["{}"]) },
+  { path: "title/sce_module/assets/helper.elf", file: new Blob([executable]) },
   { path: "title/shaders/example.frag", file: new Blob([executable]) },
-  { path: "title/content/resource.bin", file: new Blob([resource]) }
+  { path: "title/content/resource.bin", file: new Blob([resource]) },
+  { path: "title/anyps5-conversion.json", file: new Blob([originalReceipt]) }
 ];
 const dosDirectoryOptions = { versionMadeBy: 20, externalFileAttributes: 0x10 };
 const dosEntries = await Promise.all(folder.map(async ({ path, file }) => [path, new Uint8Array(await file.arrayBuffer())]));
@@ -77,6 +94,32 @@ for (const target of ["windows", "linux"]) {
   const converted = native.Convert(input, event => events.push(event));
   assert.equal(converted.ok, true, converted.error);
   assert.equal(converted.executable[0], target === "windows" ? 77 : 127);
+  if (kind === "ZIP") {
+    const readPatch = name => readFile(path.join(process.argv[3], name), "utf8");
+    const patch = await readPatch("valid.toml");
+    const patched = native.Convert({ ...input, patch }, () => {});
+    assert.equal(patched.ok, true, patched.error);
+    assert.notDeepEqual(patched.executable, converted.executable);
+    const modulePatch = await readPatch("module.toml");
+    const patchedModule = native.Convert({ ...input, patch: modulePatch }, () => {});
+    assert.equal(patchedModule.ok, true, patchedModule.error);
+    assert.equal(patchedModule.modules.length, 1);
+    assert.notDeepEqual(patchedModule.modules[0].bytes, converted.modules[0].bytes);
+    const mismatch = await readPatch("mismatch.toml");
+    for (const [badPatch, message] of [
+      [mismatch, /expected [0-9a-f]+ found [0-9a-f]+/iu],
+      [patch.replace("program.dat", "other.elf"), /unmatched patch target/iu],
+      ["format = 1", /no patch entries/iu],
+      ["format = 2", /unsupported format/iu]
+    ]) {
+      const rejected = native.Convert({ ...input, patch: badPatch }, () => {});
+      assert.equal(rejected.ok, false);
+      assert.match(rejected.error, message);
+      assert.equal(rejected.executable, undefined);
+      assert.equal(rejected.modules, undefined);
+    }
+    assert.deepEqual(input.executable, executable);
+  }
   if (target === "windows") {
     const image = new DataView(converted.executable.buffer, converted.executable.byteOffset, converted.executable.byteLength);
     assert.equal(image.getUint16(image.getUint32(60, true) + 24 + 68, true), 3);
@@ -90,17 +133,24 @@ for (const target of ["windows", "linux"]) {
     chunks.push(chunk.slice());
     await new Promise(resolve => setTimeout(resolve, 1));
   } });
-  await packageArchive(archive, converted, input.outputName, libraries, destination, () => {});
+  const receipt = { version: 1, release: { tag: "v1-test", revision: "0123456789abcdef0123456789abcdef01234567" }, target, toIntel: false };
+  await packageArchive(archive, converted, input.outputName, libraries, destination, () => {}, false, { receipt });
   await destination.close();
   const reader = new ZipReader(new BlobReader(new Blob(chunks)));
   const entries = await reader.getEntries();
   const byName = new Map(entries.map(entry => [entry.filename, entry]));
   assert(byName.has(input.outputName));
   assert(byName.has("libs/system.prx"));
+  const receiptBytes = await byName.get("anyps5-conversion.json").getData(new Uint8ArrayWriter(), { checkSignature: true });
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(receiptBytes)), receipt);
+  if (kind !== "ZIP") {
+    assert.deepEqual(await byName.get("app0/anyps5-conversion.json").getData(new Uint8ArrayWriter(), { checkSignature: true }), originalReceipt);
+  }
   assert.deepEqual(await byName.get("app0/shaders/example.frag").getData(new Uint8ArrayWriter(), { checkSignature: true }), executable);
   assert.deepEqual(await byName.get("app0/sce_module/library.prx.esbak.guest.prx").getData(new Uint8ArrayWriter(), { checkSignature: true }), converted.modules[0].bytes);
   assert.deepEqual(await byName.get("app0/sce_module/library.prx").getData(new Uint8ArrayWriter(), { checkSignature: true }), new Uint8Array([79, 21, 61, 29]));
   assert.deepEqual(await byName.get("app0/program.dat").getData(new Uint8ArrayWriter(), { checkSignature: true }), executable);
+  assert.deepEqual(await byName.get("app0/sce_module/assets/helper.elf").getData(new Uint8ArrayWriter(), { checkSignature: true }), executable);
   assert.deepEqual(await byName.get("app0/content/resource.bin").getData(new Uint8ArrayWriter(), { checkSignature: true }), resource);
   assert.equal((byName.get(input.outputName).externalFileAttributes >>> 16) & 0o777, 0o755);
   assert(maxChunk < resource.length);
@@ -125,7 +175,7 @@ for (const target of ["windows", "linux"]) {
         }
       });
     }
-  }, () => {}, true);
+  }, () => {}, true, { receipt });
   assert.equal(active, false);
   assert(directoryChunk < resource.length);
   assert.equal(saved.size, entries.length);
@@ -146,8 +196,9 @@ const bundleConversion = native.Convert(bundleInput, () => {});
 assert.equal(bundleConversion.ok, true, bundleConversion.error);
 const bundleLibraries = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
 const bundleWriter = new ZipWriter(new BlobWriter("application/zip"), { zip64: true, level: 9, useWebWorkers: false, useCompressionStream: false });
-await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "01-first/", writer: bundleWriter });
-await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "02-second/", writer: bundleWriter });
+const bundleReceipt = { version: 1, release: { tag: "v1-test", revision: "0123456789abcdef0123456789abcdef01234567" }, target: "linux", toIntel: false };
+await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "01-first/", writer: bundleWriter, receipt: bundleReceipt });
+await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "02-second/", writer: bundleWriter, receipt: bundleReceipt });
 const bundle = await bundleWriter.close();
 const bundleReader = new ZipReader(new BlobReader(bundle));
 const bundleEntries = await bundleReader.getEntries();
@@ -158,6 +209,12 @@ assert(bundleNames.has("01-first/app0/content/resource.bin"));
 assert(bundleNames.has(`02-second/${bundleInput.outputName}`));
 assert(bundleNames.has("02-second/libs/system.prx"));
 assert(bundleNames.has("02-second/app0/content/resource.bin"));
+assert(!bundleNames.has("anyps5-conversion.json"));
+for (const directory of ["01-first", "02-second"]) {
+  const entry = bundleEntries.find(item => item.filename === directory + "/anyps5-conversion.json");
+  const bytes = await entry.getData(new Uint8ArrayWriter(), { checkSignature: true });
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(bytes)), bundleReceipt);
+}
 await bundleReader.close();
 await bundleArchive.close();
 console.log("Multiple app packages append under separate roots in a single ZIP");
